@@ -1,0 +1,143 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 360,
+    "width": 640
+  },
+  "media": [
+    {
+      "id": "a",
+      "path": "",
+      "relativePath": "../media/generated/h264.mp4"
+    },
+    {
+      "id": "b",
+      "path": "",
+      "relativePath": "../media/generated/hevc.mp4"
+    },
+    {
+      "id": "c",
+      "path": "",
+      "relativePath": "../media/generated/vp9.webm"
+    },
+    {
+      "id": "d",
+      "path": "",
+      "relativePath": "../media/generated/prores.mov"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "a",
+          "mediaId": "a",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 160,
+            "y": 90
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "top-left",
+      "locked": false,
+      "muted": false,
+      "name": "top-left"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "b",
+          "mediaId": "b",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 480,
+            "y": 90
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "top-right",
+      "locked": false,
+      "muted": false,
+      "name": "top-right"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "c",
+          "mediaId": "c",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 160,
+            "y": 270
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "bottom-left",
+      "locked": false,
+      "muted": false,
+      "name": "bottom-left"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "d",
+          "mediaId": "d",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 480,
+            "y": 270
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "bottom-right",
+      "locked": false,
+      "muted": false,
+      "name": "bottom-right"
+    }
+  ],
+  "version": 1
+}

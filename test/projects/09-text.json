@@ -1,0 +1,223 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 360,
+    "width": 640
+  },
+  "media": [
+    {
+      "id": "back",
+      "path": "",
+      "relativePath": "../media/generated/h264.mp4"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "back",
+          "mediaId": "back",
+          "opacity": 0.4,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "back",
+      "locked": false,
+      "muted": false,
+      "name": "back"
+    },
+    {
+      "clips": [
+        {
+          "align": "left",
+          "color": "#FFFFFF",
+          "duration": 48000000,
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 28
+          },
+          "id": "latin",
+          "opacity": 1,
+          "start": 0,
+          "text": "Lightweight editor\nsecond line, left",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 190,
+            "y": 70
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "latin",
+      "locked": false,
+      "muted": false,
+      "name": "latin"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "color": "#3DBA74",
+          "duration": 48000000,
+          "font": {
+            "family": "PingFang SC",
+            "size": 30
+          },
+          "id": "cjk",
+          "opacity": 1,
+          "start": 0,
+          "text": "你好，世界 こんにちは 안녕하세요",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 320,
+            "y": 170
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "cjk",
+      "locked": false,
+      "muted": false,
+      "name": "cjk"
+    },
+    {
+      "clips": [
+        {
+          "align": "right",
+          "color": "#FFFFFFCC",
+          "duration": 48000000,
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 34
+          },
+          "id": "emoji",
+          "opacity": 1,
+          "start": 0,
+          "text": "Ship it 🚀🎬👋",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 470,
+            "y": 250
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "emoji",
+      "locked": false,
+      "muted": false,
+      "name": "emoji"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "color": "#F2A93B",
+          "duration": 48000000,
+          "font": {
+            "family": "Georgia",
+            "size": 30
+          },
+          "id": "turned",
+          "opacity": 1,
+          "start": 0,
+          "text": "rotated",
+          "transform": {
+            "rotation": -25,
+            "scaleX": 1.5,
+            "scaleY": 1.5,
+            "x": 110,
+            "y": 270
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "turned",
+      "locked": false,
+      "muted": false,
+      "name": "turned"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "color": "#FFFFFF",
+          "duration": 48000000,
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 36
+          },
+          "id": "growing",
+          "keyframes": {
+            "scaleX": [
+              {
+                "easing": "linear",
+                "time": 0,
+                "value": 0.5
+              },
+              {
+                "easing": "linear",
+                "time": 48000000,
+                "value": 2
+              }
+            ],
+            "scaleY": [
+              {
+                "easing": "linear",
+                "time": 0,
+                "value": 0.5
+              },
+              {
+                "easing": "linear",
+                "time": 48000000,
+                "value": 2
+              }
+            ]
+          },
+          "opacity": 1,
+          "start": 0,
+          "text": "zoom",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 560,
+            "y": 60
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "growing",
+      "locked": false,
+      "muted": false,
+      "name": "growing"
+    }
+  ],
+  "version": 1
+}

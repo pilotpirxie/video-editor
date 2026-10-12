@@ -1,0 +1,109 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 2160,
+    "width": 3840
+  },
+  "media": [
+    {
+      "id": "big",
+      "path": "",
+      "relativePath": "../media/generated/4k-long-gop.mp4"
+    },
+    {
+      "id": "inset",
+      "path": "",
+      "relativePath": "../media/generated/1080p.mp4"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "id": "big",
+          "mediaId": "big",
+          "opacity": 1,
+          "sourceStart": 96000000,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 1920,
+            "y": 1080
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "big",
+      "locked": false,
+      "muted": false,
+      "name": "big"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "id": "inset",
+          "mediaId": "inset",
+          "opacity": 0.9,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 4,
+            "scaleX": 0.75,
+            "scaleY": 0.75,
+            "x": 2900,
+            "y": 1560
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "inset",
+      "locked": false,
+      "muted": false,
+      "name": "inset"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "color": "#FFFFFF",
+          "duration": 24000000,
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 220
+          },
+          "id": "title",
+          "opacity": 1,
+          "start": 0,
+          "text": "4K 超高清 🎥",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 1000,
+            "y": 400
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "title",
+      "locked": false,
+      "muted": false,
+      "name": "title"
+    }
+  ],
+  "version": 1
+}

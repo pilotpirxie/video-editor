@@ -1,0 +1,70 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 360,
+    "width": 640
+  },
+  "media": [
+    {
+      "id": "clip",
+      "path": "",
+      "relativePath": "../media/generated/h264.mp4"
+    },
+    {
+      "id": "second",
+      "path": "",
+      "relativePath": "../media/generated/long-gop.mp4"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "id": "first",
+          "mediaId": "clip",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "second",
+          "mediaId": "second",
+          "opacity": 1,
+          "sourceStart": 80000000,
+          "speedPercent": 100,
+          "start": 24000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "type": "video",
+          "volume": 0
+        }
+      ],
+      "hidden": false,
+      "id": "video",
+      "locked": false,
+      "muted": false,
+      "name": "video"
+    }
+  ],
+  "version": 1
+}

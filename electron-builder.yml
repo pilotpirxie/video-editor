@@ -1,0 +1,35 @@
+appId: com.internal.video-editor
+productName: Video Editor
+directories:
+  output: release
+files:
+  - package.json
+  - dist/node/src/**
+  - dist/renderer/**
+  - "!**/*.test.js"
+  # The page code is already bundled into dist/renderer.
+  - "!node_modules/**"
+extraResources:
+  - from: vendor/ffmpeg
+    to: ffmpeg
+    filter:
+      - ffmpeg
+      - ffprobe
+# English UI only.
+electronLanguages:
+  - en
+mac:
+  target:
+    - target: dmg
+      arch: arm64
+  category: public.app-category.video
+  minimumSystemVersion: "15.0"
+  # Ad-hoc signature: staff approve the app once under Privacy & Security.
+  # With an Apple Developer ID, replace this with the identity and enable hardenedRuntime.
+  identity: "-"
+  hardenedRuntime: false
+  gatekeeperAssess: false
+dmg:
+  # No auto-update: new versions are a new DMG.
+  writeUpdateInfo: false
+publish: null

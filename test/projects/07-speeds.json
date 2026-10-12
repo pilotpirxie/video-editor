@@ -1,0 +1,128 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 360,
+    "width": 640
+  },
+  "media": [
+    {
+      "id": "clip",
+      "path": "",
+      "relativePath": "../media/generated/long-gop.mp4"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "quarter",
+          "mediaId": "clip",
+          "opacity": 1,
+          "sourceStart": 24000000,
+          "speedPercent": 25,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 160,
+            "y": 90
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "quarter",
+      "locked": false,
+      "muted": false,
+      "name": "quarter"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "double",
+          "mediaId": "clip",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 200,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 480,
+            "y": 90
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "double",
+      "locked": false,
+      "muted": false,
+      "name": "double"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "odd",
+          "mediaId": "clip",
+          "opacity": 1,
+          "sourceStart": 12345,
+          "speedPercent": 137,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 160,
+            "y": 270
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "odd",
+      "locked": false,
+      "muted": false,
+      "name": "odd"
+    },
+    {
+      "clips": [
+        {
+          "duration": 3200000,
+          "id": "timelapse",
+          "mediaId": "clip",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 5000,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 480,
+            "y": 270
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "timelapse",
+      "locked": false,
+      "muted": false,
+      "name": "timelapse"
+    }
+  ],
+  "version": 1
+}

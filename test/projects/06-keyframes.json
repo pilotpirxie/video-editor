@@ -1,0 +1,247 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 360,
+    "width": 640
+  },
+  "media": [
+    {
+      "id": "back",
+      "path": "",
+      "relativePath": "../media/generated/h264.mp4"
+    },
+    {
+      "id": "mover",
+      "path": "",
+      "relativePath": "../media/generated/long-gop.mp4"
+    },
+    {
+      "id": "card",
+      "path": "",
+      "relativePath": "../media/generated/image-alpha.png"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "back",
+          "mediaId": "back",
+          "opacity": 0.5,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "back",
+      "locked": false,
+      "muted": false,
+      "name": "back"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "mover",
+          "keyframes": {
+            "cropBottom": [
+              {
+                "easing": "easeIn",
+                "time": 24000000,
+                "value": 0
+              },
+              {
+                "easing": "linear",
+                "time": 48000000,
+                "value": 60
+              }
+            ],
+            "cropLeft": [
+              {
+                "easing": "linear",
+                "time": 0,
+                "value": 0
+              },
+              {
+                "easing": "linear",
+                "time": 48000000,
+                "value": 100
+              }
+            ],
+            "opacity": [
+              {
+                "easing": "linear",
+                "time": 0,
+                "value": 0.2
+              },
+              {
+                "easing": "hold",
+                "time": 12000000,
+                "value": 1
+              }
+            ],
+            "rotation": [
+              {
+                "easing": "hold",
+                "time": 0,
+                "value": 0
+              },
+              {
+                "easing": "easeOut",
+                "time": 12000000,
+                "value": 45
+              },
+              {
+                "easing": "linear",
+                "time": 48000000,
+                "value": 360
+              }
+            ],
+            "scaleX": [
+              {
+                "easing": "linear",
+                "time": 0,
+                "value": 0.4
+              },
+              {
+                "easing": "linear",
+                "time": 48000000,
+                "value": 1.2
+              }
+            ],
+            "scaleY": [
+              {
+                "easing": "linear",
+                "time": 0,
+                "value": 0.4
+              },
+              {
+                "easing": "linear",
+                "time": 48000000,
+                "value": 1.2
+              }
+            ],
+            "x": [
+              {
+                "easing": "easeInOut",
+                "time": 0,
+                "value": 100
+              },
+              {
+                "easing": "linear",
+                "time": 24000000,
+                "value": 540
+              },
+              {
+                "easing": "linear",
+                "time": 48000000,
+                "value": 320
+              }
+            ],
+            "y": [
+              {
+                "easing": "easeIn",
+                "time": 0,
+                "value": 80
+              },
+              {
+                "easing": "easeOut",
+                "time": 24000000,
+                "value": 280
+              },
+              {
+                "easing": "linear",
+                "time": 48000000,
+                "value": 180
+              }
+            ]
+          },
+          "mediaId": "mover",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.5,
+            "scaleY": 0.5,
+            "x": 160,
+            "y": 90
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "mover",
+      "locked": false,
+      "muted": false,
+      "name": "mover"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "card",
+          "keyframes": {
+            "opacity": [
+              {
+                "easing": "easeIn",
+                "time": 0,
+                "value": 1
+              },
+              {
+                "easing": "linear",
+                "time": 48000000,
+                "value": 0.3
+              }
+            ],
+            "rotation": [
+              {
+                "easing": "easeInOut",
+                "time": 0,
+                "value": -90
+              },
+              {
+                "easing": "linear",
+                "time": 48000000,
+                "value": 90
+              }
+            ]
+          },
+          "mediaId": "card",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.5,
+            "scaleY": 0.5,
+            "x": 500,
+            "y": 300
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "card",
+      "locked": false,
+      "muted": false,
+      "name": "card"
+    }
+  ],
+  "version": 1
+}

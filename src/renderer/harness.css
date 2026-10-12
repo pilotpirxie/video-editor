@@ -1,0 +1,168 @@
+:root {
+  --window-background: #14171d;
+  --panel-background: #1b1f27;
+  --raised-surface: #252a34;
+  --hover-surface: #2e3440;
+  --divider: #363d4a;
+  --text-primary: #ffffff;
+  --text-secondary: #a7b0c0;
+  --text-disabled: #687183;
+  --primary: #3dba74;
+  --primary-hover: #4bc882;
+  --primary-pressed: #33a064;
+  --text-on-primary: #0d1a13;
+  --danger: #e5484d;
+  --warning: #f2a93b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--window-background);
+  color: var(--text-primary);
+  font: 13px -apple-system, BlinkMacSystemFont, sans-serif;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  user-select: none;
+}
+
+.harness {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+}
+
+.toolbar,
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--panel-background);
+  border-bottom: 1px solid var(--divider);
+}
+
+.transport {
+  border-top: 1px solid var(--divider);
+  border-bottom: none;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: auto;
+}
+
+.stage canvas {
+  flex: none;
+  background: #000000;
+}
+
+button,
+select {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--raised-surface);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+button:hover:not(:disabled),
+select:hover:not(:disabled) {
+  background: var(--hover-surface);
+}
+
+button:disabled,
+select:disabled,
+input:disabled {
+  color: var(--text-disabled);
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+button.primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--text-on-primary);
+  font-weight: 600;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+button.primary:active:not(:disabled) {
+  background: var(--primary-pressed);
+}
+
+button.primary:disabled {
+  border-color: var(--divider);
+  background: var(--raised-surface);
+}
+
+.segmented {
+  display: flex;
+}
+
+.segmented button {
+  border-radius: 0;
+}
+
+.segmented button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.segmented button:last-child {
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+}
+
+.segmented button[aria-pressed='true'] {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.timecode {
+  min-width: 96px;
+  font-size: 15px;
+}
+
+.transport input[type='range'] {
+  flex: 1;
+  accent-color: var(--primary);
+}
+
+.status,
+.stats {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.status {
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

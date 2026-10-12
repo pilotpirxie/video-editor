@@ -1,0 +1,58 @@
+// T-21: every reference project must render to identical pixels through the preview path
+// (originals read by seeking, as when paused at 100%) and the export path (originals read in order).
+// T-14: the same must hold at a reduced output size.
+import { describe, expect, it } from 'vitest'
+import { litFraction, renderFrames, sameBytes, type Size } from '../helpers.js'
+
+type Case = {
+  project: string
+  frames: number[]
+  size?: Size
+}
+
+const REFERENCE_PROJECTS: Case[] = [
+  { project: '01-single-clip', frames: [0, 1, 29, 30, 31, 59] },
+  { project: '02-mosaic', frames: [0, 14, 30, 59] },
+  { project: '03-rotation-opacity', frames: [0, 4, 5, 6, 33, 59] },
+  { project: '04-crop', frames: [0, 17, 59] },
+  { project: '05-fades', frames: [0, 7, 15, 29, 30, 37, 52, 60, 89] },
+  { project: '06-keyframes', frames: [0, 1, 14, 15, 16, 29, 30, 31, 45, 59] },
+  { project: '07-speeds', frames: [0, 1, 2, 3, 4, 5, 11, 12, 37, 58, 59] },
+  { project: '08-mixed-rates', frames: [0, 1, 2, 3, 9, 17, 18, 21, 22, 35] },
+  { project: '09-text', frames: [0, 20, 59] },
+  { project: '10-alpha', frames: [0, 5, 9] },
+  { project: '11-tiny-canvas', frames: [0, 12, 29] },
+  { project: '12-4k-canvas', frames: [0, 14, 29] },
+]
+
+const REDUCED_SIZE: Case[] = [
+  { project: 'golden-downscale', frames: [0, 10, 29], size: { width: 960, height: 540 } },
+  { project: 'golden-downscale', frames: [3], size: { width: 214, height: 120 } },
+  { project: '02-mosaic', frames: [0, 31], size: { width: 320, height: 180 } },
+  { project: '06-keyframes', frames: [8, 44], size: { width: 1280, height: 720 } },
+]
+
+async function expectSamePixels(testCase: Case): Promise<void> {
+  const request = testCase.size === undefined ? { frames: testCase.frames } : { frames: testCase.frames, size: testCase.size }
+  const paused = await renderFrames(testCase.project, { ...request, via: 'paused' })
+  const exported = await renderFrames(testCase.project, { ...request, via: 'export' })
+  let mostContent = 0
+  for (const [index, frame] of testCase.frames.entries()) {
+    const pausedPicture = paused[index]
+    const exportedPicture = exported[index]
+    if (pausedPicture === undefined || exportedPicture === undefined) throw new Error(`Frame ${frame} was not rendered`)
+    expect(sameBytes(pausedPicture, exportedPicture), `frame ${frame}`).toBe(true)
+    mostContent = Math.max(mostContent, litFraction(pausedPicture))
+  }
+  // Blank pictures would also be identical. A single frame may be black (a fade starts
+  // from nothing), but every reference project shows something.
+  expect(mostContent).toBeGreaterThan(0.2)
+}
+
+describe('preview and export render identical frames', () => {
+  it.each(REFERENCE_PROJECTS)('$project', expectSamePixels)
+})
+
+describe('a downscaled preview equals a downscaled export', () => {
+  it.each(REDUCED_SIZE)('$project at $size.width×$size.height', expectSamePixels)
+})

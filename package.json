@@ -1,0 +1,33 @@
+{
+  "name": "video-editor",
+  "productName": "Video Editor",
+  "version": "0.1.0",
+  "description": "Lightweight non-linear video editor",
+  "private": true,
+  "type": "module",
+  "main": "dist/node/src/main/main.js",
+  "scripts": {
+    "fetch-ffmpeg": "node scripts/fetch-ffmpeg.mjs",
+    "build": "node scripts/fetch-ffmpeg.mjs && tsc -p tsconfig.node.json && vite build",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json --noEmit",
+    "test:unit": "vitest run src",
+    "test:engine": "npm run build && vitest run test/engine --no-file-parallelism",
+    "test": "npm run typecheck && npm run test:unit && npm run test:engine",
+    "dist": "npm run build && electron-builder --mac dmg --arm64"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.4",
+    "vitest": "5.0.4"
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 120,
+    "width": 160
+  },
+  "media": [
+    {
+      "id": "clip",
+      "path": "",
+      "relativePath": "../media/generated/h264.mp4"
+    },
+    {
+      "id": "card",
+      "path": "",
+      "relativePath": "../media/generated/image-alpha.png"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "id": "clip",
+          "mediaId": "clip",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.5,
+            "scaleY": 0.5,
+            "x": 80,
+            "y": 60
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "video",
+      "locked": false,
+      "muted": false,
+      "name": "video"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "id": "card",
+          "mediaId": "card",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 15,
+            "scaleX": 0.2,
+            "scaleY": 0.2,
+            "x": 110,
+            "y": 90
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "card",
+      "locked": false,
+      "muted": false,
+      "name": "card"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "color": "#FFFFFF",
+          "duration": 24000000,
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 18
+          },
+          "id": "title",
+          "opacity": 1,
+          "start": 0,
+          "text": "120p",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 40,
+            "y": 20
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "title",
+      "locked": false,
+      "muted": false,
+      "name": "title"
+    }
+  ],
+  "version": 1
+}

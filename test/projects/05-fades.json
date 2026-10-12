@@ -1,0 +1,110 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 360,
+    "width": 640
+  },
+  "media": [
+    {
+      "id": "first",
+      "path": "",
+      "relativePath": "../media/generated/h264.mp4"
+    },
+    {
+      "id": "second",
+      "path": "",
+      "relativePath": "../media/generated/long-gop.mp4"
+    },
+    {
+      "id": "music",
+      "path": "",
+      "relativePath": "../media/generated/audio.wav"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "fadeIn": 12000000,
+          "fadeOut": 12000000,
+          "id": "first",
+          "mediaId": "first",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "type": "video",
+          "volume": 0.8,
+          "volumeFadeOut": 12000000
+        }
+      ],
+      "hidden": false,
+      "id": "first",
+      "locked": false,
+      "muted": false,
+      "name": "first"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "fadeIn": 24000000,
+          "fadeOut": 6000000,
+          "id": "second",
+          "mediaId": "second",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 24000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1.5,
+            "scaleY": 1.5,
+            "x": 320,
+            "y": 180
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "second",
+      "locked": false,
+      "muted": false,
+      "name": "second"
+    },
+    {
+      "clips": [
+        {
+          "duration": 36000000,
+          "id": "music",
+          "mediaId": "music",
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 12000000,
+          "type": "audio",
+          "volume": 0.5,
+          "volumeFadeIn": 6000000,
+          "volumeFadeOut": 6000000
+        }
+      ],
+      "hidden": false,
+      "id": "music",
+      "locked": false,
+      "muted": false,
+      "name": "music"
+    }
+  ],
+  "version": 1
+}

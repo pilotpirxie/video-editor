@@ -1,0 +1,143 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1001,
+      "num": 24000
+    },
+    "height": 360,
+    "width": 640
+  },
+  "media": [
+    {
+      "id": "pal",
+      "path": "",
+      "relativePath": "../media/generated/fps-25.mp4"
+    },
+    {
+      "id": "ntsc",
+      "path": "",
+      "relativePath": "../media/generated/fps-2997.mp4"
+    },
+    {
+      "id": "fast",
+      "path": "",
+      "relativePath": "../media/generated/fps-60.mp4"
+    },
+    {
+      "id": "fifty",
+      "path": "",
+      "relativePath": "../media/generated/fps-50.mp4"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 36036000,
+          "id": "pal",
+          "mediaId": "pal",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 160,
+            "y": 90
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "pal",
+      "locked": false,
+      "muted": false,
+      "name": "pal"
+    },
+    {
+      "clips": [
+        {
+          "duration": 36036000,
+          "id": "ntsc",
+          "mediaId": "ntsc",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 480,
+            "y": 90
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "ntsc",
+      "locked": false,
+      "muted": false,
+      "name": "ntsc"
+    },
+    {
+      "clips": [
+        {
+          "duration": 18018000,
+          "id": "fast",
+          "mediaId": "fast",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 160,
+            "y": 270
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "fast",
+      "locked": false,
+      "muted": false,
+      "name": "fast"
+    },
+    {
+      "clips": [
+        {
+          "duration": 22022000,
+          "id": "fifty",
+          "mediaId": "fifty",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 480,
+            "y": 270
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "fifty",
+      "locked": false,
+      "muted": false,
+      "name": "fifty"
+    }
+  ],
+  "version": 1
+}

@@ -1,0 +1,172 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 360,
+    "width": 640
+  },
+  "media": [
+    {
+      "id": "back",
+      "path": "",
+      "relativePath": "../media/generated/h264.mp4"
+    },
+    {
+      "id": "card",
+      "path": "",
+      "relativePath": "../media/generated/image-alpha.png"
+    },
+    {
+      "id": "prores",
+      "path": "",
+      "relativePath": "../media/generated/prores4444-alpha.mov"
+    },
+    {
+      "id": "webm",
+      "path": "",
+      "relativePath": "../media/generated/vp9-alpha.webm"
+    },
+    {
+      "id": "exact",
+      "path": "",
+      "relativePath": "../media/generated/lossless-alpha.mov"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 8000000,
+          "id": "back",
+          "mediaId": "back",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "back",
+      "locked": false,
+      "muted": false,
+      "name": "back"
+    },
+    {
+      "clips": [
+        {
+          "duration": 8000000,
+          "id": "card",
+          "mediaId": "card",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 8,
+            "scaleX": 0.9,
+            "scaleY": 0.9,
+            "x": 170,
+            "y": 100
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "card",
+      "locked": false,
+      "muted": false,
+      "name": "card"
+    },
+    {
+      "clips": [
+        {
+          "duration": 8000000,
+          "id": "prores",
+          "mediaId": "prores",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": -8,
+            "scaleX": 0.9,
+            "scaleY": 0.9,
+            "x": 470,
+            "y": 100
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "prores",
+      "locked": false,
+      "muted": false,
+      "name": "prores"
+    },
+    {
+      "clips": [
+        {
+          "duration": 8000000,
+          "id": "webm",
+          "mediaId": "webm",
+          "opacity": 0.8,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.9,
+            "scaleY": 0.9,
+            "x": 170,
+            "y": 260
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "webm",
+      "locked": false,
+      "muted": false,
+      "name": "webm"
+    },
+    {
+      "clips": [
+        {
+          "duration": 8000000,
+          "id": "exact",
+          "mediaId": "exact",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 180,
+            "scaleX": 0.9,
+            "scaleY": 0.9,
+            "x": 470,
+            "y": 260
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "exact",
+      "locked": false,
+      "muted": false,
+      "name": "exact"
+    }
+  ],
+  "version": 1
+}

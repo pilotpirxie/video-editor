@@ -1,0 +1,178 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 1080,
+    "width": 1920
+  },
+  "media": [
+    {
+      "id": "exact",
+      "path": "",
+      "relativePath": "../media/generated/lossless-alpha.mov"
+    },
+    {
+      "id": "card",
+      "path": "",
+      "relativePath": "../media/generated/image-alpha.png"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 8000000,
+          "id": "back",
+          "mediaId": "exact",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 6,
+            "scaleY": 6,
+            "x": 960,
+            "y": 540
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "back",
+      "locked": false,
+      "muted": false,
+      "name": "back"
+    },
+    {
+      "clips": [
+        {
+          "duration": 8000000,
+          "id": "plain",
+          "mediaId": "card",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 400,
+            "y": 250
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "plain",
+      "locked": false,
+      "muted": false,
+      "name": "plain"
+    },
+    {
+      "clips": [
+        {
+          "duration": 8000000,
+          "id": "turned",
+          "mediaId": "card",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 17,
+            "scaleX": 2.5,
+            "scaleY": 2.5,
+            "x": 1400,
+            "y": 300
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "turned",
+      "locked": false,
+      "muted": false,
+      "name": "turned"
+    },
+    {
+      "clips": [
+        {
+          "duration": 8000000,
+          "id": "sideways",
+          "mediaId": "card",
+          "opacity": 0.5,
+          "start": 0,
+          "transform": {
+            "rotation": 90,
+            "scaleX": 1.5,
+            "scaleY": 1.5,
+            "x": 300,
+            "y": 780
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "sideways",
+      "locked": false,
+      "muted": false,
+      "name": "sideways"
+    },
+    {
+      "clips": [
+        {
+          "crop": {
+            "bottom": 60,
+            "left": 80,
+            "right": 80,
+            "top": 20
+          },
+          "duration": 8000000,
+          "id": "cropped",
+          "mediaId": "card",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": -8,
+            "scaleX": 3,
+            "scaleY": 3,
+            "x": 1000,
+            "y": 800
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "cropped",
+      "locked": false,
+      "muted": false,
+      "name": "cropped"
+    },
+    {
+      "clips": [
+        {
+          "duration": 8000000,
+          "id": "small",
+          "mediaId": "card",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.3,
+            "scaleY": 0.3,
+            "x": 1650,
+            "y": 850
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "small",
+      "locked": false,
+      "muted": false,
+      "name": "small"
+    }
+  ],
+  "version": 1
+}
