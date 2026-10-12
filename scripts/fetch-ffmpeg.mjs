@@ -1,5 +1,3 @@
-// Downloads the pinned static arm64 FFmpeg and FFprobe builds into vendor/ffmpeg.
-// Idempotent: does nothing when the pinned builds are already in place.
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

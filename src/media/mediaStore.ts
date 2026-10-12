@@ -15,12 +15,10 @@ import { isPreviewComplete, openPreviewCopy, type PreviewCopy } from './previewC
 import { ProbeError, probeMedia } from './probe.js'
 
 const CACHE_KEY_LENGTH = 32
-/** How long a preview-copy build waits for the first frame request of a freshly opened project. */
 const PREPARATION_GRACE_MS = 250
 const INFO_FILE = 'info.json'
 const MEDIA_KINDS = ['video', 'audio', 'image']
 
-/** A request the session cannot serve; the message is safe to show. */
 export class MediaError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options)
@@ -31,23 +29,20 @@ export class MediaError extends Error {
 type MediaEntry = {
   path: string
   info: MediaInfo
-  /** Cache directory holding everything prepared from this file. */
   directory: string
   preview: PreviewCopy | undefined
-  /** Started on first need; later callers share the same preparation. */
   audio: Promise<FileHandle> | undefined
 }
 
 type OpenProject = {
   media: Map<string, MediaEntry>
-  /** Aborted when the project is closed, which stops its background preparation. */
   lifetime: AbortController
-  /** Settles when background preparation has run its course. Never rejects. */
   prepared: Promise<void>
 }
 
 function cacheKey(text: string): string {
-  return createHash('sha256').update(text).digest('hex').slice(0, CACHE_KEY_LENGTH)
+  const digest = createHash('sha256').update(text).digest('hex')
+  return digest.slice(0, CACHE_KEY_LENGTH)
 }
 
 function isMediaInfo(value: unknown): value is MediaInfo {
@@ -56,16 +51,10 @@ function isMediaInfo(value: unknown): value is MediaInfo {
 }
 
 type WeightLimiter = {
-  /** Runs `task` once the weights already running leave room for it. */
   run<Result>(weight: number, task: () => Promise<Result>): Promise<Result>
-  /** Resolves when nothing is running or waiting. */
   whenIdle(): Promise<void>
 }
 
-/**
- * Runs tasks so that the weights of those running never add up to more than `capacity`.
- * A task heavier than the whole capacity runs alone. Tasks start in the order they arrive.
- */
 function createWeightLimiter(capacity: number): WeightLimiter {
   let runningWeight = 0
   const waiting: { weight: number; start: () => void }[] = []
@@ -107,10 +96,6 @@ function createWeightLimiter(capacity: number): WeightLimiter {
   return { run, whenIdle }
 }
 
-/**
- * Everything one engine may ask of the media process: the project it has open, the caches
- * prepared for it, and its running decoders and encoder. One session per connected window.
- */
 export class MediaSession implements MediaClient {
   private project: OpenProject | undefined
   private readonly streams = new Map<number, FrameStream>()
@@ -143,7 +128,6 @@ export class MediaSession implements MediaClient {
         media.set(reference.id, entry)
         states[reference.id] = { info: entry.info }
       } catch (error) {
-        // One unusable file must not take the project down with it.
         if (!(error instanceof ProbeError) && !(error instanceof MediaError)) throw error
         states[reference.id] = { error: error.message }
       }
@@ -184,7 +168,6 @@ export class MediaSession implements MediaClient {
   async streamFrame(streamId: number, frame: number): Promise<RawFrame> {
     const stream = this.streams.get(streamId)
     if (stream === undefined) throw new MediaError(`Frame stream ${streamId} is not open`)
-    // Re-inserting marks the stream as most recently used.
     this.streams.delete(streamId)
     this.streams.set(streamId, stream)
     this.suspendIdleStreams()
@@ -227,11 +210,9 @@ export class MediaSession implements MediaClient {
 
   async writeFile(directory: string, name: string, data: ArrayBuffer): Promise<void> {
     await mkdir(directory, { recursive: true })
-    // `name` is a file name, never a path: it cannot leave the directory.
     await writeFile(join(directory, basename(name)), new Uint8Array(data))
   }
 
-  /** Stops everything this session started. Called when its window goes away. */
   async dispose(): Promise<void> {
     for (const stream of this.streams.values()) stream.close()
     this.streams.clear()
@@ -259,7 +240,6 @@ export class MediaSession implements MediaClient {
     const path = candidates.find((candidate) => existsSync(candidate))
     if (path === undefined) throw new MediaError(`"${basename(candidates[0] ?? reference.id)}" was not found.`)
 
-    // The key changes when the file does, so stale cache entries are simply never found again.
     const file = await stat(path)
     const directory = join(projectCache, cacheKey(`${path}\n${file.size}\n${file.mtimeMs}`))
     await mkdir(directory, { recursive: true })
@@ -270,7 +250,13 @@ export class MediaSession implements MediaClient {
   private async infoOf(path: string, directory: string): Promise<MediaInfo> {
     const infoPath = join(directory, INFO_FILE)
     if (existsSync(infoPath)) {
-      const cached: unknown = JSON.parse(await readFile(infoPath, 'utf8'))
+      const cachedText = await readFile(infoPath, 'utf8')
+      let cached: unknown
+      try {
+        cached = JSON.parse(cachedText)
+      } catch (error) {
+        logError('Ignoring an unreadable media info cache', error, { infoPath })
+      }
       if (isMediaInfo(cached)) return cached
     }
     const info = await probeMedia(this.ffmpeg, path)
@@ -278,10 +264,6 @@ export class MediaSession implements MediaClient {
     return info
   }
 
-  /**
-   * Audio first (fast, and playback needs it at once), then preview copies one at a time.
-   * A file that cannot be prepared is logged and skipped; its clips fall back to the original.
-   */
   private async prepareInBackground(media: ReadonlyMap<string, MediaEntry>, signal: AbortSignal, projectPath: string): Promise<void> {
     const entries = [...media.values()]
     for (const entry of entries) {
@@ -294,12 +276,9 @@ export class MediaSession implements MediaClient {
       }
     }
 
-    // Copies already on disk open instantly, so they go first and are usable at once.
     const videos = entries.filter((entry) => entry.info.kind === 'video')
     videos.sort((a, b) => Number(isPreviewComplete(b.directory)) - Number(isPreviewComplete(a.directory)))
     for (const entry of videos) {
-      // A build uses every core. The frame the user is looking at comes first: wait for the
-      // request to arrive, and for any frame decode in flight to finish, before starting one.
       await sleep(PREPARATION_GRACE_MS)
       await this.frameDecodes.whenIdle()
       if (signal.aborted) return
@@ -317,7 +296,6 @@ export class MediaSession implements MediaClient {
     return entry.audio
   }
 
-  /** Keeps FFmpeg processes within the cap: the least recently used streams restart on their next use. */
   private suspendIdleStreams(): void {
     const excess = this.streams.size - MAX_OPEN_STREAMS
     let suspended = 0
@@ -357,12 +335,6 @@ async function openAudio(ffmpeg: FfmpegRunner, entry: MediaEntry, signal: AbortS
 }
 
 async function closeWhenOpened(audio: Promise<FileHandle>): Promise<void> {
-  let handle: FileHandle
-  try {
-    handle = await audio
-  } catch {
-    // Preparation failed or was cancelled, so there is no file to close; its error was already reported to whoever asked for the audio.
-    return
-  }
-  await handle.close()
+  const [opened] = await Promise.allSettled([audio])
+  if (opened.status === 'fulfilled') await opened.value.close()
 }

@@ -1,6 +1,3 @@
-// Turns resolved layers into textures: stills and text once, video frames from the preview
-// copy (playback and scrubbing), from the original by seeking (paused), or from a sequential
-// decoder (export). Everything it uploads lives in one byte-capped cache.
 import { MAX_SOURCE_DIMENSION, TEXTURE_CACHE_BYTES } from '../shared/limits.js'
 import { logError } from '../shared/log.js'
 import type { MediaClient } from '../shared/mediaProtocol.js'
@@ -11,18 +8,13 @@ import { rasterizeText } from './text.js'
 
 const NO_CROP = { left: 0, top: 0, right: 0, bottom: 0 }
 
-/** Where video frames come from. */
-export type FrameQuality =
-  // Preview copy; a frame that is not prepared yet falls back to the original.
+type FrameQuality =
   | 'preview'
-  // The original file, decoded by seeking to the frame.
   | 'full'
-  // The original file, decoded in order by one running decoder per clip.
   | 'stream'
 
 type Picture = {
   texture: GpuTexture
-  /** Size of the whole picture in canvas pixels. */
   naturalWidth: number
   naturalHeight: number
   hasAlphaBelow: boolean
@@ -30,32 +22,18 @@ type Picture = {
 
 type OpenStream = {
   id: number
-  /** The frame this clip shows now; replaced, and its texture retired, on the next frame. */
   shown: GpuTexture | undefined
 }
 
 export type FrameProvider = {
-  /** Draw items for exactly these layers; waits until every picture is there. */
   itemsFor(layers: readonly Layer[], quality: FrameQuality, outputScale: number, signal?: AbortSignal): Promise<DrawItem[]>
-  /**
-   * Draw items from what is already loaded. A layer whose picture is not ready shows the
-   * last one it had; `lateLayers` counts those.
-   */
   itemsNow(layers: readonly Layer[], outputScale: number): { items: DrawItem[]; lateLayers: number }
-  /**
-   * Loads preview pictures so that itemsNow finds them later. Resolves when they are loaded
-   * or known to be unavailable; never rejects.
-   */
   prepare(layers: readonly Layer[], outputScale: number): Promise<void>
-  /** Frees textures that left the cache. Call after each render, never between loading and drawing. */
   collect(): void
-  /** Stops the sequential decoders of an export. */
   closeStreams(): Promise<void>
-  /** Drops every picture; for when another project is loaded. */
   clear(): void
 }
 
-/** The preview copy does not hold this frame yet. */
 class PreviewNotReady extends Error {}
 
 function textKey(layer: TextLayer, scaleX: number, scaleY: number): string {
@@ -84,10 +62,8 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
   const pictures = createByteLru<Picture>(TEXTURE_CACHE_BYTES, (picture) => retired.push(picture.texture))
   const loading = new Map<string, Promise<Picture>>()
   const streams = new Map<string, OpenStream>()
-  /** Cache key of the last picture each clip showed, for when its next one is late. */
   const lastShown = new Map<string, string>()
 
-  /** Returns the cached picture for `key`, loading it once however many callers ask. */
   async function cached(key: string, load: () => Promise<Picture>): Promise<Picture> {
     const ready = pictures.get(key)
     if (ready !== undefined) return ready
@@ -176,7 +152,6 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     return previewOrFull(layer, signal)
   }
 
-  /** Cache key under which a layer's picture is found during playback. */
   function playbackKey(layer: Layer, outputScale: number): string {
     if (layer.kind === 'image') return `image:${layer.mediaId}`
     if (layer.kind === 'text') return textKey(layer, layer.transform.scaleX * outputScale, layer.transform.scaleY * outputScale)
@@ -208,14 +183,12 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     const key = playbackKey(layer, outputScale)
     if (pictures.get(key) !== undefined) return
     try {
-      // Loaded under the playback key, so that itemsNow finds it.
       if (layer.kind === 'video') {
         await cached(key, () => requirePreview(layer))
       } else {
         await pictureFor(layer, 'preview', outputScale, undefined)
       }
     } catch (error) {
-      // A preview frame that is not prepared yet simply shows up as a late layer.
       if (!(error instanceof PreviewNotReady)) logError('Could not load a picture for playback', error, { clipId: layer.clipId })
     }
   }

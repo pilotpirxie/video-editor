@@ -7,7 +7,6 @@ import { FfmpegError, writeAll, type FfmpegRunner } from './ffmpeg.js'
 const AUDIO_PIPE = 'pipe:3'
 const X264_QUALITY = 20
 const AAC_BITRATE = '192k'
-/** Standard-range BT.709: what players assume for HD video, written and tagged explicitly. */
 const TO_VIDEO_COLOR = [
   'scale=out_color_matrix=bt709:out_range=tv',
   'format=yuv420p',
@@ -21,12 +20,9 @@ export class EncoderError extends Error {
   }
 }
 
-/** One running MP4 export. The file exists under its final name only after finish(). */
 export type Encoder = {
-  /** Adds one frame and the samples that play during it. Resolves once FFmpeg has taken the frame. */
   write(pixels: ArrayBuffer, audio: Float32Array): Promise<void>
   finish(): Promise<void>
-  /** Stops FFmpeg and removes the partial file. Safe to call after a failure. */
   cancel(): Promise<void>
 }
 
@@ -41,7 +37,6 @@ export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encode
   const limits = encoderLimits(target.width * target.height)
   const temporaryPath = temporaryPathFor(target.path)
   const args = [
-    // One frame queued ahead of the encoder, not FFmpeg's default eight: at 4K a frame is 33 MB.
     '-thread_queue_size',
     '1',
     '-f',
@@ -84,7 +79,6 @@ export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encode
     'aac',
     '-b:a',
     AAC_BITRATE,
-    // Index at the front, so the file starts playing before it has fully downloaded.
     '-movflags',
     '+faststart',
     '-f',
@@ -97,13 +91,10 @@ export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encode
   if (audioPipe === undefined) throw new EncoderError('The encoder was started without an audio input')
 
   async function write(pixels: ArrayBuffer, audio: Float32Array): Promise<void> {
-    // Audio is handed over without waiting: FFmpeg reads it only as fast as it muxes video,
-    // so waiting on both pipes stalls once the video encoder starts buffering frames.
     audioPipe?.write(Buffer.from(audio.buffer, audio.byteOffset, audio.byteLength))
     try {
       await writeAll(job.stdin, new Uint8Array(pixels))
     } catch (error) {
-      // The pipe closed because FFmpeg stopped; its exit says why.
       await job.done
       throw new EncoderError('The encoder stopped accepting frames', { cause: error })
     }
@@ -121,7 +112,6 @@ export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encode
     try {
       await job.done
     } catch (error) {
-      // Being killed is the expected way for a cancelled encoder to end.
       if (!(error instanceof FfmpegError)) throw error
     }
     await rm(temporaryPath, { force: true })

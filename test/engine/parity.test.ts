@@ -1,6 +1,3 @@
-// T-21: every reference project must render to identical pixels through the preview path
-// (originals read by seeking, as when paused at 100%) and the export path (originals read in order).
-// T-14: the same must hold at a reduced output size.
 import { describe, expect, it } from 'vitest'
 import { litFraction, renderFrames, sameBytes, type Size } from '../helpers.js'
 
@@ -44,8 +41,6 @@ async function expectSamePixels(testCase: Case): Promise<void> {
     expect(sameBytes(pausedPicture, exportedPicture), `frame ${frame}`).toBe(true)
     mostContent = Math.max(mostContent, litFraction(pausedPicture))
   }
-  // Blank pictures would also be identical. A single frame may be black (a fade starts
-  // from nothing), but every reference project shows something.
   expect(mostContent).toBeGreaterThan(0.2)
 }
 

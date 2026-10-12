@@ -52,7 +52,6 @@ describe('no drift over 20 hours', () => {
       expect(frameAt(start - 1, duration)).toBe(frame - 1)
       expect(frameAt(start + duration - 1, duration)).toBe(frame)
     }
-    // Rational check: frame n starts at exactly n·den/num seconds.
     expect(lastFrame * duration * rate.num).toBe(lastFrame * rate.den * TICKS_PER_SECOND)
   })
 

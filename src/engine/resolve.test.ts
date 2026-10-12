@@ -146,7 +146,9 @@ describe('source frame', () => {
 
   it('accounts for a picture that starts after the container', () => {
     const delayed: MediaStates = { footage: { info: videoMedia({ startOffset: FRAME_30 * 3 }) } }
-    const layers = (time: number): Layer[] => resolveFrame(project([track([videoClip()])]), delayed, time, 1)
+    function layers(time: number): Layer[] {
+      return resolveFrame(project([track([videoClip()])]), delayed, time, 1)
+    }
     expect(layers(0)[0]).toMatchObject({ frame: 0 })
     expect(layers(FRAME_30 * 3)[0]).toMatchObject({ frame: 0 })
     expect(layers(FRAME_30 * 4)[0]).toMatchObject({ frame: 1 })
@@ -196,7 +198,6 @@ describe('keyframes', () => {
     expect(valueAt(track, SECOND)).toBe(100)
     expect(valueAt(track, 1.5 * SECOND)).toBe(150)
     expect(valueAt(track, 2 * SECOND)).toBe(200)
-    // Held until the next keyframe, then jumps.
     expect(valueAt(track, 3 * SECOND - 100)).toBe(200)
     expect(valueAt(track, 3 * SECOND)).toBe(50)
     expect(valueAt(track, 3.5 * SECOND)).toBe(50 + 100 * 0.125)

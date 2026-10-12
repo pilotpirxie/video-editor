@@ -27,7 +27,12 @@ describe('probeMedia', () => {
       const info = await probe(name)
       expect(performance.now() - startedAt, name).toBeLessThan(MAX_PROBE_MS)
 
-      const expectedKind = /^(image|animated)/.test(name) ? 'image' : name.startsWith('audio') ? 'audio' : 'video'
+      let expectedKind = 'video'
+      if (/^(image|animated)/.test(name)) {
+        expectedKind = 'image'
+      } else if (name.startsWith('audio')) {
+        expectedKind = 'audio'
+      }
       expect(info.kind, name).toBe(expectedKind)
     }
   })

@@ -1,6 +1,3 @@
-// The render engine: loads a project, shows any frame of it, plays it with sound as the
-// clock, and runs exports. It knows nothing about the UI or Electron; everything outside
-// comes in through a MediaClient and goes out as events.
 import { fitCanvas, type Size } from '../shared/exportPresets.js'
 import { AUDIO_CACHE_BYTES, AUDIO_QUEUE_SECONDS, READ_AHEAD_FRAMES } from '../shared/limits.js'
 import { describeError } from '../shared/log.js'
@@ -14,25 +11,19 @@ import { createFrameProvider } from './frameProvider.js'
 import { cachedAudioReader, mix } from './mixer.js'
 import { resolveFrame, type Layer } from './resolve.js'
 
-/** Samples mixed and handed to the output at a time. */
 const AUDIO_BLOCK_SAMPLES = 2048
 
 export type EngineEvent =
   | { type: 'loaded'; duration: number; canvas: Canvas; problems: string[] }
-  // `fullQualityMs` is how long the frame took to appear from the originals, when it has.
   | { type: 'position'; time: number; isPlaying: boolean; droppedFrames: number; fullQualityMs: number | undefined }
-  // Preview copies and audio are ready, so playback will no longer wait on preparation.
   | { type: 'prepared' }
   | { type: 'error'; message: string }
 
-/** Sent to the audio output; it answers with how many samples it has played. */
-export type OutputCommand = { type: 'start' } | { type: 'samples'; samples: Float32Array } | { type: 'stop' }
-export type OutputReport = { type: 'consumed'; samples: number }
+type OutputCommand = { type: 'start' } | { type: 'samples'; samples: Float32Array } | { type: 'stop' }
+type OutputReport = { type: 'consumed'; samples: number }
 
 export type Engine = {
-  /** `forPreview` prepares the project for playback and scrubbing; a render-only job passes false. */
   load(projectPath: string, forPreview: boolean): Promise<void>
-  /** Size in device pixels at which the preview is drawn. */
   setOutputSize(size: Size): void
   attachAudio(port: MessagePort): void
   seek(time: number): void
@@ -45,7 +36,6 @@ export type Engine = {
 type Playback = {
   clock: PlaybackClock
   startSample: number
-  /** Timeline sample up to which audio has been mixed and queued. */
   mixedUntil: number
   consumedSamples: number
   isMixing: boolean
@@ -56,8 +46,7 @@ function isOutputReport(value: unknown): value is OutputReport {
   return typeof value === 'object' && value !== null && 'type' in value && value.type === 'consumed' && 'samples' in value && typeof value.samples === 'number'
 }
 
-/** The engine was asked for something it cannot do in its current state. */
-export class EngineError extends Error {
+class EngineError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'EngineError'
@@ -73,16 +62,12 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
 
   let loaded: LoadedProject | undefined
   let output: Size = { width: surface.width, height: surface.height }
-  /** The playhead in ticks, always on a frame boundary. */
   let time = 0
-  /** Bumped whenever what should be on screen changes, so stale paused renders give up. */
   let generation = 0
   let refining: AbortController | undefined
   let audioPort: MessagePort | undefined
   let playback: Playback | undefined
-  /** How long the output takes to make a sample audible, as last reported by the page. */
   let outputLatency = 0
-  /** Frames missed during the current or most recent playback. */
   let droppedFrames = 0
 
   function requireLoaded(): LoadedProject {
@@ -108,7 +93,6 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     emit({ type: 'position', time, isPlaying: playback !== undefined, droppedFrames, fullQualityMs })
   }
 
-  /** Shows the frame at the playhead: at once from preview copies, then again from the originals. */
   async function showPaused(): Promise<void> {
     const project = loaded
     if (project === undefined) return
@@ -131,13 +115,11 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
       draw(project, exact)
       emitPosition(performance.now() - startedAt)
     } catch (error) {
-      // A newer seek cancelled this one; its own render reports the outcome.
       if (controller.signal.aborted) return
       emit({ type: 'error', message: describeError(error) })
     }
   }
 
-  /** Keeps a little mixed audio queued ahead of what the output has played. */
   async function fillAudioQueue(project: LoadedProject, playing: Playback): Promise<void> {
     if (playing.isMixing) return
     playing.isMixing = true
@@ -157,7 +139,6 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     }
   }
 
-  /** Loads the pictures of `frame` and the frames after it, so playback finds them ready. */
   async function prepareAhead(project: LoadedProject, frame: number, frameTicks: number): Promise<void> {
     const scale = outputScale(project)
     const loads: Promise<void>[] = []
@@ -167,7 +148,6 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     await Promise.all(loads)
   }
 
-  /** One display refresh during playback: show the frame the sound has reached. */
   function tick(project: LoadedProject, playing: Playback): void {
     if (playback !== playing) return
     const frameTicks = frameDuration(project.project.canvas.frameRate)
@@ -181,7 +161,6 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     if (frame !== playing.drawnFrame) {
       const skipped = playing.drawnFrame === undefined ? 0 : frame - playing.drawnFrame - 1
       const { items, lateLayers } = provider.itemsNow(layersAt(project, frame * frameTicks), outputScale(project))
-      // A frame counts as dropped when it was skipped, or shown with a stale layer.
       droppedFrames += Math.max(0, skipped) + (lateLayers > 0 ? 1 : 0)
       playing.drawnFrame = frame
       time = frame * frameTicks
@@ -199,7 +178,6 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     audioPort?.postMessage(command)
   }
 
-  /** Starts sound and picture together once the first frames are loaded. */
   async function startPlayback(project: LoadedProject, playing: Playback, frameTicks: number): Promise<void> {
     await prepareAhead(project, frameAt(time, frameTicks), frameTicks)
     if (playback !== playing) return

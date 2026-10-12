@@ -1,17 +1,11 @@
-// T-17, T-18, T-19: the real harness window, driven through its own buttons and keys by the
-// app's --selftest mode. The window opens without taking focus and with its sound muted.
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
-import { ROOT, projectPath, runApp } from '../helpers.js'
+import { describe, expect, it } from 'vitest'
+import { HAS_SAMPLES, lastJsonLine, projectPath, runApp, scratchDirectory } from '../helpers.js'
 
-const scratch = mkdtempSync(join(tmpdir(), 'video-editor-harness-'))
-const HAS_SAMPLES = existsSync(join(ROOT, 'samples', 'kangaroo1920.mp4'))
+const scratch = scratchDirectory('harness')
 const MAX_PAUSED_FRAME_MS = 500
 const MAX_TYPICAL_MEMORY_MB = 700
-
-afterAll(() => rmSync(scratch, { recursive: true, force: true }))
 
 type Report = {
   status: string
@@ -35,12 +29,11 @@ function isReport(value: unknown): value is Report {
 async function selfTest(project: string, extraArgs: readonly string[]): Promise<Report> {
   const result = await runApp(['--selftest', projectPath(project), ...extraArgs], 600_000)
   if (result.exitCode !== 0) throw new Error(`The self-test failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`)
-  const report: unknown = JSON.parse(result.stdout.trim().split('\n').at(-1) ?? '')
+  const report = lastJsonLine(result.stdout)
   if (!isReport(report)) throw new Error(`Unexpected self-test report: ${result.stdout}`)
   return report
 }
 
-/** Frames since the start that a timecode stands for, at 30 frames per second. */
 function framesOf(timecode: string): number {
   const [hours, minutes, seconds, frames] = timecode.split(':').map(Number)
   return (((hours ?? 0) * 60 + (minutes ?? 0)) * 60 + (seconds ?? 0)) * 30 + (frames ?? 0)
@@ -54,20 +47,17 @@ describe('dev harness', () => {
     expect(report.status).toBe('Ready.')
     expect(report.timecodeAtStart).toBe('00:00:00:00')
 
-    // Sound is the clock: after 1.5 s of playback the playhead is about 45 frames in.
     const played = framesOf(report.timecodeWhilePlaying)
     expect(played).toBeGreaterThan(30)
     expect(played).toBeLessThan(60)
     expect(report.droppedFrames).toBe(0)
 
-    // Pausing holds the frame; the playhead does not creep.
     expect(framesOf(report.timecodeAfterPause)).toBeGreaterThanOrEqual(played)
     expect(report.timecodeStillPaused).toBe(report.timecodeAfterPause)
 
     expect(report.timecodeAfterScrub).toBe('00:00:01:15')
     expect(report.playsOnSpace).toBe(true)
 
-    // At 100% one canvas pixel is one screen pixel: the 640-pixel canvas covers 640 device pixels.
     expect(Math.round(report.actualSize.pixelWidth)).toBe(640)
 
     expect(report.fullQualityMilliseconds.firstFrame).toBeLessThanOrEqual(MAX_PAUSED_FRAME_MS)

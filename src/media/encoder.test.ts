@@ -45,7 +45,6 @@ describe('startEncoder', () => {
     await encoder.cancel()
     expect(existsSync(path)).toBe(false)
     expect(existsSync(temporaryPathFor(path))).toBe(false)
-    // Cancelling again, as the session does when its window closes, is harmless.
     await encoder.cancel()
   })
 

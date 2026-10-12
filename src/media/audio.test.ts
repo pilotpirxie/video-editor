@@ -16,7 +16,6 @@ const QUARTER_SECOND = 12_000
 
 afterAll(() => rm(scratch, { recursive: true, force: true }))
 
-/** Left and right value of the reference ramp at sample `index`. */
 function ramp(index: number): { left: number; right: number } {
   const left = (index % RAMP_PERIOD) - 32_768
   return { left: left / 32_768, right: (-left - 1) / 32_768 }
@@ -42,7 +41,6 @@ async function window(directory: string, firstSample: number, sampleCount: numbe
   return samples
 }
 
-/** Index of the frame where the left channel falls furthest from the frame before it. */
 function largestDrop(samples: Float32Array): number {
   let position = 0
   let drop = 0
@@ -87,7 +85,6 @@ describe('prepareAudio', () => {
 
   it.each(['audio.mp3', 'audio.m4a', 'audio.ogg', 'audio.opus'])('keeps lossy %s aligned to the sample', async (name) => {
     const samples = await allSamples(await prepare(name))
-    // The ramp wraps from full positive to full negative exactly at sample 65536.
     expect(Math.abs(largestDrop(samples) - RAMP_PERIOD)).toBeLessThanOrEqual(2)
     expect(Math.abs(samples.length / 2 - RAMP_SAMPLES)).toBeLessThan(4800)
   })
@@ -96,10 +93,8 @@ describe('prepareAudio', () => {
     { name: 'h264.mp4', toleranceSamples: 2 },
     { name: 'h264.mkv', toleranceSamples: 48 },
     { name: 'vp9.webm', toleranceSamples: 48 },
-    // These containers carry the encoder's lead-in as real audio; the picture starts later by the same amount.
     { name: 'h264.ts', toleranceSamples: 2 },
     { name: 'h264.flv', toleranceSamples: 48 },
-    // AVI cannot describe the MP3 lead-in at all; the muxer only compensates to the nearest frame.
     { name: 'mpeg4.avi', toleranceSamples: 1600 },
   ])('keeps the sound of $name in sync with its picture', async ({ name, toleranceSamples }) => {
     const info = await probeMedia(ffmpeg, mediaPath(name))
@@ -203,7 +198,6 @@ describe('waveform', () => {
     const peaks = new Int8Array(await readFile(join(directory, WAVEFORM_FILE)))
     expect(peaks.length).toBe((RAMP_SAMPLES / WAVEFORM_BUCKET_SAMPLES) * 2)
 
-    // Bucket 10 covers samples 4800…5279. Left rises, right mirrors it.
     const leftAtStart = ramp(4800).left
     const leftAtEnd = ramp(5279).left
     expect(peaks[20]).toBe(Math.round(Math.min(leftAtStart, ramp(5279).right) * 127))
@@ -233,7 +227,6 @@ describe('waveform', () => {
     expect(bytes).toBe(14_400_000)
     expect(bytes).toBeLessThanOrEqual(20 * 1024 * 1024)
 
-    // The folder really does emit two bytes per bucket and nothing else.
     const folder = createPeakFolder()
     folder.add(new Float32Array(WAVEFORM_BUCKET_SAMPLES * 2 * 1000))
     expect(folder.finish().length).toBe(2000)

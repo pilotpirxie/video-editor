@@ -4,7 +4,8 @@ import { startEngine } from './engineHost.js'
 
 const HEADLESS_MODE = 'headless'
 
-/** A hidden window that only runs the jobs main hands it. */
+class PageError extends Error {}
+
 function runHeadless(): void {
   const engine = startEngine(undefined)
   engine.onEvent((event) => {
@@ -18,7 +19,7 @@ function runHeadless(): void {
 
 function runHarness(): void {
   const container = document.getElementById('root')
-  if (container === null) throw new Error('The page has no root element')
+  if (container === null) throw new PageError('The page has no root element')
   createRoot(container).render(<Harness />)
 }
 

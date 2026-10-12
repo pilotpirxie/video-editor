@@ -1,20 +1,15 @@
-// T-20: MP4 export. The check project plays frames 0…29 of one barcode clip, then frames
-// 100…129 of another; its sound is the reference ramp for the first second, then silence.
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { EXPORT_PRESETS, exportSize, fitCanvas, type ExportPreset } from '../../src/shared/exportPresets.js'
 import { temporaryPathFor } from '../../src/media/encoder.js'
-import { bundledFfmpeg, cropPicture, projectPath, readBarcode, runApp, type Picture } from '../helpers.js'
+import { bundledFfmpeg, cropPicture, projectPath, readBarcode, runApp, scratchDirectory, type Picture } from '../helpers.js'
 
 const ffmpeg = bundledFfmpeg()
-const scratch = mkdtempSync(join(tmpdir(), 'video-editor-export-'))
+const scratch = scratchDirectory('export')
 const CANVAS = { width: 640, height: 360 }
 const FRAME_COUNT = 60
 const SAMPLE_RATE = 48_000
-
-afterAll(() => rmSync(scratch, { recursive: true, force: true }))
 
 type ProbedExport = {
   video: Record<string, string>
@@ -48,7 +43,6 @@ async function probeExport(path: string): Promise<ProbedExport> {
   return { video, audio, duration: Number(format.duration) }
 }
 
-/** Decodes every frame of an export and cuts out the part that shows the project canvas. */
 async function decodedFrames(path: string, preset: ExportPreset): Promise<Picture[]> {
   const size = exportSize(preset, CANVAS)
   const fit = fitCanvas(CANVAS, size)
@@ -112,10 +106,8 @@ describe('MP4 export', () => {
   it('keeps the sound in step with the picture', async () => {
     const samples = await decodedAudio(join(scratch, '480p.mp4'))
     expect(Math.abs(samples.length / 2 - 2 * SAMPLE_RATE)).toBeLessThan(2048)
-    // First second: the ramp. Second second: the muted clip.
     expect(loudness(samples, 1000, 47_000)).toBeGreaterThan(0.3)
     expect(loudness(samples, 50_000, 95_000)).toBeLessThan(0.005)
-    // The ramp's left channel crosses zero exactly at sample 32768.
     let crossing = -1
     for (let frame = 30_000; frame < 36_000; frame++) {
       if ((samples[frame * 2] ?? 0) < 0 && (samples[(frame + 1) * 2] ?? 0) >= 0) crossing = frame + 1

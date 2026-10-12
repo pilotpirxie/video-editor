@@ -11,9 +11,10 @@
     "build": "node scripts/fetch-ffmpeg.mjs && tsc -p tsconfig.node.json && vite build",
     "start": "npm run build && electron .",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json --noEmit",
+    "lint": "knip && jscpd",
     "test:unit": "vitest run src",
     "test:engine": "npm run build && vitest run test/engine --no-file-parallelism",
-    "test": "npm run typecheck && npm run test:unit && npm run test:engine",
+    "test": "npm run typecheck && npm run lint && npm run test:unit && npm run test:engine",
     "dist": "npm run build && electron-builder --mac dmg --arm64"
   },
   "dependencies": {
@@ -26,6 +27,8 @@
     "@types/react-dom": "19.3.0",
     "electron": "44.7.0",
     "electron-builder": "26.15.3",
+    "jscpd": "5.4.1",
+    "knip": "6.41.0",
     "typescript": "7.0.2",
     "vite": "8.3.4",
     "vitest": "5.0.4"

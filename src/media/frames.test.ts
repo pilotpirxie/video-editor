@@ -21,6 +21,13 @@ async function frameOf(name: string, index: number, halvings = 0): Promise<RawFr
   return decodeFrame(ffmpeg, await sourceOf(name), index, halvings)
 }
 
+async function expectBarcodes(name: string, indexes: readonly number[]): Promise<void> {
+  const source = await sourceOf(name)
+  for (const index of indexes) {
+    expect(readBarcode(await decodeFrame(ffmpeg, source, index, 0)), `frame ${index}`).toBe(index)
+  }
+}
+
 function sameBytes(a: RawFrame, b: RawFrame): boolean {
   return Buffer.from(a.data).equals(Buffer.from(b.data))
 }
@@ -44,37 +51,24 @@ describe('decodeFrame returns exactly the requested frame', () => {
     'delayed-video.mkv',
     'anamorphic.mp4',
   ])('%s', async (name) => {
-    const source = await sourceOf(name)
-    for (const index of [0, 1, 2, 29, 30, 31, 58, 59]) {
-      expect(readBarcode(await decodeFrame(ffmpeg, source, index, 0)), `frame ${index}`).toBe(index)
-    }
+    await expectBarcodes(name, [0, 1, 2, 29, 30, 31, 58, 59])
   })
 
   it.each(['fps-23976.mp4', 'fps-24.mp4', 'fps-25.mp4', 'fps-2997.mp4', 'fps-50.mp4', 'fps-5994.mp4', 'fps-60.mp4', 'fps-120.mp4'])('%s', async (name) => {
-    const source = await sourceOf(name)
-    for (const index of [0, 1, 29, 30, 31, 47]) {
-      expect(readBarcode(await decodeFrame(ffmpeg, source, index, 0)), `frame ${index}`).toBe(index)
-    }
+    await expectBarcodes(name, [0, 1, 29, 30, 31, 47])
   })
 
   it.each(['long-gop.mp4', 'long-gop.mkv', 'long-gop.ts'])('around every keyframe of %s', async (name) => {
-    const source = await sourceOf(name)
-    for (const index of [0, 1, 88, 89, 90, 91, 92, 178, 179, 180, 181, 198, 199]) {
-      expect(readBarcode(await decodeFrame(ffmpeg, source, index, 0)), `frame ${index}`).toBe(index)
-    }
+    await expectBarcodes(name, [0, 1, 88, 89, 90, 91, 92, 178, 179, 180, 181, 198, 199])
   })
 
   it('dnxhr.mov', async () => {
-    const source = await sourceOf('dnxhr.mov')
-    for (const index of [0, 1, 15, 29]) {
-      expect(readBarcode(await decodeFrame(ffmpeg, source, index, 0))).toBe(index)
-    }
+    await expectBarcodes('dnxhr.mov', [0, 1, 15, 29])
   })
 
   it('follows the timestamps of a file with a hole in them (AVI with MP3 delay)', async () => {
     const source = await sourceOf('mpeg4.avi')
     expect(source.video.isVariableFrameRate).toBe(true)
-    // The file shows frame 0 for two frame periods, then every later frame one period late.
     const shownAt = [
       { time: 0, picture: 0 },
       { time: 1, picture: 0 },
@@ -178,7 +172,6 @@ describe('decodeFrame applies colour, rotation, size and alpha', () => {
     expect(top.alpha).toBeGreaterThan(245)
     expect(Math.abs(middle.alpha - 127)).toBeLessThan(8)
     expect(bottom.alpha).toBeLessThan(10)
-    // Red bar: premultiplied colour fades with alpha.
     expect(top.red).toBeGreaterThan(200)
     expect(Math.abs(middle.red - middle.alpha)).toBeLessThan(40)
     expect(bottom.red).toBeLessThan(12)
@@ -241,8 +234,6 @@ describe('damaged sources', () => {
   })
 })
 
-// Recordings that cannot be synthesised (OBS captures, iPhone HDR clips…) are tested when
-// someone drops them into test/media/real; the folder is not part of the repository.
 const REAL_DIRECTORY = join(ROOT, 'test', 'media', 'real')
 const realRecordings = existsSync(REAL_DIRECTORY) ? readdirSync(REAL_DIRECTORY).filter((name) => !name.startsWith('.')) : []
 

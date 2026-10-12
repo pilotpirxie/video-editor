@@ -53,19 +53,16 @@ describe('createPlaybackClock', () => {
     for (let quantum = 1; quantum <= quanta; quantum++) {
       const consumed = quantum * QUANTUM
       const exactTime = (consumed / SAMPLE_RATE) * 1000
-      // Reports arrive every fourth quantum, up to 4 ms late.
       if (quantum % 4 === 0) {
         jitterSeed = (jitterSeed * 1_103_515_245 + 12_345) % 2_147_483_648
         const lateness = (jitterSeed / 2_147_483_648) * 4
         clock.report(consumed, exactTime + lateness)
-        // The picture is drawn somewhere before the next report.
         const drawTime = exactTime + lateness + 3
         const audioPosition = ((drawTime / 1000) * SAMPLE_RATE) * TICKS_PER_SAMPLE
         worstError = Math.max(worstError, Math.abs(clock.positionAt(drawTime) - audioPosition))
       }
     }
     expect(worstError).toBeLessThan(FRAME_30)
-    // The last position is the true end of the hour, within the report jitter.
     const end = clock.positionAt((quanta * QUANTUM * 1000) / SAMPLE_RATE)
     expect(Math.abs(end - minutes * 60 * 24_000_000)).toBeLessThan(FRAME_30)
   })

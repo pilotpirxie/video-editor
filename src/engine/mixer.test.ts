@@ -17,7 +17,6 @@ const MEDIA: MediaStates = {
   broken: { error: 'unreadable' },
 }
 
-/** A different, repeatable signal for each media file: the value depends only on the sample index. */
 function sourceSample(mediaId: string, index: number, channel: number): number {
   if (index < 0) return 0
   const pitch = mediaId === 'voice' ? 0.031 : 0.0173
@@ -84,7 +83,6 @@ describe('mix', () => {
   })
 
   it('starts on the first sample at or after a clip start that falls between samples', async () => {
-    // One 29.97 fps frame is 1601.6 samples.
     const clip = audioClip({ start: FRAME_2997, duration: 10 * FRAME_2997 })
     const mixed = await mixRange(project([clip]), 1600, 4)
     expect([mixed[0], mixed[2]]).toEqual([0, 0])
@@ -154,10 +152,10 @@ describe('identical samples for playback and export', () => {
   it('is unchanged by splitting a clip at a frame boundary (US-22)', async () => {
     const whole = audioClip({ start: 7 * FRAME_2997, duration: 90 * FRAME_2997, sourceStart: 12_345, volume: 0.8, volumeFadeIn: 10 * FRAME_2997, volumeFadeOut: 10 * FRAME_2997 })
     const cut = whole.start + 41 * FRAME_2997
-    const first: AudioClip = { ...whole, id: 'first', duration: cut - whole.start }
-    delete first.volumeFadeOut
-    const second: AudioClip = { ...whole, id: 'second', start: cut, duration: whole.start + whole.duration - cut, sourceStart: whole.sourceStart + (cut - whole.start) }
-    delete second.volumeFadeIn
+    const { volumeFadeOut: _fadeOut, ...withoutFadeOut } = whole
+    const { volumeFadeIn: _fadeIn, ...withoutFadeIn } = whole
+    const first: AudioClip = { ...withoutFadeOut, id: 'first', duration: cut - whole.start }
+    const second: AudioClip = { ...withoutFadeIn, id: 'second', start: cut, duration: whole.start + whole.duration - cut, sourceStart: whole.sourceStart + (cut - whole.start) }
 
     const unsplit = await mixRange(project([whole]), 0, 170_000)
     const split = await mixRange(project([first, second]), 0, 170_000)
@@ -184,7 +182,6 @@ describe('master limiter', () => {
   })
 
   it('only acts close to a peak', async () => {
-    // A quiet bed with one loud burst lasting 100 samples from sample 20000.
     const burst = audioClip({ id: 'burst', mediaId: 'loud', start: 20_000 * TICKS_PER_SAMPLE, duration: 100 * TICKS_PER_SAMPLE, volume: 2 })
     const bed = audioClip({ id: 'bed', mediaId: 'music', duration: 2 * SECOND, volume: 0.5 })
     const withBurst = await mixRange(project([bed], [burst]), 0, 40_000)
@@ -194,7 +191,6 @@ describe('master limiter', () => {
     expect(sameBits(withBurst.subarray(0, (20_000 - reach) * 2), bedOnly.subarray(0, (20_000 - reach) * 2))).toBe(true)
     expect(sameBits(withBurst.subarray((20_100 + reach) * 2), bedOnly.subarray((20_100 + reach) * 2))).toBe(true)
     expect(peakOf(withBurst.subarray(20_000 * 2, 20_100 * 2))).toBeLessThanOrEqual(LIMITER_CEILING)
-    // The bed is turned down smoothly ahead of the burst rather than cut.
     const before = Math.abs(withBurst[(20_000 - LIMITER_WINDOW) * 2] ?? 0)
     expect(before).toBeLessThan(Math.abs(bedOnly[(20_000 - LIMITER_WINDOW) * 2] ?? 0))
     expect(before).toBeGreaterThan(0)

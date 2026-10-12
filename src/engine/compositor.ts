@@ -1,20 +1,10 @@
-// The one compositor behind preview and export. Every frame is drawn into an off-screen
-// buffer at the output size; the preview copies that buffer to the canvas and the export
-// reads it back, so both see the same pixels.
 import { fitCanvas, type Size } from '../shared/exportPresets.js'
 import type { RawFrame } from '../shared/mediaProtocol.js'
 import type { Crop, Transform } from '../shared/project.js'
 
-/**
- * The one resampling filter: trilinear mip-mapping, biased half a level towards the sharper
- * mip. Unbiased, a 1.5× reduction already blends in 58% of the half-size picture and softens
- * screen text; the bias keeps moderate reductions crisp without aliasing large ones.
- */
 const LOD_BIAS = -0.5
-/** Each quad is drawn this many output pixels larger than the picture, so its edge can be anti-aliased. */
 const EDGE_MARGIN = 1
 const BYTES_PER_PIXEL = 4
-/** A full mip chain adds a third to the base level. */
 const MIP_CHAIN_FACTOR = 4 / 3
 const FLOATS_PER_VERTEX = 4
 const DEGREES_TO_RADIANS = Math.PI / 180
@@ -26,7 +16,6 @@ uniform vec2 uOutputSize;
 out vec2 vLocal;
 void main() {
   vLocal = aLocal;
-  // Output row 0 lands on the first row the buffer is read back from, so no flip is needed.
   gl_Position = vec4(aPosition / uOutputSize * 2.0 - 1.0, 0.0, 1.0);
 }`
 
@@ -51,8 +40,6 @@ void main() {
   } else {
     color = texture(uTexture, uv, uLodBias);
   }
-  // Distance to the nearest edge in output pixels becomes coverage: exact for aligned
-  // edges, smooth for rotated ones, and identical with or without multisampling.
   vec2 inside = uHalfSize - abs(vLocal);
   float coverage = clamp(min(inside.x, inside.y) + 0.5, 0.0, 1.0);
   outColor = color * (uOpacity * coverage);
@@ -69,34 +56,25 @@ export type GpuTexture = {
   handle: WebGLTexture
   width: number
   height: number
-  /** GPU memory held, mip chain included. */
   bytes: number
 }
 
-/** One layer to draw. Colour in the texture is premultiplied by alpha. */
 export type DrawItem = {
   texture: GpuTexture
-  /** Size of the whole, uncropped picture in canvas pixels. */
   naturalWidth: number
   naturalHeight: number
   crop: Crop
   transform: Transform
   opacity: number
-  /** The texture is twice the picture height: colour on top, alpha as grey below. */
   hasAlphaBelow: boolean
 }
 
 export type Compositor = {
-  /** Uploads premultiplied RGBA pixels, top row first. */
   uploadPixels(frame: RawFrame): GpuTexture
-  /** Uploads a decoded image or a canvas; its colour must already be premultiplied. */
   uploadImage(image: ImageBitmap | OffscreenCanvas): GpuTexture
   release(texture: GpuTexture): void
-  /** Draws `items` bottom to top over black, with the canvas fitted inside the output. */
   render(canvas: Size, output: Size, items: readonly DrawItem[]): void
-  /** Copies the last rendered frame onto the drawing surface. */
   present(): void
-  /** The last rendered frame as RGBA, top row first. The buffer is reused by the next call. */
   readPixels(): ArrayBuffer
 }
 
@@ -122,7 +100,6 @@ function linkProgram(gl: WebGL2RenderingContext): WebGLProgram {
   return program
 }
 
-/** Corner positions and local coordinates of one item's quad, as a triangle strip in output pixels. */
 function quadVertices(item: DrawItem, canvas: Size, output: Size): { vertices: Float32Array; halfWidth: number; halfHeight: number } | undefined {
   const fit = fitCanvas(canvas, output)
   const croppedWidth = item.naturalWidth - item.crop.left - item.crop.right
@@ -147,7 +124,6 @@ function quadVertices(item: DrawItem, canvas: Size, output: Size): { vertices: F
   for (const [index, corner] of corners.entries()) {
     const localX = corner.x * (halfWidth + EDGE_MARGIN)
     const localY = corner.y * (halfHeight + EDGE_MARGIN)
-    // Y points down in output pixels, so a positive angle turns clockwise.
     vertices[index * FLOATS_PER_VERTEX] = centerX + localX * cosine - localY * sine
     vertices[index * FLOATS_PER_VERTEX + 1] = centerY + localX * sine + localY * cosine
     vertices[index * FLOATS_PER_VERTEX + 2] = localX
@@ -186,7 +162,6 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
 
   gl.disable(gl.DEPTH_TEST)
   gl.enable(gl.BLEND)
-  // Premultiplied alpha: source colour is added as is.
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
   gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
   gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE)
@@ -210,7 +185,6 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     frameSize.height = output.height
   }
 
-  /** Sets sampling and builds the mip chain of the texture that was just filled. */
   function finishTexture(handle: WebGLTexture, width: number, height: number): GpuTexture {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
@@ -231,7 +205,6 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
   function uploadImage(image: ImageBitmap | OffscreenCanvas): GpuTexture {
     const handle = gl.createTexture()
     gl.bindTexture(gl.TEXTURE_2D, handle)
-    // The source is already premultiplied; without this flag WebGL would divide the alpha back out.
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, image)
     return finishTexture(handle, image.width, image.height)
@@ -251,7 +224,6 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     const top = item.crop.top / item.naturalHeight
     const width = 1 - (item.crop.left + item.crop.right) / item.naturalWidth
     const height = 1 - (item.crop.top + item.crop.bottom) / item.naturalHeight
-    // Samples stay half a texel inside the drawn part, so nothing outside the crop bleeds in.
     const halfTexelX = 0.5 / item.texture.width
     const halfTexelY = 0.5 / pictureHeight
 
@@ -284,12 +256,9 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
   function present(): void {
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, frameBuffer)
     gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null)
-    // The buffer holds the top row first; the canvas wants it at the top, hence the flipped target.
     gl.blitFramebuffer(0, 0, frameSize.width, frameSize.height, 0, frameSize.height, frameSize.width, 0, gl.COLOR_BUFFER_BIT, gl.NEAREST)
   }
 
-  // One read-back buffer for the compositor's lifetime: at 4K each one is 33 MB, and an export
-  // would otherwise leave one behind per frame for the garbage collector.
   let readBack = new Uint8Array(0)
 
   function readPixels(): ArrayBuffer {

@@ -10,13 +10,12 @@ export default defineConfig({
     outDir: resolve('dist/renderer'),
     emptyOutDir: true,
     target: 'esnext',
-    // Worklet and worker files must stay files: the page's content policy forbids data: scripts.
     assetsInlineLimit: 0,
   },
   worker: { format: 'es' },
   test: {
     include: ['src/**/*.test.ts', 'test/**/*.test.ts'],
-    globalSetup: ['test/setup.ts'],
+    globalSetup: [resolve('test/setup.ts')],
     testTimeout: 120_000,
     hookTimeout: 600_000,
   },

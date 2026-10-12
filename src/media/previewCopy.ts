@@ -5,26 +5,19 @@ import type { VideoInfo } from '../shared/mediaProtocol.js'
 import type { FfmpegRunner } from './ffmpeg.js'
 import { colorToRgb, inputArguments, timingFilters, type FrameSize, type VideoSource } from './frames.js'
 
-/** Long side of a preview copy in pixels; smaller sources keep their own size. */
-export const PREVIEW_LONG_SIDE = 960
-/** FFmpeg's JPEG scale: 2 is best, 31 worst. Chosen for small files that still look clean at preview size. */
+const PREVIEW_LONG_SIDE = 960
 const JPEG_QUALITY = 10
 const READ_TIMEOUT_MS = 30_000
 const DATA_FILE = 'preview.mjpeg'
 const INDEX_FILE = 'preview.idx'
-/** End-of-image followed by start-of-image: the seam between two JPEGs in the stream. */
 const FRAME_SEAM = Buffer.from([0xff, 0xd9, 0xff, 0xd8])
 const END_OF_IMAGE_BYTES = 2
-/** 0 lets FFmpeg use every core: the build runs alone, in the background. */
 const BUILD_THREADS = 0
 const INDEX_FIELDS_PER_FRAME = 2
 const BYTES_PER_INDEX_FIELD = 8
 
-/** Every frame of a video as a separately decodable JPEG, readable while it is still being built. */
 export type PreviewCopy = {
-  /** JPEG bytes of one frame, or undefined while that frame is not prepared. */
   readFrame(frame: number): Promise<Buffer | undefined>
-  /** Resolves when every frame is prepared; rejects when the build fails or is cancelled. */
   finished: Promise<void>
   close(): Promise<void>
 }
@@ -34,7 +27,6 @@ type FrameLocation = {
   length: number
 }
 
-/** Size of the preview picture; an alpha source stores its alpha below it at the same size. */
 export function previewSize(video: VideoInfo): FrameSize {
   const scale = Math.min(1, PREVIEW_LONG_SIDE / Math.max(video.width, video.height))
   return {
@@ -43,7 +35,6 @@ export function previewSize(video: VideoInfo): FrameSize {
   }
 }
 
-/** Splits a run of concatenated JPEGs into whole pictures and the unfinished remainder. */
 export function splitJpegFrames(data: Buffer): { frames: Buffer[]; rest: Buffer } {
   const frames: Buffer[] = []
   let start = 0
@@ -59,15 +50,12 @@ export function splitJpegFrames(data: Buffer): { frames: Buffer[]; rest: Buffer 
 
 function previewFilters(video: VideoInfo): string {
   const size = previewSize(video)
-  // JPEG decoders assume full-range BT.601, so the copy is written that way whatever the source uses.
   const jpegColor = 'out_color_matrix=bt601:out_range=pc'
   const timing = timingFilters(video)
   if (!video.hasAlpha) {
     const resize = `scale=${size.width}:${size.height}:flags=area:in_color_matrix=${video.colorMatrix}:in_range=${video.colorRange}:${jpegColor}`
     return [...timing, resize, 'setsar=1', 'format=yuvj420p'].join(',')
   }
-  // JPEG has no alpha: premultiplied colour goes on top and alpha, as grey, below it.
-  // The pixel format is pinned before the split; left open, FFmpeg cannot settle the alpha branch.
   const resize = `scale=${size.width}:${size.height}:flags=area`
   const premultiplied = [...timing, colorToRgb(video), 'format=gbrap', 'premultiply=inplace=1', resize, 'setsar=1', 'format=gbrap']
   return [
@@ -78,7 +66,6 @@ function previewFilters(video: VideoInfo): string {
   ].join(';')
 }
 
-/** True when `directory` already holds a finished preview copy. */
 export function isPreviewComplete(directory: string): boolean {
   return existsSync(join(directory, INDEX_FILE))
 }
@@ -106,16 +93,11 @@ async function saveIndex(directory: string, locations: readonly FrameLocation[])
     bytes.writeDoubleLE(location.offset, position)
     bytes.writeDoubleLE(location.length, position + BYTES_PER_INDEX_FIELD)
   }
-  // The index appearing is what marks the copy complete, so it must appear whole.
   const temporaryPath = join(directory, `${INDEX_FILE}.tmp`)
   await writeFile(temporaryPath, bytes)
   await rename(temporaryPath, join(directory, INDEX_FILE))
 }
 
-/**
- * Opens the preview copy kept in `directory`, building it with FFmpeg when it is missing or
- * incomplete. Aborting `signal` stops the build.
- */
 export async function openPreviewCopy(ffmpeg: FfmpegRunner, source: VideoSource, directory: string, signal: AbortSignal): Promise<PreviewCopy> {
   const dataPath = join(directory, DATA_FILE)
   const existing = await loadIndex(directory)
@@ -136,7 +118,6 @@ export async function openPreviewCopy(ffmpeg: FfmpegRunner, source: VideoSource,
 
     async function append(picture: Buffer): Promise<void> {
       await output.write(picture)
-      // Published only after the bytes are on disk, so a reader never sees a frame it cannot read.
       locations.push({ offset: writtenBytes, length: picture.length })
       writtenBytes += picture.length
     }

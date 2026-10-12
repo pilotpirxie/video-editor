@@ -117,7 +117,6 @@ describe('openPreviewCopy', () => {
     const { copy } = await build('h264.mp4')
     const pattern = { width: 320, height: 180, rate: '30' }
     const preview = await decodeJpeg(ffmpeg, await frameOrFail(copy, 12), 320, 180)
-    // Compared by block averages: per-pixel differences are dominated by JPEG detail loss.
     const errorAgainstTruth = blockColorError(preview, await patternFrame(ffmpeg, pattern, 12, 'bt709', 'bt709'), 20)
     const errorAgainstWrongMatrix = blockColorError(preview, await patternFrame(ffmpeg, pattern, 12, 'bt709', 'bt601'), 20)
     expect(errorAgainstTruth).toBeLessThan(1.5)
@@ -128,7 +127,6 @@ describe('openPreviewCopy', () => {
   it('keeps alpha by stacking premultiplied colour above the alpha plane', async () => {
     const { copy } = await build('lossless-alpha.mov')
     const stacked = await decodeJpeg(ffmpeg, await frameOrFail(copy, 0), 320, 360)
-    // Red bar of the card, x = 60. Alpha falls from 255 at the top row to 0 at the bottom.
     const colorTop = pixelAt(stacked, 60, 4)
     const colorMiddle = pixelAt(stacked, 60, 90)
     const colorBottom = pixelAt(stacked, 60, 175)
@@ -154,9 +152,11 @@ describe('openPreviewCopy', () => {
 
     let firstFrameSeenBeforeEnd = false
     let isFinished = false
-    const finished = copy.finished.then(() => {
+    async function markFinished(): Promise<void> {
+      await copy.finished
       isFinished = true
-    })
+    }
+    const finished = markFinished()
     while (!isFinished) {
       if ((await copy.readFrame(0)) !== undefined) {
         firstFrameSeenBeforeEnd = !isFinished

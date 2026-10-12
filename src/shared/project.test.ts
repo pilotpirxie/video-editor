@@ -101,7 +101,6 @@ function childOf(holder: JsonHolder, key: string): unknown {
   return Array.isArray(holder) ? holder[Number(key)] : holder[key]
 }
 
-/** The sample as JSON text after one edit at a dotted path such as "tracks.0.clips.1.start". */
 function editedAt(path: string, edit: (holder: JsonHolder, key: string) => void): string {
   const document: unknown = JSON.parse(JSON.stringify(sampleProject()))
   const keys = path.split('.')
@@ -139,7 +138,10 @@ describe('serializeProject', () => {
   it('sorts keys at every level and ends with a newline', () => {
     const text = serializeProject(sampleProject())
     expect(text.endsWith('}\n')).toBe(true)
-    const topLevelKeys = [...text.matchAll(/^ {2}"(\w+)":/gm)].map((match) => match[1])
+    const topLevelKeys: string[] = []
+    for (const match of text.matchAll(/^ {2}"(?<key>\w+)":/gm)) {
+      topLevelKeys.push(match.groups?.key ?? '')
+    }
     expect(topLevelKeys).toEqual(['canvas', 'media', 'tracks', 'version'])
     expect(text.indexOf('"den"')).toBeLessThan(text.indexOf('"num"'))
     expect(text.indexOf('"align"')).toBeLessThan(text.indexOf('"color"'))

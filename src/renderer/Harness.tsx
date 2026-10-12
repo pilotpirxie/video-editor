@@ -1,5 +1,3 @@
-// The dev harness: load a project file, play it, scrub it, export it. It only sends commands
-// to the engine worker and shows what the engine reports back.
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent, type ReactElement } from 'react'
 import { EXPORT_PRESETS, isExportPreset, type ExportPreset } from '../shared/exportPresets.js'
 import { describeError } from '../shared/log.js'
@@ -24,7 +22,6 @@ type Position = {
   isPlaying: boolean
   droppedFrames: number
   fullQualityMs: number | undefined
-  /** Counts the position reports received, so a test can tell a new one from the last. */
   sequence: number
 }
 
@@ -39,7 +36,6 @@ function exportMessage(event: JobEvent): ExportState {
   return { stage: 'finished', message: 'Export finished.' }
 }
 
-/** CSS size of the preview: the canvas fitted into the stage, or one device pixel per canvas pixel. */
 function previewSize(canvas: Canvas, stage: DOMRect, zoom: Zoom): { width: number; height: number } {
   if (zoom === 'actual') return { width: canvas.width / devicePixelRatio, height: canvas.height / devicePixelRatio }
   const scale = Math.min(stage.width / canvas.width, stage.height / canvas.height)
@@ -100,11 +96,9 @@ export function Harness(): ReactElement {
     }
   }, [loaded, position.isPlaying])
 
-  // Commands from main are subscribed to once, but must run the callbacks of the latest render.
   const actionsRef = useRef({ openProject, chooseProject, startExport })
   actionsRef.current = { openProject, chooseProject, startExport }
 
-  // The engine lives as long as the window; its canvas can be handed over only once.
   useEffect(() => {
     const canvas = canvasRef.current
     if (canvas === null || engineRef.current !== undefined) return
@@ -138,7 +132,6 @@ export function Harness(): ReactElement {
     })
   }, [])
 
-  // Keeps the preview's size, and the size the engine renders at, in step with the window.
   useEffect(() => {
     const stage = stageRef.current
     const canvas = canvasRef.current
@@ -157,10 +150,17 @@ export function Harness(): ReactElement {
     return () => observer.disconnect()
   }, [loaded, zoom])
 
-  // Playback also stops by itself at the end of the timeline; the sound output then rests too.
   useEffect(() => {
     if (position.isPlaying) return
-    audioRef.current?.suspend().catch((error: unknown) => setMessage(`The sound output could not be paused: ${describeError(error)}`))
+
+    async function suspendSound(): Promise<void> {
+      try {
+        await audioRef.current?.suspend()
+      } catch (error) {
+        setMessage(`The sound output could not be paused: ${describeError(error)}`)
+      }
+    }
+    void suspendSound()
   }, [position.isPlaying])
 
   useEffect(() => {

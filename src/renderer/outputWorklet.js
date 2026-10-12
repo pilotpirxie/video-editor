@@ -1,8 +1,3 @@
-// Runs on the audio thread. Plays the mixed samples the engine queues and reports how many it
-// has actually played: that count is the playback clock. When the queue runs dry it plays
-// silence and the count stands still, so sound and picture stall together and never drift.
-
-/** Reports are sent every this many render quanta (128 samples each). */
 const QUANTA_PER_REPORT = 4
 const CHANNELS = 2
 
@@ -15,7 +10,6 @@ class OutputProcessor extends AudioWorkletProcessor {
     this.isRunning = false
     this.quantaSinceReport = 0
     this.engine = undefined
-    // The node's own port only delivers the direct line to the engine worker.
     this.port.onmessage = (event) => {
       this.engine = event.ports[0]
       if (this.engine === undefined) return

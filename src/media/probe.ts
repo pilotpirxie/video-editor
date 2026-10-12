@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { basename } from 'node:path'
 import type { AudioInfo, MediaInfo, VideoInfo } from '../shared/mediaProtocol.js'
-import { TICKS_PER_SECOND, exactFrameDuration, frameDuration, secondsToTicks, type FrameRate } from '../shared/time.js'
+import { PROJECT_FRAME_RATES, TICKS_PER_SECOND, exactFrameDuration, frameDuration, secondsToTicks, type FrameRate } from '../shared/time.js'
 import type { FfmpegRunner } from './ffmpeg.js'
 
 const PROBE_TIMEOUT_MS = 10_000
@@ -9,47 +9,31 @@ const MAX_SOURCE_FRAME_RATE = 240
 const VARIABLE_RATE_TOLERANCE = 0.001
 const HD_MIN_HEIGHT = 720
 const HD_MIN_WIDTH = 1280
+const DEGREES_PER_QUARTER_TURN = 90
 
-/** Rates a source is conformed to when its own rate does not fit whole ticks. */
 const STANDARD_RATES: readonly FrameRate[] = [
+  ...PROJECT_FRAME_RATES,
   { num: 10, den: 1 },
   { num: 12, den: 1 },
   { num: 15, den: 1 },
-  { num: 24000, den: 1001 },
-  { num: 24, den: 1 },
-  { num: 25, den: 1 },
-  { num: 30000, den: 1001 },
-  { num: 30, den: 1 },
   { num: 48, den: 1 },
-  { num: 50, den: 1 },
   { num: 60000, den: 1001 },
-  { num: 60, den: 1 },
   { num: 100, den: 1 },
   { num: 120000, den: 1001 },
   { num: 120, den: 1 },
   { num: 240, den: 1 },
-]
+].sort((a, b) => framesPerSecond(a) - framesPerSecond(b))
 
 const IMAGE_FORMATS = /(^|,)(image2|png_pipe|jpeg_pipe|webp_pipe|webp_anim|gif|apng|bmp_pipe|tiff_pipe)(,|$)/
-/** FFmpeg only reports these formats for files that hold an animation. */
 const ANIMATION_FORMATS = /(^|,)(webp_anim|apng)(,|$)/
-/** Packets read from the start of the file to see whether frames are evenly spaced. */
 const TIMING_SAMPLE_PACKETS = 120
-/** Frame intervals may differ by this fraction of the typical interval before the rate counts as variable. */
 const UNEVEN_INTERVAL_TOLERANCE = 0.5
 const ALPHA_PIXEL_FORMATS = /^(ya\d|pal8)|yuva|rgba|bgra|argb|abgr|gbrap/
 const RATIO = /^(?<num>\d+)[/:](?<den>\d+)$/
 const HDR_TRANSFERS = ['smpte2084', 'arib-std-b67']
-/** Containers whose index leads a seek to the keyframe at or before the target. */
 const INDEXED_FORMATS = /(^|,)(mov|matroska|avi)(,|$)/
-/**
- * Without such an index (MPEG-TS, FLV…) a seek lands mid-GOP and decoding only starts at the
- * next keyframe, so decoding must begin at least one GOP early. Longer GOPs than this are not
- * handled exactly until keyframes are indexed at import (T-60).
- */
 const UNINDEXED_SEEK_PREROLL = 10 * TICKS_PER_SECOND
 
-/** The subset of ffprobe's JSON this module reads. Every field may be absent. */
 type ProbedStream = {
   index?: number
   codec_type?: string
@@ -84,7 +68,6 @@ type ProbeOutput = {
   packets?: ProbedPacket[]
 }
 
-/** A file the editor cannot use. The message is one plain sentence for the user. */
 export class ProbeError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options)
@@ -92,7 +75,6 @@ export class ProbeError extends Error {
   }
 }
 
-/** Why a file cannot be used, phrased to follow `"name" cannot be used: `. */
 class UnusableMedia extends Error {}
 
 function isProbeOutput(value: unknown): value is ProbeOutput {
@@ -121,7 +103,6 @@ function nearestStandardRate(target: number): FrameRate {
   return nearest
 }
 
-/** True when the first frames of the stream are not evenly spaced in time. */
 function hasUnevenFrameTimes(stream: ProbedStream, packets: readonly ProbedPacket[]): boolean {
   const times: number[] = []
   for (const packet of packets) {
@@ -129,8 +110,6 @@ function hasUnevenFrameTimes(stream: ProbedStream, packets: readonly ProbedPacke
     if (packet.stream_index === stream.index && Number.isFinite(time)) times.push(time)
   }
   times.sort((a, b) => a - b)
-  // Packets arrive in decode order, so the sample ends with frames whose earlier
-  // neighbours were not read yet. Those holes are not uneven timing.
   const incompleteTail = 2 * ((stream.has_b_frames ?? 0) + 1)
   times.length = Math.max(0, times.length - incompleteTail)
 
@@ -166,7 +145,7 @@ function isSideways(stream: ProbedStream): boolean {
   for (const sideData of stream.side_data_list ?? []) {
     if (sideData.rotation !== undefined) degrees = sideData.rotation
   }
-  const quarterTurns = Math.round(degrees / 90)
+  const quarterTurns = Math.round(degrees / DEGREES_PER_QUARTER_TURN)
   return quarterTurns % 2 !== 0
 }
 
@@ -185,7 +164,6 @@ function colorMatrixOf(stream: ProbedStream): VideoInfo['colorMatrix'] {
   if (tagged === 'bt709') return 'bt709'
   if (tagged === 'smpte170m' || tagged === 'bt470bg') return 'bt601'
   if (tagged.startsWith('bt2020')) return 'bt2020'
-  // Untagged: the convention every player follows is HD → 709, SD → 601.
   const isHighDefinition = (stream.height ?? 0) >= HD_MIN_HEIGHT || (stream.width ?? 0) >= HD_MIN_WIDTH
   return isHighDefinition ? 'bt709' : 'bt601'
 }
@@ -202,7 +180,6 @@ function hasAlpha(stream: ProbedStream): boolean {
 }
 
 function alphaDecoderOf(stream: ProbedStream): string | undefined {
-  // FFmpeg's own VP8/VP9 decoders ignore the WebM alpha plane; libvpx reads it.
   if (!hasAlphaTag(stream)) return undefined
   if (stream.codec_name === 'vp9') return 'libvpx-vp9'
   if (stream.codec_name === 'vp8') return 'libvpx'
@@ -220,9 +197,6 @@ function videoInfo(stream: ProbedStream, output: ProbeOutput, containerStartSeco
   const estimatedFrames = Math.floor((containerDuration - startOffset) / timing.frameDuration)
   const frameCount = canTrustCount ? countedFrames : estimatedFrames
 
-  // A frame can be reached from the keyframe before it only if the seek lands on that keyframe
-  // and the decoder has seen every frame it reorders. Uneven streams also need earlier frames
-  // to hold across gaps.
   const canSeekToKeyframe = INDEXED_FORMATS.test(output.format?.format_name ?? '') && !timing.isVariableFrameRate
   const reorderPreroll = ((stream.has_b_frames ?? 0) + 1) * timing.frameDuration
   const seekPreroll = canSeekToKeyframe ? reorderPreroll : UNINDEXED_SEEK_PREROLL
@@ -287,10 +261,6 @@ function interpret(output: ProbeOutput): MediaInfo {
   throw new UnusableMedia('it contains no picture and no sound')
 }
 
-/**
- * Reads what the editor needs to know about a media file.
- * Rejects with a ProbeError whose message is one plain sentence.
- */
 export async function probeMedia(ffmpeg: FfmpegRunner, path: string): Promise<MediaInfo> {
   const name = basename(path)
   const unreadable = `"${name}" could not be read: it is damaged or not a supported media file.`

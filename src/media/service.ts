@@ -1,4 +1,3 @@
-// Entry point of the media process: the only process that runs FFmpeg or touches media files.
 import type { MessagePortMain } from 'electron'
 import { describeError, logError } from '../shared/log.js'
 import type { MediaMessage, MediaProcessCommand, MediaProcessReport, MediaReply, MediaRequest } from '../shared/mediaProtocol.js'
@@ -6,7 +5,6 @@ import { createFfmpegRunner, type Binary, type FfmpegRunner } from './ffmpeg.js'
 import { MediaError, MediaSession } from './mediaStore.js'
 
 const VERSION_TIMEOUT_MS = 10_000
-/** The number only: builds append their own suffix, such as a URL, to the version. */
 const VERSION_PATTERN = /version (?<version>\d[\w.]*)/
 
 function isCommand(value: unknown): value is MediaProcessCommand {
@@ -58,7 +56,6 @@ function perform(session: MediaSession, request: MediaRequest, signal: AbortSign
   }
 }
 
-/** Answers one window's engine over its private port until the port closes. */
 function serve(port: MessagePortMain, ffmpeg: FfmpegRunner, cacheDirectory: string): void {
   const session = new MediaSession(ffmpeg, cacheDirectory)
   const inFlight = new Map<number, AbortController>()
@@ -85,9 +82,15 @@ function serve(port: MessagePortMain, ffmpeg: FfmpegRunner, cacheDirectory: stri
     }
     void answer(message.id, message.request)
   })
-  port.on('close', () => {
-    session.dispose().catch((error: unknown) => logError('Could not shut a media session down cleanly', error))
-  })
+  async function shutDown(): Promise<void> {
+    try {
+      await session.dispose()
+    } catch (error) {
+      logError('Could not shut a media session down cleanly', error)
+    }
+  }
+
+  port.on('close', () => void shutDown())
   port.start()
 }
 

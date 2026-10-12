@@ -1,16 +1,11 @@
-// Worker entry: runs the engine off the UI thread and translates messages to and from the page.
 import { createEngine, type Engine, type EngineEvent } from '../engine/engine.js'
 import { describeError } from '../shared/log.js'
 import type { HeadlessJob, JobEvent } from '../shared/mediaProtocol.js'
 import { createMediaClient } from './mediaClient.js'
 
-/** What the page sends to the worker. */
 export type WorkerCommand =
-  // First message. `canvas` is the visible preview surface; a headless engine has none.
   | { type: 'init'; canvas: OffscreenCanvas | undefined }
-  // Sent with the port to the media process as its transferred port.
   | { type: 'media-port' }
-  // Sent with the port to the audio output as its transferred port.
   | { type: 'audio-port' }
   | { type: 'load'; path: string }
   | { type: 'resize'; width: number; height: number }
@@ -19,7 +14,6 @@ export type WorkerCommand =
   | { type: 'pause' }
   | { type: 'job'; job: HeadlessJob }
 
-/** What the worker sends to the page. */
 export type WorkerEvent = EngineEvent | { type: 'job'; event: JobEvent }
 
 const HEADLESS_SURFACE_SIZE = 2
@@ -35,7 +29,6 @@ type Startup = {
   provideMediaPort(port: MessagePort): void
 }
 
-/** The page and main send the canvas and the media port separately, in either order. */
 function createStartup(): Startup {
   let provideCanvas: (canvas: OffscreenCanvas) => void = () => {}
   let provideMediaPort: (port: MessagePort) => void = () => {}
@@ -89,7 +82,6 @@ function start(): void {
   const startup = createStartup()
   const engineReady = createEngineWhenReady(startup)
 
-  // Commands wait for the engine, so nothing sent during start-up is lost.
   async function dispatch(command: WorkerCommand, ports: readonly MessagePort[]): Promise<void> {
     try {
       await handle(await engineReady, command, ports)

@@ -14,6 +14,7 @@ FFprobe binaries into `vendor/ffmpeg` and checks their SHA-256.
 | `npm ci` | Installs the pinned dependencies |
 | `npm start` | Builds and opens the dev harness |
 | `npm run typecheck` | Strict TypeScript check of everything |
+| `npm run lint` | Unused files, exports and dependencies (knip) and duplicated code (jscpd); any finding fails |
 | `npm run test:unit` | Unit tests (time, project format, resolver, mixer, FFmpeg jobs, probe, decoding, caches) |
 | `npm run test:engine` | Builds the app and tests it for real: golden images, preview/export parity, MP4 export, the harness window |
 | `npm test` | All of the above |

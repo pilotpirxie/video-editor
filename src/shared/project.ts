@@ -7,15 +7,13 @@ import {
   type FrameRate,
 } from './time.js'
 
-export const PROJECT_VERSION = 1
+const PROJECT_VERSION = 1
 
 export type Easing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'hold'
 
 export type Keyframe = {
-  /** Ticks from the clip start. */
   time: number
   value: number
-  /** Shapes the segment from this keyframe to the next one. */
   easing: Easing
 }
 
@@ -35,17 +33,13 @@ export type AnimatableProperty =
 export type Keyframes = Partial<Record<AnimatableProperty, Keyframe[]>>
 
 export type Transform = {
-  /** Clip centre in canvas pixels. */
   x: number
   y: number
-  /** Relative to the natural (cropped) size. */
   scaleX: number
   scaleY: number
-  /** Degrees clockwise about the clip centre. */
   rotation: number
 }
 
-/** Pixels removed from each side of the natural size. */
 export type Crop = {
   left: number
   top: number
@@ -93,7 +87,7 @@ export type AudioClip = ClipTiming &
     type: 'audio'
   }
 
-export type ImageClip = ClipTiming &
+type ImageClip = ClipTiming &
   VisualSettings & {
     type: 'image'
     mediaId: string
@@ -102,12 +96,11 @@ export type ImageClip = ClipTiming &
 
 export type TextAlign = 'left' | 'center' | 'right'
 
-export type TextClip = ClipTiming &
+type TextClip = ClipTiming &
   VisualSettings & {
     type: 'text'
     text: string
     font: { family: string; size: number }
-    /** #RRGGBB or #RRGGBBAA */
     color: string
     align: TextAlign
   }
@@ -126,9 +119,7 @@ export type Track = {
 
 export type MediaRef = {
   id: string
-  /** Absolute path, or empty when only the relative path is known. */
   path: string
-  /** Relative to the project file, or empty. */
   relativePath: string
 }
 
@@ -142,15 +133,14 @@ export type Project = {
   version: typeof PROJECT_VERSION
   canvas: Canvas
   media: MediaRef[]
-  /** Bottom track first: later tracks draw on top. */
   tracks: Track[]
 }
 
 export type ParseResult = { ok: true; project: Project } | { ok: false; message: string }
 
-export const MIN_CANVAS = { width: 160, height: 120 }
-export const MAX_CANVAS = { width: 3840, height: 2160 }
-export const MAX_VOLUME = 2
+const MIN_CANVAS = { width: 160, height: 120 }
+const MAX_CANVAS = { width: 3840, height: 2160 }
+const MAX_VOLUME = 2
 
 const EASINGS: readonly Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut', 'hold']
 const TRANSFORM_PROPERTIES: readonly AnimatableProperty[] = ['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity']
@@ -168,7 +158,6 @@ function fail(path: string, problem: string): never {
 type NumberRule = {
   min?: number
   max?: number
-  /** Value must be strictly greater than this. */
   above?: number
 }
 
@@ -176,7 +165,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** Checks that `value` is an object with exactly the expected keys, then hands out its typed fields. */
 function readFields(value: unknown, path: string, required: readonly string[], optional: readonly string[] = []): Fields {
   if (!isRecord(value)) fail(path, 'must be an object')
   for (const key of required) {
@@ -189,7 +177,6 @@ function readFields(value: unknown, path: string, required: readonly string[], o
   return new Fields(value, path)
 }
 
-/** One JSON object being read. */
 class Fields {
   constructor(
     private readonly record: Record<string, unknown>,
@@ -248,7 +235,6 @@ class Fields {
     return value
   }
 
-  /** A timeline position or length: whole ticks on the 100-tick grid. */
   gridTime(key: string, kind: 'zero or more' | 'positive'): number {
     const value = this.record[key]
     const sign = kind === 'positive' ? 'positive' : 'non-negative'
@@ -590,12 +576,10 @@ function sortKeys(value: unknown): unknown {
   return sorted
 }
 
-/** Canonical text: sorted keys, two-space indent, trailing newline. */
 export function serializeProject(project: Project): string {
   return `${JSON.stringify(sortKeys(project), null, 2)}\n`
 }
 
-/** End of the last clip, in ticks. */
 export function projectDuration(project: Project): number {
   let end = 0
   for (const track of project.tracks) {

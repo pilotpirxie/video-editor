@@ -1,18 +1,14 @@
-// Turns "the project at time t" into the list of things to draw. Pure: preview and export
-// both call this, which is what keeps animation identical between them.
 import { minimumHalvings } from '../shared/limits.js'
 import type { MediaState, VideoInfo } from '../shared/mediaProtocol.js'
 import type { AnimatableProperty, Clip, Crop, Easing, Keyframe, Keyframes, Project, TextAlign, Transform, VisualClip } from '../shared/project.js'
 import { frameIndexAt, sourceTime } from '../shared/time.js'
 
-/** A source is never decoded smaller than this fraction of its size, however small it is drawn. */
 const MAX_HALVINGS = 6
 const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 }
 
 type LayerBase = {
   clipId: string
   transform: Transform
-  /** Clip opacity with fades applied, 0…1. */
   opacity: number
 }
 
@@ -21,7 +17,6 @@ export type VideoLayer = LayerBase & {
   mediaId: string
   video: VideoInfo
   frame: number
-  /** How many times the source may be halved before drawing without losing visible detail. */
   halvings: number
   crop: Crop
 }
@@ -47,7 +42,6 @@ export type Layer = VideoLayer | ImageLayer | TextLayer
 
 export type MediaStates = Readonly<Record<string, MediaState>>
 
-/** Position within a keyframe segment, 0…1, shaped by the segment's easing. */
 export function ease(easing: Easing, progress: number): number {
   if (easing === 'hold') {
     return 0
@@ -65,12 +59,10 @@ export function ease(easing: Easing, progress: number): number {
   }
 }
 
-/** Value of a keyframed property at `localTime` ticks into the clip. */
 export function valueAt(keyframes: readonly Keyframe[], localTime: number): number | undefined {
   let previous: Keyframe | undefined
   for (const keyframe of keyframes) {
     if (keyframe.time > localTime) {
-      // Before the first keyframe its value already applies.
       if (previous === undefined) return keyframe.value
       const progress = (localTime - previous.time) / (keyframe.time - previous.time)
       return previous.value + (keyframe.value - previous.value) * ease(previous.easing, progress)
@@ -86,7 +78,6 @@ function animated(keyframes: Keyframes | undefined, property: AnimatableProperty
   return valueAt(track, localTime) ?? fallback
 }
 
-/** Linear ramp up over `fadeIn` at the clip start and down over `fadeOut` at its end. */
 export function fadeFactor(localTime: number, duration: number, fadeIn: number | undefined, fadeOut: number | undefined): number {
   let factor = 1
   if (fadeIn !== undefined && localTime < fadeIn) factor *= localTime / fadeIn
@@ -120,7 +111,6 @@ function opacityAt(clip: VisualClip, localTime: number): number {
   return opacity * fadeFactor(localTime, clip.duration, clip.fadeIn, clip.fadeOut)
 }
 
-/** The largest value a property takes anywhere in the clip. */
 function largestValue(keyframes: Keyframes | undefined, property: AnimatableProperty, fallback: number): number {
   const track = keyframes?.[property]
   if (track === undefined) return fallback
@@ -129,11 +119,6 @@ function largestValue(keyframes: Keyframes | undefined, property: AnimatableProp
   return largest
 }
 
-/**
- * How far a video source can be halved before decoding. Decided once for the whole clip from
- * its largest drawn scale, so a sequential decoder never has to change size mid-clip, and
- * preview and export always ask for the same picture.
- */
 export function sourceHalvings(video: VideoInfo, clip: VisualClip, outputScale: number): number {
   const largestScale = Math.max(
     largestValue(clip.keyframes, 'scaleX', clip.transform.scaleX),
@@ -155,7 +140,6 @@ function layerOf(clip: Clip, time: number, media: MediaStates, outputScale: numb
     return { ...base, kind: 'text', text: clip.text, family: clip.font.family, size: clip.font.size, color: clip.color, align: clip.align }
   }
 
-  // A clip whose media failed to load draws nothing; the rest of the frame is unaffected.
   const state = media[clip.mediaId]
   if (state === undefined || 'error' in state) return undefined
   const info = state.info
@@ -177,20 +161,13 @@ function layerOf(clip: Clip, time: number, media: MediaStates, outputScale: numb
   }
 }
 
-export function isActive(clip: Clip, time: number): boolean {
-  return time >= clip.start && time < clip.start + clip.duration
-}
-
-/**
- * Everything visible at `time`, bottom layer first.
- * `outputScale` is output pixels per canvas pixel; it only affects how much source detail is requested.
- */
 export function resolveFrame(project: Project, media: MediaStates, time: number, outputScale: number): Layer[] {
   const layers: Layer[] = []
   for (const track of project.tracks) {
     if (track.hidden) continue
     for (const clip of track.clips) {
-      if (!isActive(clip, time)) continue
+      const isActive = time >= clip.start && time < clip.start + clip.duration
+      if (!isActive) continue
       const layer = layerOf(clip, time, media, outputScale)
       if (layer !== undefined) layers.push(layer)
     }

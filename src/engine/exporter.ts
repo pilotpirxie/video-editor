@@ -1,5 +1,3 @@
-// Rendering a whole project, or chosen frames of it, without a window: the same resolver,
-// compositor and mixer as the preview, fed from the original files.
 import { exportSize, fitCanvas, type Size } from '../shared/exportPresets.js'
 import type { ExportJob, FramesJob, LoadedProject, MediaClient } from '../shared/mediaProtocol.js'
 import { projectDuration } from '../shared/project.js'
@@ -9,18 +7,16 @@ import type { FrameProvider } from './frameProvider.js'
 import { mix, type AudioReader } from './mixer.js'
 import { resolveFrame } from './resolve.js'
 
-/** Progress is reported about this many times over a whole export. */
 const PROGRESS_STEPS = 200
 const FRAME_NUMBER_DIGITS = 6
 
-export class ExportError extends Error {
+class ExportError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'ExportError'
   }
 }
 
-/** What a render needs: the loaded project and the engine parts that draw and mix it. */
 export type RenderContext = {
   loaded: LoadedProject
   media: MediaClient
@@ -33,7 +29,6 @@ export type ProgressListener = (done: number, total: number) => void
 
 export type JobSummary = Record<string, unknown>
 
-/** Renders the whole timeline to an MP4 file at the size of the job's preset. */
 export async function exportMp4(context: RenderContext, job: ExportJob, onProgress: ProgressListener): Promise<JobSummary> {
   const { project, media: states } = context.loaded
   const output = exportSize(job.preset, project.canvas)
@@ -52,7 +47,6 @@ export async function exportMp4(context: RenderContext, job: ExportJob, onProgre
       context.compositor.render(project.canvas, output, items)
       context.provider.collect()
 
-      // Each frame carries the samples that start inside it; together they cover the timeline exactly once.
       const firstSample = Math.ceil(time / TICKS_PER_SAMPLE)
       const endSample = Math.ceil((time + frameTicks) / TICKS_PER_SAMPLE)
       const audio = await mix(project, states, firstSample, endSample - firstSample, context.readAudio)
@@ -71,17 +65,12 @@ export async function exportMp4(context: RenderContext, job: ExportJob, onProgre
   return { path: job.outputPath, frames: frameCount, ...output }
 }
 
-/**
- * Renders single frames and writes each as raw RGBA, top row first. `via` chooses whether the
- * originals are read by seeking (as a paused preview does) or in order (as an export does).
- */
 export async function renderFrames(context: RenderContext, job: FramesJob): Promise<JobSummary> {
   const { project, media: states } = context.loaded
   const output: Size = job.size ?? { width: project.canvas.width, height: project.canvas.height }
   const outputScale = fitCanvas(project.canvas, output).scale
   const frameTicks = frameDuration(project.canvas.frameRate)
   const quality = job.via === 'paused' ? 'full' : 'stream'
-  // A sequential decoder can only move forwards.
   const frames = [...job.frames].sort((a, b) => a - b)
 
   try {

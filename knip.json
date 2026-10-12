@@ -1,0 +1,6 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["src/main/main.ts", "src/main/preload.cts", "src/media/service.ts", "scripts/*.mjs"],
+  "project": ["src/**", "test/**/*.ts", "scripts/**"],
+  "ignoreBinaries": ["pgrep", "pkill"]
+}

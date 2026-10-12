@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { createByteLru } from './byteLru.js'
+import { createByteLru, type ByteLru } from './byteLru.js'
+
+function trackedCache(): { cache: ByteLru<string>; evicted: string[] } {
+  const evicted: string[] = []
+  return { cache: createByteLru<string>(100, (value) => evicted.push(value)), evicted }
+}
 
 describe('createByteLru', () => {
   it('evicts the least recently used entries once over budget', () => {
-    const evicted: string[] = []
-    const cache = createByteLru<string>(100, (value) => evicted.push(value))
+    const { cache, evicted } = trackedCache()
     cache.set('a', 'A', 40)
     cache.set('b', 'B', 40)
     cache.set('c', 'C', 40)
@@ -15,8 +19,7 @@ describe('createByteLru', () => {
   })
 
   it('treats a read as a use', () => {
-    const evicted: string[] = []
-    const cache = createByteLru<string>(100, (value) => evicted.push(value))
+    const { cache, evicted } = trackedCache()
     cache.set('a', 'A', 40)
     cache.set('b', 'B', 40)
     cache.get('a')
@@ -25,8 +28,7 @@ describe('createByteLru', () => {
   })
 
   it('keeps a single entry that is larger than the whole budget', () => {
-    const evicted: string[] = []
-    const cache = createByteLru<string>(100, (value) => evicted.push(value))
+    const { cache, evicted } = trackedCache()
     cache.set('small', 'S', 10)
     cache.set('huge', 'H', 500)
     expect(evicted).toEqual(['S'])
@@ -35,8 +37,7 @@ describe('createByteLru', () => {
   })
 
   it('releases the old value when a key is replaced', () => {
-    const evicted: string[] = []
-    const cache = createByteLru<string>(100, (value) => evicted.push(value))
+    const { cache, evicted } = trackedCache()
     cache.set('a', 'old', 30)
     cache.set('a', 'new', 50)
     expect(evicted).toEqual(['old'])
@@ -45,8 +46,7 @@ describe('createByteLru', () => {
   })
 
   it('releases everything on clear', () => {
-    const evicted: string[] = []
-    const cache = createByteLru<string>(100, (value) => evicted.push(value))
+    const { cache, evicted } = trackedCache()
     cache.set('a', 'A', 10)
     cache.set('b', 'B', 10)
     cache.clear()

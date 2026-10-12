@@ -24,6 +24,9 @@ const MEDIA_SERVICE_PATH = join(import.meta.dirname, '..', 'media', 'service.js'
 const PRELOAD_PATH = join(import.meta.dirname, 'preload.cjs')
 const WINDOW_BACKGROUND = '#14171D'
 const USAGE_EXIT_CODE = 2
+const NOT_FOUND_STATUS = 404
+const WINDOW_SIZE = { width: 1440, height: 900 }
+const MIN_WINDOW_SIZE = { width: 1280, height: 720 }
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html',
@@ -41,28 +44,20 @@ const SIZE_PATTERN = /^(?<width>\d+)x(?<height>\d+)$/
 
 type WindowMode = 'harness' | 'headless'
 
-/** Everything the main process keeps track of while it runs. */
 type AppState = {
   mediaProcess: UtilityProcess
   harnessWindow: BrowserWindow | undefined
   exportWindow: BrowserWindow | undefined
-  /** Who is told about job events, by the id of the window that runs the job. */
   jobListeners: Map<number, (event: JobEvent) => void>
-  /** Answers the export save dialog without showing it; set while the self-test runs. */
   exportPathOverride: string | undefined
-  /** Running when --report-memory was given. */
   memory: MemoryMonitor | undefined
-  /** The lines shown in the About panel, once the bundled FFmpeg has reported its versions. */
   versions: string[] | undefined
 }
 
-/** The command line was not understood; the message says how to fix it. */
 class UsageError extends Error {}
 
-// Must happen before the app is ready.
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 
-/** `--name value` pairs for the flags this app knows; other arguments belong to Electron. */
 function cliOptions(argv: readonly string[]): Map<string, string> {
   const options = new Map<string, string>()
   for (const [index, argument] of argv.entries()) {
@@ -120,22 +115,20 @@ function isVersionReport(value: unknown): value is MediaProcessReport {
   return typeof value === 'object' && value !== null && 'type' in value && value.type === 'versions'
 }
 
-/** Serves the built renderer files under app://, so the page never runs from file://. */
 function serveRenderer(): void {
   protocol.handle('app', async (request) => {
     const filePath = join(RENDERER_DIRECTORY, normalize(decodeURIComponent(new URL(request.url).pathname)))
-    if (!filePath.startsWith(RENDERER_DIRECTORY)) return new Response('Not found', { status: 404 })
+    if (!filePath.startsWith(RENDERER_DIRECTORY)) return new Response('Not found', { status: NOT_FOUND_STATUS })
     try {
       const body = await readFile(filePath)
       return new Response(body, { headers: { 'content-type': CONTENT_TYPES[extname(filePath)] ?? 'application/octet-stream' } })
     } catch (error) {
       logError('Could not serve a renderer file', error, { filePath })
-      return new Response('Not found', { status: 404 })
+      return new Response('Not found', { status: NOT_FOUND_STATUS })
     }
   })
 }
 
-/** Lists the versions of everything bundled in the About panel. */
 function showVersionsInAboutPanel(report: MediaProcessReport): string[] {
   const versions = [
     `Electron ${process.versions.electron}`,
@@ -172,7 +165,6 @@ function send(window: BrowserWindow, command: HostCommand): void {
 
 type WindowOptions = {
   mode: WindowMode
-  /** Shown without taking focus and never slowed down when covered: for unattended runs. */
   isUnattended: boolean
 }
 
@@ -180,10 +172,10 @@ function createWindow(state: AppState, options: WindowOptions): BrowserWindow {
   const { mode } = options
   const isHeadless = mode === 'headless'
   const window = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1280,
-    minHeight: 720,
+    width: WINDOW_SIZE.width,
+    height: WINDOW_SIZE.height,
+    minWidth: MIN_WINDOW_SIZE.width,
+    minHeight: MIN_WINDOW_SIZE.height,
     show: false,
     backgroundColor: WINDOW_BACKGROUND,
     webPreferences: {
@@ -191,7 +183,6 @@ function createWindow(state: AppState, options: WindowOptions): BrowserWindow {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      // A hidden window must keep rendering at full speed while it exports.
       backgroundThrottling: !isHeadless && !options.isUnattended,
     },
   })
@@ -201,26 +192,30 @@ function createWindow(state: AppState, options: WindowOptions): BrowserWindow {
   } else if (!isHeadless) {
     window.show()
   }
-  // Problems inside a window would otherwise be visible only in its developer tools.
   window.webContents.on('console-message', (details) => {
     if (details.level === 'error') logError('A window reported an error', new Error(details.message), { mode })
   })
-  // Gives the window's engine a private line to the media process.
   window.webContents.once('did-finish-load', () => {
     const { port1, port2 } = new MessageChannelMain()
     const connect: MediaProcessCommand = { type: 'connect' }
     state.mediaProcess.postMessage(connect, [port1])
     window.webContents.postMessage('media-port', undefined, [port2])
   })
-  window.loadURL(`app://editor/index.html?mode=${mode}`).catch((error: unknown) => logError('Could not load the window', error, { mode }))
+  void loadPage(window, mode)
   return window
 }
 
-/** Runs a job in a hidden engine window and reports its events to `onEvent`. */
+async function loadPage(window: BrowserWindow, mode: WindowMode): Promise<void> {
+  try {
+    await window.loadURL(`app://editor/index.html?mode=${mode}`)
+  } catch (error) {
+    logError('Could not load the window', error, { mode })
+  }
+}
+
 function runHeadlessJob(state: AppState, job: HeadlessJob, onEvent: (event: JobEvent) => void): BrowserWindow {
   const window = createWindow(state, { mode: 'headless', isUnattended: false })
   const senderId = window.webContents.id
-  // macOS would otherwise slow down an app with no visible window.
   const blockerId = powerSaveBlocker.start('prevent-app-suspension')
   state.jobListeners.set(senderId, onEvent)
   window.webContents.once('did-finish-load', () => send(window, { type: 'run-job', job }))
@@ -234,7 +229,6 @@ function runHeadlessJob(state: AppState, job: HeadlessJob, onEvent: (event: JobE
   return window
 }
 
-/** Prints a result as one JSON line, with the peak memory when it was being measured, and exits. */
 async function finish(state: AppState, result: Record<string, unknown>): Promise<void> {
   const report = { ...result }
   if (state.memory !== undefined) report.peakMemoryMegabytes = Math.round((await state.memory.stop()) / BYTES_PER_MEGABYTE)
@@ -242,7 +236,6 @@ async function finish(state: AppState, result: Record<string, unknown>): Promise
   app.exit(0)
 }
 
-/** Runs one job for the command line: progress and the result go to stdout, then the app exits. */
 function runCliJob(state: AppState, job: HeadlessJob): void {
   app.dock?.hide()
   runHeadlessJob(state, job, (event) => {
@@ -257,7 +250,6 @@ function runCliJob(state: AppState, job: HeadlessJob): void {
   })
 }
 
-/** Opens the harness on a project, drives it through the self-test and prints the report. */
 async function runCliSelfTest(state: AppState, projectPath: string, options: SelfTestOptions): Promise<void> {
   state.exportPathOverride = options.exportPath
   const window = openHarness(state, projectPath, true)
@@ -289,22 +281,23 @@ function registerIpc(state: AppState): void {
   ipcMain.handle('open-project-dialog', async (event): Promise<string | undefined> => {
     const owner = BrowserWindow.fromWebContents(event.sender)
     if (owner === null) return undefined
-    const result = await dialog.showOpenDialog(owner, {
+    const chosen = await dialog.showOpenDialog(owner, {
       properties: ['openFile'],
       filters: [{ name: 'Project', extensions: ['json'] }],
     })
-    return result.filePaths[0]
+    return chosen.filePaths[0]
   })
 
   ipcMain.handle('save-export-dialog', async (event, suggestedName: unknown): Promise<string | undefined> => {
     if (state.exportPathOverride !== undefined) return state.exportPathOverride
     const owner = BrowserWindow.fromWebContents(event.sender)
     if (owner === null) return undefined
-    const result = await dialog.showSaveDialog(owner, {
+    const chosen = await dialog.showSaveDialog(owner, {
       defaultPath: typeof suggestedName === 'string' ? suggestedName : 'export.mp4',
       filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
     })
-    return result.canceled || result.filePath === '' ? undefined : result.filePath
+    if (chosen.canceled || chosen.filePath === '') return undefined
+    return chosen.filePath
   })
 
   ipcMain.on('job-event', (event, jobEvent: unknown) => {
@@ -316,7 +309,6 @@ function registerIpc(state: AppState): void {
     if (requester !== null && isExportJob(job)) startExportFor(state, requester, job)
   })
 
-  // Closing the window drops its media connection, which stops FFmpeg and removes the partial file.
   ipcMain.on('cancel-export', () => state.exportWindow?.destroy())
 }
 
@@ -358,7 +350,6 @@ async function main(): Promise<void> {
   const options = cliOptions(process.argv)
   const exportPath = options.get('export')
   const framesPath = options.get('frames')
-  // Parsed before anything starts, so a bad command line fails at once.
   let cliJob: HeadlessJob | undefined
   if (exportPath !== undefined) cliJob = exportJobFromCli(exportPath, options)
   if (framesPath !== undefined) cliJob = framesJobFromCli(framesPath, options)
@@ -410,6 +401,4 @@ async function run(): Promise<void> {
   }
 }
 
-// Not awaited: Electron only signals "ready" once this module has finished loading, so a
-// top-level await on anything that waits for "ready" would never complete.
 void run()

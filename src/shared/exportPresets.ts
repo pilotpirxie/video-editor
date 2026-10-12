@@ -4,7 +4,6 @@ export type Size = {
 }
 
 type PresetRule =
-  // Follows the project aspect ratio; named by its short side.
   | { kind: 'short-side'; shortSide: number }
   | { kind: 'fixed'; size: Size }
 
@@ -42,7 +41,6 @@ export function isExportPreset(name: string): name is ExportPreset {
   return Object.hasOwn(PRESET_RULES, name)
 }
 
-/** H.264 4:2:0 needs even dimensions. */
 function nearestEven(value: number): number {
   return Math.max(2, Math.round(value / 2) * 2)
 }
@@ -60,13 +58,11 @@ export function exportSize(preset: ExportPreset, canvas: Size): Size {
 }
 
 export type CanvasFit = {
-  /** Output pixels per canvas pixel. */
   scale: number
   offsetX: number
   offsetY: number
 }
 
-/** Places the whole canvas inside the output, centred, with bars where the aspect differs. */
 export function fitCanvas(canvas: Size, output: Size): CanvasFit {
   const scale = Math.min(output.width / canvas.width, output.height / canvas.height)
   return {

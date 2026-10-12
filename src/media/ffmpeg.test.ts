@@ -93,13 +93,11 @@ describe('spawnJob', () => {
 
     execFileSync('pkill', ['-KILL', '-P', String(process.pid), 'ffmpeg'])
 
-    // Frames already in the pipe are still delivered; after them the failure surfaces.
-    const drain = async (): Promise<void> => {
+    async function drain(): Promise<void> {
       while ((await job.readExact(FRAME_BYTES, 5000)) !== undefined);
     }
     await expect(drain()).rejects.toThrow(/ffmpeg was killed/)
     await expect(job.done).rejects.toThrow(FfmpegError)
-    // Writing into the dead process must fail quietly, never crash the caller.
     await expect(writeAll(job.stdin, Buffer.alloc(FRAME_BYTES))).rejects.toThrow()
     await expect(runOnce('ffmpeg', ['-version'], { timeoutMs: 10_000 })).resolves.toBeInstanceOf(Buffer)
   })

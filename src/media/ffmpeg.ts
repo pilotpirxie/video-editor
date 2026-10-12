@@ -20,43 +20,28 @@ export class FfmpegError extends Error {
   }
 }
 
-export type RunOptions = {
+type RunOptions = {
   signal?: AbortSignal
-  /** The whole job must finish within this time. */
   timeoutMs: number
 }
 
-export type SpawnOptions = {
+type SpawnOptions = {
   signal?: AbortSignal
-  /** Number of extra input pipes, readable by FFmpeg as pipe:3, pipe:4, … */
   extraInputPipes?: number
-  /**
-   * Runs at low CPU priority: full speed on an idle machine, but it yields to the decodes
-   * the user is waiting for. For preparation work.
-   */
   isBackground?: boolean
 }
 
 export type Job = {
   stdin: Writable
-  /** Extra input pipes in order: pipes[0] is pipe:3. */
   pipes: Writable[]
-  /**
-   * Resolves with exactly `byteCount` bytes of stdout, or undefined once the stream has ended.
-   * Rejects when FFmpeg fails, or produces nothing for `timeoutMs` while this read is pending.
-   */
   readExact(byteCount: number, timeoutMs: number): Promise<Buffer | undefined>
-  /** Resolves with the next stdout chunk of any size, or undefined once the stream has ended. */
   readChunk(timeoutMs: number): Promise<Buffer | undefined>
-  /** Resolves when FFmpeg exits cleanly, rejects with the reason otherwise. */
   done: Promise<void>
   kill(): void
 }
 
 export type FfmpegRunner = {
-  /** Runs a job to completion and resolves with everything it wrote to stdout. */
   runOnce(binary: Binary, args: readonly string[], options: RunOptions): Promise<Buffer>
-  /** Starts a streaming job. Unread stdout exerts back-pressure on FFmpeg. */
   spawnJob(binary: Binary, args: readonly string[], options?: SpawnOptions): Job
   killAll(): void
 }
@@ -71,10 +56,8 @@ type Pipes = {
 type RunningProcess = {
   binary: Binary
   pipes: Pipes
-  /** Settles when the process has exited and its pipes are closed; undefined when it was killed. */
   exitCode: Promise<number | undefined>
   stderrTail(): string
-  /** The reason we stopped it ourselves, if we did. */
   stopReason(): string | undefined
   stop(reason: string): void
   lowerPriority(): void
@@ -96,11 +79,7 @@ function openPipes(child: ChildProcess, binary: Binary): Pipes {
   return { stdin, stdout, stderr, extraInputs }
 }
 
-function reportedThroughJob(): void {
-  // A killed FFmpeg closes its pipes while we may still be writing, and its exit rejects
-  // `done`. Both failures already reach the caller through read() and `done`, so these
-  // listeners exist only to keep Node from treating them as uncaught.
-}
+function reportedThroughJob(): void {}
 
 function failureOf(running: RunningProcess, exitCode: number | undefined): FfmpegError {
   const stopReason = running.stopReason()
@@ -109,7 +88,6 @@ function failureOf(running: RunningProcess, exitCode: number | undefined): Ffmpe
   return new FfmpegError(`${running.binary} ${outcome}`, running.stderrTail(), exitCode)
 }
 
-/** Writes one buffer and resolves once FFmpeg has taken it, so callers are paced by the encoder. */
 export function writeAll(stream: Writable, data: Uint8Array): Promise<void> {
   return new Promise((resolve, reject) => {
     stream.write(data, (error) => {
@@ -119,7 +97,6 @@ export function writeAll(stream: Writable, data: Uint8Array): Promise<void> {
   })
 }
 
-/** Creates the one place that starts FFmpeg and FFprobe processes from `binaryDirectory`. */
 export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
   const children = new Set<ChildProcess>()
 
@@ -134,7 +111,7 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
 
     pipes.stderr.setEncoding('utf8')
     pipes.stderr.on('data', (text: string) => {
-      stderrText = (stderrText + text).slice(-STDERR_TAIL_CHARACTERS)
+      stderrText = `${stderrText}${text}`.slice(-STDERR_TAIL_CHARACTERS)
     })
     for (const stream of [pipes.stdin, pipes.stdout, pipes.stderr, ...pipes.extraInputs]) {
       stream.on('error', reportedThroughJob)
@@ -166,7 +143,6 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
       try {
         setPriority(child.pid, osConstants.priority.PRIORITY_LOW)
       } catch (error) {
-        // The process can exit before its priority is set; a job that already ended needs none.
         if (child.exitCode === null && child.signalCode === null) throw error
       }
     }
@@ -193,9 +169,6 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
     if (options.isBackground === true) running.lowerPriority()
     const stdout = running.pipes.stdout
 
-    // stdout stays paused unless a read is waiting, so unread output backs up into FFmpeg.
-    // (Node's 'readable' event is not usable here: with a partial unit buffered it fires
-    // again on every subscription and spins the process.)
     const buffered: Buffer[] = []
     let bufferedBytes = 0
     let hasEnded = false
@@ -234,7 +207,6 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
       })
     }
 
-    /** Removes exactly `byteCount` buffered bytes into one buffer that owns its memory. */
     function take(byteCount: number): Buffer {
       const unit = Buffer.allocUnsafeSlow(byteCount)
       let filled = 0
@@ -262,7 +234,6 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
         await waitForOutput(timeoutMs)
       }
       if (bufferedBytes >= needed) return take(byteCount ?? bufferedBytes)
-      // The stream ended, possibly inside a unit; a failure surfaces here.
       await done
       return undefined
     }
