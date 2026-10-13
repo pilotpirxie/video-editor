@@ -176,7 +176,7 @@ describe('arranging by dragging', () => {
     expect(projectIn(report, 'kept').tracks).toEqual(projectIn(report, 'lowered').tracks)
 
     // A hundred pixels cropped off the left of the 320-wide picture: the centre moved right by fifty, so what is left did not move.
-    expect(report.groupIcons).toEqual(['Transform 2', 'Crop 2', 'Timing 2', 'Opacity 2', 'Transitions 2', 'Volume 2'])
+    expect(report.groupIcons).toEqual(['Transform 2', 'Crop 2', 'Timing 2', 'Opacity 2', 'Transitions 2', 'Animation 2', 'Volume 2'])
     expect(projectIn(report, 'cropped').tracks[0]?.clips[0]).toMatchObject({ crop: { left: 100, top: 0, right: 0, bottom: 0 }, transform: { x: 210, y: 90 } })
     expect(report.widthAfterCrop).toBe('220.0')
     expect(report.hintSize).toBe('13px')
@@ -317,7 +317,7 @@ describe('groups', () => {
     expect(moved?.type === 'group' && Math.abs(moved.transform.x - 360)).toBeLessThanOrEqual(2)
     expect(moved?.type === 'group' && Math.abs(moved.transform.y - 200)).toBeLessThanOrEqual(2)
 
-    // Inside, the timeline shows the group's own tracks and the camera cannot be changed. Twenty canvas pixels are forty inside a group at half its size.
+    // Inside, the timeline shows the group's own tracks and the camera cannot be changed. Twenty canvas pixels are forty inside a group at half its size; going down, the member comes within reach of the middle of the canvas and snaps to it.
     expect(report.tracksInside).toBe(4)
     expect(report.isCameraToolOff).toBe(true)
     const inside = projectIn(report, 'inside').tracks[3]?.clips[0]
@@ -325,7 +325,7 @@ describe('groups', () => {
     expect(inside.tracks[3]?.clips[0]).toMatchObject({ id: 'd', opacity: 0.4 })
     const dragged = inside.tracks[0]?.clips[0]
     expect(dragged?.type === 'video' && Math.abs(dragged.transform.x + 120)).toBeLessThanOrEqual(4)
-    expect(dragged?.type === 'video' && Math.abs(dragged.transform.y + 50)).toBeLessThanOrEqual(4)
+    expect(dragged?.type === 'video' && Math.abs(inside.transform.y + dragged.transform.y / 2 - 180)).toBeLessThanOrEqual(0.01)
 
     // Ungrouped, the members are where and as large as the group showed them, the lowest where the group was and the others above it.
     const ungrouped = projectIn(report, 'ungrouped')

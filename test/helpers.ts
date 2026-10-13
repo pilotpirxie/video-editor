@@ -6,6 +6,7 @@ import { afterAll, expect } from 'vitest'
 import { allClips } from '../src/editor/clips.js'
 import { createFfmpegRunner, writeAll, type FfmpegRunner } from '../src/media/ffmpeg.js'
 import { parseProject, serializeProject, type CameraKeyframe, type Clip, type MediaRef, type Project, type Transform, type VideoClip } from '../src/shared/project.js'
+import { SECOND } from './fixtures.js'
 import { BARCODE_BITS, BARCODE_HEIGHT_FRACTION, barcodeSource, type VideoPattern } from './media/generate.js'
 
 export const ROOT = join(import.meta.dirname, '..')
@@ -264,6 +265,24 @@ export function renderProject(directory: string, name: string, project: Project,
   const path = join(directory, `${name}.json`)
   writeFileSync(path, serializeProject(project))
   return renderFrames(path, request)
+}
+
+// What the tests that work pixels out by hand share: a small canvas, clips that last its first second, and a white picture that fills it.
+export const SMALL_CANVAS = { width: 640, height: 360 }
+export const FIRST_SECOND = { start: 0, duration: SECOND }
+export const WHITE = { red: 255, green: 255, blue: 255 }
+export const RED = { red: 255, green: 0, blue: 0 }
+export const BLUE = { red: 0, green: 0, blue: 255 }
+
+export function at(x: number, y: number, scale = 1, rotation = 0): Transform {
+  return { x, y, scaleX: scale, scaleY: scale, rotation }
+}
+
+export const WHITE_GROUND = imageOf('image-white.png', 'ground', { start: 0, duration: 2 * SECOND }, at(320, 180, 2))
+
+// One frame of the given tracks on the small canvas, the lowest track first, as the paused preview shows it.
+export async function frameOfTracks(directory: string, name: string, tracks: readonly Clip[][], frame: number): Promise<Picture> {
+  return pictureAt(await renderProject(directory, name, projectOfTracks(SMALL_CANVAS, tracks), { via: 'paused', frames: [frame] }), 0)
 }
 
 export function pictureAt(pictures: readonly Picture[], index: number): Picture {

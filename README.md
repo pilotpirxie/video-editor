@@ -8,8 +8,13 @@ handles, text clips, animated images, the properties panel, the transport with C
 keys, and the export dialog. From group 3 there are the camera zoom (T-48, T-49), transitions
 (T-50), blur and pixelate clips (T-51), highlight and spotlight clips (T-52) and effects
 (T-53), each with the controls to add and change it: the zoom tool and the camera lane, the
-Effects and Transitions tabs, and the buttons of the Annotations tab. The end-to-end run of
-T-47 with a new user on the 4 GB reference Mac is still to be done by hand.
+Effects and Transitions tabs, and the buttons of the Annotations tab. Also from group 3 are
+callouts, arrows and lines (T-54), text styling (T-55), animation presets (T-56), groups
+(T-57), sound that follows the speed of its clip (T-58) and volume keyframes (T-59), again
+with their controls: the Annotations tab, handles for an arrow's ends and a bubble's tail,
+the text and animation fields in Properties, groups that open on a double click, and volume
+points on the waveform. The end-to-end run of T-47 with a new user on the 4 GB reference Mac
+is still to be done by hand.
 
 To see the new features at once, open `test/projects/demo-zoom-effects.json` with File, Open.
 
@@ -25,8 +30,8 @@ FFprobe binaries into `vendor/ffmpeg` and checks their SHA-256.
 | `npm run typecheck` | Strict TypeScript check of everything |
 | `npm run lint` | Unused files, exports and dependencies (knip) and duplicated code (jscpd); any finding fails |
 | `npm run test:unit` | Unit tests (time, project format, resolver, mixer, FFmpeg jobs, probe, decoding, caches, editing commands) |
-| `npm run test:engine` | Builds the app and tests it for real: golden images, preview/export parity, MP4 export, the harness window, split and hit-test parity, and pixels worked out by hand for the camera zoom, every transition, blur, pixelate, highlight, spotlight and each effect |
-| `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents, crash recovery, transport keys, fades, text, animated images, relink, the export dialog and how it holds the window, arranging by dragging (landing outline, group moves across tracks, crop fields), annotations, effects, transitions and zoom-and-pan (added, changed and removed by mouse and in Properties), the controls (drop-down lists, groups, media tiles, wide sidebars, timeline zoom-out), and the responsiveness budgets on a 4,096-clip project |
+| `npm run test:engine` | Builds the app and tests it for real: golden images, preview/export parity, MP4 export, the harness window, split and hit-test parity, and pixels worked out by hand for the camera zoom, every transition, blur, pixelate, highlight, spotlight, each effect, callouts, arrows, styled text and groups |
+| `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents, crash recovery, transport keys, fades, text, animated images, relink, the export dialog and how it holds the window, arranging by dragging (landing outline, group moves across tracks, crop fields), annotations, callouts and arrows, text styling, animation presets, groups (made, edited from the inside, taken apart), volume keyframes and the sound of fast clips, effects, transitions and zoom-and-pan (added, changed and removed by mouse and in Properties), the controls (drop-down lists, groups, media tiles, wide sidebars, timeline zoom-out), and the responsiveness budgets on a 4,096-clip project |
 | `npm test` | All of the above |
 | `npm run test:acceptance` | Builds a ten-minute tutorial through the editor window and exports it at 1080p; takes several minutes and is not part of `npm test` |
 | `npm run dist` | Builds `release/Video Editor-<version>-arm64.dmg` |
@@ -70,6 +75,8 @@ the focus; `src/editor/shortcuts.ts` is the table.
 | Cmd+Shift+`=` `-` `0` | Timeline zoom in, out, fit |
 | Cmd+T, Cmd+Shift+T | Split the selected clips, or every clip under the playhead |
 | Delete, Cmd+Delete | Delete, ripple delete |
+| Cmd+G, Cmd+U | Group the selected clips, ungroup the selected group |
+| Esc | Let go of the selection; with nothing selected, leave the open group |
 | Cmd+E, Cmd+I | Export, import media |
 
 ## Project files
@@ -85,6 +92,18 @@ carry `effects`, applied first to last; any visual clip can carry `transitionIn`
 `transitionOut`, and the one at the start of a clip that touches the clip before it is the
 transition on their cut. `camera` at the top level lists the zooms: each is the view reached at
 its time after a move of its `duration`. Lengths in all of these are canvas pixels.
+
+A `callout` clip is a filled shape with words in it (`shape`, `width`, `height`, `fill`,
+`borderColor`, `borderWidth`, and for the two bubbles a `tail` tip measured from the middle of
+the box). An `arrow` clip is a line of `length` and `thickness` through the middle of the
+clip, with a `startHead` and an `endHead`; a line is an arrow without heads. Text and callouts
+take `font.weight`, `lineSpacing`, `outline` and `shadow`; a text clip also takes `background`
+and `boxWidth`, the width its words wrap at. Any visual clip can carry `animationIn` and
+`animationOut`, a preset with a `duration`. A `group` clip holds `tracks` of its own, in a time
+of its own that it shows from `contentStart` on, with its members placed around the middle of
+the group. On a video or audio clip `changesPitch` lets the pitch follow the speed, and
+`hasFastSound` gives a clip faster than 400 % its sound; `keyframes.volume` holds the volume
+keyframes. All of these keys are optional, and the format version is still 1.
 
 ## Where things are
 

@@ -3,6 +3,14 @@ import type { BlurClip, Clip, Effect, HighlightClip, Transform } from '../../src
 import { SECOND } from '../fixtures.js'
 import { KEY_GREEN, SUBJECT_MAGENTA } from '../media/generate.js'
 import {
+  at,
+  BLUE,
+  FIRST_SECOND,
+  frameOfTracks,
+  RED,
+  SMALL_CANVAS,
+  WHITE,
+  WHITE_GROUND,
   bundledFfmpeg,
   cropPicture,
   expectGolden,
@@ -22,18 +30,7 @@ import {
 
 const ffmpeg = bundledFfmpeg()
 const scratch = scratchDirectory('effects')
-const CANVAS = { width: 640, height: 360 }
-const SPAN = { start: 0, duration: SECOND }
-const WHITE = { red: 255, green: 255, blue: 255 }
-const RED = { red: 255, green: 0, blue: 0 }
-const BLUE = { red: 0, green: 0, blue: 255 }
 const GREY = { red: 128, green: 128, blue: 128 }
-
-function at(x: number, y: number, scale: number, rotation = 0): Transform {
-  return { x, y, scaleX: scale, scaleY: scale, rotation }
-}
-
-const GROUND = imageOf('image-white.png', 'ground', { start: 0, duration: 2 * SECOND }, at(320, 180, 2))
 
 type Area = {
   transform: Transform
@@ -42,15 +39,15 @@ type Area = {
 }
 
 function blurOf(id: string, area: Area, settings: Partial<BlurClip>): Clip {
-  return { id, type: 'blur', ...SPAN, ...area, opacity: 1, shape: 'rectangle', softEdge: 0, strength: 8, ...settings }
+  return { id, type: 'blur', ...FIRST_SECOND, ...area, opacity: 1, shape: 'rectangle', softEdge: 0, strength: 8, ...settings }
 }
 
 function highlightOf(id: string, area: Area, settings: Partial<HighlightClip> = {}): Clip {
-  return { id, type: 'highlight', ...SPAN, ...area, opacity: 1, shape: 'rectangle', softEdge: 0, color: '#FFE94D', ...settings }
+  return { id, type: 'highlight', ...FIRST_SECOND, ...area, opacity: 1, shape: 'rectangle', softEdge: 0, color: '#FFE94D', ...settings }
 }
 
-async function frameOf(name: string, tracks: readonly Clip[][], frame = 0): Promise<Picture> {
-  return pictureAt(await renderProject(scratch, name, projectOfTracks(CANVAS, tracks), { via: 'paused', frames: [frame] }), 0)
+function frameOf(name: string, tracks: readonly Clip[][], frame = 0): Promise<Picture> {
+  return frameOfTracks(scratch, name, tracks, frame)
 }
 
 // The share of a bell curve that lies below `deviations` standard deviations from its middle (Abramowitz and Stegun 26.2.17).
@@ -64,7 +61,7 @@ describe('blur and pixelate clips', () => {
   it('blurs a hard edge into the ramp its strength stands for, the same on both sides', async () => {
     // Black on the left, white on the right, cut at x = 160, at the size the card has: enlarged, its edge would be soft before any blur. The upper half is blurred by 2, the lower by 8.
     const tracks = [
-      [imageOf('image-edge.png', 'edge', SPAN, at(160, 90, 1))],
+      [imageOf('image-edge.png', 'edge', FIRST_SECOND, at(160, 90, 1))],
       [blurOf('slight', { transform: at(160, 45, 1), width: 320, height: 90 }, { strength: 2 })],
       [blurOf('strong', { transform: at(160, 135, 1), width: 320, height: 90 }, { strength: 8 })],
     ]
@@ -92,7 +89,7 @@ describe('blur and pixelate clips', () => {
 
   it('fills every block of a pixelated clip with the mean of what is beneath it', async () => {
     // The magenta subject spans 200 to 440 by 100 to 260; blocks of 40 start at the corner of the canvas.
-    const tracks = [[imageOf('image-green-screen.png', 'picture', SPAN, at(320, 180, 2))], [blurOf('blocks', { transform: at(320, 180, 1), width: 640, height: 360 }, { strength: 40, isPixelated: true })]]
+    const tracks = [[imageOf('image-green-screen.png', 'picture', FIRST_SECOND, at(320, 180, 2))], [blurOf('blocks', { transform: at(320, 180, 1), width: 640, height: 360 }, { strength: 40, isPixelated: true })]]
     const picture = await frameOf('blocks', tracks)
     expectPixel(picture, 20, 20, KEY_GREEN, 2)
     expectPixel(picture, 300, 180, SUBJECT_MAGENTA, 2)
@@ -113,14 +110,14 @@ describe('blur and pixelate clips', () => {
 describe('highlight and spotlight clips', () => {
   it('multiplies what is beneath by the colour: inside the shape for a highlight, outside it for a spotlight', async () => {
     const tracks = [
-      [GROUND],
+      [WHITE_GROUND],
       [
         highlightOf('marker', { transform: at(160, 180, 1), width: 200, height: 200 }),
         highlightOf('spot', { transform: at(320, 180, 1), width: 300, height: 200 }, { start: SECOND, shape: 'ellipse', color: '#404040', isSpotlight: true }),
       ],
       [highlightOf('faint', { transform: at(480, 180, 1), width: 200, height: 200 }, { opacity: 0.5 })],
     ]
-    const pictures = await renderProject(scratch, 'marker', projectOfTracks(CANVAS, tracks), { via: 'paused', frames: [0, 30] })
+    const pictures = await renderProject(scratch, 'marker', projectOfTracks(SMALL_CANVAS, tracks), { via: 'paused', frames: [0, 30] })
     const marked = pictureAt(pictures, 0)
     expectPixel(marked, 160, 180, { red: 255, green: 233, blue: 77 })
     expectPixel(marked, 480, 180, { red: 255, green: 244, blue: 166 })
@@ -145,13 +142,13 @@ describe('highlight and spotlight clips', () => {
 describe('effects', () => {
   // Tiles of 160 by 90 on white. The magenta subject of the green-screen card is the middle 60 by 40 of its tile.
   function tile(file: string, id: string, x: number, y: number, effects: Effect[], rotation = 0): Clip[] {
-    return [imageOf(file, id, SPAN, at(x, y, 0.5, rotation), effects.length === 0 ? {} : { effects })]
+    return [imageOf(file, id, FIRST_SECOND, at(x, y, 0.5, rotation), effects.length === 0 ? {} : { effects })]
   }
 
   it('changes each pixel as its settings say', async () => {
     const shadow: Effect = { type: 'dropShadow', offsetX: 20, offsetY: 0, softness: 0, color: '#000000', opacity: 0.5 }
     const tracks = [
-      [GROUND],
+      [WHITE_GROUND],
       tile('image-red.png', 'grey', 100, 60, [{ type: 'blackAndWhite', amount: 1 }]),
       tile('image-green-screen.png', 'brighter', 300, 60, [{ type: 'colorAdjust', brightness: 0.2, contrast: 0, saturation: 0 }]),
       tile('image-green-screen.png', 'colourless', 500, 60, [{ type: 'colorAdjust', brightness: 0, contrast: 0, saturation: -1 }]),
@@ -195,7 +192,7 @@ describe('effects', () => {
   it('applies effects in their order: a border follows corners rounded before it and is cut by corners rounded after it', async () => {
     const corners: Effect = { type: 'roundedCorners', radius: 40 }
     const border: Effect = { type: 'border', width: 6, color: '#0000FF' }
-    const tracks = [[GROUND], [imageOf('image-red.png', 'followed', SPAN, at(160, 180, 0.9), { effects: [corners, border] })], [imageOf('image-red.png', 'cut', SPAN, at(480, 180, 0.9), { effects: [border, corners] })]]
+    const tracks = [[WHITE_GROUND], [imageOf('image-red.png', 'followed', FIRST_SECOND, at(160, 180, 0.9), { effects: [corners, border] })], [imageOf('image-red.png', 'cut', FIRST_SECOND, at(480, 180, 0.9), { effects: [border, corners] })]]
     const picture = await frameOf('order', tracks)
     // Fourteen pixels in from the top left corner of each tile: on the rounded border of the first, inside the square border of the second.
     expectPixel(picture, 16 + 14, 99 + 14, BLUE, 0)
@@ -205,8 +202,8 @@ describe('effects', () => {
   })
 
   it('leaves the picture untouched by an effect that is switched off', async () => {
-    const plain = await frameOf('plain', [[GROUND], tile('image-green-screen.png', 'tile', 320, 180, [])])
-    const switchedOff = await frameOf('switched-off', [[GROUND], tile('image-green-screen.png', 'tile', 320, 180, [{ type: 'clipBlur', strength: 9, isOff: true }])])
+    const plain = await frameOf('plain', [[WHITE_GROUND], tile('image-green-screen.png', 'tile', 320, 180, [])])
+    const switchedOff = await frameOf('switched-off', [[WHITE_GROUND], tile('image-green-screen.png', 'tile', 320, 180, [{ type: 'clipBlur', strength: 9, isOff: true }])])
     expect(sameBytes(plain, switchedOff)).toBe(true)
   })
 

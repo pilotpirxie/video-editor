@@ -1505,7 +1505,7 @@ async function testSound(driver: Driver): Promise<UiTestReport> {
   const point = await driver.timelinePoint(second, 0, 1)
   const later = await driver.timelinePoint(1.5 * second, 0, 1)
   await driver.hover({ x: point.x, y: point.y + VOLUME_POINT_AT_HALF })
-  const cursorOverPoint = await driver.page.evaluate(`document.querySelector('[aria-label="Timeline"]').style.cursor`)
+  const cursorOverPoint = await driver.page.evaluate(`document.querySelector('[data-testid="timeline"] canvas:last-child').style.cursor`)
   await driver.drag({ x: point.x, y: point.y + VOLUME_POINT_AT_HALF }, { x: later.x, y: later.y + NEAR_TOP_OF_SOUND })
   await driver.untilUndoLabel('Undo Change Volume Keyframe')
   const dragged = await driver.savedProject('dragged.json')

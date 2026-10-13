@@ -1,21 +1,50 @@
-import { existsSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { EXPORT_PRESETS, exportSize, fitCanvas, type ExportPreset } from '../../src/shared/exportPresets.js'
 import { temporaryPathFor } from '../../src/media/encoder.js'
+import { serializeProject, type Project } from '../../src/shared/project.js'
 import { bundledFfmpeg, cropPicture, probeExport, projectPath, readBarcode, runApp, scratchDirectory, type Picture } from '../helpers.js'
+import { CLICK_SAMPLE_44K, mediaPath } from '../media/generate.js'
 
 const ffmpeg = bundledFfmpeg()
 const scratch = scratchDirectory('export')
 const CANVAS = { width: 640, height: 360 }
 const FRAME_COUNT = 60
 const SAMPLE_RATE = 48_000
+const SECOND = 24_000_000
+const SAMPLES_PER_VIDEO_FRAME = SAMPLE_RATE / 30
+const CLICK_SECONDS = CLICK_SAMPLE_44K / 44_100
 
-async function exportCheckProject(preset: ExportPreset): Promise<string> {
-  const path = join(scratch, `${preset}.mp4`)
-  const result = await runApp(['--export', projectPath('export-check'), '--out', path, '--preset', preset])
+// One second of silence with a click in its middle, first at twice its speed with the pitch following, then from the third second at half its speed with the pitch kept.
+const CLICK_AT_TWO_SPEEDS: Project = {
+  version: 1,
+  canvas: { width: 160, height: 120, frameRate: { num: 30, den: 1 } },
+  media: [{ id: 'click', path: mediaPath('audio-44k-click.wav'), relativePath: '' }],
+  tracks: [
+    {
+      id: 'sound',
+      name: 'sound',
+      hidden: false,
+      locked: false,
+      muted: false,
+      clips: [
+        { id: 'fast', type: 'audio', mediaId: 'click', start: 0, duration: SECOND / 2, sourceStart: 0, speedPercent: 200, changesPitch: true, volume: 1 },
+        { id: 'slow', type: 'audio', mediaId: 'click', start: 2 * SECOND, duration: 2 * SECOND, sourceStart: 0, speedPercent: 50, volume: 1 },
+      ],
+    },
+  ],
+}
+
+async function exported(project: string, name: string, preset: ExportPreset): Promise<string> {
+  const path = join(scratch, `${name}.mp4`)
+  const result = await runApp(['--export', project, '--out', path, '--preset', preset])
   if (result.exitCode !== 0) throw new Error(`Export failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`)
   return path
+}
+
+function exportCheckProject(preset: ExportPreset): Promise<string> {
+  return exported(projectPath('export-check'), preset, preset)
 }
 
 async function decodedFrames(path: string, preset: ExportPreset): Promise<Picture[]> {
@@ -44,6 +73,15 @@ function loudness(samples: Float32Array, firstFrame: number, endFrame: number): 
   let sumOfSquares = 0
   for (let frame = firstFrame; frame < endFrame; frame++) sumOfSquares += (samples[frame * 2] ?? 0) ** 2
   return Math.sqrt(sumOfSquares / (endFrame - firstFrame))
+}
+
+// The sample with the highest level between two seconds of the timeline.
+function loudestSample(samples: Float32Array, fromSecond: number, toSecond: number): number {
+  let loudest = fromSecond * SAMPLE_RATE
+  for (let frame = loudest; frame < toSecond * SAMPLE_RATE; frame++) {
+    if (Math.abs(samples[frame * 2] ?? 0) > Math.abs(samples[loudest * 2] ?? 0)) loudest = frame
+  }
+  return loudest
 }
 
 describe('MP4 export', () => {
@@ -88,6 +126,20 @@ describe('MP4 export', () => {
       if ((samples[frame * 2] ?? 0) < 0 && (samples[(frame + 1) * 2] ?? 0) >= 0) crossing = frame + 1
     }
     expect(Math.abs(crossing - 32_768)).toBeLessThanOrEqual(40)
+  })
+
+  it('puts the sound of faster and slower clips where it is heard, within one frame', async () => {
+    const projectFile = join(scratch, 'click-at-two-speeds.json')
+    writeFileSync(projectFile, serializeProject(CLICK_AT_TWO_SPEEDS))
+    const samples = await decodedAudio(await exported(projectFile, 'click-at-two-speeds', '120p'))
+    expect(Math.abs(samples.length / 2 - 4 * SAMPLE_RATE)).toBeLessThan(2048)
+
+    const fastClick = loudestSample(samples, 0, 2)
+    const slowClick = loudestSample(samples, 2, 4)
+    expect(Math.abs(fastClick - (CLICK_SECONDS / 2) * SAMPLE_RATE)).toBeLessThanOrEqual(SAMPLES_PER_VIDEO_FRAME)
+    expect(Math.abs(slowClick - (2 + CLICK_SECONDS * 2) * SAMPLE_RATE)).toBeLessThanOrEqual(SAMPLES_PER_VIDEO_FRAME)
+    // Nothing of the fast clip is left after its end, and the slow one is silent until its click.
+    expect(loudness(samples, SAMPLE_RATE / 2 + SAMPLES_PER_VIDEO_FRAME, 2 * SAMPLE_RATE)).toBeLessThan(0.005)
   })
 
   it('fails with a plain message, and writes nothing, for a broken project', async () => {
