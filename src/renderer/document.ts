@@ -8,7 +8,7 @@ import { createActions, type Actions } from './actions.js'
 import type { EngineHost } from './engineHost.js'
 import { createEditorStore, type EditorStore } from './store.js'
 import { createThumbnails, type Thumbnails } from './thumbnails.js'
-import { createTransport, isTypingTarget, type Transport } from './transport.js'
+import { createTransport, isModalOpen, isTypingTarget, type Transport } from './transport.js'
 
 const AUTOSAVE_INTERVAL_MS = 10_000
 const PREPARATION_POLL_MS = 500
@@ -194,8 +194,9 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
     return path.split('/').at(-1) ?? path
   }
 
-  // The export reads a copy of the project written at this moment, so whatever is edited afterwards is not in the video.
+  // The export reads a copy of the project written at this moment. From here until its result has been read, a dialog holds the window, so nothing plays or changes behind it.
   async function exportVideo(choices: ExportChoices): Promise<void> {
+    transport.pause()
     const { documentPath, selection } = store.getState()
     const projectName = documentPath === undefined ? 'Untitled' : fileNameOf(documentPath).replace(/\.json$/, '')
     const outputPath = await window.host.saveExportDialog(`${projectName}.mp4`)
@@ -209,31 +210,28 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
       return
     }
     const job = exportJobFor(choices, selectionRange(snapshot, selection), { projectPath: info.exportSnapshotPath, outputPath })
-    store.setExportProgress({ fileName: fileNameOf(outputPath), done: 0, total: 1, startedAt: performance.now() })
+    store.setExportStatus({ phase: 'running', fileName: fileNameOf(outputPath), done: 0, total: 1, startedAt: performance.now() })
     window.host.startExport(job)
   }
 
   // Nothing comes back from a cancelled export: its window is closed and its unfinished file removed.
   function cancelExport(): void {
     window.host.cancelExport()
-    store.setExportProgress(undefined)
+    store.setExportStatus(undefined)
   }
 
   function onExportEvent(event: JobEvent): void {
-    const running = store.getState().exportProgress
-    if (running === undefined) return
-    if (event.type === 'progress') {
-      store.setExportProgress({ ...running, done: event.done, total: event.total })
-      return
-    }
-    store.setExportProgress(undefined)
-    if (event.type === 'done') store.notifyExported(`Exported "${running.fileName}".`)
-    else store.notify(`"${running.fileName}" was not exported. ${event.message}`)
+    const running = store.getState().exportStatus
+    if (running?.phase !== 'running') return
+    const { fileName } = running
+    if (event.type === 'progress') store.setExportStatus({ ...running, done: event.done, total: event.total })
+    else if (event.type === 'done') store.setExportStatus({ phase: 'done', fileName })
+    else store.setExportStatus({ phase: 'failed', fileName, message: event.message })
   }
 
   function openExportDialog(): void {
-    const { project, exportProgress } = store.getState()
-    if (exportProgress === undefined && projectDuration(project) > 0) store.showExportDialog(true)
+    const { project, exportStatus } = store.getState()
+    if (exportStatus === undefined && projectDuration(project) > 0) store.showExportDialog(true)
   }
 
   // New, Open and Close all leave the current document, so they share one unsaved-changes check.
@@ -274,10 +272,15 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
   }
 
   window.host.onCommand((command: HostCommand) => {
+    if (command.type === 'export-event') {
+      onExportEvent(command.event)
+      return
+    }
+    // Under an open dialog the project can still be saved and the window closed; every other command waits for the dialog to go.
+    const isForUnderADialog = command.type === 'menu' && (command.action === 'save' || command.action === 'save-as' || command.action === 'close')
+    if (isModalOpen() && !isForUnderADialog) return
     if (command.type === 'open-project') {
       void leaveFor({ kind: 'open', path: command.path })
-    } else if (command.type === 'export-event') {
-      onExportEvent(command.event)
     } else if (command.type !== 'menu') {
       return
     } else if (command.action === 'export') {

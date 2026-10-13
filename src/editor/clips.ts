@@ -24,6 +24,16 @@ export function hasSource(clip: Clip): clip is VideoClip | AudioClip {
   return clip.type === 'video' || clip.type === 'audio'
 }
 
+// A clip that shows or plays a media file. Text, blur and highlight clips have none.
+export function hasMedia(clip: Clip): clip is Extract<Clip, { mediaId: string }> {
+  return clip.type === 'video' || clip.type === 'audio' || clip.type === 'image'
+}
+
+// Only the picture of a video or an image can be cropped: text is laid out to fit its words, and a shape has nothing to cut away.
+export function isCroppable(clip: Clip): clip is Extract<Clip, { type: 'video' | 'image' }> {
+  return clip.type === 'video' || clip.type === 'image'
+}
+
 // A video clip whose sound still belongs to it: the media has sound and it was not separated.
 export function hasLinkedAudio(clip: Clip, mediaStates: MediaStates): clip is VideoClip {
   if (clip.type !== 'video' || clip.isAudioSeparated === true) return false

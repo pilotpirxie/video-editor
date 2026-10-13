@@ -1,0 +1,181 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 1080,
+    "width": 1920
+  },
+  "media": [
+    {
+      "id": "1080p",
+      "path": "",
+      "relativePath": "../media/generated/1080p.mp4"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "footage",
+          "mediaId": "1080p",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 960,
+            "y": 540
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "footage",
+      "locked": false,
+      "muted": false,
+      "name": "footage"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "height": 300,
+          "id": "blur",
+          "opacity": 1,
+          "shape": "rectangle",
+          "softEdge": 0,
+          "start": 0,
+          "strength": 24,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 500,
+            "y": 400
+          },
+          "type": "blur",
+          "width": 600
+        }
+      ],
+      "hidden": false,
+      "id": "blur",
+      "locked": false,
+      "muted": false,
+      "name": "blur"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "height": 300,
+          "id": "pixelate",
+          "isPixelated": true,
+          "opacity": 1,
+          "shape": "ellipse",
+          "softEdge": 30,
+          "start": 0,
+          "strength": 40,
+          "transform": {
+            "rotation": 15,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 1400,
+            "y": 350
+          },
+          "type": "blur",
+          "width": 500
+        }
+      ],
+      "hidden": false,
+      "id": "pixelate",
+      "locked": false,
+      "muted": false,
+      "name": "pixelate"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "height": 300,
+          "id": "soft",
+          "opacity": 0.6,
+          "shape": "ellipse",
+          "softEdge": 60,
+          "start": 0,
+          "strength": 10,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 300,
+            "y": 850
+          },
+          "type": "blur",
+          "width": 300
+        }
+      ],
+      "hidden": false,
+      "id": "soft",
+      "locked": false,
+      "muted": false,
+      "name": "soft"
+    },
+    {
+      "clips": [
+        {
+          "color": "#FFE94D",
+          "duration": 24000000,
+          "height": 120,
+          "id": "highlight",
+          "opacity": 1,
+          "shape": "rectangle",
+          "softEdge": 0,
+          "start": 0,
+          "transform": {
+            "rotation": -4,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 960,
+            "y": 850
+          },
+          "type": "highlight",
+          "width": 700
+        },
+        {
+          "color": "#404040",
+          "duration": 24000000,
+          "fadeOut": 12000000,
+          "height": 400,
+          "id": "spotlight",
+          "isSpotlight": true,
+          "opacity": 1,
+          "shape": "ellipse",
+          "softEdge": 40,
+          "start": 24000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 960,
+            "y": 540
+          },
+          "type": "highlight",
+          "width": 600
+        }
+      ],
+      "hidden": false,
+      "id": "highlight",
+      "locked": false,
+      "muted": false,
+      "name": "highlight"
+    }
+  ],
+  "version": 1
+}

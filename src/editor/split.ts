@@ -12,10 +12,11 @@ export function clipsToSplit(project: Project, selection: readonly string[], cut
   return unlockedClipIds(project, (clip) => (selected.size === 0 || selected.has(clip.id)) && isCutInside(clip, cut))
 }
 
+// What plays at the end of a clip goes to the second part and what plays at its start stays with the first, fades and transitions alike.
 function firstPart(clip: Clip, local: number): Clip {
   if (clip.type === 'audio') return withFadesWithin({ ...clip, duration: local, volumeFadeOut: undefined })
-  if (clip.type === 'video') return withFadesWithin({ ...clip, duration: local, fadeOut: undefined, volumeFadeOut: undefined })
-  return withFadesWithin({ ...clip, duration: local, fadeOut: undefined })
+  if (clip.type === 'video') return withFadesWithin({ ...clip, duration: local, fadeOut: undefined, transitionOut: undefined, volumeFadeOut: undefined })
+  return withFadesWithin({ ...clip, duration: local, fadeOut: undefined, transitionOut: undefined })
 }
 
 // Both parts keep every keyframe, also those now outside their own range, so an eased curve stays exactly the curve it was.
@@ -24,9 +25,9 @@ function secondPart(clip: Clip, cut: number, id: string): Clip {
   const timing = { id, start: cut, duration: clip.duration - local, keyframes: shiftedKeyframes(clip.keyframes, -local) }
   if (clip.type === 'audio') return withFadesWithin({ ...clip, ...timing, sourceStart: sourceTime(clip, cut), volumeFadeIn: undefined })
   if (clip.type === 'video') {
-    return withFadesWithin({ ...clip, ...timing, sourceStart: sourceTime(clip, cut), fadeIn: undefined, volumeFadeIn: undefined })
+    return withFadesWithin({ ...clip, ...timing, sourceStart: sourceTime(clip, cut), fadeIn: undefined, transitionIn: undefined, volumeFadeIn: undefined })
   }
-  return withFadesWithin({ ...clip, ...timing, fadeIn: undefined })
+  return withFadesWithin({ ...clip, ...timing, fadeIn: undefined, transitionIn: undefined })
 }
 
 // `newIds` maps each clip to split to the id of its second part.

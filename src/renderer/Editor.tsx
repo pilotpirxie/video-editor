@@ -1,20 +1,22 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
 import { clampLayout, parseLayout, widestSidebar, type Layout } from '../editor/layout.js'
-import { durationText, timeLeft } from '../editor/export.js'
+import type { ShapeKind } from '../editor/shapes.js'
 import { shortcutFor, type ShortcutAction } from '../editor/shortcuts.js'
 import type { Size } from '../shared/exportPresets.js'
 import { logError } from '../shared/log.js'
 import { projectDuration } from '../shared/project.js'
 import { CanvasPanel } from './CanvasPanel.js'
 import { SessionContext, useEditorState, useSession } from './context.js'
-import { ExportDialog } from './ExportDialog.js'
+import { EffectProperties } from './EffectProperties.js'
+import { ExportDialog, ExportProgressDialog } from './ExportDialog.js'
 import type { Session } from './document.js'
-import { Icon, IconButton } from './icons.js'
+import { Icon, IconButton, type IconName } from './icons.js'
+import { EffectsTab, TransitionsTab } from './LibraryTabs.js'
 import { MediaTab } from './MediaTab.js'
 import { Properties } from './Properties.js'
 import { Timeline } from './Timeline.js'
 import { installTooltips } from './tooltip.js'
-import { isKeyForTheEditor, isTypingTarget } from './transport.js'
+import { isKeyForTheEditor, isModalOpen, isTypingTarget } from './transport.js'
 
 const LAYOUT_KEY = 'layout'
 const KEYBOARD_RESIZE_STEP = 16
@@ -105,7 +107,14 @@ function Splitter({ label, testId, sizeKey, size, isHidden, growth, onPreview, o
   )
 }
 
-// Callouts, arrows, blurs and highlights join the text here later; each is added at the playhead, on a layer of its own.
+const SHAPES: readonly { kind: ShapeKind; icon: IconName; label: string }[] = [
+  { kind: 'blur', icon: 'blur', label: 'Blur' },
+  { kind: 'pixelate', icon: 'grid', label: 'Pixelate' },
+  { kind: 'highlight', icon: 'marker', label: 'Highlight' },
+  { kind: 'spotlight', icon: 'spotlight', label: 'Spotlight' },
+]
+
+// Callouts and arrows join these later; each is added at the playhead, on a layer of its own.
 function AnnotationsTab(): ReactElement {
   const { actions } = useSession()
   return (
@@ -115,6 +124,13 @@ function AnnotationsTab(): ReactElement {
         Text
       </button>
       <p className="hint">Adds a title at the playhead. Double-click it on the canvas to change the words.</p>
+      {SHAPES.map(({ kind, icon, label }) => (
+        <button key={kind} type="button" className="button annotation-item" data-testid={`add-${kind}`} onClick={() => actions.addShape(kind)}>
+          <Icon name={icon} />
+          {label}
+        </button>
+      ))}
+      <p className="hint">Each acts on everything beneath it, inside its shape. Move and size it on the canvas; its look is in Properties.</p>
     </div>
   )
 }
@@ -150,45 +166,11 @@ function Sidebar(): ReactElement {
       </div>
       <div className="tab-panel" role="tabpanel" aria-label={tab}>
         {tab === 'Media' && <MediaTab />}
+        {tab === 'Effects' && <EffectsTab />}
+        {tab === 'Transitions' && <TransitionsTab />}
         {tab === 'Annotations' && <AnnotationsTab />}
-        {(tab === 'Effects' || tab === 'Transitions') && <p className="empty-state">Nothing here yet.</p>}
       </div>
     </>
-  )
-}
-
-// The one primary action of the window. While a video is being made it shows how far that is, what is left, and the way to stop it.
-function ExportControl(): ReactElement {
-  const session = useSession()
-  const progress = useEditorState((state) => state.exportProgress)
-  const hasContent = useEditorState((state) => projectDuration(state.project) > 0)
-
-  if (progress === undefined) {
-    return (
-      <button
-        type="button"
-        className="button primary"
-        data-testid="export"
-        data-tooltip={hasContent ? 'Export (⌘E)' : 'Add something to the timeline first'}
-        disabled={!hasContent}
-        onClick={() => session.store.showExportDialog(true)}
-      >
-        Export…
-      </button>
-    )
-  }
-  const left = timeLeft(progress.done, progress.total, performance.now() - progress.startedAt)
-  return (
-    <div className="export-progress" role="status" data-testid="export-progress">
-      <progress value={progress.done} max={progress.total} aria-label={`Exporting ${progress.fileName}`} />
-      <span className="export-progress-text">
-        Frame {progress.done.toLocaleString('en')} of {progress.total.toLocaleString('en')}
-        {left !== undefined && ` · ${durationText(left)} left`}
-      </span>
-      <button type="button" className="button" data-testid="export-cancel" onClick={session.cancelExport}>
-        Cancel
-      </button>
-    </div>
   )
 }
 
@@ -197,7 +179,7 @@ function TopBar({ layout, onToggle }: { layout: Layout; onToggle(key: 'isLeftCol
   const undoLabel = useEditorState((state) => state.history.done.at(-1)?.label)
   const redoLabel = useEditorState((state) => state.history.undone.at(-1)?.label)
   const notice = useEditorState((state) => state.notice)
-  const isNoticeAboutExport = useEditorState((state) => state.isNoticeAboutExport)
+  const hasContent = useEditorState((state) => projectDuration(state.project) > 0)
 
   return (
     <header className="top-bar">
@@ -206,20 +188,24 @@ function TopBar({ layout, onToggle }: { layout: Layout; onToggle(key: 'isLeftCol
       <IconButton icon="redo" label={redoLabel === undefined ? 'Redo' : `Redo ${redoLabel}`} testId="redo" isDisabled={redoLabel === undefined} onClick={store.redo} />
       <div className="notice-area">
         {notice !== undefined && (
-          <div className={isNoticeAboutExport ? 'notice good' : 'notice'} role={isNoticeAboutExport ? 'status' : 'alert'}>
+          <div className="notice" role="alert">
             <span data-testid="notice">{notice}</span>
-            {isNoticeAboutExport && (
-              <button type="button" className="button" data-testid="show-export" onClick={() => window.host.showLastExport()}>
-                Show in Finder
-              </button>
-            )}
             <button type="button" className="button" onClick={() => store.notify(undefined)}>
               Dismiss
             </button>
           </div>
         )}
       </div>
-      <ExportControl />
+      <button
+        type="button"
+        className="button primary"
+        data-testid="export"
+        data-tooltip={hasContent ? 'Export (⌘E)' : 'Add something to the timeline first'}
+        disabled={!hasContent}
+        onClick={() => store.showExportDialog(true)}
+      >
+        Export…
+      </button>
       <IconButton icon="panelBottom" label="Timeline" testId="toggle-timeline" isPressed={!layout.isTimelineCollapsed} onClick={() => onToggle('isTimelineCollapsed')} />
       <IconButton icon="panelRight" label="Properties panel" testId="toggle-right" isPressed={!layout.isRightCollapsed} onClick={() => onToggle('isRightCollapsed')} />
     </header>
@@ -294,7 +280,7 @@ function listenForEditingKeys(session: Session): () => void {
   const abandonDrag = (): void => void store.cancel()
 
   function onClipboard(event: ClipboardEvent): void {
-    if (isTypingTarget(document.activeElement)) return
+    if (isTypingTarget(document.activeElement) || isModalOpen()) return
     event.preventDefault()
     if (event.type === 'copy') actions.copy()
     else if (event.type === 'cut') actions.cut()
@@ -315,9 +301,12 @@ function listenForEditingKeys(session: Session): () => void {
   }
 }
 
+// First the choices, then, from the moment the export starts until its result has been read, how it is going.
 function ExportDialogWhenOpen(): ReactElement | undefined {
-  const isOpen = useEditorState((state) => state.isExportDialogOpen)
-  return isOpen ? <ExportDialog /> : undefined
+  const isChoosing = useEditorState((state) => state.isExportDialogOpen)
+  const isExporting = useEditorState((state) => state.exportStatus !== undefined)
+  if (isExporting) return <ExportProgressDialog />
+  return isChoosing ? <ExportDialog /> : undefined
 }
 
 export function Editor({ session, preview }: { session: Session; preview: HTMLCanvasElement }): ReactElement {
@@ -357,7 +346,9 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
   }
 
   function onFilesDropped(event: DragEvent<HTMLDivElement>): void {
+    // The default is always prevented: a file dropped on the window would otherwise be opened in place of the editor.
     event.preventDefault()
+    if (isModalOpen()) return
     const paths = [...event.dataTransfer.files].map((file) => window.host.pathOfFile(file))
     if (paths.length > 0) void session.importFiles(paths)
   }
@@ -381,6 +372,7 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
         <Splitter label="Resize properties panel" testId="split-right" sizeKey="rightWidth" size={layout.rightWidth} isHidden={layout.isRightCollapsed} growth={-1} onPreview={showSize} onResize={resize} />
         <aside className="sidebar right" aria-label="Properties" data-testid="right-sidebar" hidden={layout.isRightCollapsed}>
           <Properties />
+          <EffectProperties />
         </aside>
         <Splitter label="Resize timeline" testId="split-timeline" sizeKey="timelineHeight" size={layout.timelineHeight} isHidden={layout.isTimelineCollapsed} growth={-1} onPreview={showSize} onResize={resize} />
         <section className="timeline-panel" aria-label="Timeline" data-testid="timeline-panel" hidden={layout.isTimelineCollapsed}>

@@ -31,7 +31,9 @@ export function installTooltips(root: HTMLElement): () => void {
     const owner = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-tooltip]') : null
     hide()
     const text = owner?.dataset.tooltip
-    if (owner === null || text === undefined) return
+    // A drag is not a question about what is under the pointer.
+    const isDragging = event instanceof PointerEvent && event.buttons !== 0
+    if (owner === null || text === undefined || isDragging) return
     timer = window.setTimeout(() => show(owner, text), SHOW_DELAY_MS)
   }
 

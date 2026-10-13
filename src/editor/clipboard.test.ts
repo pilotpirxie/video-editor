@@ -61,6 +61,16 @@ describe('copy and paste', () => {
     reopened(pasted)
   })
 
+  it('pastes a clip with its effects and transitions, and a clip without media', () => {
+    const dressed = videoClip('a', 0, SECOND, { effects: [{ type: 'clipBlur', strength: 5 }], transitionIn: { type: 'slide', duration: SECOND / 2 } })
+    const spotlight = { id: 'spot', type: 'highlight' as const, start: SECOND, duration: SECOND, transform: dressed.transform, opacity: 1, width: 300, height: 200, shape: 'ellipse' as const, softEdge: 10, color: '#404040', isSpotlight: true as const }
+    const project = projectOf([track('t1', [dressed, spotlight])])
+    const pasted = reopened(pasteClips(project, paste(project, ['a', 'spot'], 4 * SECOND)))
+    expect(clipOf(pasted, 'p1')).toMatchObject({ effects: dressed.effects, transitionIn: dressed.transitionIn })
+    expect(clipOf(pasted, 'p2')).toMatchObject({ type: 'highlight', start: 5 * SECOND, color: '#404040', isSpotlight: true })
+    expect(pasted.media).toEqual(project.media)
+  })
+
   it('keeps clips from different tracks on different tracks', () => {
     const project = sample()
     const pasted = pasteClips(project, paste(project, ['a', 'music'], 10 * SECOND))

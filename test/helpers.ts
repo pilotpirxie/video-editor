@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
-import { afterAll } from 'vitest'
+import { afterAll, expect } from 'vitest'
 import { createFfmpegRunner, writeAll, type FfmpegRunner } from '../src/media/ffmpeg.js'
-import { parseProject, type Project } from '../src/shared/project.js'
+import { parseProject, serializeProject, type CameraKeyframe, type Clip, type MediaRef, type Project, type Transform, type VideoClip } from '../src/shared/project.js'
 import { BARCODE_BITS, BARCODE_HEIGHT_FRACTION, barcodeSource, type VideoPattern } from './media/generate.js'
 
 export const ROOT = join(import.meta.dirname, '..')
@@ -225,6 +225,60 @@ export async function renderFrames(project: string, request: FrameRequest): Prom
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }
+}
+
+// The clips a test draws, one list per track with the bottom track first. Each clip names its media by its file in the generated test media.
+export function projectOfTracks(canvas: Size, tracks: readonly (readonly Clip[])[], camera?: CameraKeyframe[]): Project {
+  const media = new Map<string, MediaRef>()
+  for (const clip of tracks.flat()) {
+    if ('mediaId' in clip) media.set(clip.mediaId, { id: clip.mediaId, path: join(ROOT, 'test', 'media', 'generated', clip.mediaId), relativePath: '' })
+  }
+  const project: Project = {
+    version: 1,
+    canvas: { ...canvas, frameRate: { num: 30, den: 1 } },
+    media: [...media.values()],
+    tracks: tracks.map((clips, index) => ({ id: `track-${index}`, name: `Track ${index + 1}`, hidden: false, locked: false, muted: false, clips: [...clips] })),
+  }
+  if (camera !== undefined) project.camera = camera
+  return project
+}
+
+type Span = {
+  start: number
+  duration: number
+}
+
+export function imageOf(file: string, id: string, span: Span, transform: Transform, settings: Partial<Extract<Clip, { type: 'image' }>> = {}): Clip {
+  return { id, type: 'image', mediaId: file, ...span, transform, opacity: 1, ...settings }
+}
+
+export function videoOf(file: string, id: string, span: Span, transform: Transform, settings: Partial<VideoClip> = {}): Clip {
+  return { id, type: 'video', mediaId: file, ...span, sourceStart: 0, speedPercent: 100, volume: 1, transform, opacity: 1, ...settings }
+}
+
+// Frames of a project that a test made up; it is written into `directory` first, as the editor would save it.
+export function renderProject(directory: string, name: string, project: Project, request: FrameRequest): Promise<Picture[]> {
+  const path = join(directory, `${name}.json`)
+  writeFileSync(path, serializeProject(project))
+  return renderFrames(path, request)
+}
+
+export function pictureAt(pictures: readonly Picture[], index: number): Picture {
+  const picture = pictures[index]
+  if (picture === undefined) throw new Error(`Picture ${index} was not rendered`)
+  return picture
+}
+
+export type Rgb = {
+  red: number
+  green: number
+  blue: number
+}
+
+export function expectPixel(picture: Picture, x: number, y: number, expected: Rgb, tolerance = 1): void {
+  const actual = pixelAt(picture, x, y)
+  const furthest = Math.max(Math.abs(actual.red - expected.red), Math.abs(actual.green - expected.green), Math.abs(actual.blue - expected.blue))
+  expect(furthest, `pixel ${x},${y} is ${actual.red},${actual.green},${actual.blue}`).toBeLessThanOrEqual(tolerance)
 }
 
 function isSize(value: unknown): value is Size {

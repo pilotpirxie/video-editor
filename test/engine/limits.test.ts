@@ -5,6 +5,8 @@ import { HAS_SAMPLES, lastJsonLine, projectPath, runApp, scratchDirectory } from
 const scratch = scratchDirectory('limits')
 const MAX_PEAK_MEMORY_MB = 1500
 const KNOWN_4K_PEAK_MEMORY_MB = 2500
+// Four 1080p layers at half size are read at full size for the whole clip when the camera zooms to 200% on them. Measured at 1,512 MB, which is over the 1.5 GB of the specification; bringing it under is part of the memory audit.
+const KNOWN_ZOOMED_PEAK_MEMORY_MB = 1700
 
 async function peakMemoryOfExport(project: string, preset: string): Promise<number> {
   const startedAt = performance.now()
@@ -26,8 +28,13 @@ describe('memory while exporting', () => {
     expect(await peakMemoryOfExport('demo-four-layers', '1080p')).toBeLessThanOrEqual(MAX_PEAK_MEMORY_MB)
   })
 
-  it('a 4K export stays under what x264 is known to need', async () => {
-    expect(await peakMemoryOfExport('12-4k-canvas', '4k')).toBeLessThanOrEqual(KNOWN_4K_PEAK_MEMORY_MB)
+  it.skipIf(!HAS_SAMPLES)('the same four layers under camera zooms, with blur, spotlight, transitions and effects, stay under what they are known to need', async () => {
+    expect(await peakMemoryOfExport('demo-zoom-effects', '1080p')).toBeLessThanOrEqual(KNOWN_ZOOMED_PEAK_MEMORY_MB)
+  })
+
+  // The second project blurs, pixelates and highlights parts of the picture, which takes spare pictures of the size of the output.
+  it.each(['12-4k-canvas', '15-blur-highlight'])('a 4K export of %s stays under what x264 is known to need', async (project) => {
+    expect(await peakMemoryOfExport(project, '4k')).toBeLessThanOrEqual(KNOWN_4K_PEAK_MEMORY_MB)
   })
 
   it.fails('a 4K export stays under 1.5 GB', async () => {

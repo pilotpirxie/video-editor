@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { FRAME, SECOND, audioClip, track, videoClip } from '../../test/fixtures.js'
-import type { Clip } from '../shared/project.js'
+import type { CameraKeyframe, Clip } from '../shared/project.js'
 import {
+  CAMERA_LANE_HEIGHT,
   CLIP_INSET,
   RULER_HEIGHT,
+  TRACKS_TOP,
   TRACK_HEIGHT,
   clipBands,
   clipsInMarquee,
@@ -12,13 +14,17 @@ import {
   fadeHandles,
   fitZoom,
   hitClip,
+  hitZoom,
   rulerStep,
   timeToX,
   trackIndexAt,
   trackTop,
+  transitionBandAt,
+  transitionBands,
   visibleRange,
   xToTime,
   zoomAround,
+  zoomBars,
 } from './timelineView.js'
 
 const view = { pixelsPerSecond: 100, scrollX: 250, scrollY: 0 }
@@ -32,12 +38,12 @@ describe('time and pixels', () => {
   })
 
   it('shows the top layer in the top row', () => {
-    expect(trackTop(2, 3, view)).toBe(RULER_HEIGHT)
-    expect(trackTop(0, 3, view)).toBe(RULER_HEIGHT + 2 * TRACK_HEIGHT)
-    expect(trackIndexAt(RULER_HEIGHT + 5, 3, view)).toBe(2)
-    expect(trackIndexAt(RULER_HEIGHT + 2 * TRACK_HEIGHT + 5, 3, view)).toBe(0)
-    expect(trackIndexAt(RULER_HEIGHT + 3 * TRACK_HEIGHT + 5, 3, view)).toBe(-1)
-    expect(trackIndexAt(RULER_HEIGHT + 5, 3, { ...view, scrollY: TRACK_HEIGHT })).toBe(1)
+    expect(trackTop(2, 3, view)).toBe(TRACKS_TOP)
+    expect(trackTop(0, 3, view)).toBe(TRACKS_TOP + 2 * TRACK_HEIGHT)
+    expect(trackIndexAt(TRACKS_TOP + 5, 3, view)).toBe(2)
+    expect(trackIndexAt(TRACKS_TOP + 2 * TRACK_HEIGHT + 5, 3, view)).toBe(0)
+    expect(trackIndexAt(TRACKS_TOP + 3 * TRACK_HEIGHT + 5, 3, view)).toBe(-1)
+    expect(trackIndexAt(TRACKS_TOP + 5, 3, { ...view, scrollY: TRACK_HEIGHT })).toBe(1)
   })
 })
 
@@ -118,8 +124,8 @@ describe('hitClip and clipsInMarquee', () => {
     track('top', [videoClip('c', SECOND, SECOND)], { locked: true }),
   ]
   const inOrder = createClipIndex()
-  const bottomRow = RULER_HEIGHT + TRACK_HEIGHT + 10
-  const topRow = RULER_HEIGHT + 10
+  const bottomRow = TRACKS_TOP + TRACK_HEIGHT + 10
+  const topRow = TRACKS_TOP + 10
 
   it('finds the clip under the pointer and the edge it is near', () => {
     expect(hitClip(tracks, inOrder, flat, 100, bottomRow)).toMatchObject({ clip: { id: 'a' }, trackIndex: 0, edge: undefined })
@@ -131,7 +137,8 @@ describe('hitClip and clipsInMarquee', () => {
   it('finds nothing in a gap, on the ruler or below the tracks', () => {
     expect(hitClip(tracks, inOrder, flat, 250, bottomRow)).toBeUndefined()
     expect(hitClip(tracks, inOrder, flat, 100, 10)).toBeUndefined()
-    expect(hitClip(tracks, inOrder, flat, 100, RULER_HEIGHT + 2 * TRACK_HEIGHT + 10)).toBeUndefined()
+    expect(hitClip(tracks, inOrder, flat, 100, RULER_HEIGHT + CAMERA_LANE_HEIGHT / 2)).toBeUndefined()
+    expect(hitClip(tracks, inOrder, flat, 100, TRACKS_TOP + 2 * TRACK_HEIGHT + 10)).toBeUndefined()
   })
 
   it('offers no trim edges on a clip too narrow to grab in the middle', () => {
@@ -169,7 +176,7 @@ describe('clipBands', () => {
 
 describe('fade handles', () => {
   const flat = { pixelsPerSecond: 100, scrollX: 0, scrollY: 0 }
-  const rowTop = RULER_HEIGHT
+  const rowTop = TRACKS_TOP
   const pictureY = rowTop + CLIP_INSET + 7
   const soundY = rowTop + TRACK_HEIGHT - CLIP_INSET - 7
 
@@ -216,3 +223,65 @@ describe('fade handles', () => {
   })
 })
 
+
+describe('transition bands', () => {
+  const flat = { pixelsPerSecond: 100, scrollX: 0, scrollY: 0 }
+  const rowTop = TRACKS_TOP
+  const middle = rowTop + TRACK_HEIGHT / 2
+  const first = videoClip('first', SECOND, 3 * SECOND, { transitionIn: { type: 'zoom', duration: SECOND }, transitionOut: { type: 'push', duration: SECOND / 2 } })
+  const second = videoClip('second', 4 * SECOND, 3 * SECOND, { transitionIn: { type: 'crossDissolve', duration: SECOND } })
+
+  it('lie inside the clip at a free end, with the grip at the end that points into the clip', () => {
+    expect(transitionBands(first, undefined, undefined, flat, rowTop)).toEqual([
+      { edge: 'in', left: 100, right: 200, gripX: 200, gripY: middle, isOnCut: false },
+      { edge: 'out', left: 350, right: 400, gripX: 350, gripY: middle, isOnCut: false },
+    ])
+  })
+
+  it('lie across the cut when two clips touch, and replace the end transition of the earlier clip', () => {
+    expect(transitionBands(second, first, undefined, flat, rowTop)).toEqual([{ edge: 'in', left: 350, right: 450, gripX: 450, gripY: middle, isOnCut: true }])
+    expect(transitionBands(first, undefined, second, flat, rowTop).map((band) => band.edge)).toEqual(['in'])
+  })
+
+  it('are grabbed at their grip, which is apart from the fade handles in the corners', () => {
+    const bands = transitionBands(first, undefined, undefined, flat, rowTop)
+    expect(transitionBandAt(bands, 203, middle - 4)?.edge).toBe('in')
+    expect(transitionBandAt(bands, 349, middle)?.edge).toBe('out')
+    expect(transitionBandAt(bands, 200, rowTop + CLIP_INSET + 7)).toBeUndefined()
+    expect(transitionBands(audioClip('music', 0, SECOND), undefined, undefined, flat, rowTop)).toEqual([])
+  })
+})
+
+describe('camera lane', () => {
+  const flat = { pixelsPerSecond: 100, scrollX: 0, scrollY: 0 }
+
+  function zoom(time: number, duration: number): CameraKeyframe {
+    return { time, duration, easing: 'easeInOut', x: 960, y: 540, scale: 2 }
+  }
+
+  const camera = [zoom(2 * SECOND, SECOND), zoom(2.5 * SECOND, 3 * SECOND), zoom(6 * SECOND, 2 * SECOND)]
+
+  it('draws each zoom as a bar for its move, which never starts before the zoom before it', () => {
+    expect(zoomBars(camera)).toEqual([
+      { index: 0, from: SECOND, to: 2 * SECOND },
+      { index: 1, from: 2 * SECOND, to: 2.5 * SECOND },
+      { index: 2, from: 4 * SECOND, to: 6 * SECOND },
+    ])
+    expect(zoomBars([zoom(SECOND / 2, SECOND)])).toEqual([{ index: 0, from: 0, to: SECOND / 2 }])
+  })
+
+  it('finds the zoom under the pointer, and its start where the length of the move is changed', () => {
+    expect(hitZoom(camera, flat, 600)).toEqual({ index: 2, part: 'zoom' })
+    expect(hitZoom(camera, flat, 500)).toEqual({ index: 2, part: 'zoom' })
+    expect(hitZoom(camera, flat, 403)).toEqual({ index: 2, part: 'start' })
+    expect(hitZoom(camera, flat, 150)).toEqual({ index: 0, part: 'zoom' })
+    expect(hitZoom(camera, flat, 320)).toBeUndefined()
+    expect(hitZoom(camera, flat, 50)).toBeUndefined()
+  })
+
+  it('keeps the diamond of a zoom ahead of the start of the move that begins there', () => {
+    expect(hitZoom(camera, flat, 201)).toEqual({ index: 0, part: 'zoom' })
+    expect(hitZoom(camera, flat, 209)).toEqual({ index: 1, part: 'start' })
+    expect(hitZoom(camera, flat, 230)).toEqual({ index: 1, part: 'zoom' })
+  })
+})

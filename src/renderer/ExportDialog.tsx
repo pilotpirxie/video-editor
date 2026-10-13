@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactElement } from 'react'
-import { exportFrameRates, parseRememberedChoices, selectionRange, startingChoices, durationText, type ExportChoices, type RememberedChoices } from '../editor/export.js'
+import { exportFrameRates, parseRememberedChoices, selectionRange, startingChoices, durationText, timeLeft, type ExportChoices, type RememberedChoices } from '../editor/export.js'
 import { unlinkedMedia } from '../editor/place.js'
 import { EXPORT_PRESETS, EXPORT_QUALITIES, exportSize, isExportPreset, shortSideOf, type ExportPreset, type ExportQuality } from '../shared/exportPresets.js'
 import { logError } from '../shared/log.js'
@@ -165,6 +165,82 @@ export function ExportDialog(): ReactElement {
           </button>
         </div>
       </form>
+    </dialog>
+  )
+}
+
+// Holds the window from the first frame of an export until its result has been read: how far it is, the way to stop it, then how it ended.
+export function ExportProgressDialog(): ReactElement | undefined {
+  const session = useSession()
+  const status = useEditorState((state) => state.exportStatus)
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const phase = status?.phase
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (dialog === null) return
+    dialog.showModal()
+    // The focus starts on the dialog, not on Cancel: a key pressed out of habit must not stop a long export.
+    dialog.focus()
+  }, [])
+
+  // The result is read and then dismissed, so its button is where the focus goes.
+  useEffect(() => {
+    if (phase !== 'running') closeRef.current?.focus()
+  }, [phase])
+
+  if (status === undefined) return undefined
+  const left = status.phase === 'running' ? timeLeft(status.done, status.total, performance.now() - status.startedAt) : undefined
+  return (
+    <dialog
+      ref={dialogRef}
+      className="dialog"
+      tabIndex={-1}
+      // Escape closes the result. It cannot close a running export, however often it is pressed: that would leave the export without its Cancel.
+      closedby={status.phase === 'running' ? 'none' : 'closerequest'}
+      aria-labelledby="export-progress-title"
+      data-testid="export-progress-dialog"
+      onClose={() => session.store.setExportStatus(undefined)}
+    >
+      <div className="dialog-form">
+        <h2 className="dialog-title" id="export-progress-title" data-testid="export-title" aria-live="polite">
+          {status.phase === 'running' && `Exporting "${status.fileName}"`}
+          {status.phase === 'done' && `Exported "${status.fileName}"`}
+          {status.phase === 'failed' && `"${status.fileName}" was not exported`}
+        </h2>
+        {status.phase === 'running' && (
+          <>
+            <progress className="export-bar" value={status.done} max={status.total} aria-label="Frames exported" />
+            <p className="dialog-summary" data-testid="export-progress">
+              Frame {status.done.toLocaleString('en')} of {status.total.toLocaleString('en')}
+              {left !== undefined && ` · ${durationText(left)} left`}
+            </p>
+          </>
+        )}
+        {status.phase === 'failed' && (
+          <p className="dialog-summary" data-testid="export-problem">
+            {status.message}
+          </p>
+        )}
+        <div className="dialog-buttons">
+          {status.phase === 'running' && (
+            <button type="button" className="button" data-testid="export-cancel" onClick={session.cancelExport}>
+              Cancel
+            </button>
+          )}
+          {status.phase === 'done' && (
+            <button type="button" className="button" data-testid="show-export" onClick={() => window.host.showLastExport()}>
+              Show in Finder
+            </button>
+          )}
+          {status.phase !== 'running' && (
+            <button ref={closeRef} type="button" className="button primary" data-testid="export-done" onClick={() => dialogRef.current?.close()}>
+              {status.phase === 'done' ? 'Done' : 'Close'}
+            </button>
+          )}
+        </div>
+      </div>
     </dialog>
   )
 }

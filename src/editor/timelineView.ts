@@ -1,16 +1,23 @@
-import type { Clip, Track } from '../shared/project.js'
+import type { CameraKeyframe, Clip, Track } from '../shared/project.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
-import { endOf } from './clips.js'
+import { endOf, isVisual } from './clips.js'
 import type { Fade } from './properties.js'
+import { transitionSpans, type TransitionEdge } from './transitions.js'
 
 export const RULER_HEIGHT = 24
+// The lane under the ruler that shows the zooms of the camera. It does not scroll away with the tracks.
+export const CAMERA_LANE_HEIGHT = 22
+export const TRACKS_TOP = RULER_HEIGHT + CAMERA_LANE_HEIGHT
 export const TRACK_HEIGHT = 56
 export const CLIP_INSET = 2
 
 const PICTURE_SHARE = 0.6
 const FADE_HANDLE_INSET = 7
-const FADE_HANDLE_REACH = 8
+const HANDLE_REACH = 8
 const MIN_WIDTH_FOR_FADES = 4 * FADE_HANDLE_INSET
+const ZOOM_REACH = 6
+const ZOOM_START_REACH = 2 * ZOOM_REACH
+const MIN_WIDTH_FOR_ZOOM_START = 2 * ZOOM_START_REACH
 
 const MIN_LABEL_SPACING = 90
 const MAX_PIXELS_PER_FRAME = 20
@@ -48,12 +55,12 @@ export function xToTime(x: number, view: TimelineView): number {
 
 // The top row shows the top layer, so rows run opposite to the track list, whose first entry is the bottom layer.
 export function trackTop(trackIndex: number, trackCount: number, view: TimelineView): number {
-  return RULER_HEIGHT + (trackCount - 1 - trackIndex) * TRACK_HEIGHT - view.scrollY
+  return TRACKS_TOP + (trackCount - 1 - trackIndex) * TRACK_HEIGHT - view.scrollY
 }
 
 // May return an index one past the top track or below zero: rows where a drop creates a track.
 export function trackIndexAt(y: number, trackCount: number, view: TimelineView): number {
-  const row = Math.floor((y - RULER_HEIGHT + view.scrollY) / TRACK_HEIGHT)
+  const row = Math.floor((y - TRACKS_TOP + view.scrollY) / TRACK_HEIGHT)
   return trackCount - 1 - row
 }
 
@@ -143,7 +150,7 @@ export type ClipHit = {
 export function hitClip(tracks: readonly Track[], inOrder: ClipIndex, view: TimelineView, x: number, y: number): ClipHit | undefined {
   const trackIndex = trackIndexAt(y, tracks.length, view)
   const track = tracks[trackIndex]
-  if (track === undefined || y < RULER_HEIGHT) return undefined
+  if (track === undefined || y < TRACKS_TOP) return undefined
   const time = xToTime(x, view)
   const clips = inOrder(track)
   const range = visibleRange(clips, time, time + 1)
@@ -242,16 +249,86 @@ export function fadeHandles(clip: Clip, makesSound: boolean, view: TimelineView,
   return handles
 }
 
-// The handle under the pointer. Its reach is larger than the dot that is drawn, so it is easy to grab.
-export function fadeHandleAt(handles: readonly FadeHandle[], x: number, y: number): FadeHandle | undefined {
-  let nearest: FadeHandle | undefined
-  let nearestDistance = FADE_HANDLE_REACH
-  for (const handle of handles) {
+// Which of the handles is under the pointer, or -1. The reach is larger than the dot that is drawn, so a handle is easy to grab.
+function nearestInReach(handles: readonly { x: number; y: number }[], x: number, y: number): number {
+  let nearest = -1
+  let nearestDistance = HANDLE_REACH
+  for (const [index, handle] of handles.entries()) {
     const distance = Math.hypot(handle.x - x, handle.y - y)
     if (distance <= nearestDistance) {
-      nearest = handle
+      nearest = index
       nearestDistance = distance
     }
   }
   return nearest
+}
+
+export function fadeHandleAt(handles: readonly FadeHandle[], x: number, y: number): FadeHandle | undefined {
+  return handles[nearestInReach(handles, x, y)]
+}
+
+// Where a transition is drawn on its clip, and the grip that sets its length.
+export type TransitionBand = {
+  edge: TransitionEdge
+  left: number
+  right: number
+  // The end of the band that can be dragged, at half the height of the row: the end that lies inside the clip.
+  gripX: number
+  gripY: number
+  isOnCut: boolean
+}
+
+// `before` and `after` are the clips next to this one on its track, in time order.
+export function transitionBands(clip: Clip, before: Clip | undefined, after: Clip | undefined, view: TimelineView, rowTop: number): TransitionBand[] {
+  if (!isVisual(clip) || (clip.transitionIn === undefined && clip.transitionOut === undefined)) return []
+  const spans = transitionSpans(clip, before, after)
+  const gripY = rowTop + TRACK_HEIGHT / 2
+  const bands: TransitionBand[] = []
+  if (spans.in !== undefined) {
+    const right = timeToX(spans.in.to, view)
+    bands.push({ edge: 'in', left: timeToX(spans.in.from, view), right, gripX: right, gripY, isOnCut: spans.in.isOnCut })
+  }
+  if (spans.out !== undefined) {
+    const left = timeToX(spans.out.from, view)
+    bands.push({ edge: 'out', left, right: timeToX(spans.out.to, view), gripX: left, gripY, isOnCut: false })
+  }
+  return bands
+}
+
+export function transitionBandAt(bands: readonly TransitionBand[], x: number, y: number): TransitionBand | undefined {
+  const grips = bands.map((band) => ({ x: band.gripX, y: band.gripY }))
+  return bands[nearestInReach(grips, x, y)]
+}
+
+// A zoom on the camera lane: a bar for the time its move takes, ending where the zoom is reached.
+export type ZoomBar = {
+  index: number
+  from: number
+  to: number
+}
+
+// A move never starts before the zoom before it has been reached, whatever length it was given.
+export function zoomBars(camera: readonly CameraKeyframe[]): ZoomBar[] {
+  return camera.map((zoom, index) => ({ index, from: Math.max(zoom.time - zoom.duration, camera[index - 1]?.time ?? 0), to: zoom.time }))
+}
+
+export type ZoomHit = {
+  index: number
+  // The start of the bar changes how long the move takes; anywhere else on it moves the zoom in time.
+  part: 'zoom' | 'start'
+}
+
+export function hitZoom(camera: readonly CameraKeyframe[], view: TimelineView, x: number): ZoomHit | undefined {
+  const bars = zoomBars(camera)
+  // The diamonds come first. A move that starts at the zoom before it has its start on that zoom's diamond, and the diamond must stay easy to grab.
+  const reached = bars.findLast((bar) => Math.abs(x - timeToX(bar.to, view)) <= ZOOM_REACH)
+  if (reached !== undefined) return { index: reached.index, part: 'zoom' }
+  for (const bar of bars) {
+    const left = timeToX(bar.from, view)
+    const right = timeToX(bar.to, view)
+    if (x < left || x > right) continue
+    const isAtStart = right - left >= MIN_WIDTH_FOR_ZOOM_START && x <= left + ZOOM_START_REACH
+    return { index: bar.index, part: isAtStart ? 'start' : 'zoom' }
+  }
+  return undefined
 }

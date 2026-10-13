@@ -9,6 +9,10 @@ function sampleProject(): Project {
   return {
     version: 1,
     canvas: { width: 1920, height: 1080, frameRate: { num: 30, den: 1 } },
+    camera: [
+      { time: 2 * SECOND, duration: SECOND, easing: 'easeInOut', x: 480, y: 270, scale: 2 },
+      { time: 4 * SECOND, duration: SECOND / 2, easing: 'hold', x: 960, y: 540, scale: 1 },
+    ],
     media: [
       { id: 'm-video', path: '/media/clip.mp4', relativePath: 'media/clip.mp4' },
       { id: 'm-music', path: '', relativePath: 'media/music.mp3' },
@@ -33,9 +37,19 @@ function sampleProject(): Project {
             transform: { x: 960, y: 540, scaleX: 1, scaleY: 1, rotation: 0 },
             opacity: 1,
             fadeIn: SECOND,
+            transitionOut: { type: 'wipeLeft', duration: SECOND },
             volume: 0.8,
             volumeFadeOut: SECOND / 2,
             crop: { left: 10, top: 0, right: 0, bottom: 4.5 },
+            effects: [
+              { type: 'colorAdjust', brightness: 0.1, contrast: -0.2, saturation: 0.5 },
+              { type: 'chromaKey', color: '#00B140', tolerance: 0.4, softness: 0.1, spill: 0.5, isOff: true },
+              { type: 'roundedCorners', radius: 24 },
+              { type: 'border', width: 4, color: '#FFFFFF' },
+              { type: 'clipBlur', strength: 6 },
+              { type: 'dropShadow', offsetX: 8, offsetY: -8, softness: 12, color: '#000000', opacity: 0.5 },
+              { type: 'blackAndWhite', amount: 1 },
+            ],
             keyframes: {
               x: [
                 { time: 0, value: 100, easing: 'easeInOut' },
@@ -52,6 +66,7 @@ function sampleProject(): Project {
             duration: 5 * SECOND,
             transform: { x: 200, y: 200, scaleX: 0.5, scaleY: 0.5, rotation: 15 },
             opacity: 0.75,
+            transitionIn: { type: 'crossDissolve', duration: SECOND },
           },
         ],
       },
@@ -84,6 +99,45 @@ function sampleProject(): Project {
             sourceStart: 0,
             speedPercent: 100,
             volume: 0.5,
+          },
+        ],
+      },
+      {
+        id: 't3',
+        name: 'Marks',
+        hidden: false,
+        locked: false,
+        muted: false,
+        clips: [
+          {
+            id: 'c-blur',
+            type: 'blur',
+            start: 0,
+            duration: 2 * SECOND,
+            transform: { x: 400, y: 300, scaleX: 1, scaleY: 1, rotation: 0 },
+            opacity: 1,
+            width: 320,
+            height: 80,
+            shape: 'rectangle',
+            softEdge: 0,
+            strength: 20,
+            isPixelated: true,
+          },
+          {
+            id: 'c-highlight',
+            type: 'highlight',
+            start: 2 * SECOND,
+            duration: 2 * SECOND,
+            transform: { x: 960, y: 540, scaleX: 1, scaleY: 1, rotation: 0 },
+            opacity: 0.8,
+            fadeOut: SECOND / 2,
+            width: 300,
+            height: 300,
+            shape: 'ellipse',
+            softEdge: 12,
+            color: '#4D4D4D',
+            isSpotlight: true,
+            keyframes: { x: [{ time: 0, value: 900, easing: 'linear' }] },
           },
         ],
       },
@@ -142,9 +196,9 @@ describe('serializeProject', () => {
     for (const match of text.matchAll(/^ {2}"(?<key>\w+)":/gm)) {
       topLevelKeys.push(match.groups?.key ?? '')
     }
-    expect(topLevelKeys).toEqual(['canvas', 'media', 'tracks', 'version'])
+    expect(topLevelKeys).toEqual(['camera', 'canvas', 'media', 'tracks', 'version'])
     expect(text.indexOf('"den"')).toBeLessThan(text.indexOf('"num"'))
-    expect(text.indexOf('"align"')).toBeLessThan(text.indexOf('"color"'))
+    expect(text.indexOf('"family"')).toBeLessThan(text.indexOf('"size"'))
   })
 
   it('does not depend on the order keys were set in', () => {
@@ -197,6 +251,10 @@ describe('parseProject', () => {
     expect(messageFor(withValue(`tracks.0.clips.1.${key}`, true))).toContain(key)
   })
 
+  it('accepts a transition that is longer than its clip, as a trim or a split may leave it', () => {
+    expect(parseProject(withValue('tracks.0.clips.1.transitionIn.duration', 20 * SECOND)).ok).toBe(true)
+  })
+
   it('reports the project duration as the end of the last clip', () => {
     expect(projectDuration(sampleProject())).toBe(14 * SECOND)
   })
@@ -207,7 +265,7 @@ describe('parseProject', () => {
     ['a missing version', without('version'), /^version must be a whole number/],
     ['a newer format', withValue('version', 2), /saved by a newer version of the editor \(format 2\)/],
     ['a missing section', without('canvas'), /^project\.canvas is missing$/],
-    ['an unknown top-level key', withValue('camera', {}), /^project\.camera is not a known setting$/],
+    ['an unknown top-level key', withValue('subtitles', {}), /^project\.subtitles is not a known setting$/],
     ['a canvas that is too small', withValue('canvas.width', 100), /^canvas\.width must be at least 160$/],
     ['a canvas that is too large', withValue('canvas.height', 4320), /^canvas\.height must be at most 2160$/],
     ['an unsupported frame rate', withValue('canvas.frameRate', { num: 48, den: 1 }), /^canvas\.frameRate must be 24000\/1001/],
@@ -222,7 +280,7 @@ describe('parseProject', () => {
     ['a speed above 10000%', withValue('tracks.0.clips.0.speedPercent', 20_000), /speedPercent must be at most 10000$/],
     ['a fractional speed', withValue('tracks.0.clips.0.speedPercent', 150.5), /speedPercent must be a whole number$/],
     ['an unknown media reference', withValue('tracks.0.clips.0.mediaId', 'nope'), /mediaId "nope" is not in the media list$/],
-    ['an unknown clip type', withValue('tracks.0.clips.0.type', 'blur'), /^tracks\[0\]\.clips\[0\]\.type must be one of video, audio, image, text/],
+    ['an unknown clip type', withValue('tracks.0.clips.0.type', 'callout'), /^tracks\[0\]\.clips\[0\]\.type must be one of video, audio, image, text, blur, highlight/],
     ['an unknown clip setting', withValue('tracks.0.clips.1.volume', 1), /^tracks\[0\]\.clips\[1\]\.volume is not a known setting$/],
     ['overlapping clips', withValue('tracks.0.clips.1.start', 2 * SECOND), /^tracks\[0\]\.clips has overlapping clips "c-video" and "c-image"$/],
     ['an opacity above 1', withValue('tracks.0.clips.0.opacity', 1.5), /opacity must be at most 1$/],
@@ -238,6 +296,29 @@ describe('parseProject', () => {
     ['a property the clip type cannot animate', withValue('tracks.1.clips.0.keyframes', { volume: [] }), /^tracks\[1\]\.clips\[0\]\.keyframes\.volume is not a known setting$/],
     ['a bad colour', withValue('tracks.1.clips.0.color', 'white'), /color must look like #RRGGBB or #RRGGBBAA$/],
     ['a non-finite number', '{"version":1,"canvas":{"width":1e999,"height":1080,"frameRate":{"num":30,"den":1}},"media":[],"tracks":[]}', /^canvas\.width must be a number$/],
+    ['a camera without zooms', withValue('camera', []), /^camera must be a list with at least one zoom; leave it out instead$/],
+    ['zooms out of order', withValue('camera.1.time', 2 * SECOND), /^camera\[1\]\.time must be later than the zoom before it$/],
+    ['a zoom smaller than the canvas', withValue('camera.0.scale', 0.5), /^camera\[0\]\.scale must be at least 1$/],
+    ['a zoom larger than ten times', withValue('camera.0.scale', 11), /^camera\[0\]\.scale must be at most 10$/],
+    ['a zoom whose move has no length', withValue('camera.0.duration', 0), /^camera\[0\]\.duration must be a positive multiple of 100$/],
+    ['an unknown zoom setting', withValue('camera.0.rotation', 5), /^camera\[0\]\.rotation is not a known setting$/],
+    ['an unknown transition', withValue('tracks.0.clips.1.transitionIn.type', 'spin'), /transitionIn\.type must be one of crossDissolve, fadeBlack, fadeWhite, wipeLeft/],
+    ['a transition without a length', withValue('tracks.0.clips.1.transitionIn.duration', 0), /transitionIn\.duration must be a positive multiple of 100$/],
+    ['a transition on an audio clip', withValue('tracks.1.clips.1.transitionIn', { type: 'slide', duration: SECOND }), /^tracks\[1\]\.clips\[1\]\.transitionIn is not a known setting$/],
+    ['an empty list of effects', withValue('tracks.0.clips.0.effects', []), /effects must be a list with at least one effect; leave it out instead$/],
+    ['an unknown effect', withValue('tracks.0.clips.0.effects.0.type', 'sparkle'), /effects\[0\]\.type must be one of colorAdjust, blackAndWhite, dropShadow, border, roundedCorners, clipBlur, chromaKey$/],
+    ['the same effect twice', withValue('tracks.0.clips.0.effects.1', { type: 'colorAdjust', brightness: 0, contrast: 0, saturation: 0 }), /effects\[1\]\.type "colorAdjust" is used more than once on this clip$/],
+    ['an effect amount out of range', withValue('tracks.0.clips.0.effects.0.contrast', 1.5), /effects\[0\]\.contrast must be at most 1$/],
+    ['an effect setting of another effect', withValue('tracks.0.clips.0.effects.2.width', 3), /effects\[2\]\.width is not a known setting$/],
+    ['an effect colour with transparency', withValue('tracks.0.clips.0.effects.3.color', '#FFFFFF80'), /effects\[3\]\.color must look like #RRGGBB$/],
+    ['an effect that is switched on in words', withValue('tracks.0.clips.0.effects.0.isOff', false), /effects\[0\]\.isOff must be true or left out$/],
+    ['a border without a width', withValue('tracks.0.clips.0.effects.3.width', 0), /effects\[3\]\.width must be greater than 0$/],
+    ['effects on a blur clip', withValue('tracks.2.clips.0.effects', [{ type: 'blackAndWhite', amount: 1 }]), /^tracks\[2\]\.clips\[0\]\.effects is not a known setting$/],
+    ['a blur without strength', withValue('tracks.2.clips.0.strength', 0), /^tracks\[2\]\.clips\[0\]\.strength must be greater than 0$/],
+    ['a shape that is neither', withValue('tracks.2.clips.0.shape', 'star'), /^tracks\[2\]\.clips\[0\]\.shape must be one of rectangle, ellipse$/],
+    ['a shape without a size', without('tracks.2.clips.1.width'), /^tracks\[2\]\.clips\[1\]\.width is missing$/],
+    ['a negative soft edge', withValue('tracks.2.clips.1.softEdge', -1), /^tracks\[2\]\.clips\[1\]\.softEdge must be at least 0$/],
+    ['a highlight colour with transparency', withValue('tracks.2.clips.1.color', '#FFE94D80'), /^tracks\[2\]\.clips\[1\]\.color must look like #RRGGBB$/],
   ])('rejects %s with a readable message', (_label, text, expected) => {
     expect(messageFor(text)).toMatch(expected)
   })

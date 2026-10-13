@@ -1,19 +1,25 @@
-import { endOf, makesSound } from '../editor/clips.js'
+import { endOf, hasMedia, makesSound } from '../editor/clips.js'
+import { takesEffects } from '../editor/effects.js'
 import {
+  CAMERA_LANE_HEIGHT,
   CLIP_INSET,
   RULER_HEIGHT,
+  TRACKS_TOP,
   TRACK_HEIGHT,
   clipBands,
   rulerStep,
   timeToX,
   trackTop,
+  transitionBands,
   visibleRange,
   xToTime,
+  zoomBars,
   type Band,
   type ClipIndex,
   type FadeHandle,
   type Marquee,
   type TimelineView,
+  type TransitionBand,
 } from '../editor/timelineView.js'
 import type { MediaStates } from '../engine/resolve.js'
 import type { Size } from '../shared/exportPresets.js'
@@ -34,9 +40,24 @@ const SELECTION_WIDTH = 2
 const TICK_HEIGHT = 6
 const PLAYHEAD_HEAD = 5
 const INT8_PEAK = 127
+// A waveform is a row of bars: enough to see where the sound is loud, and a third of the drawing that a line per pixel takes.
+const WAVEFORM_BAR_STEP = 3
+const WAVEFORM_BAR_WIDTH = 2
 const RAMP_SHADE_OPACITY = 0.6
 const HANDLE_RADIUS = 4.5
 const HANDLE_LABEL_GAP = 9
+const LANDING_FILL_OPACITY = 0.25
+const LANDING_DASH = [6, 4]
+const CHIP_PADDING = 3
+const CHIP_HEIGHT = 16
+const EFFECTS_MARK = 'fx'
+const TRANSITION_SHADE_OPACITY = 0.45
+const MIN_WIDTH_FOR_TRANSITION_LINES = 6
+const GRIP_WIDTH = 4
+const GRIP_HEIGHT = 16
+const ZOOM_BAR_HEIGHT = 6
+const ZOOM_BAR_OPACITY = 0.5
+const ZOOM_DIAMOND = 5
 
 export type TimelineColors = {
   background: string
@@ -53,6 +74,7 @@ export type TimelineColors = {
   audio: string
   image: string
   annotation: string
+  blur: string
 }
 
 export type TimelineFonts = {
@@ -66,12 +88,31 @@ export type ContentScene = {
   preparation: Readonly<Record<string, Preparation>>
   mediaNames: ReadonlyMap<string, string>
   selection: ReadonlySet<string>
+  selectedZoom: number | undefined
   view: TimelineView
   size: Size
   colors: TimelineColors
   fonts: TimelineFonts
   inOrder: ClipIndex
   thumbnails: Thumbnails
+}
+
+// What something held over the timeline would change if it were released now: the end of a clip a transition would go to, or the clip an effect would go to.
+export type DropTarget = {
+  left: number
+  right: number
+  top: number
+}
+
+// Where media held over the timeline would land if it were released now.
+export type Landing = {
+  start: number
+  end: number
+  trackIndex: number
+  // Top of the row the clip will be on, once a track made for it has moved the rows.
+  top: number
+  isNewTrack: boolean
+  guide: number | undefined
 }
 
 export type OverlayScene = {
@@ -82,9 +123,14 @@ export type OverlayScene = {
   playhead: number
   guide: number | undefined
   marquee: Marquee | undefined
+  landing: Landing | undefined
+  dropTarget: DropTarget | undefined
   // Fade handles of the clip under the pointer or being changed, and which of them is held.
   handles: readonly FadeHandle[]
   heldHandle: FadeHandle | undefined
+  // The grips of the transitions of that clip, and the one that is held.
+  grips: readonly TransitionBand[]
+  heldGrip: TransitionBand | undefined
   heldLabel: string
 }
 
@@ -107,6 +153,7 @@ export function readColors(element: Element): TimelineColors {
     audio: token('--clip-audio'),
     image: token('--clip-image'),
     annotation: token('--clip-annotation'),
+    blur: token('--clip-blur'),
   }
 }
 
@@ -133,16 +180,19 @@ function clipColor(clip: Clip, scene: ContentScene): string {
   if (clip.type === 'video') return videoOf(clip, scene.mediaStates)?.isAnimatedImage === true ? colors.image : colors.video
   if (clip.type === 'audio') return colors.audio
   if (clip.type === 'image') return colors.image
+  if (clip.type === 'blur') return colors.blur
   return colors.annotation
 }
 
 function clipName(clip: Clip, mediaNames: ReadonlyMap<string, string>): string {
   if (clip.type === 'text') return clip.text.split('\n')[0] ?? ''
+  if (clip.type === 'blur') return clip.isPixelated === true ? 'Pixelate' : 'Blur'
+  if (clip.type === 'highlight') return clip.isSpotlight === true ? 'Spotlight' : 'Highlight'
   return mediaNames.get(clip.mediaId) ?? clip.mediaId
 }
 
 function badgeOf(clip: Clip, scene: ContentScene): { text: string; color: string } | undefined {
-  if (clip.type === 'text') return undefined
+  if (!hasMedia(clip)) return undefined
   const state = scene.mediaStates[clip.mediaId]
   if (state === undefined || ('error' in state && state.isMissing)) return { text: 'media missing', color: scene.colors.danger }
   if ('error' in state) return { text: 'media error', color: scene.colors.danger }
@@ -162,10 +212,10 @@ function drawThumbnail(context: CanvasRenderingContext2D, clip: VideoClip, media
   if (picture !== undefined) context.drawImage(picture, left, band.top, pictureWidth, band.height)
 }
 
-function levelFor(levels: readonly WaveformLevel[], samplesPerPixel: number): WaveformLevel | undefined {
+function levelFor(levels: readonly WaveformLevel[], samplesPerBar: number): WaveformLevel | undefined {
   let chosen = levels[0]
   for (const level of levels) {
-    if (level.samplesPerBucket <= samplesPerPixel) chosen = level
+    if (level.samplesPerBucket <= samplesPerBar) chosen = level
   }
   return chosen
 }
@@ -174,28 +224,33 @@ function drawWaveform(context: CanvasRenderingContext2D, clip: AudioClip | Video
   const levels = scene.thumbnails.waveform(clip.mediaId)
   if (levels === undefined) return
   const { view } = scene
-  const firstX = Math.max(0, Math.ceil(timeToX(clip.start, view)))
-  const lastX = Math.min(scene.size.width, timeToX(endOf(clip), view))
-  const samplesPerPixel = (sourceTime(clip, xToTime(1, view)) - sourceTime(clip, xToTime(0, view))) / TICKS_PER_SAMPLE
-  const level = levelFor(levels, samplesPerPixel)
+  const ticksPerBar = (WAVEFORM_BAR_STEP / view.pixelsPerSecond) * TICKS_PER_SECOND
+  const samplesPerBar = (sourceTime(clip, ticksPerBar) - sourceTime(clip, 0)) / TICKS_PER_SAMPLE
+  const level = levelFor(levels, samplesPerBar)
   if (level === undefined) return
 
+  // The bars stand on a grid that starts with the timeline and scrolls with it. Each bar then always shows the same stretch of sound; on a grid of the window, every scroll would change them all.
+  const scrolled = Math.round(view.scrollX)
+  const firstBar = Math.ceil(Math.max(scrolled, timeToX(clip.start, view) + scrolled) / WAVEFORM_BAR_STEP)
+  const endX = Math.min(scene.size.width, timeToX(endOf(clip), view))
   const middle = top + height / 2
   const reach = (height / 2 - 1) / INT8_PEAK
   const bucketCount = level.peaks.length / 2
-  context.fillStyle = scene.colors.textPrimary
-  for (let x = firstX; x < lastX; x++) {
-    const firstSample = sourceTime(clip, xToTime(x, view)) / TICKS_PER_SAMPLE
+  const bars = new Path2D()
+  for (let bar = firstBar; bar * WAVEFORM_BAR_STEP - scrolled < endX; bar++) {
+    const firstSample = sourceTime(clip, bar * ticksPerBar) / TICKS_PER_SAMPLE
     const firstBucket = Math.max(0, Math.floor(firstSample / level.samplesPerBucket))
-    const endBucket = Math.min(bucketCount, Math.max(firstBucket + 1, Math.ceil((firstSample + samplesPerPixel) / level.samplesPerBucket)))
+    const endBucket = Math.min(bucketCount, Math.max(firstBucket + 1, Math.ceil((firstSample + samplesPerBar) / level.samplesPerBucket)))
     let lowest = 0
     let highest = 0
     for (let bucket = firstBucket; bucket < endBucket; bucket++) {
       lowest = Math.min(lowest, level.peaks[bucket * 2] ?? 0)
       highest = Math.max(highest, level.peaks[bucket * 2 + 1] ?? 0)
     }
-    context.fillRect(x, middle - highest * reach, 1, Math.max(1, (highest - lowest) * reach))
+    bars.rect(bar * WAVEFORM_BAR_STEP - scrolled, middle - highest * reach, WAVEFORM_BAR_WIDTH, Math.max(1, (highest - lowest) * reach))
   }
+  context.fillStyle = scene.colors.textPrimary
+  context.fill(bars)
 }
 
 function drawLabel(context: CanvasRenderingContext2D, clip: Clip, scene: ContentScene, left: number, top: number, width: number): void {
@@ -222,8 +277,36 @@ function drawLabel(context: CanvasRenderingContext2D, clip: Clip, scene: Content
     context.fillText(badge.text, textX + LABEL_PADDING / 2, top + LABEL_HEIGHT / 2)
     textX += badgeWidth + LABEL_PADDING / 2
   }
+  // A clip with effects says so before its name; what the effects are is in Properties.
+  if (takesEffects(clip) && clip.effects !== undefined) {
+    context.fillStyle = colors.textSecondary
+    context.fillText(EFFECTS_MARK, textX, top + LABEL_HEIGHT / 2)
+    textX += context.measureText(EFFECTS_MARK).width + LABEL_PADDING
+  }
   context.fillStyle = colors.textPrimary
   context.fillText(clipName(clip, scene.mediaNames), textX, top + LABEL_HEIGHT / 2, Math.max(0, left + width - textX - LABEL_PADDING))
+}
+
+// A transition is a shaded band with a cross from corner to corner. On a cut it lies over the ends of both clips.
+function drawTransitionBand(context: CanvasRenderingContext2D, band: TransitionBand, rowTop: number, scene: ContentScene): void {
+  const top = rowTop + CLIP_INSET
+  const height = TRACK_HEIGHT - 2 * CLIP_INSET
+  const width = band.right - band.left
+  const opacity = context.globalAlpha
+  context.globalAlpha = opacity * TRANSITION_SHADE_OPACITY
+  context.fillStyle = scene.colors.background
+  context.fillRect(band.left, top, width, height)
+  context.globalAlpha = opacity
+  if (width < MIN_WIDTH_FOR_TRANSITION_LINES) return
+
+  context.beginPath()
+  context.moveTo(band.left, top)
+  context.lineTo(band.right, top + height)
+  context.moveTo(band.left, top + height)
+  context.lineTo(band.right, top)
+  context.strokeStyle = scene.colors.textPrimary
+  context.lineWidth = 1
+  context.stroke()
 }
 
 // Shades what a fade takes away: a wedge that is widest at the clip edge and gone where the fade ends.
@@ -287,7 +370,7 @@ function drawClipDetails(context: CanvasRenderingContext2D, shape: ClipShape, sc
     const media = clip.type === 'video' ? videoOf(clip, scene.mediaStates) : undefined
     if (clip.type === 'video' && media !== undefined && picture !== undefined) drawThumbnail(context, clip, media, scene, left, picture)
     // Media that is missing has no waveform to ask for.
-    const state = clip.type === 'text' ? undefined : scene.mediaStates[clip.mediaId]
+    const state = hasMedia(clip) ? scene.mediaStates[clip.mediaId] : undefined
     const isAvailable = state !== undefined && 'info' in state
     if ((clip.type === 'audio' || clip.type === 'video') && sound !== undefined && isAvailable) drawWaveform(context, clip, scene, sound.top, sound.height)
   }
@@ -322,9 +405,13 @@ function drawTrack(context: CanvasRenderingContext2D, track: Track, scene: Conte
   const shapes: ClipShape[] = []
   const bodies = new Map<string, Path2D>()
   const soundBands = new Path2D()
-  for (let index = range.first; index < range.end; index++) {
+  // The clip just past the right edge is looked at too: a transition on its cut reaches back into view.
+  const bands: TransitionBand[] = []
+  for (let index = range.first; index <= range.end; index++) {
     const clip = clips[index]
     if (clip === undefined) continue
+    bands.push(...transitionBands(clip, clips[index - 1], clips[index + 1], view, rowTop))
+    if (index === range.end) continue
     const shape = shapeOf(clip, scene, rowTop)
     shapes.push(shape)
     const color = clipColor(clip, scene)
@@ -346,7 +433,35 @@ function drawTrack(context: CanvasRenderingContext2D, track: Track, scene: Conte
     drawClipDetails(context, shape, scene)
     if (scene.selection.has(shape.clip.id)) drawSelection(context, shape, scene)
   }
+  for (const band of bands) drawTransitionBand(context, band, rowTop, scene)
   context.globalAlpha = 1
+}
+
+// The zooms of the camera, in a lane of their own under the ruler: a bar for the time each move takes, ending in a diamond where the zoom is reached.
+function drawCameraLane(context: CanvasRenderingContext2D, scene: ContentScene): void {
+  const { view, size, colors, project } = scene
+  context.fillStyle = colors.panel
+  context.fillRect(0, RULER_HEIGHT, size.width, CAMERA_LANE_HEIGHT)
+  context.fillStyle = colors.divider
+  context.fillRect(0, TRACKS_TOP - 1, size.width, 1)
+
+  const middle = RULER_HEIGHT + CAMERA_LANE_HEIGHT / 2
+  for (const bar of zoomBars(project.camera ?? [])) {
+    const left = timeToX(bar.from, view)
+    const right = timeToX(bar.to, view)
+    if (right < -ZOOM_DIAMOND || left > size.width) continue
+    context.fillStyle = bar.index === scene.selectedZoom ? colors.primary : colors.textSecondary
+    context.globalAlpha = ZOOM_BAR_OPACITY
+    context.fillRect(left, middle - ZOOM_BAR_HEIGHT / 2, right - left, ZOOM_BAR_HEIGHT)
+    context.globalAlpha = 1
+    context.beginPath()
+    context.moveTo(right, middle - ZOOM_DIAMOND)
+    context.lineTo(right + ZOOM_DIAMOND, middle)
+    context.lineTo(right, middle + ZOOM_DIAMOND)
+    context.lineTo(right - ZOOM_DIAMOND, middle)
+    context.closePath()
+    context.fill()
+  }
 }
 
 function drawRuler(context: CanvasRenderingContext2D, scene: ContentScene): void {
@@ -376,15 +491,57 @@ export function drawContent(context: CanvasRenderingContext2D, scene: ContentSce
   context.fillRect(0, 0, size.width, size.height)
   for (const [trackIndex, track] of project.tracks.entries()) {
     const rowTop = trackTop(trackIndex, project.tracks.length, view)
-    const isVisible = rowTop + TRACK_HEIGHT > RULER_HEIGHT && rowTop < size.height
+    const isVisible = rowTop + TRACK_HEIGHT > TRACKS_TOP && rowTop < size.height
     if (isVisible) drawTrack(context, track, scene, rowTop)
   }
   drawRuler(context, scene)
+  drawCameraLane(context, scene)
+}
+
+// A few words on a patch of the background, readable over whatever is drawn beneath.
+function drawChip(context: CanvasRenderingContext2D, scene: OverlayScene, text: string, left: number, middle: number): void {
+  context.font = scene.fonts.small
+  context.textBaseline = 'middle'
+  const width = context.measureText(text).width
+  context.fillStyle = scene.colors.background
+  context.fillRect(left - CHIP_PADDING, middle - CHIP_HEIGHT / 2, width + 2 * CHIP_PADDING, CHIP_HEIGHT)
+  context.fillStyle = scene.colors.textPrimary
+  context.fillText(text, left, middle)
+}
+
+// The outline of the clip that a drop would make. A dashed one says the drop makes a track of its own.
+function drawLanding(context: CanvasRenderingContext2D, scene: OverlayScene, landing: Landing): void {
+  const { view, colors } = scene
+  const left = timeToX(landing.start, view)
+  const width = Math.max(SELECTION_WIDTH, timeToX(landing.end, view) - left)
+  const top = landing.top + CLIP_INSET
+  const height = TRACK_HEIGHT - 2 * CLIP_INSET
+  context.beginPath()
+  context.roundRect(left + 1, top + 1, width - 2, height - 2, Math.min(CLIP_RADIUS, width / 2))
+  context.fillStyle = colors.primary
+  context.globalAlpha = LANDING_FILL_OPACITY
+  context.fill()
+  context.globalAlpha = 1
+  context.strokeStyle = colors.primary
+  context.lineWidth = SELECTION_WIDTH
+  context.setLineDash(landing.isNewTrack ? LANDING_DASH : [])
+  context.stroke()
+  context.setLineDash([])
+  if (landing.isNewTrack) drawChip(context, scene, 'New track', Math.max(left, 0) + LABEL_PADDING + CHIP_PADDING, top + height / 2)
 }
 
 export function drawOverlay(context: CanvasRenderingContext2D, scene: OverlayScene): void {
   const { view, size, colors, marquee } = scene
   context.clearRect(0, 0, size.width, size.height)
+
+  if (scene.landing !== undefined) drawLanding(context, scene, scene.landing)
+
+  if (scene.dropTarget !== undefined) {
+    const { left, right, top } = scene.dropTarget
+    context.strokeStyle = colors.primary
+    context.lineWidth = SELECTION_WIDTH
+    context.strokeRect(left + 1, top + CLIP_INSET + 1, Math.max(SELECTION_WIDTH, right - left - 2), TRACK_HEIGHT - 2 * CLIP_INSET - 2)
+  }
 
   if (marquee !== undefined) {
     const width = marquee.right - marquee.left
@@ -412,18 +569,30 @@ export function drawOverlay(context: CanvasRenderingContext2D, scene: OverlaySce
     context.lineWidth = 1
     context.stroke()
   }
+  for (const grip of scene.grips) {
+    context.beginPath()
+    context.roundRect(grip.gripX - GRIP_WIDTH / 2, grip.gripY - GRIP_HEIGHT / 2, GRIP_WIDTH, GRIP_HEIGHT, GRIP_WIDTH / 2)
+    context.fillStyle = grip === scene.heldGrip ? colors.primary : colors.textPrimary
+    context.fill()
+    context.strokeStyle = colors.background
+    context.lineWidth = 1
+    context.stroke()
+  }
+  if (scene.heldGrip !== undefined) {
+    // The length is written on the side of the grip that points into the transition.
+    context.font = scene.fonts.small
+    const labelWidth = context.measureText(scene.heldLabel).width
+    const { gripX, gripY, edge } = scene.heldGrip
+    drawChip(context, scene, scene.heldLabel, edge === 'in' ? gripX - HANDLE_LABEL_GAP - labelWidth : gripX + HANDLE_LABEL_GAP, gripY)
+  }
+
   if (scene.heldHandle !== undefined) {
     const { x, y } = scene.heldHandle
     context.font = scene.fonts.small
-    context.textBaseline = 'middle'
     const labelWidth = context.measureText(scene.heldLabel).width
     // The length is written on the side of the handle that points into the clip, where there is room for it.
     const isFadeIn = scene.heldHandle.fade === 'fadeIn' || scene.heldHandle.fade === 'volumeFadeIn'
-    const labelX = isFadeIn ? x + HANDLE_LABEL_GAP : x - HANDLE_LABEL_GAP - labelWidth
-    context.fillStyle = colors.background
-    context.fillRect(labelX - 3, y - 8, labelWidth + 6, 16)
-    context.fillStyle = colors.textPrimary
-    context.fillText(scene.heldLabel, labelX, y)
+    drawChip(context, scene, scene.heldLabel, isFadeIn ? x + HANDLE_LABEL_GAP : x - HANDLE_LABEL_GAP - labelWidth, y)
   }
 
   const playheadX = Math.round(timeToX(scene.playhead, view))

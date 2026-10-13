@@ -687,12 +687,20 @@ async function openEditor(state: AppState, projectPath: string | undefined, isUn
   showDocument(state, editor)
 
   // A document with unsaved changes closes only after the page has asked the user; a crashed page cannot ask.
+  // While it exports, the window stays, as one with a sheet does: its dialog is the only place to follow the export or to stop it.
   window.on('close', (event) => {
-    const canCloseNow = editor.isCloseConfirmed || !editor.documentState.isDirty || window.webContents.isCrashed()
+    const isExporting = state.exportWindow !== undefined
+    const hasNothingToAsk = editor.isCloseConfirmed || !editor.documentState.isDirty
+    const canCloseNow = window.webContents.isCrashed() || (!isExporting && hasNothingToAsk)
     if (canCloseNow) return
     event.preventDefault()
-    send(window, { type: 'menu', action: 'close' })
+    // A close that is refused calls off the quit it may have been part of.
+    state.isQuitting = false
+    if (!isExporting) send(window, { type: 'menu', action: 'close' })
+    else if (!isUnattended) shell.beep()
   })
+  // For the same reason an export does not outlive the page that started it: a page that loads again has forgotten it.
+  window.webContents.on('did-start-loading', () => state.exportWindow?.destroy())
   window.on('closed', () => {
     state.editor = undefined
     if (!editor.documentState.isDirty || editor.isCloseConfirmed) void discardRecovery(editor.document.recoveryPath)

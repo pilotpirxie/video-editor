@@ -1,10 +1,13 @@
+import { moveZoom, setZoom } from '../editor/camera.js'
 import { endOf, locateClip, makesSound, nextTrackName, type NewTrack } from '../editor/clips.js'
+import { addEffect, takesEffects } from '../editor/effects.js'
 import { moveClips, trimClip } from '../editor/moveTrim.js'
-import { dropMedia, mediaFileName } from '../editor/place.js'
+import { dropMedia, mediaFileName, type MediaDrop } from '../editor/place.js'
 import { setFade, type Fade } from '../editor/properties.js'
 import { snapDelta, timelineTargets } from '../editor/snapping.js'
 import {
   RULER_HEIGHT,
+  TRACKS_TOP,
   TRACK_HEIGHT,
   clipsInMarquee,
   createClipIndex,
@@ -12,22 +15,29 @@ import {
   fadeHandles,
   fitZoom,
   hitClip,
+  hitZoom,
   timeToX,
   trackIndexAt,
   trackTop,
+  transitionBandAt,
+  transitionBands,
   xToTime,
   zoomAround,
+  zoomBars,
   type ClipHit,
   type FadeHandle,
   type Marquee,
   type TimelineView,
+  type TransitionBand,
+  type ZoomHit,
   type ZoomLimits,
 } from '../editor/timelineView.js'
+import { DEFAULT_TRANSITION, setTransition, transitionTargetAt, type TransitionTarget } from '../editor/transitions.js'
 import type { Size } from '../shared/exportPresets.js'
-import { projectDuration, type MediaRef, type Project } from '../shared/project.js'
+import { projectDuration, type Clip, type EffectType, type MediaRef, type Project, type Track, type TransitionType } from '../shared/project.js'
 import { TICKS_PER_SECOND, frameDuration } from '../shared/time.js'
 import type { Session } from './document.js'
-import { drawContent, drawOverlay, readColors, readFonts } from './timelineDraw.js'
+import { drawContent, drawOverlay, readColors, readFonts, type DropTarget, type Landing } from './timelineDraw.js'
 
 const DRAG_THRESHOLD = 3
 const SNAP_RANGE_PIXELS = 8
@@ -37,26 +47,55 @@ const SCROLL_PAST_END = 0.5
 const START_PIXELS_PER_SECOND = 100
 const FADE_LABEL_DECIMALS = 2
 
-export const MEDIA_DROP_EVENT = 'media-drop'
+// What can be dragged out of the tabs of the library.
+export type LibraryItem =
+  | { kind: 'media'; mediaId: string }
+  | { kind: 'effect'; effect: EffectType }
+  | { kind: 'transition'; transition: TransitionType }
 
-export type MediaDropDetail = {
-  mediaId: string
+// What an item says while it is dragged out of the library: 'library-drag' on every move and 'library-drop' on release, both to whatever is under the pointer.
+export const LIBRARY_DRAG_EVENT = 'library-drag'
+export const LIBRARY_DROP_EVENT = 'library-drop'
+
+export type LibraryDragDetail = {
+  item: LibraryItem
   clientX: number
   clientY: number
 }
+
+// The clip and the track that stand in for the real ones while the landing of held media is worked out.
+const HELD_CLIP_ID = 'held-media'
+const HELD_TRACK: NewTrack = { id: 'held-media-track', name: '' }
 
 type Point = {
   x: number
   y: number
 }
 
+// What something held over the timeline would change, and where that is shown.
+type HeldDrop =
+  | { kind: 'transition'; target: TransitionTarget; type: TransitionType; shown: DropTarget }
+  | { kind: 'effect'; clipIds: readonly string[]; effect: EffectType; shown: DropTarget }
+
 type Gesture =
   | { kind: 'scrub' }
   | { kind: 'press'; hit: ClipHit; at: Point; wasSelected: boolean; hasModifier: boolean }
-  | { kind: 'move'; clipIds: readonly string[]; grabTime: number; edges: number[]; targets: number[]; trackCount: number; newTrack: NewTrack }
+  | { kind: 'zoom-press'; hit: ZoomHit; at: Point; time: number }
+  | { kind: 'zoom'; hit: ZoomHit; edgeTime: number; zoomTime: number; grabOffset: number; targets: number[] }
+  | { kind: 'transition'; target: TransitionTarget; type: TransitionType; anchor: number; isOnCut: boolean; grabOffset: number; targets: number[] }
+  | { kind: 'move'; clipIds: readonly string[]; grabTime: number; grabbedRow: number; edges: number[]; targets: number[]; trackCount: number; newTrack: NewTrack }
   | { kind: 'trim'; clipId: string; edge: 'start' | 'end'; edgeTime: number; targets: number[] }
   | { kind: 'fade'; clipId: string; clipIds: readonly string[]; fade: Fade; clipStart: number; clipEnd: number; endTime: number; grabOffset: number; targets: number[] }
   | { kind: 'marquee'; from: Point; kept: readonly string[] }
+
+// The handles drawn over one clip: its fade handles and the grips of its transitions, and the one of them that is held.
+type ShownHandles = {
+  handles: FadeHandle[]
+  heldHandle: FadeHandle | undefined
+  grips: TransitionBand[]
+  heldGrip: TransitionBand | undefined
+  heldLabel: string
+}
 
 export type TimelineElements = {
   host: HTMLElement
@@ -84,8 +123,8 @@ function contextOf(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   return context
 }
 
-export function isMediaDrop(event: Event): event is CustomEvent<MediaDropDetail> {
-  return event instanceof CustomEvent && event.type === MEDIA_DROP_EVENT
+export function isLibraryDrag(event: Event): event is CustomEvent<LibraryDragDetail> {
+  return event instanceof CustomEvent && (event.type === LIBRARY_DRAG_EVENT || event.type === LIBRARY_DROP_EVENT)
 }
 
 // Draws the timeline and turns pointer input into commands. React only supplies the elements; nothing here re-renders components while dragging, scrolling or playing.
@@ -102,6 +141,10 @@ export function createTimelineController(elements: TimelineElements, session: Se
   let size: Size = { width: 0, height: 0 }
   let gesture: Gesture | undefined
   let guide: number | undefined
+  // Where something dragged out of the library is right now, while it is over the timeline.
+  let held: LibraryDragDetail | undefined
+  let shownLanding = ''
+  let shownDrop = ''
   let marquee: Marquee | undefined
   let isContentStale = true
   let isOverlayStale = true
@@ -125,7 +168,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   function withScrollInRange(next: TimelineView, project: Project): TimelineView {
     const contentWidth = (projectDuration(project) / TICKS_PER_SECOND) * next.pixelsPerSecond
     const maxScrollX = Math.max(0, contentWidth - size.width * SCROLL_PAST_END)
-    const maxScrollY = Math.max(0, RULER_HEIGHT + project.tracks.length * TRACK_HEIGHT - size.height)
+    const maxScrollY = Math.max(0, TRACKS_TOP + project.tracks.length * TRACK_HEIGHT - size.height)
     return {
       pixelsPerSecond: next.pixelsPerSecond,
       scrollX: Math.min(Math.max(0, next.scrollX), maxScrollX),
@@ -155,6 +198,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
         preparation: session.preparation(),
         mediaNames,
         selection: selected,
+        selectedZoom: state.selectedZoom,
         view,
         size,
         colors,
@@ -169,7 +213,90 @@ export function createTimelineController(elements: TimelineElements, session: Se
     }
     if (isOverlayStale) {
       isOverlayStale = false
-      drawOverlay(overlayContext, { view, size, colors, fonts, playhead: transport.position().time, guide, marquee, ...shownHandles() })
+      const landing = landingOfHeld()
+      const drop = held === undefined ? undefined : heldDropAt(held)
+      drawOverlay(overlayContext, { view, size, colors, fonts, playhead: transport.position().time, guide: landing?.guide ?? guide, marquee, landing, dropTarget: drop?.shown, ...shownHandles() })
+      // Tests read these to learn where the held media would land, and what a held transition or effect would go to.
+      const landingText = landing === undefined ? '' : JSON.stringify(landing)
+      if (landingText !== shownLanding) host.dataset.landing = landingText
+      shownLanding = landingText
+      const dropText = drop === undefined ? '' : JSON.stringify(drop)
+      if (dropText !== shownDrop) host.dataset.drop = dropText
+      shownDrop = dropText
+    }
+  }
+
+  function pointIn(detail: LibraryDragDetail): Point {
+    const box = overlay.getBoundingClientRect()
+    return { x: detail.clientX - box.left, y: detail.clientY - box.top }
+  }
+
+  // What a transition or an effect held at a point of the window would go to. It is worked out on the project as it is and nothing is changed.
+  function heldDropAt(detail: LibraryDragDetail): HeldDrop | undefined {
+    const { item } = detail
+    if (item.kind === 'media') return undefined
+    const { project, selection } = store.getState()
+    const point = pointIn(detail)
+    const trackCount = project.tracks.length
+    if (item.kind === 'effect') {
+      const hit = hitClip(project.tracks, inOrder, view, point.x, point.y)
+      if (hit === undefined || hit.track.locked || !takesEffects(hit.clip)) return undefined
+      // An effect dropped on one of several selected clips goes to all of them.
+      const clipIds = selection.includes(hit.clip.id) ? selection : [hit.clip.id]
+      const shown = { left: timeToX(hit.clip.start, view), right: timeToX(endOf(hit.clip), view), top: trackTop(hit.trackIndex, trackCount, view) }
+      return { kind: 'effect', clipIds, effect: item.effect, shown }
+    }
+
+    const trackIndex = trackIndexAt(point.y, trackCount, view)
+    const target = point.y < TRACKS_TOP ? undefined : transitionTargetAt(project, trackIndex, xToTime(point.x, view))
+    if (target === undefined) return undefined
+    // The band is drawn where the transition would lie, which the rule that sets it knows best.
+    const after = setTransition(project, target, { type: item.transition, duration: DEFAULT_TRANSITION }, frameTicks())
+    const located = locateClip(after, target.clipId)
+    if (after === project || located === undefined) return undefined
+    const rowTop = trackTop(located.trackIndex, trackCount, view)
+    const band = bandsOf(located.track, located.clip, rowTop).find((candidate) => candidate.edge === target.edge)
+    if (band === undefined) return undefined
+    return { kind: 'transition', target, type: item.transition, shown: { left: band.left, right: band.right, top: rowTop } }
+  }
+
+  // The drop that releasing media at a point of the window makes: its start on whole frames, snapped, on the row under the pointer.
+  function mediaDropAt(detail: LibraryDragDetail, clipId: string, newTrack: NewTrack): { drop: MediaDrop; guide: number | undefined } | undefined {
+    if (detail.item.kind !== 'media') return undefined
+    const { mediaId } = detail.item
+    const { project, mediaStates, isSnapping: snaps } = store.getState()
+    const reference = project.media.find((candidate) => candidate.id === mediaId)
+    const state = mediaStates[mediaId]
+    if (reference === undefined || state === undefined || 'error' in state) return undefined
+
+    const point = pointIn(detail)
+    let start = Math.max(0, wholeFrames(xToTime(point.x, view)))
+    let snapGuide: number | undefined
+    if (snaps) {
+      const snap = snapDelta([start], 0, timelineTargets(project, new Set(), transport.position().time), snapRange())
+      start += snap.delta
+      snapGuide = snap.guide
+    }
+    const trackIndex = Math.max(0, trackIndexAt(Math.max(point.y, TRACKS_TOP), project.tracks.length, view))
+    return { drop: { reference, info: state.info, clipId, start, trackIndex, newTrack }, guide: snapGuide }
+  }
+
+  // Where the held media would land. It is worked out on the project as it is at this moment and nothing is changed, so hovering is not an edit.
+  function landingOfHeld(): Landing | undefined {
+    const dropped = held === undefined ? undefined : mediaDropAt(held, HELD_CLIP_ID, HELD_TRACK)
+    if (dropped === undefined) return undefined
+    const { project } = store.getState()
+    const after = dropMedia(project, dropped.drop)
+    const landed = locateClip(after, HELD_CLIP_ID)
+    if (landed === undefined) return undefined
+    return {
+      start: landed.clip.start,
+      end: endOf(landed.clip),
+      trackIndex: landed.trackIndex,
+      // A new track directly above a row appears where that row was, so the outline is drawn where the clip will be once the rows have moved.
+      top: trackTop(landed.trackIndex, after.tracks.length, view),
+      isNewTrack: after.tracks.length > project.tracks.length,
+      guide: dropped.guide,
     }
   }
 
@@ -184,22 +311,45 @@ export function createTimelineController(elements: TimelineElements, session: Se
     return clip.type === 'audio' || clip.type === 'video' ? (clip[fade] ?? 0) : 0
   }
 
-  // The fade handles are shown for one clip at a time: the one being changed, or else the one under the pointer.
-  function shownHandles(): { handles: FadeHandle[]; heldHandle: FadeHandle | undefined; heldLabel: string } {
-    const none = { handles: [], heldHandle: undefined, heldLabel: '' }
+  function secondsLabel(ticks: number): string {
+    return `${(ticks / TICKS_PER_SECOND).toFixed(FADE_LABEL_DECIMALS)} s`
+  }
+
+  // The fade handles and the transition grips are shown for one clip at a time: the one being changed, or else the one under the pointer.
+  function shownHandles(): ShownHandles {
+    const none: ShownHandles = { handles: [], heldHandle: undefined, grips: [], heldGrip: undefined, heldLabel: '' }
     const fading = gesture?.kind === 'fade' ? gesture : undefined
-    const clipId = fading?.clipId ?? hoveredClipId
-    if (clipId === undefined || (gesture !== undefined && fading === undefined)) return none
+    const changing = gesture?.kind === 'transition' ? gesture : undefined
+    const clipId = fading?.clipId ?? changing?.target.clipId ?? hoveredClipId
+    if (clipId === undefined || (gesture !== undefined && fading === undefined && changing === undefined)) return none
     const { project, mediaStates } = store.getState()
     const shown = locateClip(project, clipId)
     if (shown === undefined || shown.track.locked) return none
 
     const rowTop = trackTop(shown.trackIndex, project.tracks.length, view)
     const handles = fadeHandles(shown.clip, makesSound(shown.clip, mediaStates), view, rowTop)
-    if (fading === undefined) return { handles, heldHandle: undefined, heldLabel: '' }
+    const grips = bandsOf(shown.track, shown.clip, rowTop)
+    if (changing !== undefined) {
+      const heldGrip = grips.find((grip) => grip.edge === changing.target.edge)
+      const span = heldGrip === undefined ? 0 : xToTime(heldGrip.right, view) - xToTime(heldGrip.left, view)
+      return { ...none, grips, heldGrip, heldLabel: secondsLabel(span) }
+    }
+    if (fading === undefined) return { ...none, handles, grips }
     const heldHandle = handles.find((handle) => handle.fade === fading.fade)
-    const seconds = fadeLength(fading.fade, clipId) / TICKS_PER_SECOND
-    return { handles, heldHandle, heldLabel: `${seconds.toFixed(FADE_LABEL_DECIMALS)} s` }
+    return { ...none, handles, heldHandle, heldLabel: secondsLabel(fadeLength(fading.fade, clipId)) }
+  }
+
+  // The transitions of a clip as they are drawn; where they lie depends on the clips next to it.
+  function bandsOf(track: Track, clip: Clip, rowTop: number): TransitionBand[] {
+    if (clip.type === 'audio' || (clip.transitionIn === undefined && clip.transitionOut === undefined)) return []
+    const ordered = inOrder(track)
+    const index = ordered.indexOf(clip)
+    return transitionBands(clip, ordered[index - 1], ordered[index + 1], view, rowTop)
+  }
+
+  function transitionGripOn(hit: ClipHit, point: Point): TransitionBand | undefined {
+    const rowTop = trackTop(hit.trackIndex, store.getState().project.tracks.length, view)
+    return transitionBandAt(bandsOf(hit.track, hit.clip, rowTop), point.x, point.y)
   }
 
   function fadeHandleOn(hit: ClipHit, point: Point): FadeHandle | undefined {
@@ -286,6 +436,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
       kind: 'move',
       clipIds: selection,
       grabTime: xToTime(press.at.x, view),
+      grabbedRow: locateClip(project, clip.id)?.trackIndex ?? press.hit.trackIndex,
       edges,
       targets: timelineTargets(project, moving, playhead),
       trackCount: project.tracks.length,
@@ -325,6 +476,70 @@ export function createTimelineController(elements: TimelineElements, session: Se
     }
   }
 
+  // The grip of a transition sets its length. On a cut the transition is centred, so it grows by twice what the grip moves.
+  function startTransition(hit: ClipHit, grip: TransitionBand, at: Point): Gesture | undefined {
+    const { project, selection } = store.getState()
+    const { clip } = hit
+    if (clip.type === 'audio') return undefined
+    const transition = grip.edge === 'in' ? clip.transitionIn : clip.transitionOut
+    if (transition === undefined) return undefined
+    if (!selection.includes(clip.id)) store.select([clip.id])
+    store.begin('Change Transition')
+    return {
+      kind: 'transition',
+      target: { clipId: clip.id, edge: grip.edge },
+      type: transition.type,
+      anchor: grip.edge === 'in' ? clip.start : endOf(clip),
+      isOnCut: grip.isOnCut,
+      grabOffset: at.x - grip.gripX,
+      targets: timelineTargets(project, new Set(), transport.position().time),
+    }
+  }
+
+  function updateTransition(changing: Extract<Gesture, { kind: 'transition' }>, event: PointerEvent, point: Point): void {
+    const time = snappedTime(point.x - changing.grabOffset, changing.anchor, changing.targets, event)
+    const reach = changing.target.edge === 'in' ? time - changing.anchor : changing.anchor - time
+    const duration = changing.isOnCut ? 2 * reach : reach
+    const { target, type } = changing
+    const ticks = frameTicks()
+    store.update((project) => setTransition(project, target, { type, duration }, ticks))
+  }
+
+  // A zoom is dragged to another time by its bar or its diamond; the start of its bar sets how long its move takes.
+  function startZoom(press: Extract<Gesture, { kind: 'zoom-press' }>): Gesture | undefined {
+    const { project } = store.getState()
+    const bar = zoomBars(project.camera ?? [])[press.hit.index]
+    if (bar === undefined) return undefined
+    const edgeTime = press.hit.part === 'start' ? bar.from : bar.to
+    store.begin(press.hit.part === 'start' ? 'Change Zoom Length' : 'Move Zoom')
+    return {
+      kind: 'zoom',
+      hit: press.hit,
+      edgeTime,
+      zoomTime: bar.to,
+      grabOffset: press.at.x - timeToX(edgeTime, view),
+      targets: timelineTargets(project, new Set(), transport.position().time),
+    }
+  }
+
+  function updateZoom(zooming: Extract<Gesture, { kind: 'zoom' }>, event: PointerEvent, point: Point): void {
+    const time = snappedTime(point.x - zooming.grabOffset, zooming.edgeTime, zooming.targets, event)
+    const { hit, zoomTime } = zooming
+    const ticks = frameTicks()
+    if (hit.part === 'start') store.update((project) => setZoom(project, hit.index, { duration: zoomTime - time }, ticks))
+    else store.update((project) => moveZoom(project, hit.index, time, ticks))
+  }
+
+  // The time under the pointer in whole frames, pulled to a snap target when one is in range of where the dragged edge would land.
+  function snappedTime(x: number, edgeTime: number, targets: readonly number[], event: PointerEvent): number {
+    const time = wholeFrames(xToTime(x, view))
+    guide = undefined
+    if (!isSnapping(event)) return time
+    const snap = snapDelta([edgeTime], time - edgeTime, targets, snapRange())
+    guide = snap.guide
+    return edgeTime + snap.delta
+  }
+
   function updateFade(fading: Extract<Gesture, { kind: 'fade' }>, event: PointerEvent, point: Point): void {
     let time = wholeFrames(xToTime(point.x - fading.grabOffset, view))
     guide = undefined
@@ -348,9 +563,9 @@ export function createTimelineController(elements: TimelineElements, session: Se
     }
     // Rows are counted in the project as it was when the drag began: a track created by this very drag must not shift the rows under the pointer.
     const row = Math.min(move.trackCount, Math.max(0, trackIndexAt(point.y, move.trackCount, view)))
-    const targetTrackIndex = move.clipIds.length === 1 ? row : undefined
+    const trackShift = row - move.grabbedRow
     const { clipIds, newTrack } = move
-    store.update((project) => moveClips(project, { clipIds, deltaTime, targetTrackIndex, isRipple: event.shiftKey, newTrack }))
+    store.update((project) => moveClips(project, { clipIds, deltaTime, trackShift, isRipple: event.shiftKey, newTrack }))
   }
 
   function updateTrim(trim: Extract<Gesture, { kind: 'trim' }>, event: PointerEvent, point: Point): void {
@@ -400,6 +615,14 @@ export function createTimelineController(elements: TimelineElements, session: Se
       seekTo(at)
       return
     }
+    if (at.y < TRACKS_TOP) {
+      const camera = store.getState().project.camera ?? []
+      const zoomHit = hitZoom(camera, view, at.x)
+      store.selectZoom(zoomHit?.index)
+      const zoom = zoomHit === undefined ? undefined : camera[zoomHit.index]
+      if (zoomHit !== undefined && zoom !== undefined) gesture = { kind: 'zoom-press', hit: zoomHit, at, time: zoom.time }
+      return
+    }
     const hasModifier = event.shiftKey || event.metaKey
     const { project, selection } = store.getState()
     const hit = hitClip(project.tracks, inOrder, view, at.x, at.y)
@@ -407,6 +630,13 @@ export function createTimelineController(elements: TimelineElements, session: Se
       const kept = hasModifier ? selection : []
       if (!hasModifier) store.select([])
       gesture = { kind: 'marquee', from: at, kept }
+      return
+    }
+    const grip = transitionGripOn(hit, at)
+    const changing = grip === undefined ? undefined : startTransition(hit, grip, at)
+    if (changing !== undefined) {
+      gesture = changing
+      invalidate('overlay')
       return
     }
     const handle = fadeHandleOn(hit, at)
@@ -424,10 +654,14 @@ export function createTimelineController(elements: TimelineElements, session: Se
   // The cursor says what a press here would do, and the clip under it shows its fade handles.
   function showHover(point: Point | undefined): void {
     const { project } = store.getState()
-    const found = point === undefined || point.y < RULER_HEIGHT ? undefined : hitClip(project.tracks, inOrder, view, point.x, point.y)
+    const found = point === undefined || point.y < TRACKS_TOP ? undefined : hitClip(project.tracks, inOrder, view, point.x, point.y)
     const hit = found === undefined || found.track.locked ? undefined : found
+    const isOnLane = point !== undefined && point.y >= RULER_HEIGHT && point.y < TRACKS_TOP
+    const zoomHit = isOnLane ? hitZoom(project.camera ?? [], view, point.x) : undefined
     let cursor = 'default'
-    if (hit !== undefined && point !== undefined && fadeHandleOn(hit, point) !== undefined) cursor = 'grab'
+    if (zoomHit !== undefined) cursor = zoomHit.part === 'start' ? 'ew-resize' : 'grab'
+    else if (hit !== undefined && point !== undefined && transitionGripOn(hit, point) !== undefined) cursor = 'ew-resize'
+    else if (hit !== undefined && point !== undefined && fadeHandleOn(hit, point) !== undefined) cursor = 'grab'
     else if (hit?.edge !== undefined) cursor = 'ew-resize'
     overlay.style.cursor = cursor
 
@@ -448,8 +682,17 @@ export function createTimelineController(elements: TimelineElements, session: Se
       if (distance < DRAG_THRESHOLD || !canDrag) return
       gesture = startDrag(gesture)
     }
+    if (gesture.kind === 'zoom-press') {
+      if (Math.abs(point.x - gesture.at.x) < DRAG_THRESHOLD) return
+      gesture = startZoom(gesture)
+      if (gesture === undefined) return
+    }
     if (gesture.kind === 'scrub') {
       seekTo(point)
+    } else if (gesture.kind === 'zoom') {
+      updateZoom(gesture, event, point)
+    } else if (gesture.kind === 'transition') {
+      updateTransition(gesture, event, point)
     } else if (gesture.kind === 'move') {
       updateMove(gesture, event, point)
     } else if (gesture.kind === 'trim') {
@@ -468,9 +711,14 @@ export function createTimelineController(elements: TimelineElements, session: Se
     guide = undefined
     marquee = undefined
     if (ended === undefined) return
-    if (ended.kind === 'move' || ended.kind === 'trim' || ended.kind === 'fade') {
+    if (ended.kind === 'move' || ended.kind === 'trim' || ended.kind === 'fade' || ended.kind === 'zoom' || ended.kind === 'transition') {
       if (finish === 'commit') store.commit()
       else store.cancel()
+    }
+    // A click on a zoom goes to its time, so the canvas shows the view that is selected.
+    if (ended.kind === 'zoom-press' && finish === 'commit') {
+      transport.pause()
+      transport.seek(ended.time)
     }
     // A plain click on one clip of a larger selection narrows the selection to that clip.
     const isPlainClick = ended.kind === 'press' && ended.wasSelected && !ended.hasModifier && finish === 'commit'
@@ -497,25 +745,35 @@ export function createTimelineController(elements: TimelineElements, session: Se
     openMenu({ x: event.clientX, y: event.clientY })
   }
 
-  function onMediaDrop(event: Event): void {
-    if (!isMediaDrop(event)) return
-    const { project, mediaStates, isSnapping: snaps } = store.getState()
-    const { mediaId } = event.detail
-    const reference = project.media.find((candidate) => candidate.id === mediaId)
-    const state = mediaStates[mediaId]
-    if (reference === undefined || state === undefined || 'error' in state) return
+  // Heard for every move of a drag out of the library, wherever in the window it is: only one over the timeline has something to show.
+  function onLibraryDrag(event: Event): void {
+    if (!isLibraryDrag(event)) return
+    const isOverTimeline = event.target instanceof Node && host.contains(event.target)
+    if (!isOverTimeline && held === undefined) return
+    held = isOverTimeline ? event.detail : undefined
+    invalidate('overlay')
+  }
 
-    const box = overlay.getBoundingClientRect()
-    const point = { x: event.detail.clientX - box.left, y: event.detail.clientY - box.top }
-    let start = Math.max(0, wholeFrames(xToTime(point.x, view)))
-    if (snaps) {
-      const snap = snapDelta([start], 0, timelineTargets(project, new Set(), transport.position().time), snapRange())
-      start += snap.delta
+  function onLibraryDrop(event: Event): void {
+    if (!isLibraryDrag(event)) return
+    held = undefined
+    invalidate('overlay')
+    const drop = heldDropAt(event.detail)
+    if (drop?.kind === 'transition') {
+      const ticks = frameTicks()
+      store.apply('Add Transition', (current) => setTransition(current, drop.target, { type: drop.type, duration: DEFAULT_TRANSITION }, ticks))
+      store.select([drop.target.clipId])
+      return
+    }
+    if (drop?.kind === 'effect') {
+      store.apply('Add Effect', (current) => addEffect(current, drop.clipIds, drop.effect))
+      store.select(drop.clipIds)
+      return
     }
     const clipId = crypto.randomUUID()
-    const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
-    const trackIndex = Math.max(0, trackIndexAt(Math.max(point.y, RULER_HEIGHT), project.tracks.length, view))
-    store.apply('Add Clip', (current) => dropMedia(current, { reference, info: state.info, clipId, start, trackIndex, newTrack }))
+    const dropped = mediaDropAt(event.detail, clipId, { id: crypto.randomUUID(), name: nextTrackName(store.getState().project) })
+    if (dropped === undefined) return
+    store.apply('Add Clip', (current) => dropMedia(current, dropped.drop))
     store.select([clipId])
   }
 
@@ -543,6 +801,12 @@ export function createTimelineController(elements: TimelineElements, session: Se
 
   const cancel = (): void => endGesture('cancel')
   const commit = (): void => endGesture('commit')
+  // A window that is left in the middle of a drag may never hear how the drag ended.
+  function onWindowBlur(): void {
+    held = undefined
+    endGesture('cancel')
+    invalidate('overlay')
+  }
   const leave = (): void => showHover(undefined)
   const resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(host)
@@ -560,9 +824,10 @@ export function createTimelineController(elements: TimelineElements, session: Se
   overlay.addEventListener('pointerleave', leave)
   overlay.addEventListener('wheel', onWheel, { passive: false })
   overlay.addEventListener('contextmenu', onContextMenu)
-  host.addEventListener(MEDIA_DROP_EVENT, onMediaDrop)
+  host.addEventListener(LIBRARY_DROP_EVENT, onLibraryDrop)
+  window.addEventListener(LIBRARY_DRAG_EVENT, onLibraryDrag)
   window.addEventListener('keydown', onKeyDown)
-  window.addEventListener('blur', cancel)
+  window.addEventListener('blur', onWindowBlur)
 
   return {
     zoomBy(factor) {
@@ -582,9 +847,10 @@ export function createTimelineController(elements: TimelineElements, session: Se
       overlay.removeEventListener('pointerleave', leave)
       overlay.removeEventListener('wheel', onWheel)
       overlay.removeEventListener('contextmenu', onContextMenu)
-      host.removeEventListener(MEDIA_DROP_EVENT, onMediaDrop)
+      host.removeEventListener(LIBRARY_DROP_EVENT, onLibraryDrop)
+      window.removeEventListener(LIBRARY_DRAG_EVENT, onLibraryDrag)
       window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('blur', cancel)
+      window.removeEventListener('blur', onWindowBlur)
     },
   }
 }

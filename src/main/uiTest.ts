@@ -89,7 +89,6 @@ async function testEdit(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('track-1')} !== null`, 'a second track for the clip dropped on occupied space')
   await dragMedia(driver, 'image.jpg', await driver.timelinePoint(3 * second, 0, 2))
   await driver.untilUndoLabel('Undo Add Clip')
-  await driver.until(`${selector('used-image.jpg')} !== null`, 'the image to be marked as used')
   const placed = await driver.savedProject('placed.json')
 
   // The image clip is dragged a little short of the end of the video clip and snaps onto it.

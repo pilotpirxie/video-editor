@@ -4,7 +4,7 @@ import { TRACK_HEIGHT } from '../editor/timelineView.js'
 import { addTrack, deleteTrack, moveTrack, renameTrack, setTrackFlag, type TrackFlag } from '../editor/tracks.js'
 import type { Track } from '../shared/project.js'
 import { useEditorState, useSession } from './context.js'
-import { IconButton, type IconName } from './icons.js'
+import { Icon, IconButton, type IconName } from './icons.js'
 import { PopupMenu, type MenuItem } from './Menu.js'
 import { createTimelineController, type TimelineController } from './timelineController.js'
 import { isKeyForTheEditor } from './transport.js'
@@ -172,6 +172,10 @@ export function Timeline(): ReactElement {
       </div>
       <div className="timeline-body">
         <div className="track-headers-viewport">
+          <div className="camera-lane-header">
+            <Icon name="zoom" />
+            Camera
+          </div>
           <div className="track-headers" ref={headersRef}>
             {tracks.map((track, index) => <TrackHeader key={track.id} track={track} index={index} />).reverse()}
           </div>

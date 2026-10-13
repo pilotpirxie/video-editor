@@ -5,8 +5,13 @@ list are in [AGENTS.md](AGENTS.md). What exists so far is ticket group 1, the co
 engine, and group 2, the basic editor: the window with its layout, undo, project files,
 autosave, media import and relink, the timeline with linked clips and fade handles, canvas
 handles, text clips, animated images, the properties panel, the transport with Camtasia-like
-keys, and the export dialog. The end-to-end run of T-47 with a new user on the 4 GB reference
-Mac is still to be done by hand.
+keys, and the export dialog. From group 3 there are the camera zoom (T-48, T-49), transitions
+(T-50), blur and pixelate clips (T-51), highlight and spotlight clips (T-52) and effects
+(T-53), each with the controls to add and change it: the zoom tool and the camera lane, the
+Effects and Transitions tabs, and the buttons of the Annotations tab. The end-to-end run of
+T-47 with a new user on the 4 GB reference Mac is still to be done by hand.
+
+To see the new features at once, open `test/projects/demo-zoom-effects.json` with File, Open.
 
 ## Commands
 
@@ -20,8 +25,8 @@ FFprobe binaries into `vendor/ffmpeg` and checks their SHA-256.
 | `npm run typecheck` | Strict TypeScript check of everything |
 | `npm run lint` | Unused files, exports and dependencies (knip) and duplicated code (jscpd); any finding fails |
 | `npm run test:unit` | Unit tests (time, project format, resolver, mixer, FFmpeg jobs, probe, decoding, caches, editing commands) |
-| `npm run test:engine` | Builds the app and tests it for real: golden images, preview/export parity, MP4 export, the harness window, split and hit-test parity |
-| `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents, crash recovery, transport keys, fades, text, animated images, relink, the export dialog, the controls (drop-down lists, groups, media tiles, wide sidebars, timeline zoom-out), and the responsiveness budgets on a 4,096-clip project |
+| `npm run test:engine` | Builds the app and tests it for real: golden images, preview/export parity, MP4 export, the harness window, split and hit-test parity, and pixels worked out by hand for the camera zoom, every transition, blur, pixelate, highlight, spotlight and each effect |
+| `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents, crash recovery, transport keys, fades, text, animated images, relink, the export dialog and how it holds the window, arranging by dragging (landing outline, group moves across tracks, crop fields), annotations, effects, transitions and zoom-and-pan (added, changed and removed by mouse and in Properties), the controls (drop-down lists, groups, media tiles, wide sidebars, timeline zoom-out), and the responsiveness budgets on a 4,096-clip project |
 | `npm test` | All of the above |
 | `npm run test:acceptance` | Builds a ten-minute tutorial through the editor window and exports it at 1080p; takes several minutes and is not part of `npm test` |
 | `npm run dist` | Builds `release/Video Editor-<version>-arm64.dmg` |
@@ -72,6 +77,14 @@ the focus; `src/editor/shortcuts.ts` is the table.
 A project is one JSON file: a canvas, a media list and tracks of clips, bottom track first.
 Times are whole ticks of 1/24,000,000 s; positions on the timeline are multiples of 100 ticks.
 `test/projects` holds the reference projects; `src/shared/project.ts` is the format.
+
+Besides video, audio, image and text clips there are `blur` clips (blur or pixelate what is
+beneath, inside a rectangle or ellipse) and `highlight` clips (tint what is beneath like a
+marker pen, or as a spotlight dim everything outside the shape). A clip with a picture can
+carry `effects`, applied first to last; any visual clip can carry `transitionIn` and
+`transitionOut`, and the one at the start of a clip that touches the clip before it is the
+transition on their cut. `camera` at the top level lists the zooms: each is the view reached at
+its time after a move of its `duration`. Lengths in all of these are canvas pixels.
 
 ## Where things are
 

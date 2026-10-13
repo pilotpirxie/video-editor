@@ -1,10 +1,14 @@
+import { deleteZoom, setViewAt, zoomIndexAt } from '../editor/camera.js'
 import { copyClips, deleteClips, pasteClips, rippleDelete, spanEnd, type Clipboard } from '../editor/clipboard.js'
-import { nearestEdit, nextTrackName, unlockedClipIds, type NewTrack } from '../editor/clips.js'
+import { isVisual, locateClip, nearestEdit, nextTrackName, unlockedClipIds, type NewTrack } from '../editor/clips.js'
+import { addEffect, takesEffects } from '../editor/effects.js'
 import { clipsToSeparate, separateAudio } from '../editor/separate.js'
+import { addShape, type ShapeKind } from '../editor/shapes.js'
 import { clipsToSplit, splitClips } from '../editor/split.js'
 import { addText } from '../editor/text.js'
 import { addTrack } from '../editor/tracks.js'
-import { projectDuration } from '../shared/project.js'
+import { DEFAULT_TRANSITION, setTransition } from '../editor/transitions.js'
+import { projectDuration, type Clip, type EffectType, type TransitionType } from '../shared/project.js'
 import { frameAt, frameDuration } from '../shared/time.js'
 import type { EditorStore } from './store.js'
 import type { TimelineLimits, Transport } from './transport.js'
@@ -16,6 +20,11 @@ export type Actions = {
   canSeparateAudio(): boolean
   separateAudio(): void
   addText(): void
+  addShape(kind: ShapeKind): void
+  // Both go to the selected clips, and say so in the top bar when no selected clip can take them.
+  addEffect(type: EffectType): void
+  addTransition(type: TransitionType): void
+  zoomToFull(): void
   stepFrames(count: number): void
   jumpTo(end: 'start' | 'end'): void
   jumpToEdit(direction: 1 | -1): void
@@ -69,8 +78,28 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     return true
   }
 
+  // The selected clips that pass a test, in the order they were selected.
+  function selectedClipIds(isWanted: (clip: Clip) => boolean): string[] {
+    const { project, selection } = store.getState()
+    return selection.filter((clipId) => {
+      const located = locateClip(project, clipId)
+      return located !== undefined && !located.track.locked && isWanted(located.clip)
+    })
+  }
+
+  // Where something new is added: the frame the playhead is on, with playback stopped so that it is seen at once.
+  function playheadFrame(): number {
+    const { frameTicks } = limits()
+    transport.pause()
+    return frameAt(transport.position().time, frameTicks) * frameTicks
+  }
+
   function deleteSelection(isRipple: boolean): void {
-    const { selection } = store.getState()
+    const { selection, selectedZoom } = store.getState()
+    if (selectedZoom !== undefined) {
+      store.apply('Delete Zoom', (project) => deleteZoom(project, selectedZoom))
+      return
+    }
     if (selection.length === 0) return
     const noun = plural(selection.length, 'Clip')
     if (isRipple) {
@@ -100,14 +129,48 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     // The new title opens for typing at once, so the usual next step needs no extra click.
     addText() {
       const { project } = store.getState()
-      const { frameTicks } = limits()
       const clipId = crypto.randomUUID()
       const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
-      const start = frameAt(transport.position().time, frameTicks) * frameTicks
-      transport.pause()
+      const start = playheadFrame()
       store.apply('Add Text', (current) => addText(current, { clipId, start, newTrack }))
       store.select([clipId])
       store.editText(clipId)
+    },
+    addShape(kind) {
+      const { project } = store.getState()
+      const clipId = crypto.randomUUID()
+      const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
+      const start = playheadFrame()
+      const label = `Add ${kind.charAt(0).toUpperCase()}${kind.slice(1)}`
+      store.apply(label, (current) => addShape(current, { kind, clipId, start, newTrack }))
+      store.select([clipId])
+    },
+    addEffect(type) {
+      const clipIds = selectedClipIds(takesEffects)
+      if (clipIds.length === 0) {
+        store.notify('Select a video, an image or a text first, or drag the effect onto one.')
+        return
+      }
+      store.apply('Add Effect', (project) => addEffect(project, clipIds, type))
+    },
+    addTransition(type) {
+      const clipIds = selectedClipIds(isVisual)
+      if (clipIds.length === 0) {
+        store.notify('Select a clip first, or drag the transition onto the start or the end of one.')
+        return
+      }
+      const { frameTicks } = limits()
+      store.apply('Add Transition', (project) => {
+        let edited = project
+        for (const clipId of clipIds) edited = setTransition(edited, { clipId, edge: 'in' }, { type, duration: DEFAULT_TRANSITION }, frameTicks)
+        return edited
+      })
+    },
+    zoomToFull() {
+      const { canvas } = store.getState().project
+      const time = playheadFrame()
+      store.apply('Zoom to Full', (project) => setViewAt(project, time, { x: canvas.width / 2, y: canvas.height / 2, scale: 1 }))
+      store.selectZoom(zoomIndexAt(store.getState().project, time))
     },
     stepFrames(count) {
       const timeline = limits()

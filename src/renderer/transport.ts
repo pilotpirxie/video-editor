@@ -169,10 +169,15 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && target.isContentEditable
 }
 
+// A dialog that is open has the window to itself: nothing behind it answers to keys, menu commands, pasted clips or dropped files.
+export function isModalOpen(): boolean {
+  return document.querySelector('dialog:modal') !== null
+}
+
 // Keys belong to a dialog, a menu or a list of options while one is open, and to a text field while it has the focus.
 export function isKeyForTheEditor(event: KeyboardEvent): boolean {
-  if (event.defaultPrevented || isTypingTarget(event.target)) return false
-  return !(event.target instanceof Element) || event.target.closest('dialog, [role="menu"], [role="listbox"]') === null
+  if (event.defaultPrevented || isTypingTarget(event.target) || isModalOpen()) return false
+  return !(event.target instanceof Element) || event.target.closest('[role="menu"], [role="listbox"]') === null
 }
 
 export function onSpaceKey(handler: () => void): () => void {

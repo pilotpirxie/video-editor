@@ -13,7 +13,7 @@ function sample(): Project {
 }
 
 function move(overrides: Partial<Move>): Move {
-  return { clipIds: ['b'], deltaTime: 0, targetTrackIndex: undefined, isRipple: false, newTrack: NEW_TRACK, ...overrides }
+  return { clipIds: ['b'], deltaTime: 0, trackShift: 0, isRipple: false, newTrack: NEW_TRACK, ...overrides }
 }
 
 function trim(overrides: Partial<Trim>): Trim {
@@ -34,7 +34,7 @@ describe('moveClips', () => {
   })
 
   it('moves a clip to another track when the space there is free', () => {
-    const moved = moveClips(sample(), move({ deltaTime: SECOND, targetTrackIndex: 1 }))
+    const moved = moveClips(sample(), move({ deltaTime: SECOND, trackShift: 1 }))
     expect(clipIds(moved)).toEqual([['a', 'c'], ['music', 'b']])
     reopened(moved)
   })
@@ -45,12 +45,12 @@ describe('moveClips', () => {
     expect(onNeighbour.tracks[1]).toMatchObject(NEW_TRACK)
     reopened(onNeighbour)
 
-    const onOtherTrack = moveClips(sample(), move({ deltaTime: -2 * SECOND, targetTrackIndex: 1 }))
+    const onOtherTrack = moveClips(sample(), move({ deltaTime: -2 * SECOND, trackShift: 1 }))
     expect(clipIds(onOtherTrack)).toEqual([['a', 'c'], ['music'], ['b']])
   })
 
   it('creates a track on top when dragged above the highest track', () => {
-    expect(clipIds(moveClips(sample(), move({ targetTrackIndex: 2 })))).toEqual([['a', 'c'], ['music'], ['b']])
+    expect(clipIds(moveClips(sample(), move({ trackShift: 2 })))).toEqual([['a', 'c'], ['music'], ['b']])
   })
 
   it('returns the same project when nothing changes', () => {
@@ -72,6 +72,50 @@ describe('moveClips', () => {
     const backwards = moveClips(sample(), move({ clipIds: ['b', 'c'], deltaTime: -9 * SECOND }))
     expect(clipOf(backwards, 'b').start).toBe(2 * SECOND)
     expect(clipOf(backwards, 'c').start).toBe(6 * SECOND)
+  })
+
+  it('moves several clips up and down by whole tracks, keeping them together', () => {
+    const project = projectOf([track('t1', [videoClip('a', 0, 2 * SECOND), videoClip('b', 4 * SECOND, 2 * SECOND)]), track('t2', [audioClip('music', SECOND, 3 * SECOND)]), track('t3', []), track('t4', [videoClip('c', 0, SECOND)])])
+    const up = moveClips(project, move({ clipIds: ['a', 'music'], deltaTime: SECOND, trackShift: 1 }))
+    expect(clipIds(up)).toEqual([['b'], ['a'], ['music'], ['c']])
+    expect(clipOf(up, 'a').start).toBe(SECOND)
+    expect(clipOf(up, 'music').start).toBe(2 * SECOND)
+    expect(up.tracks[3]).toBe(project.tracks[3])
+    reopened(up)
+
+    const down = moveClips(up, move({ clipIds: ['a', 'music'], trackShift: -1 }))
+    expect(clipIds(down)).toEqual([['b', 'a'], ['music'], [], ['c']])
+    // Below the bottom track there is nowhere to go: the group keeps its tracks.
+    expect(moveClips(down, move({ clipIds: ['a', 'music'], trackShift: -1 }))).toBe(down)
+  })
+
+  it('takes the nearest tracks toward the pointer on which the group fits', () => {
+    const project = projectOf([track('t1', [videoClip('a', 0, 2 * SECOND), videoClip('b', 4 * SECOND, SECOND)]), track('t2', []), track('t3', [videoClip('c', SECOND, SECOND)])])
+    const nearest = moveClips(project, move({ clipIds: ['a', 'b'], trackShift: 2 }))
+    expect(clipIds(nearest)).toEqual([[], ['a', 'b'], ['c']])
+
+    // With room beside the clip in the way, the wanted track is taken.
+    const beside = moveClips(project, move({ clipIds: ['a', 'b'], deltaTime: 2 * SECOND, trackShift: 2 }))
+    expect(clipIds(beside)).toEqual([[], [], ['c', 'a', 'b']])
+    reopened(beside)
+  })
+
+  it('gives a group dragged above the top track one new track', () => {
+    const lifted = moveClips(sample(), move({ clipIds: ['a', 'music'], trackShift: 5 }))
+    expect(clipIds(lifted)).toEqual([['b', 'c'], ['a'], ['music']])
+    expect(lifted.tracks[2]).toMatchObject(NEW_TRACK)
+    reopened(lifted)
+  })
+
+  it('keeps a group on its tracks when it fits nowhere else, on a locked track or while rippling', () => {
+    const taken = projectOf([track('t1', [videoClip('a', 0, 2 * SECOND), videoClip('b', 4 * SECOND, SECOND)]), track('t2', [videoClip('c', SECOND, 4 * SECOND)]), track('t3', [], { locked: true })])
+    const slid = moveClips(taken, move({ clipIds: ['a', 'b'], deltaTime: SECOND, trackShift: 2 }))
+    expect(clipIds(slid)).toEqual([['a', 'b'], ['c'], []])
+    expect(clipOf(slid, 'a').start).toBe(SECOND)
+
+    const rippled = moveClips(sample(), move({ clipIds: ['a', 'music'], deltaTime: SECOND, trackShift: 1, isRipple: true }))
+    expect(clipIds(rippled)).toEqual([['a', 'b', 'c'], ['music']])
+    expect(clipOf(rippled, 'b').start).toBe(5 * SECOND)
   })
 
   it('ripples: every later clip on the track moves along', () => {

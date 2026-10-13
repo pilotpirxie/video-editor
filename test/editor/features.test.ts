@@ -7,6 +7,7 @@ import { ROOT, probeExport, projectIn, projectPath, scratchDirectory, uiTest } f
 const SECOND = 24_000_000
 const MAX_STEP_MS = 50
 const MAX_CANVAS_FOLLOW_MS = 33
+const MAX_FRAME_INTERVAL_MS = 1000 / 60 + 4
 const MEDIA_DIRECTORY = join(ROOT, 'test', 'media', 'generated')
 
 const scratch = scratchDirectory('features')
@@ -141,10 +142,166 @@ describe('controls', () => {
   })
 })
 
+// Every track as its clips: what each is and the second it starts at.
+function arrangement(project: Project): string[][] {
+  return project.tracks.map((track) => track.clips.map((clip) => `${clip.type} ${clip.start / SECOND}`))
+}
+
+describe('arranging by dragging', () => {
+  it('shows where held media would land, moves two clips across tracks together, and crops by typing', async () => {
+    const report = await uiTest('arrange', ['--media', MEDIA_DIRECTORY, '--out', join(scratch, 'arrange')])
+
+    // The Media tab says how long or how large a file is, and no longer what kind it is or whether it is used.
+    expect(report.mediaDetails).toEqual(['0:02', '0:02', '320 × 180'])
+
+    // Held over the timeline, the video shows where it would land while nothing is added, and the outline keeps up with the pointer.
+    expect(report.heldOverEmpty).toEqual({ start: SECOND, trackIndex: 0, isNewTrack: true })
+    expect(report.whileHeld).toEqual({ tracks: 0, undoLabel: 'unchanged' })
+    expect(report.heldFrames).toBeGreaterThan(60)
+    expect(report.heldFrameP95).toBeLessThanOrEqual(MAX_FRAME_INTERVAL_MS)
+    // Escape abandons the drag; let go on the timeline, the clip is where the outline was.
+    expect(report.afterEscape).toEqual({ tracks: 0, undoLabel: 'unchanged' })
+    expect(arrangement(projectIn(report, 'placed'))).toEqual([['video 1']])
+
+    // Over the video the outline promised a track of its own, and playback went on while the sound was held there.
+    expect(report.heldOverTaken).toEqual({ start: 1.5 * SECOND, trackIndex: 1, isNewTrack: true })
+    expect(report.isPlayingWhileHeld).toBe(true)
+    expect(arrangement(projectIn(report, 'stacked'))).toEqual([['video 1'], ['audio 1.5']])
+
+    // The two clips went a second later and a track up together, the upper one onto a new track; then down again; then stayed, with no track below.
+    expect(arrangement(projectIn(report, 'lifted'))).toEqual([[], ['video 2'], ['audio 2.5']])
+    expect(report.groupSamples).toBeGreaterThan(4)
+    expect(report.groupToFrameP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
+    expect(arrangement(projectIn(report, 'lowered'))).toEqual([['video 2'], ['audio 2.5'], []])
+    expect(projectIn(report, 'kept').tracks).toEqual(projectIn(report, 'lowered').tracks)
+
+    // A hundred pixels cropped off the left of the 320-wide picture: the centre moved right by fifty, so what is left did not move.
+    expect(report.groupIcons).toEqual(['Transform 2', 'Crop 2', 'Timing 2', 'Opacity 2', 'Transitions 2', 'Volume 2'])
+    expect(projectIn(report, 'cropped').tracks[0]?.clips[0]).toMatchObject({ crop: { left: 100, top: 0, right: 0, bottom: 0 }, transform: { x: 210, y: 90 } })
+    expect(report.widthAfterCrop).toBe('220.0')
+    expect(report.hintSize).toBe('13px')
+  })
+})
+
+describe('annotations', () => {
+  it('adds blur, pixelate, highlight and spotlight clips and changes them on the canvas and in Properties', async () => {
+    const report = await uiTest('shapes', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'shapes')])
+
+    // A new blur is three tenths of the canvas wide and two tenths high, in the middle, on a new top track, for five seconds from the playhead.
+    const added = projectIn(report, 'added')
+    expect(added.tracks).toHaveLength(2)
+    expect(added.tracks[1]?.clips[0]).toMatchObject({ type: 'blur', start: 0, duration: 5 * SECOND, width: 192, height: 72, shape: 'rectangle', softEdge: 0, strength: 8, transform: { x: 320, y: 180, scaleX: 1, scaleY: 1 } })
+
+    // Its corner was pulled to twice the size; shape, edge, strength and the switch to pixels came from Properties, where the strength is then called the block size.
+    const styled = projectIn(report, 'styled').tracks[1]?.clips[0]
+    expect(styled).toMatchObject({ type: 'blur', shape: 'ellipse', softEdge: 6, strength: 20, isPixelated: true })
+    expect(styled?.type === 'blur' && Math.abs(styled.transform.scaleX - 2)).toBeLessThan(0.05)
+    expect(report.strengthLabel).toBe('Block size')
+
+    expect(projectIn(report, 'spotlight').tracks[2]?.clips[0]).toMatchObject({ type: 'highlight', color: '#00ff00', isSpotlight: true })
+    const kinds = projectIn(report, 'all').tracks.map((track) => {
+      const [clip] = track.clips
+      if (clip?.type === 'blur') return clip.isPixelated === true ? 'pixelate' : 'blur'
+      if (clip?.type === 'highlight') return clip.isSpotlight === true ? 'spotlight' : 'highlight'
+      return clip?.type
+    })
+    expect(kinds).toEqual(['video', 'pixelate', 'spotlight', 'pixelate', 'spotlight'])
+
+    // Undo took the last spotlight and its track away; Delete emptied the track of the pixelate clip before it.
+    expect(projectIn(report, 'afterDelete').tracks.map((track) => track.clips.length)).toEqual([1, 1, 1, 0])
+  })
+})
+
+describe('effects', () => {
+  it('adds effects by click and by dragging onto the timeline and the canvas, and changes a clip\'s list in Properties', async () => {
+    const report = await uiTest('effects', ['--project', projectPath('02-mosaic'), '--out', join(scratch, 'effects')])
+    const effectsOf = (stage: string): unknown[] => projectIn(report, stage).tracks.map((track) => {
+      const [clip] = track.clips
+      return clip?.type === 'video' ? (clip.effects ?? []) : []
+    })
+
+    expect(report.noticeWithoutSelection).toBe('Select a video, an image or a text first, or drag the effect onto one.')
+    // A click put a border on both selected clips, sized for the 360 pixel high canvas.
+    const border = { type: 'border', width: 2, color: '#ffffff' }
+    expect(effectsOf('bordered')).toEqual([[border], [border], [], []])
+    expect(report.hintForTwo).toBe('Select one clip to change its effects.')
+
+    // Held over the third clip the shadow marked it and changed nothing; dropped there and on the fourth clip on the canvas, each got its effect.
+    expect(report.heldOverTimeline).toMatchObject({ kind: 'effect', clipIds: ['c'], effect: 'dropShadow' })
+    expect(report.undoWhileHeld).toBe('Undo Add Effect')
+    expect(effectsOf('dropped')).toMatchObject([[border], [border], [{ type: 'dropShadow', offsetX: 4, opacity: 0.5 }], [{ type: 'colorAdjust', saturation: 0 }]])
+
+    // The border of the fourth clip was made 12 wide, moved before the colour adjustment and switched off.
+    expect(effectsOf('changed')[3]).toEqual([{ type: 'border', width: 12, color: '#ffffff', isOff: true }, { type: 'colorAdjust', brightness: 0, contrast: 0, saturation: -1 }])
+    expect(effectsOf('keyed')[3]).toMatchObject([{ type: 'border' }, { type: 'colorAdjust' }, { type: 'chromaKey', color: '#123456', tolerance: 0.4 }])
+    expect(JSON.stringify(effectsOf('keyed')[3])).toContain('"chromaKey"')
+    expect(effectsOf('removed')[3]).toMatchObject([{ type: 'colorAdjust' }, { type: 'chromaKey' }])
+  })
+})
+
+describe('transitions', () => {
+  it('drops transitions on a cut and on free ends, sets their length by the grip and changes them in Properties', async () => {
+    const report = await uiTest('transitions', ['--project', projectPath('export-check'), '--out', join(scratch, 'transitions')])
+    const clipsAt = (stage: string): unknown[] => projectIn(report, stage).tracks[0]?.clips ?? []
+
+    // Held over the first clip near its end, the transition marks the cut, which belongs to the start of the second clip. Nothing changes until it is let go, and nothing after Escape.
+    expect(report.heldOnCut).toMatchObject({ kind: 'transition', target: { clipId: 'second', edge: 'in' }, type: 'crossDissolve' })
+    expect(report.isUnchangedWhileHeld).toBe(true)
+    expect(report.isUnchangedAfterEscape).toBe(true)
+    expect(clipsAt('onCut')[1]).toMatchObject({ id: 'second', transitionIn: { type: 'crossDissolve', duration: SECOND } })
+
+    // The grip was pulled from half a second after the cut to 0.2 s after it: the transition is 0.4 s long, and the picture followed within the budget.
+    expect(clipsAt('shortened')[1]).toMatchObject({ transitionIn: { type: 'crossDissolve', duration: 0.4 * SECOND } })
+    expect(report.gripSamples).toBeGreaterThan(3)
+    expect(report.gripToFrameP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
+
+    // Each one-second clip has 0.8 s left beside its half of the transition on the cut, and that is how long the transitions at the free ends became.
+    expect(clipsAt('withEnds')).toMatchObject([{ transitionIn: { type: 'zoom', duration: 0.8 * SECOND } }, { transitionOut: { type: 'push', duration: 0.8 * SECOND } }])
+
+    const second = clipsAt('viaProperties')[1]
+    expect(second).toMatchObject({ transitionIn: { type: 'wipeLeft', duration: 0.3 * SECOND } })
+    expect(second).not.toHaveProperty('transitionOut')
+    expect(clipsAt('clicked')[1]).toMatchObject({ transitionIn: { type: 'circleReveal' } })
+  })
+})
+
+describe('zoom and pan', () => {
+  it('frames the canvas with the zoom tool, edits zooms on the camera lane and in Properties, and keeps the handles on a zoomed picture', async () => {
+    const report = await uiTest('zoom', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'zoom')])
+    const zoomsAt = (stage: string): { time: number; duration: number; easing: string; x: number; y: number; scale: number }[] => projectIn(report, stage).camera ?? []
+    const near = (value: number | undefined, expected: number, within: number): boolean => value !== undefined && Math.abs(value - expected) <= within
+
+    // The frame drawn over the middle half of the canvas is a zoom to 200% at the playhead, reached over a second with an eased move.
+    const [drawn] = zoomsAt('drawn')
+    expect(drawn).toMatchObject({ time: SECOND, duration: SECOND, easing: 'easeInOut' })
+    expect(near(drawn?.scale, 2, 0.02) && near(drawn?.x, 320, 2) && near(drawn?.y, 180, 2)).toBe(true)
+    expect(report.frameSamples).toBeGreaterThan(3)
+    expect(report.frameToFrameP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
+
+    // Moved by 80 and 40, then made smaller from its bottom right corner: 240 wide, with the top left corner where it was.
+    const [moved] = zoomsAt('movedFrame')
+    expect(near(moved?.x, 400, 2) && near(moved?.y, 220, 2) && near(moved?.scale, 2, 0.02)).toBe(true)
+    const [shaped] = zoomsAt('shaped')
+    expect(near(shaped?.scale, 640 / 240, 0.05) && near(shaped?.x, 360, 3) && near(shaped?.y, 197.5, 3)).toBe(true)
+
+    expect(zoomsAt('withFull')).toHaveLength(2)
+    expect(zoomsAt('withFull')[1]).toMatchObject({ time: 1.5 * SECOND, x: 320, y: 180, scale: 1 })
+
+    // On the lane the first zoom went to 0.8 s and its move was cut to 0.4 s; Properties then made it 0.5 s and linear.
+    expect(zoomsAt('onLane')[0]).toMatchObject({ time: 0.8 * SECOND, duration: 0.4 * SECOND })
+    expect(zoomsAt('viaProperties')[0]).toMatchObject({ time: 0.8 * SECOND, duration: SECOND / 2, easing: 'linear' })
+    expect(zoomsAt('afterDelete').map((zoom) => zoom.time)).toEqual([0.8 * SECOND])
+
+    // Under the zoom the clip moved by what the pointer travelled on the zoomed picture, not on the whole canvas.
+    const clip = projectIn(report, 'moved').tracks[0]?.clips[0]
+    const expected = 320 + (Number(report.pulled) * Number(report.canvasPerPixel)) / (zoomsAt('moved')[0]?.scale ?? 1)
+    expect(clip?.type === 'video' && near(clip.transform.x, expected, 1.5)).toBe(true)
+  })
+})
+
 describe('animated images', () => {
   it('imports a GIF as a looping image clip that stretches past its own length', async () => {
     const report = await uiTest('animated', ['--media', MEDIA_DIRECTORY, '--out', join(scratch, 'animated')])
-    expect(report.kindShown).toBe('image')
 
     const placed = projectIn(report, 'placed')
     expect(placed.canvas).toEqual({ width: 214, height: 120, frameRate: { num: 30, den: 1 } })
@@ -212,7 +369,7 @@ describe('missing media', () => {
 })
 
 describe('export dialog', () => {
-  it('exports from the dialog with every option, keeps editing meanwhile, and cancels cleanly', async () => {
+  it('exports from the dialog with every option, holds the window meanwhile, and cancels cleanly', async () => {
     const report = await uiTest('export', ['--project', projectPath('05-fades'), '--out', join(scratch, 'export')])
 
     // The 640 x 360 project starts at its own size; nothing is selected yet, so there is no range to choose.
@@ -230,13 +387,24 @@ describe('export dialog', () => {
     expect(range.video).toMatchObject({ codec_name: 'h264', width: '426', height: '240', r_frame_rate: '25/1', nb_frames: '50' })
     expect(range.audio).toEqual({})
     expect(Math.abs(range.duration - 2)).toBeLessThan(0.05)
-    expect(report.canShowInFinder).toBe(true)
 
-    // The next export starts from the size chosen last time. Cancelled half way, it leaves nothing on disk.
+    // The result is read in the dialog, with the focus on the button that closes it. Behind it nothing was duplicated, pasted, selected or replaced by a new project.
+    expect(report.canShowInFinder).toBe(true)
+    expect(report.focusOnResult).toBe('export-done')
+    expect(report.behindResult).toEqual({ undoLabel: 'Undo', selectedStart: '1.000' })
+
+    // The next export starts from the size chosen last time. While it runs, the focus is on the dialog and not on Cancel; Delete, Space, Duplicate, a click, a dropped file, Escape twice and closing the window change and stop nothing.
     expect(report.rememberedPreset).toBe('240p')
     expect(report.progressText).toMatch(/^Frame \d+ of 90/)
+    expect(report.focusWhileRunning).toBe('export-progress-dialog')
+    expect(report.whileRunning).toEqual({ undoLabel: 'Undo Change Opacity', selectedStart: '1.000', notice: '', hasPlayheadMoved: false, isStillRunning: true })
+    // A result is closed by Return, with the focus on its button, and by Escape.
+    expect(report.resultsClosedByKeys).toEqual(['Exported "whole-low.mp4"', 'Exported "whole-high.mp4"'])
+
+    // Cancelled half way, it leaves nothing on disk; so does an export whose window loads again.
     expect(report.hadUnfinishedFile).toBe(true)
     expect(report.leftBehind).toEqual([])
+    expect(report.leftAfterReload).toEqual([])
 
     const low = await probeExport(String(report.low))
     const high = await probeExport(String(report.high))

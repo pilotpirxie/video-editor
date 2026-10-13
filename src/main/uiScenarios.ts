@@ -4,7 +4,23 @@ import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { TICKS_PER_SECOND } from '../shared/time.js'
 import { PageError, selector } from './page.js'
-import { P95, POLL_INTERVAL_MS, RULER_HEIGHT, canvasPoint, centerOf, dragMedia, fullQualityFrame, mediaFile, numbersIn, percentile, type Driver, type Point, type Scenario, type UiTestReport } from './uiDriver.js'
+import {
+  CAMERA_LANE_HEIGHT,
+  P95,
+  POLL_INTERVAL_MS,
+  RULER_HEIGHT,
+  canvasPoint,
+  centerOf,
+  dragMedia,
+  fullQualityFrame,
+  mediaFile,
+  numbersIn,
+  percentile,
+  type Driver,
+  type Point,
+  type Scenario,
+  type UiTestReport,
+} from './uiDriver.js'
 
 const SHUTTLE_WATCH_MS = 400
 const STEPS_TO_TIME = 20
@@ -22,6 +38,8 @@ const JUMP_FRAMES = 15
 const CUT_SECONDS = 10
 const TALLER_TIMELINE = 170
 const FONT_LIST_TURNS = 5
+const HELD_PASSES = 4
+const HELD_FRAMES = 240
 const SECONDS_PER_HOUR = 3600
 
 type Shown = 'any frame' | 'another timecode'
@@ -166,12 +184,14 @@ function isListOpen(testId: string): string {
   return `${selector(`${testId}-options`)} !== null`
 }
 
+// A panel that scrolls to bring a control into view tells the page so with its next frame. A person could not press sooner, and a list that opened sooner would take the scroll for a reason to close.
+const ONCE_THE_SCROLL_IS_HEARD = `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`
+
 // A real press in the middle of a control, which is first brought into view if its panel has scrolled it away.
-// The page hears of that scroll with its next frame; a person could not press sooner, and a list that opened sooner would take the scroll for a reason to close.
 async function clickOn(driver: Driver, testId: string): Promise<void> {
   await driver.page.evaluate(`(() => {
     ${selector(testId)}.scrollIntoView({ block: 'nearest' })
-    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    return ${ONCE_THE_SCROLL_IS_HEARD}
   })()`)
   await driver.clickAt(centerOf(await driver.rect(testId)))
 }
@@ -302,7 +322,6 @@ async function testAnimated(driver: Driver): Promise<UiTestReport> {
   driver.options.answers.importMedia = [mediaFile(driver, 'animated.gif')]
   await driver.page.click('import')
   await driver.until(`${selector('media-animated.gif')} !== null`, 'the animated image in the Media tab')
-  const kindShown = await driver.page.evaluate(`${selector('media-animated.gif')}.querySelector('.badge').textContent`)
 
   await dragMedia(driver, 'animated.gif', await driver.timelinePoint(0, 0, 1))
   await driver.untilUndoLabel('Undo Add Clip')
@@ -321,7 +340,7 @@ async function testAnimated(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Trim Clip')
   await untilPrepared(driver)
   await sleep(PICTURES_SETTLE_MS)
-  return { kindShown, placed, stretched, once, isLoopingAfterUndo: await driver.page.evaluate(`${selector('clip-loop')}.checked`) }
+  return { placed, stretched, once, isLoopingAfterUndo: await driver.page.evaluate(`${selector('clip-loop')}.checked`) }
 }
 
 // Opens a project whose three media files have moved: it says so, refuses a file of the wrong kind, then finds all three from one answer.
@@ -375,13 +394,16 @@ async function startExport(driver: Driver, setup: ExportSetup): Promise<string> 
   return path
 }
 
+// The dialog that held the window during the export says how it ended; it goes away with a real click on its button, as a person would close it.
 async function untilExported(driver: Driver, fileName: string, timeoutMs?: number): Promise<void> {
-  await driver.until(`${selector('notice')}?.textContent.includes('${fileName}') === true && ${selector('export-progress')} === null`, `the export of ${fileName} to end`, timeoutMs)
-  const notice = await driver.page.text('notice')
-  if (notice !== `Exported "${fileName}".`) throw new PageError(notice)
+  await driver.until(`${selector('export-done')} !== null`, `the export of ${fileName} to end`, timeoutMs)
+  const result = await driver.page.text('export-title')
+  if (result !== `Exported "${fileName}"`) throw new PageError(`${result}: ${String(await driver.page.evaluate(`${selector('export-problem')}?.textContent`))}`)
+  await driver.clickAt(centerOf(await driver.rect('export-done')))
+  await driver.until(`${selector('export-progress-dialog')} === null`, 'the export dialog to close')
 }
 
-// Exports the three-second fades project several ways from the dialog: a range at a lower frame rate without sound, a cancelled one, and the whole timeline at two qualities.
+// Exports the three-second fades project several ways from the dialog: a range at a lower frame rate without sound, a cancelled one, the whole timeline at two qualities, and one that ends with a reload of the window.
 async function testExport(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   await fullQualityFrame(driver, 0)
@@ -414,31 +436,103 @@ async function testExport(driver: Driver): Promise<UiTestReport> {
   await pick(driver, 'export-frame-rate', '25/1')
   await driver.page.click('export-range-selection')
   const range = await startExport(driver, { fileName: 'range.mp4', preset: '240p', quality: 'low', hasAudio: false })
-  // Editing goes on while the video is made.
+  // The result stays in the dialog until it has been read, and the project behind it still answers to nothing: not to the menu, not to a paste, not to the mouse.
+  await driver.until(`${selector('export-done')} !== null`, 'the export of the range to end')
+  const canShowInFinder = (await driver.page.evaluate(`${selector('show-export')} !== null`)) === true
+  const focusOnResult = await driver.page.evaluate(`document.activeElement?.dataset.testid`)
+  await driver.picture('export-finished')
+  driver.menu('duplicate')
+  driver.menu('new')
+  driver.window.webContents.paste()
+  await driver.clickAt(await driver.timelinePoint(second / 2, 0, 3))
+  await sleep(POLL_INTERVAL_MS)
+  const behindResult = { undoLabel: driver.menuLabel('undo'), selectedStart: await driver.value('clip-start') }
+  await untilExported(driver, 'range.mp4')
+  // With the dialog gone the project answers again.
   await driver.typeInto('clip-opacity', '50')
   await driver.untilUndoLabel('Undo Change Opacity')
-  await untilExported(driver, 'range.mp4')
-  const canShowInFinder = (await driver.page.evaluate(`${selector('show-export')} !== null`)) === true
 
   // A large export is stopped half way: nothing of it stays on disk.
   await openExportDialog(driver)
   const rememberedPreset = await driver.value('export-preset')
   const cancelled = await startExport(driver, { fileName: 'cancelled.mp4', preset: '4k', quality: 'high', hasAudio: true })
-  await driver.until(`/Frame [1-9]/.test(${selector('export-progress')}?.textContent ?? '')`, 'the export to be under way')
+  await driver.until(`/Frame [1-9]\\d/.test(${selector('export-progress')}?.textContent ?? '')`, 'the export to be well under way')
   const progressText = await driver.page.text('export-progress')
   const hadUnfinishedFile = existsSync(`${cancelled}.part`)
-  await driver.page.click('export-cancel')
-  await driver.until(`${selector('export-progress')} === null`, 'the export to stop')
+  await driver.picture('export-running')
+  // While it runs the export has the window. Keys do not reach the project, and neither Escape, however often, nor closing the window stops it: only Cancel does.
+  const focusWhileRunning = await driver.page.evaluate(`document.activeElement?.dataset.testid`)
+  const timecodeBefore = await driver.page.text('timecode')
+  await driver.press('Backspace')
+  await driver.press('Space')
+  driver.menu('duplicate')
+  await driver.clickAt(await driver.timelinePoint(second / 2, 0, 3))
+  // A file dropped on the window is not imported either. The page cannot be handed a real file, so the drop carries one without a place on disk: were it let through, the import would complain about it.
+  await driver.page.evaluate(`(() => {
+    const files = new DataTransfer()
+    files.items.add(new File(['x'], 'dropped.mp4'))
+    ${selector('editor')}.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: files }))
+  })()`)
+  await driver.press('Escape')
+  await driver.press('Escape')
+  driver.window.close()
+  await sleep(POLL_INTERVAL_MS)
+  const whileRunning = {
+    undoLabel: driver.menuLabel('undo'),
+    selectedStart: await driver.value('clip-start'),
+    notice: await noticeShown(driver),
+    hasPlayheadMoved: (await driver.page.text('timecode')) !== timecodeBefore,
+    isStillRunning: !driver.window.isDestroyed() && (await driver.page.evaluate(`${selector('export-cancel')} !== null && ${selector('export-progress-dialog')}.open`)) === true,
+  }
+  await driver.clickAt(centerOf(await driver.rect('export-cancel')))
+  await driver.until(`${selector('export-progress-dialog')} === null`, 'the export to stop')
   await sleep(CANCEL_SETTLE_MS)
   const leftBehind = [cancelled, `${cancelled}.part`].filter((path) => existsSync(path))
 
+  // The result is also closed without the mouse: by Return, with the focus on its button, and by Escape.
+  const resultsClosedByKeys: string[] = []
   await openExportDialog(driver)
   const low = await startExport(driver, { fileName: 'whole-low.mp4', preset: '240p', quality: 'low', hasAudio: true })
-  await untilExported(driver, 'whole-low.mp4')
+  await driver.until(`${selector('export-done')} !== null`, 'the low-quality export to end')
+  resultsClosedByKeys.push(await driver.page.text('export-title'))
+  await driver.press('Return')
+  await driver.until(`${selector('export-progress-dialog')} === null`, 'Return to close the result')
   await openExportDialog(driver)
   const high = await startExport(driver, { fileName: 'whole-high.mp4', preset: '240p', quality: 'high', hasAudio: true })
-  await untilExported(driver, 'whole-high.mp4')
-  return { defaultPreset, summaryAtOpen, canChooseSelection, tabStops, isDialogOpenAfterListEscape, canShowInFinder, rememberedPreset, progressText, hadUnfinishedFile, leftBehind, range, low, high }
+  await driver.until(`${selector('export-done')} !== null`, 'the high-quality export to end')
+  resultsClosedByKeys.push(await driver.page.text('export-title'))
+  await driver.press('Escape')
+  await driver.until(`${selector('export-progress-dialog')} === null`, 'Escape to close the result')
+
+  // A window that loads again has forgotten its export, so the export ends with it instead of running on where nobody can stop it.
+  await openExportDialog(driver)
+  const reloaded = await startExport(driver, { fileName: 'reloaded.mp4', preset: '4k', quality: 'high', hasAudio: true })
+  await driver.until(`/Frame [1-9]/.test(${selector('export-progress')}?.textContent ?? '')`, 'the last export to be under way')
+  driver.window.webContents.reload()
+  await driver.until(`${selector('editor')} !== null && ${selector('export-progress-dialog')} === null`, 'the window to load again')
+  await sleep(CANCEL_SETTLE_MS)
+  const leftAfterReload = [reloaded, `${reloaded}.part`].filter((path) => existsSync(path))
+  return {
+    defaultPreset,
+    summaryAtOpen,
+    canChooseSelection,
+    tabStops,
+    isDialogOpenAfterListEscape,
+    behindResult,
+    canShowInFinder,
+    focusOnResult,
+    rememberedPreset,
+    progressText,
+    hadUnfinishedFile,
+    focusWhileRunning,
+    whileRunning,
+    resultsClosedByKeys,
+    leftBehind,
+    range,
+    low,
+    high,
+    leftAfterReload,
+  }
 }
 
 // The playhead position in ticks, read from the timecode of a 30 fps project.
@@ -532,11 +626,6 @@ async function testTutorial(driver: Driver): Promise<UiTestReport> {
   const presetOffered = await driver.value('export-preset')
   const startedAt = Date.now()
   const exported = await startExport(driver, { fileName: 'tutorial.mp4', preset: '1080p', quality: 'high', hasAudio: true })
-  // Editing goes on while the video is made.
-  await driver.clickAt(await driver.timelinePoint(2 * second, 3, 5))
-  await driver.until(`${selector('text-size')} !== null`, 'the title to be selected during the export')
-  await driver.typeInto('text-size', '110')
-  await driver.untilUndoLabel('Undo Change Text Size')
   await untilExported(driver, 'tutorial.mp4', LONG_EXPORT_TIMEOUT_MS)
   const exportSeconds = (Date.now() - startedAt) / MS_PER_SECOND
   return { cutSeconds: (cutEnd - cutStart) / second, noticeBeforeExport, project, presetOffered, exported, exportSeconds }
@@ -649,7 +738,10 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   await driver.until(`!(${isListOpen('text-font')})`, 'the font list to close')
 
   // By keyboard: Alt+Down in a number field opens its values, the arrow keys move through them, Return keeps one.
-  await driver.page.evaluate(`${selector('clip-opacity')}.focus()`)
+  await driver.page.evaluate(`(() => {
+    ${selector('clip-opacity')}.focus()
+    return ${ONCE_THE_SCROLL_IS_HEARD}
+  })()`)
   await driver.press('Down', ['alt'])
   await driver.until(isListOpen('clip-opacity'), 'Alt+Down to open the list of opacities')
   await driver.press('Up')
@@ -739,7 +831,484 @@ async function testControlsKept(driver: Driver): Promise<UiTestReport> {
   }
 }
 
+type ShownLanding = {
+  start: number
+  trackIndex: number
+  isNewTrack: boolean
+}
+
+function isShownLanding(value: unknown): value is ShownLanding {
+  if (typeof value !== 'object' || value === null) return false
+  if (!('start' in value) || !('trackIndex' in value) || !('isNewTrack' in value)) return false
+  return typeof value.start === 'number' && typeof value.trackIndex === 'number' && typeof value.isNewTrack === 'boolean'
+}
+
+const LANDING = `(${selector('timeline')}.dataset.landing ?? '')`
+
+// Where the timeline says the media held over it would land.
+async function untilLanding(driver: Driver): Promise<ShownLanding> {
+  await driver.until(`${LANDING} !== ''`, 'the outline of where the held media would land')
+  const landing: unknown = JSON.parse(String(await driver.page.evaluate(LANDING)))
+  if (!isShownLanding(landing)) throw new PageError('The timeline does not say where the held media would land')
+  return { start: landing.start, trackIndex: landing.trackIndex, isNewTrack: landing.isNewTrack }
+}
+
+async function trackCount(driver: Driver): Promise<unknown> {
+  return driver.page.evaluate(`document.querySelectorAll('.track-header').length`)
+}
+
+async function isPlaying(driver: Driver): Promise<boolean> {
+  return (await driver.page.evaluate(`${selector('play')}.getAttribute('aria-label')`)) === 'Pause'
+}
+
+// Builds a small project by dragging: looks at where held media would land before it is let go, moves two clips across tracks together, and crops by typing.
+async function testArrange(driver: Driver): Promise<UiTestReport> {
+  const second = TICKS_PER_SECOND
+  const names = ['h264.mp4', 'audio.wav', 'image.jpg']
+  driver.options.answers.importMedia = names.map((name) => mediaFile(driver, name))
+  await driver.page.click('import')
+  await driver.until(names.map((name) => `${selector(`media-${name}`)} !== null`).join(' && '), 'the three files in the Media tab')
+  await untilPrepared(driver)
+  const mediaDetails = await driver.page.evaluate(`[...document.querySelectorAll('.media-item .media-details')].map((details) => details.textContent)`)
+
+  // Held over the empty timeline, the video shows where it would land while nothing has been added. The pointer is then moved about, to see that the outline keeps up.
+  const video = centerOf(await driver.rect('media-h264.mp4'))
+  const oneSecond = await driver.timelinePoint(second, 0, 1)
+  const fourSeconds = await driver.timelinePoint(4 * second, 0, 1)
+  const undoBefore = driver.menuLabel('undo')
+  driver.holdAt(video)
+  await driver.dragOn(video, oneSecond)
+  await untilLanding(driver)
+  await driver.page.evaluate(`(() => {
+    window.heldFrames = []
+    const note = (now) => {
+      window.heldFrames.push(now)
+      if (window.heldFrames.length < ${HELD_FRAMES}) requestAnimationFrame(note)
+    }
+    requestAnimationFrame(note)
+  })()`)
+  for (let pass = 0; pass < HELD_PASSES; pass++) {
+    await driver.dragOn(oneSecond, fourSeconds)
+    await driver.dragOn(fourSeconds, oneSecond)
+  }
+  const drawnAt = numbersIn(await driver.page.evaluate('window.heldFrames'))
+  const heldIntervals = drawnAt.slice(1).map((time, index) => time - (drawnAt[index] ?? time))
+  const heldOverEmpty = await untilLanding(driver)
+  const whileHeld = { tracks: await trackCount(driver), undoLabel: driver.menuLabel('undo') === undoBefore ? 'unchanged' : driver.menuLabel('undo') }
+  await driver.picture('arrange-held')
+
+  // Off the timeline the outline goes. Back on it, Escape abandons the drag, and letting go then adds nothing.
+  await driver.dragOn(oneSecond, video)
+  await driver.until(`${LANDING} === ''`, 'the outline to go when the pointer leaves the timeline')
+  await driver.dragOn(video, oneSecond)
+  await untilLanding(driver)
+  await driver.press('Escape')
+  await driver.until(`${LANDING} === ''`, 'Escape to abandon the drag')
+  await driver.releaseAt(oneSecond)
+  await sleep(POLL_INTERVAL_MS)
+  const afterEscape = { tracks: await trackCount(driver), undoLabel: driver.menuLabel('undo') === undoBefore ? 'unchanged' : driver.menuLabel('undo') }
+
+  // Let go over the timeline, the clip is where the outline was.
+  driver.holdAt(video)
+  await driver.dragOn(video, oneSecond)
+  await untilLanding(driver)
+  await driver.releaseAt(oneSecond)
+  await driver.untilUndoLabel('Undo Add Clip')
+  const placed = await driver.savedProject('placed.json')
+
+  // Over a spot that is taken the outline says the drop makes a track of its own. Playback goes on while the sound is held there: holding is not an edit.
+  await driver.press('Return', ['meta'])
+  await driver.press('Space')
+  await driver.until(`${selector('play')}.getAttribute('aria-label') === 'Pause'`, 'playback to start')
+  const sound = centerOf(await driver.rect('media-audio.wav'))
+  const onTheVideo = await driver.timelinePoint(1.5 * second, 0, 1)
+  driver.holdAt(sound)
+  await driver.dragOn(sound, onTheVideo)
+  const heldOverTaken = await untilLanding(driver)
+  const isPlayingWhileHeld = await isPlaying(driver)
+  await driver.picture('arrange-new-track')
+  await driver.releaseAt(onTheVideo)
+  await driver.until(`${selector('track-1')} !== null`, 'the sound on a track of its own')
+  const stacked = await driver.savedProject('stacked.json')
+  const ruler = await driver.rect('timeline')
+  await driver.clickAt({ x: ruler.x + 8, y: ruler.y + RULER_HEIGHT / 2 })
+
+  // Selected together, the two clips go a second later and up a track together: the video takes the track of the sound and the sound gets a new one.
+  await driver.clickAt(await driver.timelinePoint(1.25 * second, 0, 2))
+  const onTheSound = await driver.timelinePoint(2.5 * second, 1, 2)
+  const aboveTheTop = await driver.timelinePoint(3.5 * second, 2, 2)
+  await driver.clickAt(onTheSound, ['shift'])
+  const moveDelays = await watchDelays(driver, 'pointermove', 'any frame')
+  driver.holdAt(onTheSound)
+  await driver.dragOn(onTheSound, aboveTheTop)
+  await driver.picture('arrange-group')
+  await driver.releaseAt(aboveTheTop)
+  await driver.untilUndoLabel('Undo Move Clips')
+  const groupDelays = await moveDelays.read()
+  const lifted = await driver.savedProject('lifted.json')
+
+  // One track down they are back on their tracks; one more down there is no track, so they stay.
+  await driver.drag(await driver.timelinePoint(3.5 * second, 2, 3), await driver.timelinePoint(3.5 * second, 1, 3))
+  await sleep(POLL_INTERVAL_MS)
+  const lowered = await driver.savedProject('lowered.json')
+  await driver.drag(await driver.timelinePoint(3.5 * second, 1, 3), await driver.timelinePoint(3.5 * second, 0, 3))
+  await sleep(POLL_INTERVAL_MS)
+  const kept = await driver.savedProject('kept.json')
+
+  // A crop typed in the properties panel hides that side of the picture; the rest stays where it is, so the centre moves by half of what went.
+  const inTheVideo = await driver.timelinePoint(2.25 * second, 0, 3)
+  await driver.clickAt({ x: inTheVideo.x, y: ruler.y + RULER_HEIGHT / 2 })
+  await driver.clickAt(inTheVideo)
+  await driver.until(`${selector('clip-crop-left')} !== null && ${selector('clip-start')}?.value === '2.000'`, 'the video alone to be selected')
+  await fullQualityFrame(driver, 0)
+  await driver.picture('arrange-uncropped')
+  const groupIcons = await driver.page.evaluate(`[...document.querySelectorAll('.group-toggle')].map((toggle) => toggle.textContent + ' ' + toggle.querySelectorAll('svg').length)`)
+  await driver.typeInto('clip-crop-left', '100')
+  await driver.untilUndoLabel('Undo Crop Clip')
+  const cropped = await driver.savedProject('cropped.json')
+  const widthAfterCrop = await driver.value('clip-width')
+  await sleep(PICTURES_SETTLE_MS)
+  await driver.picture('arrange-cropped')
+
+  // A hint is as large as the text of the window, not smaller.
+  await driver.hover(centerOf(await driver.rect('split')))
+  await driver.until(`document.querySelector('.tooltip:not([hidden])') !== null`, 'the hint of the split button')
+  const hintSize = await driver.page.evaluate(`getComputedStyle(document.querySelector('.tooltip')).fontSize`)
+  await driver.picture('arrange-hint')
+  return {
+    mediaDetails,
+    heldFrameP95: percentile(heldIntervals, P95),
+    heldFrames: heldIntervals.length,
+    heldOverEmpty,
+    whileHeld,
+    afterEscape,
+    placed,
+    heldOverTaken,
+    isPlayingWhileHeld,
+    stacked,
+    groupSamples: groupDelays.length,
+    groupToFrameP95: percentile(groupDelays, P95),
+    lifted,
+    lowered,
+    kept,
+    groupIcons,
+    cropped,
+    widthAfterCrop,
+    hintSize,
+  }
+}
+
+const DROP = `(${selector('timeline')}.dataset.drop ?? '')`
+const CANVAS_WIDTH = 640
+
+// What the timeline says a transition or an effect held over it would go to.
+async function untilDrop(driver: Driver): Promise<unknown> {
+  await driver.until(`${DROP} !== ''`, 'the mark of where the held item would go')
+  return JSON.parse(String(await driver.page.evaluate(DROP)))
+}
+
+async function onCanvas(driver: Driver, x: number, y: number): Promise<Point> {
+  return canvasPoint(driver, CANVAS_WIDTH, { x, y })
+}
+
+async function untilField(driver: Driver, testId: string, value: string): Promise<void> {
+  await driver.until(`${selector(testId)}?.value === ${JSON.stringify(value)}`, `${testId} to show ${value}`)
+}
+
+// Chooses a button with the keyboard alone: the focus is put on it, as Tab would, and Return presses it.
+async function pressWithKeyboard(driver: Driver, testId: string): Promise<void> {
+  await driver.page.evaluate(`${selector(testId)}.focus()`)
+  await driver.press('Return')
+}
+
+// Adds each kind of blur and highlight from the Annotations tab to a project with one clip, and changes them on the canvas and in Properties.
+async function testShapes(driver: Driver): Promise<UiTestReport> {
+  await fullQualityFrame(driver, 0)
+  await driver.page.click('tab-annotations')
+  await driver.page.click('add-blur')
+  await driver.untilUndoLabel('Undo Add Blur')
+  await driver.until(`${selector('blur-strength')} !== null`, 'the new blur to be selected')
+  const added = await driver.savedProject('blur.json')
+
+  // The new blur is 192 by 72 in the middle of the canvas. Its corner is pulled to twice that; its look is set in Properties.
+  await driver.drag(centerOf(await driver.rect('handle-se')), await onCanvas(driver, 608, 288))
+  await driver.untilUndoLabel('Undo Resize Clip')
+  await driver.typeInto('blur-strength', '20')
+  await driver.untilUndoLabel('Undo Change Blur')
+  await driver.page.click('shape-ellipse')
+  await driver.untilUndoLabel('Undo Change Shape')
+  await driver.typeInto('shape-soft-edge', '6')
+  await driver.untilUndoLabel('Undo Change Soft Edge')
+  await driver.page.click('blur-pixelate')
+  await driver.untilUndoLabel('Undo Pixelate')
+  const strengthLabel = await driver.page.evaluate(`${selector('blur-strength')}.closest('.labelled').querySelector('.field-label').textContent`)
+  const styled = await driver.savedProject('styled.json')
+  await fullQualityFrame(driver, 0)
+  await driver.picture('shapes-pixelate')
+
+  await driver.page.click('add-highlight')
+  await driver.untilUndoLabel('Undo Add Highlight')
+  await choose(driver, 'highlight-color', '#00ff00')
+  await driver.untilUndoLabel('Undo Change Highlight Colour')
+  await driver.page.click('highlight-spotlight')
+  await driver.untilUndoLabel('Undo Make Spotlight')
+  const spotlight = await driver.savedProject('spotlight.json')
+  await fullQualityFrame(driver, 0)
+  await driver.picture('shapes-spotlight')
+
+  await pressWithKeyboard(driver, 'add-pixelate')
+  await driver.untilUndoLabel('Undo Add Pixelate')
+  await driver.page.click('add-spotlight')
+  await driver.untilUndoLabel('Undo Add Spotlight')
+  const all = await driver.savedProject('all.json')
+
+  // Undo takes the last one away again; the one before it is deleted like any clip.
+  driver.menu('undo')
+  await driver.untilUndoLabel('Undo Add Pixelate')
+  await driver.clickAt(await driver.timelinePoint(TICKS_PER_SECOND / 2, 3, 4))
+  await driver.until(`${selector('blur-strength')} !== null`, 'the pixelate clip to be selected')
+  await driver.press('Backspace')
+  await driver.untilUndoLabel('Undo Delete Clip')
+  return { added, strengthLabel, styled, spotlight, all, afterDelete: await driver.savedProject('deleted.json') }
+}
+
+// Puts effects on the four clips of a mosaic by click and by dragging onto the timeline and the canvas, then changes one clip's list in Properties.
+async function testEffects(driver: Driver): Promise<UiTestReport> {
+  const second = TICKS_PER_SECOND
+  await fullQualityFrame(driver, 0)
+  await driver.page.click('tab-effects')
+  await driver.page.click('effect-border')
+  const noticeWithoutSelection = await driver.page.waitFor('notice', (text) => text !== '', POLL_INTERVAL_MS * STEPS_TO_TIME, 'a notice that nothing is selected')
+
+  // A click adds to every selected clip. With two selected, their settings are not offered together.
+  await driver.clickAt(await driver.timelinePoint(second / 2, 0, 4))
+  await driver.clickAt(await driver.timelinePoint(second / 2, 1, 4), ['shift'])
+  await driver.page.click('effect-border')
+  await driver.untilUndoLabel('Undo Add Effect')
+  const hintForTwo = await driver.page.waitFor('effects-hint', (text) => text !== '', POLL_INTERVAL_MS * STEPS_TO_TIME, 'the hint to select one clip')
+  const bordered = await driver.savedProject('bordered.json')
+
+  // Held over a clip on the timeline, the effect marks that clip and changes nothing yet.
+  const shadow = centerOf(await driver.rect('effect-dropShadow'))
+  const onThird = await driver.timelinePoint(second, 2, 4)
+  driver.holdAt(shadow)
+  await driver.dragOn(shadow, onThird)
+  const heldOverTimeline = await untilDrop(driver)
+  const undoWhileHeld = driver.menuLabel('undo')
+  await driver.picture('effects-held')
+  await driver.releaseAt(onThird)
+  await driver.until(`${selector('effect-dropShadow-offsetX')} !== null`, 'the shadow of the third clip in Properties')
+
+  // Held over the canvas, it marks the topmost clip under the pointer: the fourth clip fills the bottom right quarter.
+  const adjust = centerOf(await driver.rect('effect-colorAdjust'))
+  const onFourth = await onCanvas(driver, 480, 270)
+  driver.holdAt(adjust)
+  await driver.dragOn(adjust, onFourth)
+  await driver.until(`${selector('canvas-overlay')}.dataset.dropTarget === 'd'`, 'the clip under the held effect to be marked')
+  await driver.releaseAt(onFourth)
+  await driver.until(`${selector('effect-colorAdjust-brightness')} !== null`, 'the colour adjustment of the fourth clip in Properties')
+  const dropped = await driver.savedProject('dropped.json')
+
+  // The fourth clip gets a border too. Its effects are changed, reordered and switched off in Properties.
+  await driver.page.click('effect-border')
+  await driver.until(`${selector('effect-border-width')} !== null`, 'the border of the fourth clip in Properties')
+  await driver.typeInto('effect-border-width', '12')
+  await driver.untilUndoLabel('Undo Change Effect')
+  await driver.typeInto('effect-colorAdjust-saturation', '-100')
+  await untilField(driver, 'effect-colorAdjust-saturation', '-100.0')
+  await driver.page.click('effect-border-earlier')
+  await driver.untilUndoLabel('Undo Reorder Effects')
+  await driver.page.click('effect-border-switch')
+  await driver.untilUndoLabel('Undo Switch Effect Off')
+  const changed = await driver.savedProject('changed.json')
+
+  // The key colour is picked from the screen. The system's picker is stood in for here; the key is back on with the colour it gave.
+  await pressWithKeyboard(driver, 'effect-chromaKey')
+  await driver.until(`${selector('effect-chromaKey-pick')} !== null`, 'the chroma key in Properties')
+  await driver.page.evaluate(`void (window.EyeDropper = class { open() { return Promise.resolve({ sRGBHex: '#123456' }) } })`)
+  await driver.page.click('effect-chromaKey-pick')
+  await driver.untilUndoLabel('Undo Pick Key Colour')
+  const keyed = await driver.savedProject('keyed.json')
+
+  await driver.page.click('effect-border-remove')
+  await driver.untilUndoLabel('Undo Remove Effect')
+  await fullQualityFrame(driver, 0)
+  await driver.picture('effects-applied')
+  return { noticeWithoutSelection, hintForTwo, bordered, heldOverTimeline, undoWhileHeld, dropped, changed, keyed, removed: await driver.savedProject('removed.json') }
+}
+
+// Drags transitions onto the cut between two clips and onto their free ends, changes one by its grip and in Properties, and removes one.
+async function testTransitions(driver: Driver): Promise<UiTestReport> {
+  const second = TICKS_PER_SECOND
+  await fullQualityFrame(driver, 0)
+  await driver.page.click('tab-transitions')
+  const dissolve = centerOf(await driver.rect('transition-crossDissolve'))
+  const beforeCut = await driver.timelinePoint(0.8 * second, 0, 1)
+  const undoBefore = driver.menuLabel('undo')
+
+  // Held near the cut, the transition marks the cut and changes nothing. Escape abandons the drag.
+  driver.holdAt(dissolve)
+  await driver.dragOn(dissolve, beforeCut)
+  const heldOnCut = await untilDrop(driver)
+  const isUnchangedWhileHeld = driver.menuLabel('undo') === undoBefore
+  await driver.picture('transitions-held')
+  await driver.press('Escape')
+  await driver.until(`${DROP} === ''`, 'Escape to abandon the drag')
+  await driver.releaseAt(beforeCut)
+  await sleep(POLL_INTERVAL_MS)
+  const isUnchangedAfterEscape = driver.menuLabel('undo') === undoBefore
+
+  await driver.drag(dissolve, beforeCut)
+  await driver.untilUndoLabel('Undo Add Transition')
+  const onCut = await driver.savedProject('cut.json')
+
+  // The grip at the end of the transition sets its length: on a cut, twice as far as the grip is from the cut.
+  const gripDelays = await watchDelays(driver, 'pointermove', 'any frame')
+  await driver.drag(await driver.timelinePoint(1.5 * second, 0, 1), await driver.timelinePoint(1.2 * second, 0, 1))
+  await driver.untilUndoLabel('Undo Change Transition')
+  const gripToFrame = await gripDelays.read()
+  const shortened = await driver.savedProject('shortened.json')
+
+  // The free ends take a transition each, as long as the clip has room left beside the one on the cut.
+  await driver.drag(centerOf(await driver.rect('transition-zoom')), await driver.timelinePoint(0.2 * second, 0, 1))
+  await untilField(driver, 'transition-in', 'zoom')
+  await driver.drag(centerOf(await driver.rect('transition-push')), await driver.timelinePoint(1.8 * second, 0, 1))
+  await untilField(driver, 'transition-out', 'push')
+  const withEnds = await driver.savedProject('ends.json')
+  await sleep(PICTURES_SETTLE_MS)
+  await driver.picture('transitions-three')
+
+  // Properties changes the kind and the length of the transition at each end of the selected clip, and takes one away.
+  await pick(driver, 'transition-in', 'wipeLeft')
+  await driver.untilUndoLabel('Undo Change Transition')
+  await driver.typeInto('transition-in-length', '0.3')
+  await untilField(driver, 'transition-in-length', '0.300')
+  await pick(driver, 'transition-out', 'none')
+  await driver.untilUndoLabel('Undo Remove Transition')
+  const viaProperties = await driver.savedProject('properties.json')
+
+  // A click in the tab, or Return with the focus on it, puts the transition at the start of the selected clip.
+  await pressWithKeyboard(driver, 'transition-circleReveal')
+  await untilField(driver, 'transition-in', 'circleReveal')
+  return {
+    heldOnCut,
+    isUnchangedWhileHeld,
+    isUnchangedAfterEscape,
+    onCut,
+    gripSamples: gripToFrame.length,
+    gripToFrameP95: percentile(gripToFrame, P95),
+    shortened,
+    withEnds,
+    viaProperties,
+    clicked: await driver.savedProject('clicked.json'),
+  }
+}
+
+// Where a moment is on the camera lane.
+async function lanePoint(driver: Driver, time: number): Promise<Point> {
+  const onTrack = await driver.timelinePoint(time, 0, 1)
+  const timeline = await driver.rect('timeline')
+  return { x: onTrack.x, y: timeline.y + RULER_HEIGHT + CAMERA_LANE_HEIGHT / 2 }
+}
+
+async function seekOnRuler(driver: Driver, time: number, timecode: string): Promise<void> {
+  const timeline = await driver.rect('timeline')
+  await driver.clickAt({ x: (await driver.timelinePoint(time, 0, 1)).x, y: timeline.y + RULER_HEIGHT / 2 })
+  await untilTimecode(driver, timecode)
+}
+
+// Frames a part of the canvas with the zoom tool, changes the frame, the zooms on the camera lane and their settings, and moves a clip under a zoom.
+async function testZoom(driver: Driver): Promise<UiTestReport> {
+  const second = TICKS_PER_SECOND
+  await fullQualityFrame(driver, 0)
+  await driver.page.click('zoom-tool')
+  await driver.until(`${selector('camera-tool')} !== null`, 'the zoom tool')
+  await seekOnRuler(driver, second, '00:00:01:00')
+
+  // A frame drawn over the middle half of the canvas is a zoom to 200% at the playhead.
+  const frameDelays = await watchDelays(driver, 'pointermove', 'any frame')
+  await driver.drag(await onCanvas(driver, 160, 90), await onCanvas(driver, 480, 270))
+  await driver.untilUndoLabel('Undo Zoom and Pan')
+  await driver.until(`${selector('zoom-scale')} !== null`, 'the new zoom in Properties')
+  const frameToFrame = await frameDelays.read()
+  const drawn = await driver.savedProject('drawn.json')
+  await driver.picture('zoom-drawn')
+
+  // Dragged by its inside the frame moves; dragged by a corner it changes size about the opposite corner.
+  const drawnAt = await driver.value('zoom-x')
+  await driver.drag(await onCanvas(driver, 320, 180), await onCanvas(driver, 400, 220))
+  await driver.until(`${selector('zoom-x')}?.value !== '${drawnAt}'`, 'the frame to have moved')
+  const moved = await driver.savedProject('moved-frame.json')
+  const movedAt = await driver.value('zoom-x')
+  await driver.drag(centerOf(await driver.rect('zoom-se')), await onCanvas(driver, 480, 265))
+  await driver.until(`${selector('zoom-x')}?.value !== '${movedAt}'`, 'the frame to have changed size')
+  const shaped = await driver.savedProject('shaped.json')
+
+  await seekOnRuler(driver, 1.5 * second, '00:00:01:15')
+  await pressWithKeyboard(driver, 'zoom-to-full')
+  await driver.untilUndoLabel('Undo Zoom to Full')
+  const withFull = await driver.savedProject('full.json')
+
+  // On the camera lane a zoom is dragged to another time, and the start of its bar sets how long its move takes.
+  await driver.drag(await lanePoint(driver, second), await lanePoint(driver, 0.8 * second))
+  await driver.untilUndoLabel('Undo Move Zoom')
+  const barStart = await lanePoint(driver, 0)
+  await driver.drag({ x: barStart.x + 2, y: barStart.y }, await lanePoint(driver, 0.4 * second))
+  await driver.untilUndoLabel('Undo Change Zoom Length')
+  const onLane = await driver.savedProject('lane.json')
+  await sleep(PICTURES_SETTLE_MS)
+  await driver.picture('zoom-lane')
+
+  // A click on a zoom selects it and goes to its time; its settings are in Properties.
+  await driver.clickAt(await lanePoint(driver, 0.8 * second))
+  await untilTimecode(driver, '00:00:00:24')
+  await driver.typeInto('zoom-duration', '0.5')
+  await untilField(driver, 'zoom-duration', '0.500')
+  await pick(driver, 'zoom-easing', 'linear')
+  await driver.untilUndoLabel('Undo Change Zoom Easing')
+  const viaProperties = await driver.savedProject('properties.json')
+
+  // The Delete key removes the selected zoom.
+  await driver.clickAt(await lanePoint(driver, 1.5 * second))
+  await untilTimecode(driver, '00:00:01:15')
+  await driver.press('Backspace')
+  await driver.untilUndoLabel('Undo Delete Zoom')
+  const afterDelete = await driver.savedProject('deleted.json')
+
+  // With the tool off the canvas shows the zoomed picture, and the handles lie on it: a drag moves the clip by what the pointer travels on the zoomed picture.
+  await driver.page.click('zoom-tool')
+  await driver.until(`${selector('canvas-overlay')} !== null`, 'the clip handles')
+  await driver.clickAt(await lanePoint(driver, 0.8 * second))
+  await untilTimecode(driver, '00:00:00:24')
+  await fullQualityFrame(driver, 0)
+  const preview = await driver.rect('preview')
+  const middle = centerOf(preview)
+  const pulled = 60
+  await driver.drag(middle, { x: middle.x + pulled, y: middle.y })
+  await driver.untilUndoLabel('Undo Move Clip')
+  await driver.picture('zoom-handles')
+  return {
+    frameSamples: frameToFrame.length,
+    frameToFrameP95: percentile(frameToFrame, P95),
+    drawn,
+    movedFrame: moved,
+    shaped,
+    withFull,
+    onLane,
+    viaProperties,
+    afterDelete,
+    canvasPerPixel: CANVAS_WIDTH / preview.width,
+    pulled,
+    moved: await driver.savedProject('moved.json'),
+  }
+}
+
 export const FEATURE_SCENARIOS: Record<string, Scenario> = {
+  shapes: testShapes,
+  effects: testEffects,
+  transitions: testTransitions,
+  zoom: testZoom,
+  arrange: testArrange,
   controls: testControls,
   'controls-kept': testControlsKept,
   tutorial: testTutorial,

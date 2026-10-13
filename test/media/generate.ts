@@ -101,6 +101,49 @@ export function alphaCard(width: number, height: number): Buffer {
   return pixels
 }
 
+type Color = {
+  red: number
+  green: number
+  blue: number
+}
+
+const BLACK: Color = { red: 0, green: 0, blue: 0 }
+const WHITE: Color = { red: 255, green: 255, blue: 255 }
+export const KEY_GREEN: Color = { red: 0, green: 177, blue: 64 }
+export const SUBJECT_MAGENTA: Color = { red: 200, green: 40, blue: 160 }
+
+// An opaque card whose every pixel is painted by a rule, for checks that work a pixel out by hand.
+function paintedCard(width: number, height: number, colorAt: (x: number, y: number) => Color): Buffer {
+  const pixels = Buffer.alloc(width * height * 4, 255)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const color = colorAt(x, y)
+      const offset = (y * width + x) * 4
+      pixels[offset] = color.red
+      pixels[offset + 1] = color.green
+      pixels[offset + 2] = color.blue
+    }
+  }
+  return pixels
+}
+
+function solidCard(color: Color): (width: number, height: number) => Buffer {
+  return (width, height) => paintedCard(width, height, () => color)
+}
+
+// Black on the left half, white on the right: one hard edge down the middle.
+function edgeCard(width: number, height: number): Buffer {
+  return paintedCard(width, height, (x) => (x < width / 2 ? BLACK : WHITE))
+}
+
+// A magenta subject in the middle of a green screen: the middle three eighths of the width and four ninths of the height.
+function greenScreenCard(width: number, height: number): Buffer {
+  return paintedCard(width, height, (x, y) => {
+    const isSubject = x >= width * 0.3125 && x < width * 0.6875 && y >= height * (5 / 18) && y < height * (13 / 18)
+    return isSubject ? SUBJECT_MAGENTA : KEY_GREEN
+  })
+}
+
 const ALPHA_CLIP_FRAMES = 10
 
 function repeatedCard(): Buffer {
@@ -181,13 +224,13 @@ function audio(name: string, codec: readonly string[], from = 'audio.wav'): Reci
   }
 }
 
-function rawImage(name: string, width: number, height: number, codec: readonly string[] = []): Recipe {
+function rawImage(name: string, width: number, height: number, codec: readonly string[] = [], card: (width: number, height: number) => Buffer = alphaCard): Recipe {
   return {
     name,
     build: (tools) =>
       tools.ffmpegWithInput(
         ['-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${width}x${height}`, '-i', 'pipe:0', ...codec, mediaPath(name)],
-        alphaCard(width, height),
+        card(width, height),
       ),
   }
 }
@@ -325,6 +368,11 @@ const RECIPES: readonly Recipe[] = [
   rawImage('image.jpg', 320, 180, ['-q:v', '3']),
   rawImage('image.webp', 320, 180, ['-c:v', 'libwebp', '-lossless', '1']),
   rawImage('image.gif', 320, 180),
+  rawImage('image-red.png', 320, 180, [], solidCard({ red: 255, green: 0, blue: 0 })),
+  rawImage('image-blue.png', 320, 180, [], solidCard({ red: 0, green: 0, blue: 255 })),
+  rawImage('image-white.png', 320, 180, [], solidCard(WHITE)),
+  rawImage('image-edge.png', 320, 180, [], edgeCard),
+  rawImage('image-green-screen.png', 320, 180, [], greenScreenCard),
   silentClip('animated.gif', [], { pattern: { width: 160, height: 90, rate: '10' }, frames: 12, filter: 'null' }),
   silentClip('animated.webp', ['-c:v', 'libwebp_anim', '-loop', '0'], { pattern: { width: 160, height: 90, rate: '10' }, frames: 12, filter: 'null' }),
   silentClip('animated.apng', ['-f', 'apng', '-plays', '0'], { pattern: { width: 160, height: 90, rate: '10' }, frames: 12, filter: 'null' }),

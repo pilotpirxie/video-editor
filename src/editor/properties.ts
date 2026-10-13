@@ -2,7 +2,7 @@ import { valueAt, type MediaStates } from '../engine/resolve.js'
 import type { Size } from '../shared/exportPresets.js'
 import { MAX_CANVAS, MIN_CANVAS, type AnimatableProperty, type Clip, type Crop, type Keyframe, type Project, type Transform } from '../shared/project.js'
 import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, TIMELINE_GRID, type FrameRate } from '../shared/time.js'
-import { editClips, hasSource, isVisual, locateClip, withFadesWithin } from './clips.js'
+import { editClips, hasSource, isCroppable, isVisual, locateClip, withFadesWithin } from './clips.js'
 import { neighbours, sourceDuration, timelineSpan, trimClip } from './moveTrim.js'
 
 function clampWhole(value: number, min: number, max: number): number {
@@ -48,7 +48,7 @@ function baseValue(clip: Clip, property: AnimatableProperty): number | undefined
   if (property === 'opacity') return clip.opacity
   if (isTransformProperty(property)) return clip.transform[property]
   const side = cropSide(property)
-  if (side === undefined || clip.type === 'text') return undefined
+  if (side === undefined || !isCroppable(clip)) return undefined
   return (clip.crop ?? NO_CROP)[side]
 }
 
@@ -72,7 +72,7 @@ function withBaseValue(clip: Clip, property: AnimatableProperty, value: number):
   if (property === 'opacity') return { ...clip, opacity: value }
   if (isTransformProperty(property)) return { ...clip, transform: { ...clip.transform, [property]: value } }
   const side = cropSide(property)
-  if (side === undefined || clip.type === 'text') return clip
+  if (side === undefined || !isCroppable(clip)) return clip
   const crop = { ...(clip.crop ?? NO_CROP), [side]: value }
   const cropsNothing = crop.left === 0 && crop.top === 0 && crop.right === 0 && crop.bottom === 0
   return { ...clip, crop: cropsNothing ? undefined : crop }

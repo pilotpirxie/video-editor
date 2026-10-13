@@ -3,7 +3,7 @@ import { logError } from '../shared/log.js'
 import type { MediaClient } from '../shared/mediaProtocol.js'
 import { createByteLru } from './byteLru.js'
 import type { Compositor, DrawItem, GpuTexture } from './compositor.js'
-import type { ImageLayer, Layer, TextLayer, VideoLayer } from './resolve.js'
+import type { ImageLayer, Layer, PictureLayer, TextLayer, VideoLayer } from './resolve.js'
 import { rasterizeText } from './text.js'
 
 const NO_CROP = { left: 0, top: 0, right: 0, bottom: 0 }
@@ -45,8 +45,14 @@ function videoKey(layer: VideoLayer, quality: 'preview' | 'full'): string {
   return `full:${layer.mediaId}:${layer.frame}:${layer.halvings}`
 }
 
-function itemOf(layer: Layer, picture: Picture): DrawItem {
+// Blur and highlight layers have no picture of their own: they are drawn from what is beneath them.
+function hasPicture(layer: Layer): layer is PictureLayer {
+  return layer.kind !== 'blur' && layer.kind !== 'highlight'
+}
+
+function itemOf(layer: PictureLayer, picture: Picture): DrawItem {
   return {
+    kind: 'picture',
     texture: picture.texture,
     naturalWidth: picture.naturalWidth,
     naturalHeight: picture.naturalHeight,
@@ -54,6 +60,8 @@ function itemOf(layer: Layer, picture: Picture): DrawItem {
     transform: layer.transform,
     opacity: layer.opacity,
     hasAlphaBelow: picture.hasAlphaBelow,
+    effects: layer.effects,
+    transition: layer.transition,
   }
 }
 
@@ -140,7 +148,7 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     return { texture: stream.shown, naturalWidth: layer.video.width, naturalHeight: layer.video.height, hasAlphaBelow: false }
   }
 
-  function pictureFor(layer: Layer, quality: FrameQuality, outputScale: number, signal: AbortSignal | undefined): Promise<Picture> {
+  function pictureFor(layer: PictureLayer, quality: FrameQuality, outputScale: number, signal: AbortSignal | undefined): Promise<Picture> {
     if (layer.kind === 'image') return cached(`image:${layer.mediaId}`, () => loadImage(layer))
     if (layer.kind === 'text') {
       const scaleX = layer.transform.scaleX * outputScale
@@ -152,7 +160,7 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     return previewOrFull(layer, signal)
   }
 
-  function playbackKey(layer: Layer, outputScale: number): string {
+  function playbackKey(layer: PictureLayer, outputScale: number): string {
     if (layer.kind === 'image') return `image:${layer.mediaId}`
     if (layer.kind === 'text') return textKey(layer, layer.transform.scaleX * outputScale, layer.transform.scaleY * outputScale)
     return videoKey(layer, 'preview')
@@ -170,16 +178,18 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
 
   async function itemsFor(layers: readonly Layer[], quality: FrameQuality, outputScale: number, signal?: AbortSignal): Promise<DrawItem[]> {
     if (quality === 'stream') await closeEndedStreams(layers)
-    const loaded = await Promise.all(layers.map((layer) => pictureFor(layer, quality, outputScale, signal)))
+    const loaded = await Promise.all(layers.map((layer) => (hasPicture(layer) ? pictureFor(layer, quality, outputScale, signal) : undefined)))
     const items: DrawItem[] = []
     for (const [index, layer] of layers.entries()) {
       const picture = loaded[index]
-      if (picture !== undefined) items.push(itemOf(layer, picture))
+      if (!hasPicture(layer)) items.push(layer)
+      else if (picture !== undefined) items.push(itemOf(layer, picture))
     }
     return items
   }
 
   async function prepareOne(layer: Layer, outputScale: number): Promise<void> {
+    if (!hasPicture(layer)) return
     const key = playbackKey(layer, outputScale)
     if (pictures.get(key) !== undefined) return
     try {
@@ -207,6 +217,10 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     const items: DrawItem[] = []
     let lateLayers = 0
     for (const layer of layers) {
+      if (!hasPicture(layer)) {
+        items.push(layer)
+        continue
+      }
       const key = playbackKey(layer, outputScale)
       let picture = pictures.get(key)
       if (picture === undefined) {

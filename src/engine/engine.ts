@@ -4,6 +4,7 @@ import { describeError } from '../shared/log.js'
 import type { ExportJob, FramesJob, LoadedProject, MediaClient } from '../shared/mediaProtocol.js'
 import { projectDuration, type Canvas } from '../shared/project.js'
 import { SAMPLE_RATE, TICKS_PER_SAMPLE, frameAt, frameDuration } from '../shared/time.js'
+import { viewAt, wholeCanvas, type View } from './camera.js'
 import { createPlaybackClock, type PlaybackClock } from './clock.js'
 import { CompositorError, createCompositor, type DrawItem } from './compositor.js'
 import { exportMp4, renderFrames, type JobSummary, type ProgressListener, type RenderContext } from './exporter.js'
@@ -34,6 +35,8 @@ export type Engine = {
   load(projectPath: string, forPreview: boolean): Promise<void>
   setProject(project: LoadedProject): void
   setOutputSize(size: Size): void
+  // While the zoom tool is used, the paused picture shows the whole canvas, so any part of it can be framed. Playing always goes through the camera.
+  showWholeCanvasWhenPaused(isShown: boolean): void
   attachAudio(port: MessagePort): void
   seek(time: number): void
   play(outputLatencySeconds: number): void
@@ -79,6 +82,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
   let playback: Playback | undefined
   let outputLatency = 0
   let droppedFrames = 0
+  let isWholeCanvasShownWhenPaused = false
 
   function requireLoaded(): LoadedProject {
     if (loaded === undefined) throw new EngineError('No project is loaded')
@@ -93,10 +97,15 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     return resolveFrame(project.project, project.media, frameTime, outputScale(project))
   }
 
-  function draw(project: LoadedProject, items: readonly DrawItem[]): void {
-    compositor.render(project.project.canvas, output, items)
+  function draw(project: LoadedProject, view: View, items: readonly DrawItem[]): void {
+    compositor.render(project.project.canvas, output, view, items)
     compositor.present()
     provider.collect()
+  }
+
+  // Text is drawn for the largest size the camera's move reaches, so a zoom does not draw it anew on every frame.
+  function textScale(project: LoadedProject, view: View): number {
+    return outputScale(project) * view.largestScale
   }
 
   function emitPosition(fullQualityMs: number | undefined): void {
@@ -109,7 +118,9 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     generation += 1
     const shown = generation
     const layers = layersAt(project, time)
-    const scale = outputScale(project)
+    const { canvas, camera } = project.project
+    const view = isWholeCanvasShownWhenPaused ? wholeCanvas(canvas) : viewAt(camera, time, canvas)
+    const scale = textScale(project, view)
     // An edit that needs the same source frames keeps the running decodes: aborting them on every drag frame would never let a slow decode finish.
     const needed = decodesNeeded(layers)
     if (refining === undefined || refining.signal.aborted || needed !== refiningFor) {
@@ -122,12 +133,12 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     try {
       const quick = await provider.itemsFor(layers, 'preview', scale, controller.signal)
       if (shown !== generation) return
-      draw(project, quick)
+      draw(project, view, quick)
       emitPosition(undefined)
 
       const exact = await provider.itemsFor(layers, 'full', scale, controller.signal)
       if (shown !== generation) return
-      draw(project, exact)
+      draw(project, view, exact)
       emitPosition(performance.now() - startedAt)
     } catch (error) {
       if (controller.signal.aborted) return
@@ -154,11 +165,15 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     }
   }
 
+  function cameraAt(project: LoadedProject, frameTime: number): View {
+    return viewAt(project.project.camera, frameTime, project.project.canvas)
+  }
+
   async function prepareAhead(project: LoadedProject, frame: number, frameTicks: number): Promise<void> {
-    const scale = outputScale(project)
     const loads: Promise<void>[] = []
     for (let ahead = 0; ahead <= READ_AHEAD_FRAMES; ahead++) {
-      loads.push(provider.prepare(layersAt(project, (frame + ahead) * frameTicks), scale))
+      const frameTime = (frame + ahead) * frameTicks
+      loads.push(provider.prepare(layersAt(project, frameTime), textScale(project, cameraAt(project, frameTime))))
     }
     await Promise.all(loads)
   }
@@ -175,11 +190,12 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     const frame = frameAt(position, frameTicks)
     if (frame !== playing.drawnFrame) {
       const skipped = playing.drawnFrame === undefined ? 0 : frame - playing.drawnFrame - 1
-      const { items, lateLayers } = provider.itemsNow(layersAt(project, frame * frameTicks), outputScale(project))
+      const view = cameraAt(project, frame * frameTicks)
+      const { items, lateLayers } = provider.itemsNow(layersAt(project, frame * frameTicks), textScale(project, view))
       droppedFrames += Math.max(0, skipped) + (lateLayers > 0 ? 1 : 0)
       playing.drawnFrame = frame
       time = frame * frameTicks
-      draw(project, items)
+      draw(project, view, items)
       emitPosition(undefined)
     }
     void prepareAhead(project, frame + 1, frameTicks)
@@ -273,6 +289,12 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     if (playback === undefined) void showPaused()
   }
 
+  function showWholeCanvasWhenPaused(isShown: boolean): void {
+    if (isShown === isWholeCanvasShownWhenPaused) return
+    isWholeCanvasShownWhenPaused = isShown
+    if (playback === undefined) void showPaused()
+  }
+
   // The playback loop holds the project it started with, so an edit pauses instead of swapping the project under it.
   function setProject(project: LoadedProject): void {
     stopPlayback()
@@ -319,6 +341,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     load,
     setProject,
     setOutputSize,
+    showWholeCanvasWhenPaused,
     attachAudio,
     seek,
     play,

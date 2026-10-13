@@ -14,6 +14,8 @@ const INPUT_SETTLE_MS = 30
 const WHEEL_INTERVAL_MS = 8
 export const P95 = 0.95
 export const RULER_HEIGHT = 24
+// The lane of the camera's zooms lies between the ruler and the first track.
+export const CAMERA_LANE_HEIGHT = 22
 export const TRACK_HEIGHT = 56
 
 // Answers the tests give in place of the dialogs a person would see.
@@ -59,6 +61,10 @@ export type Driver = {
   rect(testId: string): Promise<Rect>
   hover(point: Point): Promise<void>
   drag(from: Point, to: Point, modifiers?: readonly Modifier[]): Promise<void>
+  // The three parts of a drag, for looking at the window while the button is still held.
+  holdAt(point: Point): void
+  dragOn(from: Point, to: Point, modifiers?: readonly Modifier[]): Promise<void>
+  releaseAt(point: Point): Promise<void>
   clickAt(point: Point, modifiers?: readonly Modifier[]): Promise<void>
   doubleClickAt(point: Point): Promise<void>
   rightClickAt(point: Point): Promise<void>
@@ -143,15 +149,23 @@ export function driverOf(window: BrowserWindow, options: UiTestOptions): Driver 
     await sleep(INPUT_SETTLE_MS)
   }
 
-  async function drag(from: Point, to: Point, modifiers: readonly Modifier[] = []): Promise<void> {
-    mouse('mouseDown', from, modifiers)
+  async function dragOn(from: Point, to: Point, modifiers: readonly Modifier[] = []): Promise<void> {
     for (let step = 1; step <= DRAG_STEPS; step++) {
       const progress = step / DRAG_STEPS
       mouse('mouseMove', { x: from.x + (to.x - from.x) * progress, y: from.y + (to.y - from.y) * progress }, modifiers)
       await sleep(INPUT_SETTLE_MS)
     }
-    mouse('mouseUp', to, modifiers)
+  }
+
+  async function releaseAt(point: Point, modifiers: readonly Modifier[] = []): Promise<void> {
+    mouse('mouseUp', point, modifiers)
     await sleep(INPUT_SETTLE_MS)
+  }
+
+  async function drag(from: Point, to: Point, modifiers: readonly Modifier[] = []): Promise<void> {
+    mouse('mouseDown', from, modifiers)
+    await dragOn(from, to, modifiers)
+    await releaseAt(to, modifiers)
   }
 
   async function clickAt(point: Point, modifiers: readonly Modifier[] = []): Promise<void> {
@@ -236,7 +250,7 @@ export function driverOf(window: BrowserWindow, options: UiTestOptions): Driver 
     if (!isTimelineView(view)) throw new PageError('The timeline does not report its view')
     return {
       x: box.x + (time / TICKS_PER_SECOND) * view.pixelsPerSecond - view.scrollX,
-      y: box.y + RULER_HEIGHT + (trackCount - 1 - trackIndex) * TRACK_HEIGHT - view.scrollY + TRACK_HEIGHT / 2,
+      y: box.y + RULER_HEIGHT + CAMERA_LANE_HEIGHT + (trackCount - 1 - trackIndex) * TRACK_HEIGHT - view.scrollY + TRACK_HEIGHT / 2,
     }
   }
 
@@ -270,6 +284,9 @@ export function driverOf(window: BrowserWindow, options: UiTestOptions): Driver 
     rect,
     hover,
     drag,
+    holdAt: (point) => mouse('mouseDown', point, []),
+    dragOn,
+    releaseAt,
     clickAt,
     doubleClickAt,
     rightClickAt,

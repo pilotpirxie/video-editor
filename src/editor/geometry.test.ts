@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Crop, Transform } from '../shared/project.js'
-import { boundsOf, boxOf, containsPoint, cropFromHandle, handlePosition, rotationFromPointer, scaleFromHandle, toCanvas, toLocal, type Box, type Point } from './geometry.js'
+import { boundsOf, boxOf, containsPoint, cropFromHandle, cropFromValue, handlePosition, rotationFromPointer, scaleFromHandle, toCanvas, toLocal, type Box, type Point } from './geometry.js'
 
 const NATURAL = { width: 400, height: 200 }
 const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 }
@@ -116,6 +116,36 @@ describe('cropFromHandle', () => {
     expect(revealed.crop.top).toBeCloseTo(0, 6)
     const stays = { x: 300, y: 150 }
     expectPoint(sourcePointOnCanvas(stays, revealed.crop, revealed.transform), sourcePointOnCanvas(stays, crop, UPRIGHT))
+  })
+})
+
+describe('cropFromValue', () => {
+  const transform: Transform = { x: 500, y: 300, scaleX: 2, scaleY: 0.5, rotation: 30 }
+  const crop: Crop = { left: 10, top: 20, right: 30, bottom: 40 }
+
+  it('hides picture on each side without moving the picture that stays', () => {
+    const stays = { x: 200, y: 100 }
+    for (const side of ['left', 'top', 'right', 'bottom'] as const) {
+      const cropped = cropFromValue(NATURAL, crop, transform, side, 60)
+      expect(cropped.crop).toEqual({ ...crop, [side]: 60 })
+      expectPoint(sourcePointOnCanvas(stays, cropped.crop, cropped.transform), sourcePointOnCanvas(stays, crop, transform))
+    }
+  })
+
+  it('gives what dragging the handle to the same crop gives', () => {
+    const before = boxOf(NATURAL, crop, transform)
+    const dragged = cropFromHandle(NATURAL, crop, transform, 'w', toCanvas(before, { x: -200, y: 0 }))
+    const typed = cropFromValue(NATURAL, crop, transform, 'left', dragged.crop.left)
+    expect(typed.crop.left).toBeCloseTo(dragged.crop.left, 6)
+    expectPoint(typed.transform, dragged.transform)
+  })
+
+  it('leaves at least one pixel of the picture and never goes below nothing', () => {
+    expect(cropFromValue(NATURAL, crop, UPRIGHT, 'left', 5000).crop.left).toBe(400 - 30 - 1)
+    expect(cropFromValue(NATURAL, crop, UPRIGHT, 'bottom', 5000).crop.bottom).toBe(200 - 20 - 1)
+    const none = cropFromValue(NATURAL, crop, UPRIGHT, 'top', -50)
+    expect(none.crop.top).toBe(0)
+    expect(none.transform.y).toBe(300 - 10)
   })
 })
 

@@ -67,15 +67,19 @@ describe('dev harness', () => {
     expect(existsSync(exportPath)).toBe(true)
   })
 
-  it.skipIf(!HAS_SAMPLES)('plays 1080p30 with four video layers, an image, two titles and music without dropping a frame', async () => {
-    const report = await selfTest('demo-four-layers', ['--seconds', '10', '--report-memory'])
-    console.info(`four-layer 1080p30 demo: dropped ${report.droppedFrames} frames in 10 s, paused frame ${JSON.stringify(report.fullQualityMilliseconds)}, peak memory ${report.peakMemoryMegabytes} MB`)
+  it.skipIf(!HAS_SAMPLES).each([
+    { project: 'demo-four-layers', layers: 'four video layers, an image, two titles and music' },
+    { project: 'demo-zoom-effects', layers: 'four video layers, two titles, a blur and a spotlight, through camera zooms, transitions and effects' },
+  ])('plays 1080p30 with $layers without dropping a frame', async ({ project }) => {
+    const report = await selfTest(project, ['--seconds', '10', '--report-memory'])
+    console.info(`${project} at 1080p30: dropped ${report.droppedFrames} frames in 10 s, paused frame ${JSON.stringify(report.fullQualityMilliseconds)}, peak memory ${report.peakMemoryMegabytes} MB`)
     expect(report.status).toBe('Ready.')
     expect(framesOf(report.timecodeWhilePlaying)).toBeGreaterThan(270)
     expect(report.droppedFrames).toBe(0)
     expect(report.fullQualityMilliseconds.afterScrub).toBeLessThanOrEqual(MAX_PAUSED_FRAME_MS)
     expect(report.fullQualityMilliseconds.atActualSize).toBeLessThanOrEqual(MAX_PAUSED_FRAME_MS)
-    expect(report.peakMemoryMegabytes).toBeLessThanOrEqual(MAX_TYPICAL_MEMORY_MB)
+    // Paused under its 2x zoom the second project reads four layers at full size, which is not the typical case the limit is for; its memory is printed above and judged while exporting.
+    if (project === 'demo-four-layers') expect(report.peakMemoryMegabytes).toBeLessThanOrEqual(MAX_TYPICAL_MEMORY_MB)
   })
 
   it('shows a 4K frame from the originals within the paused-frame budget', async () => {

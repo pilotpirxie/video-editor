@@ -3,6 +3,7 @@ import type { ExportJob, FramesJob, LoadedProject, MediaClient } from '../shared
 import { describeError } from '../shared/log.js'
 import { projectDuration } from '../shared/project.js'
 import { TICKS_PER_SAMPLE, frameDuration, timecode } from '../shared/time.js'
+import { viewAt } from './camera.js'
 import type { Compositor } from './compositor.js'
 import type { FrameProvider } from './frameProvider.js'
 import { mix, type AudioReader } from './mixer.js'
@@ -49,9 +50,10 @@ export async function exportMp4(context: RenderContext, job: ExportJob, onProgre
   try {
     for (let frame = 0; frame < frameCount; frame++) {
       time = range.start + frame * frameTicks
+      const view = viewAt(project.camera, time, project.canvas)
       const layers = resolveFrame(project, states, time, outputScale)
-      const items = await context.provider.itemsFor(layers, 'stream', outputScale)
-      context.compositor.render(project.canvas, output, items)
+      const items = await context.provider.itemsFor(layers, 'stream', outputScale * view.largestScale)
+      context.compositor.render(project.canvas, output, view, items)
       context.provider.collect()
 
       const firstSample = Math.ceil(time / TICKS_PER_SAMPLE)
@@ -83,9 +85,10 @@ export async function renderFrames(context: RenderContext, job: FramesJob): Prom
 
   try {
     for (const frame of frames) {
+      const view = viewAt(project.camera, frame * frameTicks, project.canvas)
       const layers = resolveFrame(project, states, frame * frameTicks, outputScale)
-      const items = await context.provider.itemsFor(layers, quality, outputScale)
-      context.compositor.render(project.canvas, output, items)
+      const items = await context.provider.itemsFor(layers, quality, outputScale * view.largestScale)
+      context.compositor.render(project.canvas, output, view, items)
       context.provider.collect()
       const name = `frame-${String(frame).padStart(FRAME_NUMBER_DIGITS, '0')}.rgba`
       await context.media.writeFile(job.outputDirectory, name, context.compositor.readPixels())

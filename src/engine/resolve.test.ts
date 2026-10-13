@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MediaInfo, VideoInfo } from '../shared/mediaProtocol.js'
-import type { Clip, Easing, Keyframe, Project, Track, VideoClip } from '../shared/project.js'
-import { ease, fadeFactor, resolveFrame, sourceHalvings, valueAt, type Layer, type MediaStates, type VideoLayer } from './resolve.js'
+import { TRANSITION_TYPES, ease, type CameraKeyframe, type Clip, type Easing, type Keyframe, type Project, type Track, type TransitionType, type VideoClip } from '../shared/project.js'
+import { fadeFactor, resolveFrame, sourceHalvings, transitionChange, valueAt, type Layer, type MediaStates, type TransitionPart, type VideoLayer } from './resolve.js'
 
 const SECOND = 24_000_000
 const FRAME_30 = 800_000
@@ -304,5 +304,237 @@ describe('sourceHalvings', () => {
     expect(sourceHalvings(huge, scaled(0.2), 1)).toBe(2)
     expect(sourceHalvings(VIDEO, scaled(0.0001), 1)).toBe(6)
     expect(sourceHalvings(VIDEO, scaled(0), 1)).toBe(6)
+  })
+})
+
+describe('transitionChange', () => {
+  const CANVAS = { width: 1920, height: 1080 }
+
+  function change(type: TransitionType, progress: number, isArriving: boolean, isOnCut = true): ReturnType<typeof transitionChange> {
+    const part: TransitionPart = { type, progress, isArriving, isOnCut }
+    return transitionChange(part, CANVAS)
+  }
+
+  it.each(TRANSITION_TYPES)('%s leaves the arriving picture whole at its end and the leaving one whole at its start', (type) => {
+    for (const whole of [change(type, 1, true), change(type, 0, false)]) {
+      expect(whole).toMatchObject({ opacity: 1, offsetY: 0, scale: 1 })
+      expect(Math.abs(whole.offsetX)).toBe(0)
+      expect(whole.tint?.amount ?? 0).toBe(0)
+    }
+  })
+
+  it('shares a dissolve so that the two pictures always add up to one', () => {
+    for (const progress of [0, 0.25, 0.5, 0.9, 1]) {
+      expect(change('crossDissolve', progress, true).opacity + change('crossDissolve', progress, false).opacity).toBeCloseTo(1, 12)
+    }
+  })
+
+  it('takes one half of a fade through a colour to reach the colour and the other to leave it', () => {
+    expect(change('fadeBlack', 0.25, false)).toMatchObject({ opacity: 1, tint: { color: 'black', amount: 0.5 } })
+    expect(change('fadeBlack', 0.5, false)).toMatchObject({ opacity: 1, tint: { color: 'black', amount: 1 } })
+    expect(change('fadeBlack', 0.75, false)).toMatchObject({ opacity: 0.5, tint: { color: 'black', amount: 1 } })
+    expect(change('fadeWhite', 0.25, true)).toMatchObject({ opacity: 0.5, tint: { color: 'white', amount: 1 } })
+    expect(change('fadeWhite', 0.75, true)).toMatchObject({ opacity: 1, tint: { color: 'white', amount: 0.5 } })
+  })
+
+  it('moves the edge of a wipe across the canvas, with the two pictures on opposite sides of it', () => {
+    expect(change('wipeLeft', 0.5, true).reveal).toEqual({ kind: 'line', x: 960, y: 0, normalX: 1, normalY: 0 })
+    expect(change('wipeLeft', 0.5, false).reveal).toEqual({ kind: 'line', x: 960, y: 0, normalX: -1, normalY: -0 })
+    expect(change('wipeLeft', 0, true).reveal).toMatchObject({ x: 1920 })
+    expect(change('wipeRight', 0, true).reveal).toMatchObject({ x: 0, normalX: -1 })
+    expect(change('wipeUp', 1, true).reveal).toMatchObject({ y: 0, normalY: 1 })
+    expect(change('wipeDown', 0.5, true).reveal).toMatchObject({ y: 540, normalY: -1 })
+  })
+
+  it('slides the new picture in from the right over one that stays, and pushes the old one out to the left', () => {
+    expect(change('slide', 0, true).offsetX).toBe(1920)
+    expect(change('slide', 0.5, true).offsetX).toBe(960)
+    expect(change('slide', 0.5, false)).toMatchObject({ offsetX: 0, opacity: 1 })
+    expect(change('slide', 0.5, false, false).offsetX).toBe(-960)
+    expect(change('push', 0.5, false).offsetX).toBe(-960)
+    expect(change('push', 1, false).offsetX).toBe(-1920)
+  })
+
+  it('grows the leaving picture and the arriving one while they dissolve in a zoom', () => {
+    expect(change('zoom', 0, true)).toMatchObject({ opacity: 0, scale: 0.5 })
+    expect(change('zoom', 0.5, true)).toMatchObject({ opacity: 0.5, scale: 0.75 })
+    expect(change('zoom', 1, false)).toMatchObject({ opacity: 0, scale: 2 })
+  })
+
+  it('opens a circle from the middle of the canvas that reaches its corners at the end', () => {
+    expect(change('circleReveal', 0, true).reveal).toEqual({ kind: 'circle', x: 960, y: 540, radius: 0, isInside: true })
+    expect(change('circleReveal', 1, false).reveal).toEqual({ kind: 'circle', x: 960, y: 540, radius: Math.hypot(960, 540), isInside: false })
+  })
+})
+
+describe('transitions on a track', () => {
+  const HALF = SECOND / 2
+
+  function cut(type: TransitionType, first: Partial<VideoClip> = {}, second: Partial<VideoClip> = {}): Clip[] {
+    return [
+      videoClip({ id: 'first', start: 0, duration: 2 * SECOND, sourceStart: 2 * SECOND, ...first }),
+      videoClip({ id: 'second', start: 2 * SECOND, duration: 2 * SECOND, sourceStart: 4 * SECOND, transitionIn: { type, duration: SECOND }, ...second }),
+    ]
+  }
+
+  function idsAt(clips: Clip[], time: number): string[] {
+    return layersAt(clips, time).map((layer) => layer.clipId)
+  }
+
+  function frameOf(layer: Layer | undefined): number {
+    if (layer?.kind !== 'video') throw new Error('Expected a video layer')
+    return layer.frame
+  }
+
+  it('draws both clips for the whole length of a transition on their cut, the leaving one first', () => {
+    const clips = cut('crossDissolve')
+    expect(idsAt(clips, 2 * SECOND - HALF - 100)).toEqual(['first'])
+    expect(idsAt(clips, 2 * SECOND - HALF)).toEqual(['first', 'second'])
+    expect(idsAt(clips, 2 * SECOND)).toEqual(['first', 'second'])
+    expect(idsAt(clips, 2 * SECOND + HALF - 100)).toEqual(['first', 'second'])
+    expect(idsAt(clips, 2 * SECOND + HALF)).toEqual(['second'])
+  })
+
+  it('marks the two layers of a dissolve to be added up, at shares that make one', () => {
+    const [leaving, arriving] = layersAt(cut('crossDissolve'), 2 * SECOND - HALF / 2)
+    expect(leaving?.opacity).toBeCloseTo(0.75, 12)
+    expect(arriving?.opacity).toBeCloseTo(0.25, 12)
+    expect(leaving?.transition?.mixKey).toBe('second')
+    expect(arriving?.transition?.mixKey).toBe('second')
+  })
+
+  it.each<TransitionType>(['slide', 'push', 'fadeBlack', 'fadeWhite'])('draws the layers of a %s one over the other', (type) => {
+    const layers = layersAt(cut(type), 2 * SECOND)
+    expect(layers.map((layer) => layer.transition?.mixKey)).toEqual([undefined, undefined])
+  })
+
+  it('moves the picture of a slide and leaves the place of the clip as it is', () => {
+    const [leaving, arriving] = layersAt(cut('slide'), 2 * SECOND)
+    expect(leaving?.transition?.transform).toEqual(leaving?.transform)
+    expect(arriving?.transform.x).toBe(960)
+    expect(arriving?.transition?.transform.x).toBe(960 + 960)
+  })
+
+  it('plays a clip on through its file beyond the cut', () => {
+    const clips = cut('crossDissolve')
+    const afterCut = layersAt(clips, 2 * SECOND + HALF / 2)
+    const beforeCut = layersAt(clips, 2 * SECOND - HALF / 2)
+    expect(frameOf(afterCut[0])).toBe(Math.floor((4 * SECOND + HALF / 2) / FRAME_30))
+    expect(frameOf(beforeCut[1])).toBe(Math.floor((4 * SECOND - HALF / 2) / FRAME_30))
+  })
+
+  it('holds the last and the first frame where the file has no more footage', () => {
+    const clips = cut('crossDissolve', { sourceStart: 8 * SECOND }, { sourceStart: 0 })
+    expect(frameOf(layersAt(clips, 2 * SECOND + HALF / 2)[0])).toBe(299)
+    expect(frameOf(layersAt(clips, 2 * SECOND - HALF / 2)[1])).toBe(0)
+  })
+
+  it('treats clips that do not touch as two clips with a transition each', () => {
+    const clips = cut('crossDissolve', {}, { start: 2 * SECOND + 100 })
+    expect(idsAt(clips, 2 * SECOND - HALF / 2)).toEqual(['first'])
+    const alone = layersAt(clips, 2 * SECOND + 100 + HALF)
+    expect(alone.map((layer) => layer.clipId)).toEqual(['second'])
+    expect(alone[0]?.opacity).toBeCloseTo(0.5, 12)
+    expect(alone[0]?.transition?.mixKey).toBeUndefined()
+  })
+
+  it('plays a transition at the start and at the end of a clip inside the clip', () => {
+    const clip = videoClip({ duration: 4 * SECOND, transitionIn: { type: 'crossDissolve', duration: SECOND }, transitionOut: { type: 'push', duration: SECOND } })
+    expect(videoLayerAt(clip, SECOND / 4).opacity).toBeCloseTo(0.25, 12)
+    expect(videoLayerAt(clip, SECOND).transition).toBeUndefined()
+    expect(videoLayerAt(clip, 3 * SECOND - 100).transition).toBeUndefined()
+    expect(videoLayerAt(clip, 3 * SECOND + HALF).transition?.transform.x).toBe(960 - 960)
+  })
+
+  it('does not play the end transition of a clip whose cut has a transition of its own', () => {
+    const clips = cut('crossDissolve', { transitionOut: { type: 'push', duration: SECOND } })
+    const [leaving] = layersAt(clips, 2 * SECOND - HALF / 2)
+    expect(leaving?.transition?.transform).toEqual(leaving?.transform)
+    expect(layersAt(clips, SECOND + 100)[0]?.transition).toBeUndefined()
+  })
+
+  it('plays the nearer cut when a clip is shorter than its two transitions', () => {
+    const clips: Clip[] = [
+      videoClip({ id: 'a', start: 0, duration: 2 * SECOND }),
+      videoClip({ id: 'b', start: 2 * SECOND, duration: SECOND / 2, transitionIn: { type: 'crossDissolve', duration: SECOND } }),
+      videoClip({ id: 'c', start: 2.5 * SECOND, duration: 2 * SECOND, transitionIn: { type: 'crossDissolve', duration: SECOND } }),
+    ]
+    expect(idsAt(clips, 2 * SECOND + SECOND / 8)).toEqual(['a', 'b'])
+    expect(idsAt(clips, 2 * SECOND + (3 * SECOND) / 8)).toEqual(['b', 'c'])
+  })
+
+  it('keeps a clip as faded as at its end while a transition draws it past that end', () => {
+    const clips = cut('slide', { fadeOut: SECOND })
+    expect(layersAt(clips, 2 * SECOND + HALF / 2)[0]?.opacity).toBe(0)
+    expect(layersAt(clips, 2 * SECOND - HALF)[0]?.opacity).toBeCloseTo(0.5, 12)
+  })
+})
+
+describe('effects and shapes', () => {
+  const PLACE = { x: 400, y: 300, scaleX: 1, scaleY: 1, rotation: 0 }
+  const blur: Clip = { id: 'blur', type: 'blur', start: 0, duration: SECOND, transform: PLACE, opacity: 1, width: 300, height: 100, shape: 'rectangle', softEdge: 4, strength: 12 }
+  const spotlight: Clip = { id: 'spot', type: 'highlight', start: SECOND, duration: SECOND, transform: PLACE, opacity: 0.5, width: 200, height: 200, shape: 'ellipse', softEdge: 0, color: '#404040', isSpotlight: true, transitionIn: { type: 'crossDissolve', duration: SECOND } }
+
+  it('passes on the effects that are switched on, in their order', () => {
+    const clip = videoClip({
+      effects: [
+        { type: 'border', width: 4, color: '#FFFFFF' },
+        { type: 'clipBlur', strength: 6, isOff: true },
+        { type: 'blackAndWhite', amount: 1 },
+      ],
+    })
+    expect(videoLayerAt(clip, 0).effects).toEqual([
+      { type: 'border', width: 4, color: '#FFFFFF' },
+      { type: 'blackAndWhite', amount: 1 },
+    ])
+    expect(videoLayerAt(videoClip({ effects: [{ type: 'blackAndWhite', amount: 1, isOff: true }] }), 0).effects).toBeUndefined()
+  })
+
+  it('resolves a blur clip and a highlight clip without any media', () => {
+    expect(resolveFrame(project([track([blur])]), {}, 0, 1)).toEqual([
+      { kind: 'blur', clipId: 'blur', transform: PLACE, opacity: 1, width: 300, height: 100, shape: 'rectangle', softEdge: 4, strength: 12, isPixelated: false },
+    ])
+    expect(resolveFrame(project([track([{ ...spotlight, transitionIn: undefined }])]), {}, SECOND, 1)).toEqual([
+      { kind: 'highlight', clipId: 'spot', transform: PLACE, opacity: 0.5, width: 200, height: 200, shape: 'ellipse', softEdge: 0, color: '#404040', isSpotlight: true },
+    ])
+  })
+
+  it('never adds a clip without a picture to its neighbour, whatever the transition', () => {
+    const layers = resolveFrame(project([track([blur, spotlight])]), {}, SECOND, 1)
+    expect(layers.map((layer) => layer.clipId)).toEqual(['blur', 'spot'])
+    expect(layers.map((layer) => layer.transition?.mixKey)).toEqual([undefined, undefined])
+    expect(layers[1]?.opacity).toBeCloseTo(0.25, 12)
+  })
+})
+
+describe('decode size under a camera zoom', () => {
+  const half = { x: 960, y: 540, scaleX: 0.5, scaleY: 0.5, rotation: 0 }
+
+  function halvingsWith(camera: CameraKeyframe[], clips: Clip[], time: number): number {
+    const layer = resolveFrame({ ...project([track(clips)]), camera }, MEDIA, time, 1).at(-1)
+    if (layer?.kind !== 'video') throw new Error('Expected a video layer')
+    return layer.halvings
+  }
+
+  const zoomAtThree: CameraKeyframe[] = [{ time: 3 * SECOND, duration: SECOND, easing: 'linear', x: 960, y: 540, scale: 2 }]
+
+  it('decodes a clip for the largest zoom that happens while it is on screen, at every moment of the clip', () => {
+    const clip = videoClip({ transform: half })
+    expect(halvingsWith(zoomAtThree, [clip], 0)).toBe(0)
+    expect(halvingsWith(zoomAtThree, [clip], 4 * SECOND)).toBe(0)
+  })
+
+  it('does not decode more for a zoom that starts after the clip has ended', () => {
+    const clip = videoClip({ transform: half, duration: 2 * SECOND })
+    expect(halvingsWith(zoomAtThree, [clip], SECOND)).toBe(1)
+  })
+
+  it('counts the half of a transition that draws the clip past its end', () => {
+    const clips: Clip[] = [
+      videoClip({ id: 'first', transform: half, duration: 2 * SECOND }),
+      videoClip({ id: 'second', transform: half, start: 2 * SECOND, duration: 2 * SECOND, transitionIn: { type: 'crossDissolve', duration: SECOND } }),
+    ]
+    const layers = resolveFrame({ ...project([track(clips)]), camera: zoomAtThree }, MEDIA, SECOND, 1)
+    expect(layers[0]).toMatchObject({ clipId: 'first', halvings: 0 })
   })
 })

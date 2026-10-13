@@ -1,0 +1,345 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 360,
+    "width": 640
+  },
+  "media": [
+    {
+      "id": "h264",
+      "path": "",
+      "relativePath": "../media/generated/h264.mp4"
+    },
+    {
+      "id": "image-green-screen",
+      "path": "",
+      "relativePath": "../media/generated/image-green-screen.png"
+    },
+    {
+      "id": "image-alpha",
+      "path": "",
+      "relativePath": "../media/generated/image-alpha.png"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "id": "clip-00",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 12000000,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-01",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 24000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "crossDissolve"
+          },
+          "type": "image"
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-02",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 12000000,
+          "speedPercent": 100,
+          "start": 48000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "fadeBlack"
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-03",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 72000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "fadeWhite"
+          },
+          "type": "image"
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-04",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 12000000,
+          "speedPercent": 100,
+          "start": 96000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "wipeLeft"
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-05",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 120000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "wipeRight"
+          },
+          "type": "image"
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-06",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 12000000,
+          "speedPercent": 100,
+          "start": 144000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "wipeUp"
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-07",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 168000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "wipeDown"
+          },
+          "type": "image"
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-08",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 12000000,
+          "speedPercent": 100,
+          "start": 192000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "slide"
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-09",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 216000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "push"
+          },
+          "type": "image"
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-10",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 12000000,
+          "speedPercent": 100,
+          "start": 240000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "zoom"
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-11",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 264000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "circleReveal"
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "main",
+      "locked": false,
+      "muted": false,
+      "name": "main"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "alone",
+          "mediaId": "image-alpha",
+          "opacity": 1,
+          "start": 288000000,
+          "transform": {
+            "rotation": -6,
+            "scaleX": 1.2,
+            "scaleY": 1.2,
+            "x": 420,
+            "y": 200
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "zoom"
+          },
+          "transitionOut": {
+            "duration": 16000000,
+            "type": "slide"
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "alone",
+      "locked": false,
+      "muted": false,
+      "name": "alone"
+    },
+    {
+      "clips": [
+        {
+          "duration": 14400000,
+          "height": 200,
+          "id": "wiped-blur",
+          "opacity": 1,
+          "shape": "rectangle",
+          "softEdge": 0,
+          "start": 4800000,
+          "strength": 10,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 320,
+            "y": 200
+          },
+          "transitionIn": {
+            "duration": 8000000,
+            "type": "wipeRight"
+          },
+          "type": "blur",
+          "width": 400
+        }
+      ],
+      "hidden": false,
+      "id": "blur",
+      "locked": false,
+      "muted": false,
+      "name": "blur"
+    }
+  ],
+  "version": 1
+}

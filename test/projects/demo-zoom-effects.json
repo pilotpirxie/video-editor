@@ -1,0 +1,409 @@
+{
+  "camera": [
+    {
+      "duration": 24000000,
+      "easing": "easeInOut",
+      "scale": 2,
+      "time": 72000000,
+      "x": 480,
+      "y": 270
+    },
+    {
+      "duration": 36000000,
+      "easing": "easeInOut",
+      "scale": 2,
+      "time": 156000000,
+      "x": 1440,
+      "y": 810
+    },
+    {
+      "duration": 24000000,
+      "easing": "easeInOut",
+      "scale": 1,
+      "time": 240000000,
+      "x": 960,
+      "y": 540
+    }
+  ],
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 1080,
+    "width": 1920
+  },
+  "media": [
+    {
+      "id": "kangaroo",
+      "path": "",
+      "relativePath": "../../samples/kangaroo1920.mp4"
+    },
+    {
+      "id": "cows",
+      "path": "",
+      "relativePath": "../../samples/cows1920.mp4"
+    },
+    {
+      "id": "book",
+      "path": "",
+      "relativePath": "../../samples/book1920.mp4"
+    },
+    {
+      "id": "highland",
+      "path": "",
+      "relativePath": "../../samples/highland1920.mp4"
+    },
+    {
+      "id": "music",
+      "path": "",
+      "relativePath": "../../samples/ever.mp3"
+    },
+    {
+      "id": "flower",
+      "path": "",
+      "relativePath": "../../samples/flower.png"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 288000000,
+          "id": "kangaroo",
+          "mediaId": "kangaroo",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.5,
+            "scaleY": 0.5,
+            "x": 480,
+            "y": 270
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "kangaroo",
+      "locked": false,
+      "muted": false,
+      "name": "kangaroo"
+    },
+    {
+      "clips": [
+        {
+          "duration": 144000000,
+          "id": "cows",
+          "mediaId": "cows",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.5,
+            "scaleY": 0.5,
+            "x": 1440,
+            "y": 270
+          },
+          "type": "video",
+          "volume": 0.3
+        },
+        {
+          "duration": 144000000,
+          "id": "cows-later",
+          "mediaId": "book",
+          "opacity": 1,
+          "sourceStart": 48000000,
+          "speedPercent": 100,
+          "start": 144000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.5,
+            "scaleY": 0.5,
+            "x": 1440,
+            "y": 270
+          },
+          "transitionIn": {
+            "duration": 24000000,
+            "type": "crossDissolve"
+          },
+          "type": "video",
+          "volume": 0.3
+        }
+      ],
+      "hidden": false,
+      "id": "cows",
+      "locked": false,
+      "muted": false,
+      "name": "cows"
+    },
+    {
+      "clips": [
+        {
+          "duration": 288000000,
+          "effects": [
+            {
+              "radius": 60,
+              "type": "roundedCorners"
+            },
+            {
+              "color": "#FFFFFF",
+              "type": "border",
+              "width": 12
+            }
+          ],
+          "id": "book",
+          "mediaId": "book",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.5,
+            "scaleY": 0.5,
+            "x": 480,
+            "y": 810
+          },
+          "type": "video",
+          "volume": 0.3
+        }
+      ],
+      "hidden": false,
+      "id": "book",
+      "locked": false,
+      "muted": false,
+      "name": "book"
+    },
+    {
+      "clips": [
+        {
+          "duration": 288000000,
+          "effects": [
+            {
+              "brightness": 0,
+              "contrast": 0.1,
+              "saturation": 0.3,
+              "type": "colorAdjust"
+            }
+          ],
+          "id": "highland",
+          "mediaId": "highland",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.5,
+            "scaleY": 0.5,
+            "x": 1440,
+            "y": 810
+          },
+          "type": "video",
+          "volume": 0.3
+        }
+      ],
+      "hidden": false,
+      "id": "highland",
+      "locked": false,
+      "muted": false,
+      "name": "highland"
+    },
+    {
+      "clips": [
+        {
+          "duration": 288000000,
+          "effects": [
+            {
+              "color": "#000000",
+              "offsetX": 12,
+              "offsetY": 12,
+              "opacity": 0.6,
+              "softness": 16,
+              "type": "dropShadow"
+            }
+          ],
+          "fadeIn": 24000000,
+          "id": "flower",
+          "mediaId": "flower",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.25,
+            "scaleY": 0.25,
+            "x": 960,
+            "y": 540
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "flower",
+      "locked": false,
+      "muted": false,
+      "name": "flower"
+    },
+    {
+      "clips": [
+        {
+          "duration": 120000000,
+          "fadeIn": 12000000,
+          "fadeOut": 12000000,
+          "height": 120,
+          "id": "blur",
+          "opacity": 1,
+          "shape": "rectangle",
+          "softEdge": 10,
+          "start": 72000000,
+          "strength": 24,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 480,
+            "y": 330
+          },
+          "type": "blur",
+          "width": 360
+        }
+      ],
+      "hidden": false,
+      "id": "blur",
+      "locked": false,
+      "muted": false,
+      "name": "blur"
+    },
+    {
+      "clips": [
+        {
+          "color": "#595959",
+          "duration": 72000000,
+          "fadeIn": 12000000,
+          "fadeOut": 12000000,
+          "height": 420,
+          "id": "spotlight",
+          "isSpotlight": true,
+          "opacity": 1,
+          "shape": "ellipse",
+          "softEdge": 40,
+          "start": 144000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 1440,
+            "y": 810
+          },
+          "type": "highlight",
+          "width": 700
+        }
+      ],
+      "hidden": false,
+      "id": "spotlight",
+      "locked": false,
+      "muted": false,
+      "name": "spotlight"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "color": "#FFFFFF",
+          "duration": 288000000,
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 72
+          },
+          "id": "title",
+          "opacity": 1,
+          "start": 0,
+          "text": "Zoom, blur, transitions and effects",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 960,
+            "y": 110
+          },
+          "transitionIn": {
+            "duration": 24000000,
+            "type": "zoom"
+          },
+          "transitionOut": {
+            "duration": 24000000,
+            "type": "slide"
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "title",
+      "locked": false,
+      "muted": false,
+      "name": "title"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "color": "#3DBA74",
+          "duration": 288000000,
+          "font": {
+            "family": "PingFang SC",
+            "size": 48
+          },
+          "id": "caption",
+          "opacity": 1,
+          "start": 0,
+          "text": "四层视频 · preview and export 🎬",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 960,
+            "y": 990
+          },
+          "transitionIn": {
+            "duration": 24000000,
+            "type": "wipeRight"
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "caption",
+      "locked": false,
+      "muted": false,
+      "name": "caption"
+    },
+    {
+      "clips": [
+        {
+          "duration": 288000000,
+          "id": "music",
+          "mediaId": "music",
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "type": "audio",
+          "volume": 0.6,
+          "volumeFadeIn": 24000000,
+          "volumeFadeOut": 48000000
+        }
+      ],
+      "hidden": false,
+      "id": "music",
+      "locked": false,
+      "muted": false,
+      "name": "music"
+    }
+  ],
+  "version": 1
+}

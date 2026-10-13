@@ -80,6 +80,22 @@ describe('splitClips', () => {
     expect(clipOf(after, 'a-2')).not.toHaveProperty('fadeIn')
   })
 
+  it('keeps the transition at the start on the first part, moves the one at the end to the second, and keeps the effects on both', () => {
+    const effects = [{ type: 'border' as const, width: 4, color: '#ffffff' }]
+    const dressed = videoClip('a', 0, 6 * SECOND, { transitionIn: { type: 'zoom', duration: SECOND }, transitionOut: { type: 'push', duration: 2 * SECOND }, effects })
+    const after = reopened(split(projectOf([track('t1', [dressed])]), 3 * SECOND))
+    expect(clipOf(after, 'a')).toMatchObject({ transitionIn: { type: 'zoom', duration: SECOND }, effects })
+    expect(clipOf(after, 'a')).not.toHaveProperty('transitionOut')
+    expect(clipOf(after, 'a-2')).toMatchObject({ transitionOut: { type: 'push', duration: 2 * SECOND }, effects })
+    expect(clipOf(after, 'a-2')).not.toHaveProperty('transitionIn')
+  })
+
+  it('does not shorten a transition when the cut makes its clip shorter than it', () => {
+    const long = videoClip('a', 0, 6 * SECOND, { transitionIn: { type: 'crossDissolve', duration: 4 * SECOND } })
+    const after = reopened(split(projectOf([track('t1', [long])]), SECOND))
+    expect(clipOf(after, 'a')).toMatchObject({ duration: SECOND, transitionIn: { type: 'crossDissolve', duration: 4 * SECOND } })
+  })
+
   it('shortens a fade that the cut lands inside', () => {
     const faded = videoClip('a', 0, 6 * SECOND, { fadeIn: 2 * SECOND, fadeOut: 2 * SECOND })
     const after = reopened(split(projectOf([track('t1', [faded])]), SECOND))

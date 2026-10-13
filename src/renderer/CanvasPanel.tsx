@@ -4,11 +4,12 @@ import { dropMedia } from '../editor/place.js'
 import { shortcutHint } from '../editor/shortcuts.js'
 import { projectDuration } from '../shared/project.js'
 import { timecode } from '../shared/time.js'
+import { CameraTool } from './CameraTool.js'
 import { CanvasOverlay } from './CanvasOverlay.js'
 import { useEditorState, usePosition, useSession } from './context.js'
 import { IconButton } from './icons.js'
 import { PreviewZoomButtons, keepPreviewSized, type PreviewZoom } from './previewLayout.js'
-import { MEDIA_DROP_EVENT, isMediaDrop } from './timelineController.js'
+import { LIBRARY_DROP_EVENT, isLibraryDrag } from './timelineController.js'
 
 type CanvasPanelProps = {
   // Created once outside React: its drawing surface is handed to the engine worker and cannot be handed over twice.
@@ -28,7 +29,11 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
   const frameRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState<PreviewZoom>('fit')
   const [isCropping, setIsCropping] = useState(false)
+  const [isZooming, setIsZooming] = useState(false)
   const isBusy = isPlaying || shuttleRate !== 0
+
+  // While the zoom tool is used the paused picture is the whole canvas, so any part of it can be framed.
+  useEffect(() => engine.send({ type: 'whole-canvas', isShown: isZooming }), [engine, isZooming])
 
   useEffect(() => {
     frameRef.current?.prepend(preview)
@@ -46,10 +51,11 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
     if (stage === null) return
 
     function onMediaDrop(event: Event): void {
-      if (!isMediaDrop(event)) return
+      if (!isLibraryDrag(event) || event.detail.item.kind !== 'media') return
+      const { mediaId } = event.detail.item
       const { project, mediaStates } = store.getState()
-      const reference = project.media.find((candidate) => candidate.id === event.detail.mediaId)
-      const state = mediaStates[event.detail.mediaId]
+      const reference = project.media.find((candidate) => candidate.id === mediaId)
+      const state = mediaStates[mediaId]
       if (reference === undefined || state === undefined || 'error' in state) return
       const clipId = crypto.randomUUID()
       const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
@@ -58,8 +64,8 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
       store.select([clipId])
     }
 
-    stage.addEventListener(MEDIA_DROP_EVENT, onMediaDrop)
-    return () => stage.removeEventListener(MEDIA_DROP_EVENT, onMediaDrop)
+    stage.addEventListener(LIBRARY_DROP_EVENT, onMediaDrop)
+    return () => stage.removeEventListener(LIBRARY_DROP_EVENT, onMediaDrop)
   }, [store, transport])
 
   return (
@@ -67,7 +73,7 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
       <div className={zoom === 'fit' ? 'canvas-area' : 'canvas-area scrollable'}>
         <div className="preview-fit" ref={stageRef}>
           <div className="preview-frame" ref={frameRef}>
-            <CanvasOverlay isCropping={isCropping} />
+            {isZooming ? <CameraTool /> : <CanvasOverlay isCropping={isCropping} />}
           </div>
         </div>
       </div>
@@ -87,6 +93,8 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
           </span>
         )}
         <span className="spacer" />
+        <IconButton icon="zoom" label="Zoom and pan: frame what the camera shows" testId="zoom-tool" isPressed={isZooming} onClick={() => setIsZooming(!isZooming)} />
+        <IconButton icon="fit" label="Zoom to full: the camera shows the whole canvas from here" testId="zoom-to-full" onClick={actions.zoomToFull} />
         <IconButton icon="crop" label="Crop with the handles" testId="crop-mode" isPressed={isCropping} onClick={() => setIsCropping(!isCropping)} />
         <PreviewZoomButtons zoom={zoom} onZoom={setZoom} />
       </footer>

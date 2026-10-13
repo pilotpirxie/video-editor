@@ -34,11 +34,7 @@
   min-width: 0;
   padding-left: var(--space-3);
   border-left: 3px solid var(--danger);
-  font-size: var(--text-label);
-}
-
-.notice.good {
-  border-left-color: var(--primary);
+  font-size: var(--text-body);
 }
 
 .notice span {
@@ -192,13 +188,33 @@
   min-height: 0;
 }
 
+/* Room above the track headers for the ruler (24px) and the camera lane (22px), which the canvas beside them draws. */
 .track-headers-viewport {
+  position: relative;
   flex: none;
   width: 190px;
-  padding-top: 24px;
+  padding-top: 46px;
   overflow: hidden;
   border-right: 1px solid var(--divider);
   background: var(--panel-background);
+}
+
+/* The name of the camera lane. It stays in place while the track headers scroll under it. */
+.camera-lane-header {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 22px;
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--divider);
+  background: var(--panel-background);
+  color: var(--text-secondary);
+  font-size: var(--text-small);
 }
 
 .track-header {
@@ -347,7 +363,7 @@
   aspect-ratio: 16 / 9;
 }
 
-.media-ghost {
+.drag-ghost {
   position: fixed;
   z-index: 10;
   padding: var(--space-1) var(--space-2);
@@ -418,11 +434,48 @@
   padding: var(--space-2);
 }
 
-.annotation-item {
+.annotation-item,
+.library-entry {
   display: flex;
   align-items: center;
   justify-content: flex-start;
   gap: var(--space-2);
+}
+
+.library-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* An entry is clicked or dragged out, so it is as wide as the panel and shows that it can be grabbed. */
+.library-entry {
+  width: 100%;
+  cursor: grab;
+}
+
+.panel-hint {
+  padding: var(--space-2);
+}
+
+/* Everything the camera does not show at the playhead, while the zoom tool is used. */
+.camera-dim {
+  fill: var(--window-background);
+  fill-opacity: 0.6;
+}
+
+.camera-tool {
+  cursor: crosshair;
 }
 
 /* The field for typing a text clip in place. Its letters are invisible so the preview underneath stays what is seen; only the caret and the selection are drawn. */
@@ -449,24 +502,5 @@
 .text-editor::selection {
   background: color-mix(in srgb, var(--primary) 45%, transparent);
   color: transparent;
-}
-
-.export-progress {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-label);
-  font-variant-numeric: tabular-nums;
-}
-
-.export-progress progress {
-  width: 120px;
-  height: 6px;
-  accent-color: var(--primary);
-}
-
-.export-progress-text {
-  color: var(--text-secondary);
-  white-space: nowrap;
 }
 

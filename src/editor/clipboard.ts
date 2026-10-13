@@ -1,5 +1,5 @@
 import type { Clip, MediaRef, Project } from '../shared/project.js'
-import { editClips, endOf, placeOnTrack, type NewTrack } from './clips.js'
+import { editClips, endOf, hasMedia, placeOnTrack, type NewTrack } from './clips.js'
 
 type CopiedClip = {
   clip: Clip
@@ -52,7 +52,7 @@ export function copyClips(project: Project, clipIds: readonly string[]): Clipboa
     for (const clip of track.clips) {
       if (!chosen.has(clip.id)) continue
       clips.push({ clip, trackIndex })
-      if (clip.type !== 'text') mediaIds.add(clip.mediaId)
+      if (hasMedia(clip)) mediaIds.add(clip.mediaId)
     }
   }
   return { clips, media: project.media.filter((reference) => mediaIds.has(reference.id)) }

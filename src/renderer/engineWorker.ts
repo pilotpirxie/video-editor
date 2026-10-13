@@ -10,6 +10,7 @@ export type WorkerCommand =
   | { type: 'load'; path: string }
   | { type: 'project'; loaded: LoadedProject }
   | { type: 'resize'; width: number; height: number }
+  | { type: 'whole-canvas'; isShown: boolean }
   | { type: 'seek'; time: number }
   | { type: 'play'; outputLatency: number }
   | { type: 'pause' }
@@ -62,6 +63,8 @@ async function handle(engine: Engine, command: WorkerCommand, ports: readonly Me
     engine.setProject(command.loaded)
   } else if (command.type === 'resize') {
     engine.setOutputSize({ width: command.width, height: command.height })
+  } else if (command.type === 'whole-canvas') {
+    engine.showWholeCanvasWhenPaused(command.isShown)
   } else if (command.type === 'seek') {
     engine.seek(command.time)
   } else if (command.type === 'play') {

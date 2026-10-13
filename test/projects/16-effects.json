@@ -1,0 +1,386 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 720,
+    "width": 1280
+  },
+  "media": [
+    {
+      "id": "image-white",
+      "path": "",
+      "relativePath": "../media/generated/image-white.png"
+    },
+    {
+      "id": "h264",
+      "path": "",
+      "relativePath": "../media/generated/h264.mp4"
+    },
+    {
+      "id": "image-alpha",
+      "path": "",
+      "relativePath": "../media/generated/image-alpha.png"
+    },
+    {
+      "id": "image-green-screen",
+      "path": "",
+      "relativePath": "../media/generated/image-green-screen.png"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "id": "ground",
+          "mediaId": "image-white",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 4,
+            "scaleY": 4,
+            "x": 640,
+            "y": 360
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "ground",
+      "locked": false,
+      "muted": false,
+      "name": "ground"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "effects": [
+            {
+              "brightness": 0.1,
+              "contrast": 0.3,
+              "saturation": -0.6,
+              "type": "colorAdjust"
+            }
+          ],
+          "id": "adjusted",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.8,
+            "scaleY": 0.8,
+            "x": 160,
+            "y": 190
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "adjusted",
+      "locked": false,
+      "muted": false,
+      "name": "adjusted"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "effects": [
+            {
+              "amount": 1,
+              "type": "blackAndWhite"
+            }
+          ],
+          "id": "grey",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.8,
+            "scaleY": 0.8,
+            "x": 480,
+            "y": 190
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "grey",
+      "locked": false,
+      "muted": false,
+      "name": "grey"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "effects": [
+            {
+              "color": "#000000",
+              "offsetX": 12,
+              "offsetY": 12,
+              "opacity": 0.6,
+              "softness": 8,
+              "type": "dropShadow"
+            }
+          ],
+          "id": "shadowed",
+          "mediaId": "image-alpha",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": -8,
+            "scaleX": 0.8,
+            "scaleY": 0.8,
+            "x": 800,
+            "y": 190
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "shadowed",
+      "locked": false,
+      "muted": false,
+      "name": "shadowed"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "effects": [
+            {
+              "color": "#E5484D",
+              "type": "border",
+              "width": 10
+            }
+          ],
+          "id": "bordered",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.8,
+            "scaleY": 0.8,
+            "x": 1120,
+            "y": 190
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "bordered",
+      "locked": false,
+      "muted": false,
+      "name": "bordered"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "effects": [
+            {
+              "radius": 30,
+              "type": "roundedCorners"
+            }
+          ],
+          "id": "rounded",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.8,
+            "scaleY": 0.8,
+            "x": 160,
+            "y": 530
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "rounded",
+      "locked": false,
+      "muted": false,
+      "name": "rounded"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "effects": [
+            {
+              "strength": 6,
+              "type": "clipBlur"
+            }
+          ],
+          "id": "blurred",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.8,
+            "scaleY": 0.8,
+            "x": 480,
+            "y": 530
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "blurred",
+      "locked": false,
+      "muted": false,
+      "name": "blurred"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "effects": [
+            {
+              "color": "#00B140",
+              "softness": 0.1,
+              "spill": 0.5,
+              "tolerance": 0.4,
+              "type": "chromaKey"
+            }
+          ],
+          "id": "keyed",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.8,
+            "scaleY": 0.8,
+            "x": 800,
+            "y": 530
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "keyed",
+      "locked": false,
+      "muted": false,
+      "name": "keyed"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "effects": [
+            {
+              "brightness": 0,
+              "contrast": 0,
+              "saturation": 0.5,
+              "type": "colorAdjust"
+            },
+            {
+              "radius": 24,
+              "type": "roundedCorners"
+            },
+            {
+              "color": "#3DBA74",
+              "type": "border",
+              "width": 8
+            },
+            {
+              "color": "#000000",
+              "offsetX": 0,
+              "offsetY": 10,
+              "opacity": 0.5,
+              "softness": 10,
+              "type": "dropShadow"
+            }
+          ],
+          "id": "stacked",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 6,
+            "scaleX": 0.8,
+            "scaleY": 0.8,
+            "x": 1120,
+            "y": 530
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "stacked",
+      "locked": false,
+      "muted": false,
+      "name": "stacked"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "color": "#1B1F27",
+          "duration": 24000000,
+          "effects": [
+            {
+              "color": "#3DBA74",
+              "offsetX": 4,
+              "offsetY": 4,
+              "opacity": 1,
+              "softness": 3,
+              "type": "dropShadow"
+            }
+          ],
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 64
+          },
+          "id": "title",
+          "opacity": 1,
+          "start": 0,
+          "text": "Effects",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 640,
+            "y": 665
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "title",
+      "locked": false,
+      "muted": false,
+      "name": "title"
+    }
+  ],
+  "version": 1
+}

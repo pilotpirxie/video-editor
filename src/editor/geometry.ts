@@ -171,6 +171,25 @@ export function cropFromHandle(natural: Size, crop: Crop, transform: Transform, 
   }
 }
 
+const OPPOSITE_SIDE: Record<keyof Crop, keyof Crop> = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' }
+
+// One crop side set to a value, as typing it does. The centre moves as it does when the handle of that side is dragged there, so the picture that stays visible does not shift.
+export function cropFromValue(natural: Size, crop: Crop, transform: Transform, side: keyof Crop, value: number): Cropped {
+  const isHorizontal = side === 'left' || side === 'right'
+  const full = isHorizontal ? natural.width : natural.height
+  const most = Math.max(0, full - crop[OPPOSITE_SIDE[side]] - 1)
+  const hidden = Math.min(most, Math.max(0, value))
+  const scale = isHorizontal ? transform.scaleX : transform.scaleY
+  // Hiding picture on one side moves the centre toward the other.
+  const direction = side === 'left' || side === 'top' ? 1 : -1
+  const along = (direction * (hidden - crop[side]) * scale) / 2
+  const shift = rotated(isHorizontal ? { x: along, y: 0 } : { x: 0, y: along }, transform.rotation)
+  return {
+    crop: { ...crop, [side]: hidden },
+    transform: { ...transform, x: transform.x + shift.x, y: transform.y + shift.y },
+  }
+}
+
 function angleTo(box: Box, point: Point): number {
   return Math.atan2(point.y - box.centerY, point.x - box.centerX) / DEGREES_TO_RADIANS
 }

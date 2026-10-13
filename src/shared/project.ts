@@ -11,6 +11,24 @@ const PROJECT_VERSION = 1
 
 export type Easing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'hold'
 
+// How far a move has come once its easing has shaped the time that has passed; both run from 0 to 1.
+export function ease(easing: Easing, progress: number): number {
+  if (easing === 'hold') {
+    return 0
+  } else if (easing === 'easeIn') {
+    return progress * progress * progress
+  } else if (easing === 'easeOut') {
+    const remaining = 1 - progress
+    return 1 - remaining * remaining * remaining
+  } else if (easing === 'easeInOut') {
+    if (progress < 0.5) return 4 * progress * progress * progress
+    const remaining = 1 - progress
+    return 1 - 4 * remaining * remaining * remaining
+  } else {
+    return progress
+  }
+}
+
 export type Keyframe = {
   time: number
   value: number
@@ -54,11 +72,54 @@ type ClipTiming = {
   keyframes?: Keyframes
 }
 
+export type TransitionType =
+  | 'crossDissolve'
+  | 'fadeBlack'
+  | 'fadeWhite'
+  | 'wipeLeft'
+  | 'wipeRight'
+  | 'wipeUp'
+  | 'wipeDown'
+  | 'slide'
+  | 'push'
+  | 'zoom'
+  | 'circleReveal'
+
+export type Transition = {
+  type: TransitionType
+  duration: number
+}
+
 type VisualSettings = {
   transform: Transform
   opacity: number
   fadeIn?: number
   fadeOut?: number
+  // At the start of a clip that touches the clip before it on the same track, this is the transition on that cut.
+  transitionIn?: Transition
+  transitionOut?: Transition
+}
+
+// Every effect can be switched off without losing its settings.
+type EffectSwitch = {
+  isOff?: true
+}
+
+// Lengths are canvas pixels; amounts run from 0 to 1, the three colour adjustments from -1 to 1 with 0 changing nothing.
+export type Effect =
+  | (EffectSwitch & { type: 'colorAdjust'; brightness: number; contrast: number; saturation: number })
+  | (EffectSwitch & { type: 'blackAndWhite'; amount: number })
+  | (EffectSwitch & { type: 'dropShadow'; offsetX: number; offsetY: number; softness: number; color: string; opacity: number })
+  | (EffectSwitch & { type: 'border'; width: number; color: string })
+  | (EffectSwitch & { type: 'roundedCorners'; radius: number })
+  | (EffectSwitch & { type: 'clipBlur'; strength: number })
+  | (EffectSwitch & { type: 'chromaKey'; color: string; tolerance: number; softness: number; spill: number })
+
+export type EffectType = Effect['type']
+
+// Applied from first to last; a clip has each kind at most once.
+type EffectSettings = {
+  effects?: Effect[]
 }
 
 type SourceSettings = {
@@ -75,6 +136,7 @@ type VolumeSettings = {
 
 export type VideoClip = ClipTiming &
   VisualSettings &
+  EffectSettings &
   SourceSettings &
   VolumeSettings & {
     type: 'video'
@@ -92,7 +154,8 @@ export type AudioClip = ClipTiming &
   }
 
 type ImageClip = ClipTiming &
-  VisualSettings & {
+  VisualSettings &
+  EffectSettings & {
     type: 'image'
     mediaId: string
     crop?: Crop
@@ -101,7 +164,8 @@ type ImageClip = ClipTiming &
 export type TextAlign = 'left' | 'center' | 'right'
 
 type TextClip = ClipTiming &
-  VisualSettings & {
+  VisualSettings &
+  EffectSettings & {
     type: 'text'
     text: string
     font: { family: string; size: number }
@@ -109,8 +173,38 @@ type TextClip = ClipTiming &
     align: TextAlign
   }
 
-export type Clip = VideoClip | AudioClip | ImageClip | TextClip
-export type VisualClip = VideoClip | ImageClip | TextClip
+export type Shape = 'rectangle' | 'ellipse'
+
+// A clip without a picture of its own: it changes what is drawn beneath it, inside a shape whose edge fades over `softEdge` canvas pixels.
+type ShapeSettings = {
+  width: number
+  height: number
+  shape: Shape
+  softEdge: number
+}
+
+// `strength` is the blur in canvas pixels, as in CSS blur(); pixelated, it is the side of one block.
+export type BlurClip = ClipTiming &
+  VisualSettings &
+  ShapeSettings & {
+    type: 'blur'
+    strength: number
+    isPixelated?: true
+  }
+
+// Multiplies what is beneath by its colour inside the shape, as a marker pen does; as a spotlight, everything outside the shape.
+export type HighlightClip = ClipTiming &
+  VisualSettings &
+  ShapeSettings & {
+    type: 'highlight'
+    color: string
+    isSpotlight?: true
+  }
+
+export type Clip = VideoClip | AudioClip | ImageClip | TextClip | BlurClip | HighlightClip
+export type PictureClip = VideoClip | ImageClip | TextClip
+export type ShapeClip = BlurClip | HighlightClip
+export type VisualClip = PictureClip | ShapeClip
 
 export type Track = {
   id: string
@@ -133,25 +227,56 @@ export type Canvas = {
   frameRate: FrameRate
 }
 
+// The view centred on (x, y) and enlarged `scale` times is reached at `time`, after a move from the view before it that takes `duration`.
+export type CameraKeyframe = {
+  time: number
+  duration: number
+  easing: Easing
+  x: number
+  y: number
+  scale: number
+}
+
 export type Project = {
   version: typeof PROJECT_VERSION
   canvas: Canvas
   media: MediaRef[]
   tracks: Track[]
+  // Zooms in time order. Before the first one the camera shows the whole canvas.
+  camera?: CameraKeyframe[]
 }
 
 export type ParseResult = { ok: true; project: Project } | { ok: false; message: string }
 
 export const MIN_CANVAS = { width: 160, height: 120 }
 export const MAX_CANVAS = { width: 3840, height: 2160 }
+export const MAX_CAMERA_SCALE = 10
 const MAX_VOLUME = 2
 
 const EASINGS: readonly Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut', 'hold']
 const TRANSFORM_PROPERTIES: readonly AnimatableProperty[] = ['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity']
 const CROP_PROPERTIES: readonly AnimatableProperty[] = ['cropLeft', 'cropTop', 'cropRight', 'cropBottom']
 const TEXT_ALIGNMENTS: readonly TextAlign[] = ['left', 'center', 'right']
-const CLIP_TYPES = ['video', 'audio', 'image', 'text']
+const CLIP_TYPES = ['video', 'audio', 'image', 'text', 'blur', 'highlight']
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/
+const OPAQUE_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
+export const TRANSITION_TYPES: readonly TransitionType[] = [
+  'crossDissolve',
+  'fadeBlack',
+  'fadeWhite',
+  'wipeLeft',
+  'wipeRight',
+  'wipeUp',
+  'wipeDown',
+  'slide',
+  'push',
+  'zoom',
+  'circleReveal',
+]
+export const EFFECT_TYPES: readonly EffectType[] = ['colorAdjust', 'blackAndWhite', 'dropShadow', 'border', 'roundedCorners', 'clipBlur', 'chromaKey']
+const SHAPES: readonly Shape[] = ['rectangle', 'ellipse']
+const AMOUNT: NumberRule = { min: 0, max: 1 }
+const ADJUSTMENT: NumberRule = { min: -1, max: 1 }
 
 class FormatError extends Error {}
 
@@ -259,6 +384,12 @@ class Fields {
     if (!Array.isArray(value)) fail(this.at(key), 'must be a list')
     return value
   }
+
+  opaqueColor(key: string): string {
+    const value = this.string(key)
+    if (!OPAQUE_COLOR_PATTERN.test(value)) fail(this.at(key), 'must look like #RRGGBB')
+    return value
+  }
 }
 
 function parseFrameRate(value: unknown, path: string): FrameRate {
@@ -356,10 +487,72 @@ function parseFade(fields: Fields, key: string, clipDuration: number): number {
   return fade
 }
 
+// A transition may be longer than its clip. Tying the two together would shorten a transition whenever a clip is trimmed or split somewhere else, and the picture there would change with it.
+function parseTransition(fields: Fields, key: string): Transition {
+  const transition = readFields(fields.raw(key), fields.at(key), ['type', 'duration'])
+  return { type: transition.oneOf('type', TRANSITION_TYPES), duration: transition.gridTime('duration', 'positive') }
+}
+
+const EFFECT_KEYS: Record<EffectType, readonly string[]> = {
+  colorAdjust: ['brightness', 'contrast', 'saturation'],
+  blackAndWhite: ['amount'],
+  dropShadow: ['offsetX', 'offsetY', 'softness', 'color', 'opacity'],
+  border: ['width', 'color'],
+  roundedCorners: ['radius'],
+  clipBlur: ['strength'],
+  chromaKey: ['color', 'tolerance', 'softness', 'spill'],
+}
+
+function effectSettings(type: EffectType, fields: Fields): Effect {
+  if (type === 'colorAdjust') {
+    return { type, brightness: fields.number('brightness', ADJUSTMENT), contrast: fields.number('contrast', ADJUSTMENT), saturation: fields.number('saturation', ADJUSTMENT) }
+  } else if (type === 'blackAndWhite') {
+    return { type, amount: fields.number('amount', AMOUNT) }
+  } else if (type === 'dropShadow') {
+    return {
+      type,
+      offsetX: fields.number('offsetX'),
+      offsetY: fields.number('offsetY'),
+      softness: fields.number('softness', { min: 0 }),
+      color: fields.opaqueColor('color'),
+      opacity: fields.number('opacity', AMOUNT),
+    }
+  } else if (type === 'border') {
+    return { type, width: fields.number('width', { above: 0 }), color: fields.opaqueColor('color') }
+  } else if (type === 'roundedCorners') {
+    return { type, radius: fields.number('radius', { above: 0 }) }
+  } else if (type === 'clipBlur') {
+    return { type, strength: fields.number('strength', { above: 0 }) }
+  } else {
+    return { type, color: fields.opaqueColor('color'), tolerance: fields.number('tolerance', AMOUNT), softness: fields.number('softness', AMOUNT), spill: fields.number('spill', AMOUNT) }
+  }
+}
+
+function parseEffects(value: unknown, path: string): Effect[] {
+  if (!Array.isArray(value) || value.length === 0) fail(path, 'must be a list with at least one effect; leave it out instead')
+
+  const effects: Effect[] = []
+  for (const [index, entry] of value.entries()) {
+    const entryPath = `${path}[${index}]`
+    const named = isRecord(entry) ? entry.type : undefined
+    const type = EFFECT_TYPES.find((known) => known === named)
+    if (type === undefined) fail(`${entryPath}.type`, `must be one of ${EFFECT_TYPES.join(', ')}`)
+    if (effects.some((other) => other.type === type)) fail(`${entryPath}.type`, `"${type}" is used more than once on this clip`)
+
+    const fields = readFields(entry, entryPath, ['type', ...EFFECT_KEYS[type]], ['isOff'])
+    const effect = effectSettings(type, fields)
+    if (fields.has('isOff')) effect.isOff = parseSwitch(fields, 'isOff')
+    effects.push(effect)
+  }
+  return effects
+}
+
 const TIMING_KEYS = ['id', 'type', 'start', 'duration']
 const VISUAL_KEYS = ['transform', 'opacity']
 const SOURCE_KEYS = ['mediaId', 'sourceStart', 'speedPercent']
-const OPTIONAL_VISUAL_KEYS = ['fadeIn', 'fadeOut', 'keyframes']
+const SHAPE_KEYS = ['width', 'height', 'shape', 'softEdge']
+const OPTIONAL_VISUAL_KEYS = ['fadeIn', 'fadeOut', 'transitionIn', 'transitionOut', 'keyframes']
+const OPTIONAL_PICTURE_KEYS = [...OPTIONAL_VISUAL_KEYS, 'effects']
 const OPTIONAL_VOLUME_KEYS = ['volumeFadeIn', 'volumeFadeOut']
 
 type ParseContext = {
@@ -390,6 +583,8 @@ function parseVisual(fields: Fields, clipDuration: number): VisualSettings {
   }
   if (fields.has('fadeIn')) visual.fadeIn = parseFade(fields, 'fadeIn', clipDuration)
   if (fields.has('fadeOut')) visual.fadeOut = parseFade(fields, 'fadeOut', clipDuration)
+  if (fields.has('transitionIn')) visual.transitionIn = parseTransition(fields, 'transitionIn')
+  if (fields.has('transitionOut')) visual.transitionOut = parseTransition(fields, 'transitionOut')
   return visual
 }
 
@@ -425,7 +620,7 @@ function parseVideoClip(value: unknown, path: string, context: ParseContext): Vi
     value,
     path,
     [...TIMING_KEYS, ...VISUAL_KEYS, ...SOURCE_KEYS, 'volume'],
-    [...OPTIONAL_VISUAL_KEYS, ...OPTIONAL_VOLUME_KEYS, 'crop', 'isAudioSeparated', 'loop'],
+    [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_VOLUME_KEYS, 'crop', 'isAudioSeparated', 'loop'],
   )
   const timing = parseTiming(fields, context, [...TRANSFORM_PROPERTIES, ...CROP_PROPERTIES, 'volume'])
   const clip: VideoClip = {
@@ -436,6 +631,7 @@ function parseVideoClip(value: unknown, path: string, context: ParseContext): Vi
     ...parseVolume(fields, timing.duration),
   }
   if (fields.has('crop')) clip.crop = parseCrop(fields.raw('crop'), fields.at('crop'))
+  if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'))
   if (fields.has('isAudioSeparated')) clip.isAudioSeparated = parseSwitch(fields, 'isAudioSeparated')
   if (fields.has('loop')) clip.loop = parseSwitch(fields, 'loop')
   return clip
@@ -448,7 +644,7 @@ function parseAudioClip(value: unknown, path: string, context: ParseContext): Au
 }
 
 function parseImageClip(value: unknown, path: string, context: ParseContext): ImageClip {
-  const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, 'mediaId'], [...OPTIONAL_VISUAL_KEYS, 'crop'])
+  const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, 'mediaId'], [...OPTIONAL_PICTURE_KEYS, 'crop'])
   const timing = parseTiming(fields, context, [...TRANSFORM_PROPERTIES, ...CROP_PROPERTIES])
   const clip: ImageClip = {
     type: 'image',
@@ -457,16 +653,17 @@ function parseImageClip(value: unknown, path: string, context: ParseContext): Im
     mediaId: parseMediaId(fields, context),
   }
   if (fields.has('crop')) clip.crop = parseCrop(fields.raw('crop'), fields.at('crop'))
+  if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'))
   return clip
 }
 
 function parseTextClip(value: unknown, path: string, context: ParseContext): TextClip {
-  const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, 'text', 'font', 'color', 'align'], OPTIONAL_VISUAL_KEYS)
+  const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, 'text', 'font', 'color', 'align'], OPTIONAL_PICTURE_KEYS)
   const timing = parseTiming(fields, context, TRANSFORM_PROPERTIES)
   const font = readFields(fields.raw('font'), fields.at('font'), ['family', 'size'])
   const color = fields.string('color')
   if (!COLOR_PATTERN.test(color)) fail(fields.at('color'), 'must look like #RRGGBB or #RRGGBBAA')
-  return {
+  const clip: TextClip = {
     type: 'text',
     ...timing,
     ...parseVisual(fields, timing.duration),
@@ -475,6 +672,45 @@ function parseTextClip(value: unknown, path: string, context: ParseContext): Tex
     color,
     align: fields.oneOf('align', TEXT_ALIGNMENTS),
   }
+  if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'))
+  return clip
+}
+
+function parseShape(fields: Fields): ShapeSettings {
+  return {
+    width: fields.number('width', { above: 0 }),
+    height: fields.number('height', { above: 0 }),
+    shape: fields.oneOf('shape', SHAPES),
+    softEdge: fields.number('softEdge', { min: 0 }),
+  }
+}
+
+function parseBlurClip(value: unknown, path: string, context: ParseContext): BlurClip {
+  const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, ...SHAPE_KEYS, 'strength'], [...OPTIONAL_VISUAL_KEYS, 'isPixelated'])
+  const timing = parseTiming(fields, context, TRANSFORM_PROPERTIES)
+  const clip: BlurClip = {
+    type: 'blur',
+    ...timing,
+    ...parseVisual(fields, timing.duration),
+    ...parseShape(fields),
+    strength: fields.number('strength', { above: 0 }),
+  }
+  if (fields.has('isPixelated')) clip.isPixelated = parseSwitch(fields, 'isPixelated')
+  return clip
+}
+
+function parseHighlightClip(value: unknown, path: string, context: ParseContext): HighlightClip {
+  const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, ...SHAPE_KEYS, 'color'], [...OPTIONAL_VISUAL_KEYS, 'isSpotlight'])
+  const timing = parseTiming(fields, context, TRANSFORM_PROPERTIES)
+  const clip: HighlightClip = {
+    type: 'highlight',
+    ...timing,
+    ...parseVisual(fields, timing.duration),
+    ...parseShape(fields),
+    color: fields.opaqueColor('color'),
+  }
+  if (fields.has('isSpotlight')) clip.isSpotlight = parseSwitch(fields, 'isSpotlight')
+  return clip
 }
 
 function parseClip(value: unknown, path: string, context: ParseContext): Clip {
@@ -487,6 +723,10 @@ function parseClip(value: unknown, path: string, context: ParseContext): Clip {
     return parseImageClip(value, path, context)
   } else if (type === 'text') {
     return parseTextClip(value, path, context)
+  } else if (type === 'blur') {
+    return parseBlurClip(value, path, context)
+  } else if (type === 'highlight') {
+    return parseHighlightClip(value, path, context)
   } else {
     return fail(`${path}.type`, `must be one of ${CLIP_TYPES.join(', ')}; this version cannot open other clip types`)
   }
@@ -528,6 +768,28 @@ function rejectDuplicateIds(items: readonly { id: string }[], path: string): voi
   }
 }
 
+function parseCamera(value: unknown, path: string): CameraKeyframe[] {
+  if (!Array.isArray(value) || value.length === 0) fail(path, 'must be a list with at least one zoom; leave it out instead')
+
+  const zooms: CameraKeyframe[] = []
+  for (const [index, entry] of value.entries()) {
+    const fields = readFields(entry, `${path}[${index}]`, ['time', 'duration', 'easing', 'x', 'y', 'scale'])
+    const zoom: CameraKeyframe = {
+      time: fields.gridTime('time', 'zero or more'),
+      // A view that is to be there at once has the easing "hold"; a move of no length would be a second way to say the same.
+      duration: fields.gridTime('duration', 'positive'),
+      easing: fields.oneOf('easing', EASINGS),
+      x: fields.number('x'),
+      y: fields.number('y'),
+      scale: fields.number('scale', { min: 1, max: MAX_CAMERA_SCALE }),
+    }
+    const previous = zooms.at(-1)
+    if (previous !== undefined && zoom.time <= previous.time) fail(fields.at('time'), 'must be later than the zoom before it')
+    zooms.push(zoom)
+  }
+  return zooms
+}
+
 function rejectUnreadableVersion(document: Record<string, unknown>): void {
   const version = document.version
   if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
@@ -544,7 +806,7 @@ function parseDocument(document: unknown): Project {
   if (!isRecord(document)) fail('The project', 'must be a JSON object')
   rejectUnreadableVersion(document)
 
-  const fields = readFields(document, 'project', ['version', 'canvas', 'media', 'tracks'])
+  const fields = readFields(document, 'project', ['version', 'canvas', 'media', 'tracks'], ['camera'])
   const media: MediaRef[] = []
   for (const [index, entry] of fields.array('media').entries()) {
     media.push(parseMedia(entry, `media[${index}]`))
@@ -558,12 +820,14 @@ function parseDocument(document: unknown): Project {
   }
   rejectDuplicateIds(tracks, 'tracks')
 
-  return {
+  const project: Project = {
     version: PROJECT_VERSION,
     canvas: parseCanvas(fields.raw('canvas'), 'canvas'),
     media,
     tracks,
   }
+  if (fields.has('camera')) project.camera = parseCamera(fields.raw('camera'), 'camera')
+  return project
 }
 
 export function parseProject(text: string): ParseResult {

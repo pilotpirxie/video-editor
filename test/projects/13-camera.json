@@ -1,0 +1,132 @@
+{
+  "camera": [
+    {
+      "duration": 12000000,
+      "easing": "easeInOut",
+      "scale": 2,
+      "time": 12000000,
+      "x": 200,
+      "y": 120
+    },
+    {
+      "duration": 12000000,
+      "easing": "linear",
+      "scale": 3,
+      "time": 36000000,
+      "x": 480,
+      "y": 250
+    },
+    {
+      "duration": 2400000,
+      "easing": "hold",
+      "scale": 1,
+      "time": 45600000,
+      "x": 320,
+      "y": 180
+    }
+  ],
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 360,
+    "width": 640
+  },
+  "media": [
+    {
+      "id": "h264",
+      "path": "",
+      "relativePath": "../media/generated/h264.mp4"
+    },
+    {
+      "id": "image-alpha",
+      "path": "",
+      "relativePath": "../media/generated/image-alpha.png"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "footage",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "footage",
+      "locked": false,
+      "muted": false,
+      "name": "footage"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "card",
+          "mediaId": "image-alpha",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 10,
+            "scaleX": 0.5,
+            "scaleY": 0.5,
+            "x": 500,
+            "y": 100
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "card",
+      "locked": false,
+      "muted": false,
+      "name": "card"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "color": "#FFFFFF",
+          "duration": 48000000,
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 40
+          },
+          "id": "title",
+          "opacity": 1,
+          "start": 0,
+          "text": "Zoom 你好",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 200,
+            "y": 300
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "title",
+      "locked": false,
+      "muted": false,
+      "name": "title"
+    }
+  ],
+  "version": 1
+}

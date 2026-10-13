@@ -20,6 +20,10 @@ const REFERENCE_PROJECTS: Case[] = [
   { project: '10-alpha', frames: [0, 5, 9] },
   { project: '11-tiny-canvas', frames: [0, 12, 29] },
   { project: '12-4k-canvas', frames: [0, 14, 29] },
+  { project: '13-camera', frames: [0, 7, 15, 22, 37, 45, 56, 57, 59] },
+  { project: '14-transitions', frames: [0, 11, 20, 25, 30, 35, 55, 60, 65, 90, 118, 125, 150, 180, 215, 240, 245, 270, 295, 300, 330, 335, 360, 370, 410, 419] },
+  { project: '15-blur-highlight', frames: [0, 15, 30, 50] },
+  { project: '16-effects', frames: [0, 10] },
 ]
 
 const REDUCED_SIZE: Case[] = [
@@ -27,6 +31,10 @@ const REDUCED_SIZE: Case[] = [
   { project: 'golden-downscale', frames: [3], size: { width: 214, height: 120 } },
   { project: '02-mosaic', frames: [0, 31], size: { width: 320, height: 180 } },
   { project: '06-keyframes', frames: [8, 44], size: { width: 1280, height: 720 } },
+  { project: '13-camera', frames: [37, 45], size: { width: 1280, height: 720 } },
+  { project: '14-transitions', frames: [30, 300, 330], size: { width: 320, height: 180 } },
+  { project: '15-blur-highlight', frames: [0, 30], size: { width: 480, height: 270 } },
+  { project: '16-effects', frames: [0], size: { width: 640, height: 360 } },
 ]
 
 async function expectSamePixels(testCase: Case): Promise<void> {

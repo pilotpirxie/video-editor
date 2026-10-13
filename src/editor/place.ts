@@ -3,7 +3,7 @@ import type { MediaStates } from '../engine/resolve.js'
 import type { MediaInfo, MediaUse, UnlinkedMedia } from '../shared/mediaProtocol.js'
 import { MAX_CANVAS, MIN_CANVAS, type Canvas, type Clip, type MediaRef, type Project, type Transform } from '../shared/project.js'
 import { NORMAL_SPEED_PERCENT, PROJECT_FRAME_RATES, TICKS_PER_SECOND, frameDuration, type FrameRate } from '../shared/time.js'
-import { placeOnTrack, type NewTrack } from './clips.js'
+import { hasMedia, placeOnTrack, type NewTrack } from './clips.js'
 
 // How long a clip without a source of its own length lasts when it is added: a still image, an animated image, a text.
 export const STILL_DURATION = 5 * TICKS_PER_SECOND
@@ -81,7 +81,7 @@ export function mediaUses(project: Project, mediaId: string): MediaUse[] {
   const uses = new Set<MediaUse>()
   for (const track of project.tracks) {
     for (const clip of track.clips) {
-      if (clip.type === 'text' || clip.mediaId !== mediaId) continue
+      if (!hasMedia(clip) || clip.mediaId !== mediaId) continue
       if (clip.type === 'audio') uses.add('sound')
       else uses.add(clip.type)
     }

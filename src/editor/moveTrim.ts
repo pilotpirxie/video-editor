@@ -1,13 +1,13 @@
 import type { MediaStates } from '../engine/resolve.js'
 import type { Clip, Project, Track } from '../shared/project.js'
 import { TIMELINE_GRID, sourceTime } from '../shared/time.js'
-import { editClips, endOf, hasSource, locateClip, placeOnTrack, shiftedKeyframes, withFadesWithin, type NewTrack } from './clips.js'
+import { editClips, emptyTrack, endOf, hasSource, locateClip, placeOnTrack, shiftedKeyframes, withFadesWithin, type NewTrack } from './clips.js'
 
 export type Move = {
   clipIds: readonly string[]
   deltaTime: number
-  // Row the pointer is over, counted in the project the move starts from. Only a single clip changes track.
-  targetTrackIndex: number | undefined
+  // Rows the pointer has travelled from the row of the grabbed clip, counted in the project the move starts from; up is positive.
+  trackShift: number
   isRipple: boolean
   newTrack: NewTrack
 }
@@ -36,7 +36,58 @@ function movable(project: Project, clipIds: readonly string[], isRipple: boolean
   return moving
 }
 
-// Several clips keep their tracks and stop at the first clip in their way, so the group never lands on top of anything.
+function inTimeOrder(clips: readonly Clip[]): Clip[] {
+  return [...clips].sort((a, b) => a.start - b.start)
+}
+
+// Whether a clip of one time-ordered list shares time with a clip of the other.
+function overlap(arriving: readonly Clip[], staying: readonly Clip[]): boolean {
+  let arrivingIndex = 0
+  let stayingIndex = 0
+  for (;;) {
+    const arrived = arriving[arrivingIndex]
+    const stays = staying[stayingIndex]
+    if (arrived === undefined || stays === undefined) return false
+    if (endOf(arrived) <= stays.start) arrivingIndex += 1
+    else if (endOf(stays) <= arrived.start) stayingIndex += 1
+    else return true
+  }
+}
+
+// Several clips moved by whole tracks as well as in time. Nothing comes back when they do not fit: a row is missing or locked, or a clip would land on one that stays.
+function shiftedAcrossTracks(project: Project, moving: ReadonlySet<string>, deltaTime: number, trackShift: number, newTrack: NewTrack): Project | undefined {
+  const leaving = project.tracks.map((track) => track.clips.filter((clip) => moving.has(clip.id)))
+  let earliestStart = Infinity
+  for (const clip of leaving.flat()) earliestStart = Math.min(earliestStart, clip.start)
+  const delta = Math.max(deltaTime, -earliestStart)
+
+  // One row more than there are tracks: a group dragged above the top track gets a new one there, as a single clip does.
+  const rows = [...project.tracks, emptyTrack(newTrack)]
+  const arriving: Clip[][] = rows.map(() => [])
+  for (const [trackIndex, clips] of leaving.entries()) {
+    if (clips.length === 0) continue
+    const target = arriving[trackIndex + trackShift]
+    if (target === undefined) return undefined
+    for (const clip of clips) target.push({ ...clip, start: clip.start + delta })
+  }
+
+  const tracks: Track[] = []
+  for (const [rowIndex, row] of rows.entries()) {
+    const arrived = arriving[rowIndex] ?? []
+    const isTouched = arrived.length > 0 || (leaving[rowIndex] ?? []).length > 0
+    if (!isTouched) {
+      if (rowIndex < project.tracks.length) tracks.push(row)
+      continue
+    }
+    const staying = row.clips.filter((clip) => !moving.has(clip.id))
+    const isTaken = arrived.length > 0 && (row.locked || overlap(inTimeOrder(arrived), inTimeOrder(staying)))
+    if (isTaken) return undefined
+    tracks.push({ ...row, clips: [...staying, ...arrived] })
+  }
+  return { ...project, tracks }
+}
+
+// Several clips that keep their tracks stop at the first clip in their way, so the group never lands on top of anything.
 function unobstructedDelta(project: Project, moving: ReadonlySet<string>, deltaTime: number): number {
   let delta = deltaTime
   for (const track of project.tracks) {
@@ -59,6 +110,13 @@ export function moveClips(project: Project, move: Move): Project {
   if (onlyId === undefined) return project
 
   if (moving.size > 1) {
+    // A group goes as far toward the pointer as it fits: the wanted row first, then one row closer to where it was each time.
+    const farthest = project.tracks.length
+    const wanted = move.isRipple ? 0 : Math.max(-farthest, Math.min(farthest, move.trackShift))
+    for (let shift = wanted; shift !== 0; shift -= Math.sign(wanted)) {
+      const shifted = shiftedAcrossTracks(project, moving, move.deltaTime, shift, move.newTrack)
+      if (shifted !== undefined) return shifted
+    }
     const delta = unobstructedDelta(project, moving, move.deltaTime)
     if (delta === 0) return project
     return editClips(project, moving, (clip) => ({ ...clip, start: clip.start + delta }))
@@ -67,7 +125,7 @@ export function moveClips(project: Project, move: Move): Project {
   const located = locateClip(project, onlyId)
   if (located === undefined) return project
   const start = Math.max(0, located.clip.start + move.deltaTime)
-  const trackIndex = move.targetTrackIndex ?? located.trackIndex
+  const trackIndex = Math.max(0, located.trackIndex + move.trackShift)
   if (start === located.clip.start && trackIndex === located.trackIndex) return project
   const lifted = editClips(project, moving, () => undefined)
   return placeOnTrack(lifted, { clips: [{ ...located.clip, start }], trackIndex, newTrack: move.newTrack })

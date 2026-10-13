@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from 'react'
+import { frameOf, type ZoomFrame } from '../editor/camera.js'
 import { locateClip } from '../editor/clips.js'
+import { addEffect } from '../editor/effects.js'
 import {
   HANDLES,
   boundsOf,
@@ -16,6 +18,7 @@ import {
 } from '../editor/geometry.js'
 import { setProperties, type PropertyValues } from '../editor/properties.js'
 import { positionTargets, snapPosition, type Bounds } from '../editor/snapping.js'
+import { viewAt } from '../engine/camera.js'
 import { resolveFrame, type Layer, type MediaStates } from '../engine/resolve.js'
 import { measureText } from '../engine/text.js'
 import type { Size } from '../shared/exportPresets.js'
@@ -23,6 +26,7 @@ import type { Crop, Project, Transform } from '../shared/project.js'
 import { useEditorState, usePosition, useSession } from './context.js'
 import type { Edit } from './store.js'
 import { TextEditor } from './TextEditor.js'
+import { LIBRARY_DRAG_EVENT, LIBRARY_DROP_EVENT, isLibraryDrag, type LibraryDragDetail } from './timelineController.js'
 
 const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 }
 const SNAP_RANGE_PIXELS = 8
@@ -31,12 +35,14 @@ const ROTATE_HANDLE_OFFSET_PIXELS = 26
 const ROTATE_HANDLE_MAX_REACH = 0.35
 const MIN_BOX_PIXELS = 6
 // The overlay reaches this far past the picture on every side, so the handles of a clip that fills the canvas are whole and can be grabbed. Must match the CSS.
-const MARGIN_PIXELS = 14
+export const MARGIN_PIXELS = 14
 
 // One drawn layer with everything the handles need to change it.
 type Shown = {
   clipId: string
   isText: boolean
+  // Blur and highlight clips have no picture for an effect to change, and nothing to crop.
+  hasPicture: boolean
   natural: Size
   crop: Crop
   transform: Transform
@@ -58,7 +64,7 @@ const NO_GUIDES: Guides = { x: undefined, y: undefined, isSizeSnapped: false }
 
 function naturalSize(layer: Layer): Size {
   if (layer.kind === 'video') return { width: layer.video.width, height: layer.video.height }
-  if (layer.kind === 'image') return { width: layer.width, height: layer.height }
+  if (layer.kind !== 'text') return { width: layer.width, height: layer.height }
   const measured = measureText(layer)
   return { width: measured.naturalWidth, height: measured.naturalHeight }
 }
@@ -68,10 +74,35 @@ function shownLayers(project: Project, mediaStates: MediaStates, time: number): 
   const shown: Shown[] = []
   for (const layer of resolveFrame(project, mediaStates, time, 1)) {
     const natural = naturalSize(layer)
-    const crop = layer.kind === 'text' ? NO_CROP : layer.crop
-    shown.push({ clipId: layer.clipId, isText: layer.kind === 'text', natural, crop, transform: layer.transform, box: boxOf(natural, crop, layer.transform) })
+    const crop = layer.kind === 'video' || layer.kind === 'image' ? layer.crop : NO_CROP
+    const hasPicture = layer.kind !== 'blur' && layer.kind !== 'highlight'
+    shown.push({ clipId: layer.clipId, isText: layer.kind === 'text', hasPicture, natural, crop, transform: layer.transform, box: boxOf(natural, crop, layer.transform) })
   }
   return shown
+}
+
+// How wide the picture is on screen, in CSS pixels; the overlay around it is wider by its margin on both sides.
+export function usePictureWidth(svgRef: RefObject<SVGSVGElement | null>): number {
+  const [pictureWidth, setPictureWidth] = useState(1)
+
+  useEffect(() => {
+    const svg = svgRef.current
+    if (svg === null) return
+    const measure = (): void => setPictureWidth(Math.max(1, svg.clientWidth - 2 * MARGIN_PIXELS))
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(svg)
+    return () => observer.disconnect()
+  }, [svgRef])
+
+  return pictureWidth
+}
+
+// The point of the canvas under a place in the window, when the picture shows `frame` of the canvas.
+export function pointOnCanvas(place: { clientX: number; clientY: number }, overlay: Element, frame: ZoomFrame, pictureWidth: number): Point {
+  const box = overlay.getBoundingClientRect()
+  const canvasPerPixel = frame.width / pictureWidth
+  return { x: frame.left + (place.clientX - box.left - MARGIN_PIXELS) * canvasPerPixel, y: frame.top + (place.clientY - box.top - MARGIN_PIXELS) * canvasPerPixel }
 }
 
 function lockedClipIds(project: Project): Set<string> {
@@ -117,22 +148,13 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
   const time = usePosition((position) => position.time)
   const svgRef = useRef<SVGSVGElement>(null)
   const gestureRef = useRef<Gesture | undefined>(undefined)
-  const [canvasPerPixel, setCanvasPerPixel] = useState(1)
+  const pictureWidth = usePictureWidth(svgRef)
   const [guides, setGuides] = useState<Guides>(NO_GUIDES)
+  const [dropTargetId, setDropTargetId] = useState<string | undefined>(undefined)
   const { canvas } = project
-
-  useEffect(() => {
-    const svg = svgRef.current
-    if (svg === null) return
-    const measure = (): void => {
-      const pictureWidth = svg.clientWidth - 2 * MARGIN_PIXELS
-      setCanvasPerPixel(pictureWidth > 0 ? canvas.width / pictureWidth : 1)
-    }
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(svg)
-    return () => observer.disconnect()
-  }, [canvas.width])
+  // The picture shows what the camera shows, so the handles are laid over that part of the canvas.
+  const frame = frameOf(canvas, viewAt(project.camera, time, canvas))
+  const canvasPerPixel = frame.width / pictureWidth
 
   const shown = isPlaying ? [] : shownLayers(project, mediaStates, time)
   const selected = shown.filter((item) => selection.includes(item.clipId))
@@ -141,14 +163,51 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
   const editedText = editing?.type === 'text' ? editing : undefined
 
   function pointOf(event: MouseEvent<SVGSVGElement>): Point {
-    const box = event.currentTarget.getBoundingClientRect()
-    return { x: (event.clientX - box.left - MARGIN_PIXELS) * canvasPerPixel, y: (event.clientY - box.top - MARGIN_PIXELS) * canvasPerPixel }
+    return pointOnCanvas(event, event.currentTarget, frame, pictureWidth)
   }
 
   function topmostAt(point: Point): Shown | undefined {
     const locked = lockedClipIds(project)
     return shown.findLast((item) => !locked.has(item.clipId) && containsPoint(item.box, point))
   }
+
+  // The clip an effect held at a place in the window would go to: the topmost one there that has a picture.
+  function effectTargetAt(detail: LibraryDragDetail): Shown | undefined {
+    const svg = svgRef.current
+    if (svg === null || detail.item.kind !== 'effect') return undefined
+    const point = pointOnCanvas(detail, svg, frame, pictureWidth)
+    const locked = lockedClipIds(project)
+    return shown.findLast((item) => item.hasPicture && !locked.has(item.clipId) && containsPoint(item.box, point))
+  }
+
+  // Heard for every move of a drag out of the library, wherever in the window it is: one that has left the canvas no longer has a target here.
+  const onLibraryDrag = useEffectEvent((event: Event) => {
+    if (!isLibraryDrag(event)) return
+    const isOverCanvas = event.target instanceof Node && svgRef.current?.contains(event.target) === true
+    setDropTargetId(isOverCanvas ? effectTargetAt(event.detail)?.clipId : undefined)
+  })
+
+  const onLibraryDrop = useEffectEvent((event: Event) => {
+    if (!isLibraryDrag(event) || event.detail.item.kind !== 'effect') return
+    const target = effectTargetAt(event.detail)
+    if (target === undefined) return
+    const { effect } = event.detail.item
+    // An effect dropped on one of several selected clips goes to all of them.
+    const clipIds = selection.includes(target.clipId) ? selection : [target.clipId]
+    store.apply('Add Effect', (current) => addEffect(current, clipIds, effect))
+    store.select(clipIds)
+  })
+
+  useEffect(() => {
+    const svg = svgRef.current
+    if (svg === null) return
+    window.addEventListener(LIBRARY_DRAG_EVENT, onLibraryDrag)
+    svg.addEventListener(LIBRARY_DROP_EVENT, onLibraryDrop)
+    return () => {
+      window.removeEventListener(LIBRARY_DRAG_EVENT, onLibraryDrag)
+      svg.removeEventListener(LIBRARY_DROP_EVENT, onLibraryDrop)
+    }
+  }, [])
 
   function isInTextEditor(target: EventTarget): boolean {
     return target instanceof Element && target.closest('foreignObject') !== null
@@ -167,7 +226,7 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
       return
     }
     if (only !== undefined && isHandle(grabbed)) {
-      const kind = isCropping || event.altKey ? 'crop' : 'scale'
+      const kind = only.hasPicture && (isCropping || event.altKey) ? 'crop' : 'scale'
       store.begin(kind === 'crop' ? 'Crop Clip' : 'Resize Clip')
       gestureRef.current = { kind, item: only, handle: grabbed, others: shown.filter((item) => item !== only) }
       return
@@ -258,15 +317,17 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
   const handleSize = HANDLE_PIXELS * canvasPerPixel
   const minBox = MIN_BOX_PIXELS * canvasPerPixel
   const margin = MARGIN_PIXELS * canvasPerPixel
+  const dropTarget = shown.find((item) => item.clipId === dropTargetId)
 
   return (
     <svg
       ref={svgRef}
       className="canvas-overlay"
-      viewBox={`${-margin} ${-margin} ${canvas.width + 2 * margin} ${canvas.height + 2 * margin}`}
+      viewBox={`${frame.left - margin} ${frame.top - margin} ${frame.width + 2 * margin} ${frame.height + 2 * margin}`}
       preserveAspectRatio="none"
       data-testid="canvas-overlay"
       data-selected={selected.length}
+      data-drop-target={dropTargetId}
       onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}
       onPointerMove={onPointerMove}
@@ -276,6 +337,11 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
     >
       {guides.x !== undefined && <line className="snap-guide" x1={guides.x} y1={0} x2={guides.x} y2={canvas.height} />}
       {guides.y !== undefined && <line className="snap-guide" x1={0} y1={guides.y} x2={canvas.width} y2={guides.y} />}
+      {dropTarget !== undefined && (
+        <g transform={`translate(${dropTarget.box.centerX} ${dropTarget.box.centerY}) rotate(${dropTarget.box.rotation})`}>
+          <rect className="selection-box" x={-dropTarget.box.width / 2} y={-dropTarget.box.height / 2} width={dropTarget.box.width} height={dropTarget.box.height} />
+        </g>
+      )}
       {selected.map((item) => {
         const width = Math.max(minBox, item.box.width)
         const height = Math.max(minBox, item.box.height)

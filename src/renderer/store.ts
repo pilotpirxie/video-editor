@@ -5,27 +5,25 @@ import type { Project } from '../shared/project.js'
 
 export type Edit = (project: Project) => Project
 
-type ExportProgress = {
-  fileName: string
-  done: number
-  total: number
-  // When the export began, on the clock of `performance.now()`.
-  startedAt: number
-}
+// An export from its first frame until its result has been read. `startedAt` is on the clock of `performance.now()`.
+type ExportStatus =
+  | { phase: 'running'; fileName: string; done: number; total: number; startedAt: number }
+  | { phase: 'done'; fileName: string }
+  | { phase: 'failed'; fileName: string; message: string }
 
 export type EditorState = {
   project: Project
   mediaStates: MediaStates
   selection: readonly string[]
+  // The zoom of the camera that is selected, by its place in the list. Selecting clips unselects it, and selecting it unselects the clips.
+  selectedZoom: number | undefined
   history: History
   savedProject: Project
   documentPath: string | undefined
   notice: string | undefined
-  // Whether the notice is about a finished export, whose file can be shown in the Finder.
-  isNoticeAboutExport: boolean
   isExportDialogOpen: boolean
-  // The export that is running, if one is.
-  exportProgress: ExportProgress | undefined
+  // The export that is running or has just ended, if there is one. While it is set, a dialog holds the window.
+  exportStatus: ExportStatus | undefined
   // Files that are being probed right now; they show as placeholders in the Media tab.
   pendingImports: readonly string[]
   isSnapping: boolean
@@ -51,12 +49,12 @@ export type EditorStore = {
   undo(): void
   redo(): void
   select(clipIds: readonly string[]): void
+  selectZoom(index: number | undefined): void
   setMediaState(mediaId: string, state: MediaState): void
   markSaved(project: Project, documentPath: string): void
   notify(notice: string | undefined): void
-  notifyExported(notice: string): void
   showExportDialog(isOpen: boolean): void
-  setExportProgress(progress: ExportProgress | undefined): void
+  setExportStatus(status: ExportStatus | undefined): void
   setPendingImports(paths: readonly string[]): void
   setSnapping(isSnapping: boolean): void
   editText(clipId: string | undefined): void
@@ -100,13 +98,13 @@ export function createEditorStore(): EditorStore {
     project: EMPTY_PROJECT,
     mediaStates: {},
     selection: NO_SELECTION,
+    selectedZoom: undefined,
     history: EMPTY_HISTORY,
     savedProject: EMPTY_PROJECT,
     documentPath: undefined,
     notice: undefined,
-    isNoticeAboutExport: false,
     isExportDialogOpen: false,
-    exportProgress: undefined,
+    exportStatus: undefined,
     pendingImports: [],
     isSnapping: true,
     openCount: 0,
@@ -120,6 +118,7 @@ export function createEditorStore(): EditorStore {
     if (next.project !== state.project) {
       next.selection = withoutMissingClips(next.selection, next.project)
       if (next.editingTextId !== undefined && withoutMissingClips([next.editingTextId], next.project).length === 0) next.editingTextId = undefined
+      if (next.selectedZoom !== undefined && next.project.camera?.[next.selectedZoom] === undefined) next.selectedZoom = undefined
     }
     state = next
     for (const listener of listeners) listener()
@@ -179,6 +178,7 @@ export function createEditorStore(): EditorStore {
         project: loaded.project,
         mediaStates: loaded.media,
         selection: NO_SELECTION,
+        selectedZoom: undefined,
         history: EMPTY_HISTORY,
         savedProject: isSaved ? loaded.project : EMPTY_PROJECT,
         documentPath,
@@ -193,13 +193,13 @@ export function createEditorStore(): EditorStore {
     cancel,
     undo: () => travel(undo),
     redo: () => travel(redo),
-    select: (clipIds) => setState({ selection: clipIds }),
+    select: (clipIds) => setState({ selection: clipIds, selectedZoom: undefined }),
+    selectZoom: (selectedZoom) => setState({ selectedZoom, selection: selectedZoom === undefined ? state.selection : NO_SELECTION }),
     setMediaState: (mediaId, mediaState) => setState({ mediaStates: { ...state.mediaStates, [mediaId]: mediaState } }),
     markSaved: (project, documentPath) => setState({ savedProject: project, documentPath }),
-    notify: (notice) => setState({ notice, isNoticeAboutExport: false }),
-    notifyExported: (notice) => setState({ notice, isNoticeAboutExport: true }),
+    notify: (notice) => setState({ notice }),
     showExportDialog: (isExportDialogOpen) => setState({ isExportDialogOpen }),
-    setExportProgress: (exportProgress) => setState({ exportProgress }),
+    setExportStatus: (exportStatus) => setState({ exportStatus }),
     setPendingImports: (pendingImports) => setState({ pendingImports }),
     setSnapping: (isSnapping) => setState({ isSnapping }),
     editText: (editingTextId) => setState({ editingTextId }),

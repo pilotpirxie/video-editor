@@ -1,13 +1,35 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
-import { freeTrackId, hasSource, isVisual, locateClip, makesSound, nextTrackName } from '../editor/clips.js'
+import { deleteZoom, setZoom, type ZoomChanges } from '../editor/camera.js'
+import { freeTrackId, hasMedia, hasSource, isCroppable, isVisual, makesSound, nextTrackName } from '../editor/clips.js'
+import { cropFromValue } from '../editor/geometry.js'
 import { moveClips } from '../editor/moveTrim.js'
 import { propertyAt, setCanvasSize, setDuration, setFade, setFrameRate, setLoop, setProperties, setSourceStart, setSpeed, sharedValue, type Fade } from '../editor/properties.js'
+import { setShapeStyle, type ShapeStyle } from '../editor/shapes.js'
 import { setTextStyle } from '../editor/text.js'
+import { DEFAULT_TRANSITION, TRANSITION_NAMES, setTransition, type TransitionEdge } from '../editor/transitions.js'
 import type { MediaStates } from '../engine/resolve.js'
 import { measureText } from '../engine/text.js'
 import type { Size } from '../shared/exportPresets.js'
 import { describeError, logError } from '../shared/log.js'
-import { MAX_CANVAS, MIN_CANVAS, type AnimatableProperty, type Clip, type Project, type TextAlign, type VideoClip } from '../shared/project.js'
+import {
+  MAX_CAMERA_SCALE,
+  MAX_CANVAS,
+  MIN_CANVAS,
+  TRANSITION_TYPES,
+  type AnimatableProperty,
+  type BlurClip,
+  type Clip,
+  type Crop,
+  type Easing,
+  type HighlightClip,
+  type Project,
+  type Shape,
+  type ShapeClip,
+  type TextAlign,
+  type Transform,
+  type VideoClip,
+  type VisualClip,
+} from '../shared/project.js'
 import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, PROJECT_FRAME_RATES, TICKS_PER_SECOND, frameDuration, type FrameRate } from '../shared/time.js'
 import { useEditorState, usePosition, useSession } from './context.js'
 import { installedFontFamilies } from './fonts.js'
@@ -32,6 +54,30 @@ const OPACITIES = [0, 25, 50, 75, 100]
 const VOLUMES = [0, 25, 50, 75, 100, 150, 200]
 const SPEEDS = [25, 50, 100, 200, 400, 800, 1600, 5000, 10_000]
 const FADE_SECONDS = [0, 0.25, 0.5, 1, 2, 3]
+const MOVE_SECONDS = [0.25, 0.5, 1, 2, 3]
+const ZOOM_SCALES = [100, 150, 200, 300, 400]
+const NO_TRANSITION = 'none'
+const EASINGS: readonly { easing: Easing; label: string }[] = [
+  { easing: 'easeInOut', label: 'Ease in and out' },
+  { easing: 'easeIn', label: 'Ease in' },
+  { easing: 'easeOut', label: 'Ease out' },
+  { easing: 'linear', label: 'Linear' },
+  { easing: 'hold', label: 'Jump, with no move' },
+]
+const SHAPES: readonly { shape: Shape; label: string }[] = [
+  { shape: 'rectangle', label: 'Rectangle' },
+  { shape: 'ellipse', label: 'Ellipse' },
+]
+const EDGES: readonly { edge: TransitionEdge; label: string }[] = [
+  { edge: 'in', label: 'Start' },
+  { edge: 'out', label: 'End' },
+]
+const CROP_SIDES: readonly { side: keyof Crop; property: AnimatableProperty; label: string }[] = [
+  { side: 'left', property: 'cropLeft', label: 'Left' },
+  { side: 'top', property: 'cropTop', label: 'Top' },
+  { side: 'right', property: 'cropRight', label: 'Right' },
+  { side: 'bottom', property: 'cropBottom', label: 'Bottom' },
+]
 const ALIGNMENTS: readonly { align: TextAlign; icon: IconName; label: string }[] = [
   { align: 'left', icon: 'alignLeft', label: 'Align left' },
   { align: 'center', icon: 'alignCenter', label: 'Align centre' },
@@ -52,7 +98,7 @@ type EditFieldProps = {
 }
 
 // A number field whose scrub, arrow keys, typed values and ready-made values all run as one undoable command.
-function EditField({ label, testId, command, value, min, max, step, decimals, presets, edit }: EditFieldProps): ReactElement {
+export function EditField({ label, testId, command, value, min, max, step, decimals, presets, edit }: EditFieldProps): ReactElement {
   const { store } = useSession()
   return (
     <NumberField
@@ -82,13 +128,59 @@ function rateLabel(rate: FrameRate): string {
 
 type GroupProps = {
   title: string
+  icon: IconName
   // Controls that belong to the whole group, shown at the end of its title line.
   actions?: ReactElement
   children: ReactNode
 }
 
+type ColorFieldProps = {
+  label: string
+  testId: string
+  command: string
+  // Undefined means the selected clips do not agree on a colour.
+  value: string | undefined
+  edit(color: string): Edit
+}
+
+// The colour picker reports every colour it passes over; they become one undo step, closed when the picker is.
+export function ColorField({ label, testId, command, value, edit }: ColorFieldProps): ReactElement {
+  const { store } = useSession()
+  const fieldRef = useRef<HTMLInputElement>(null)
+  const isPickingRef = useRef(false)
+
+  useEffect(() => {
+    const field = fieldRef.current
+    if (field === null) return
+    const endPicking = (): void => {
+      if (!isPickingRef.current) return
+      isPickingRef.current = false
+      store.commit()
+    }
+    field.addEventListener('change', endPicking)
+    field.addEventListener('blur', endPicking)
+    return () => {
+      field.removeEventListener('change', endPicking)
+      field.removeEventListener('blur', endPicking)
+      endPicking()
+    }
+  }, [store])
+
+  function onColor(picked: string): void {
+    updateStep(store, command, edit(picked), isPickingRef.current)
+    isPickingRef.current = true
+  }
+
+  return (
+    <label className="labelled">
+      <span className="field-label">{label}</span>
+      <input ref={fieldRef} className="color-field" type="color" data-testid={testId} value={(value ?? '').slice(0, OPAQUE_COLOR_LENGTH)} onChange={(event) => onColor(event.target.value)} />
+    </label>
+  )
+}
+
 // Fields that belong together, under a title that folds them away. What is folded stays folded the next time the editor opens.
-function Group({ title, actions, children }: GroupProps): ReactElement {
+export function Group({ title, icon, actions, children }: GroupProps): ReactElement {
   const storageKey = `group-${title}`
   const [isOpen, setIsOpen] = useState(() => localStorage.getItem(storageKey) !== 'closed')
 
@@ -106,6 +198,7 @@ function Group({ title, actions, children }: GroupProps): ReactElement {
       <div className="group-header">
         <button type="button" className="group-toggle focusable" aria-expanded={isOpen} data-testid={`group-${title.toLowerCase()}`} onClick={toggle}>
           <Icon name={isOpen ? 'chevronDown' : 'chevronRight'} />
+          <Icon name={icon} />
           {title}
         </button>
         {actions}
@@ -125,7 +218,7 @@ function ProjectSettings(): ReactElement {
   }
 
   return (
-    <Group title="Project">
+    <Group title="Project" icon="film">
       <EditField
         label="Width"
         testId="canvas-width"
@@ -158,25 +251,40 @@ function ProjectSettings(): ReactElement {
   )
 }
 
-function selectedClips(project: Project, selection: readonly string[]): Clip[] {
+// The selected clips, in the order they were selected. One pass over the project, however many are selected.
+export function selectedClips(project: Project, selection: readonly string[]): Clip[] {
+  const wanted = new Set(selection)
+  const found = new Map<string, Clip>()
+  for (const track of project.tracks) {
+    for (const clip of track.clips) {
+      if (wanted.has(clip.id)) found.set(clip.id, clip)
+    }
+  }
   const clips: Clip[] = []
   for (const clipId of selection) {
-    const located = locateClip(project, clipId)
-    if (located !== undefined) clips.push(located.clip)
+    const clip = found.get(clipId)
+    if (clip !== undefined) clips.push(clip)
   }
   return clips
 }
 
+// The whole picture of a clip as its media has it; nothing for sound, for clips without media, and for media that is missing.
+function pictureSize(clip: Clip, mediaStates: MediaStates): Size | undefined {
+  if (!hasMedia(clip) || clip.type === 'audio') return undefined
+  const state = mediaStates[clip.mediaId]
+  if (state === undefined || 'error' in state || state.info.kind === 'audio') return undefined
+  return state.info.kind === 'video' ? state.info.video : state.info
+}
+
 // The size a clip's picture has at 100%, after cropping, at the given time.
 function shownSize(clip: Clip, mediaStates: MediaStates, time: number): Size | undefined {
-  if (clip.type === 'audio') return undefined
   if (clip.type === 'text') {
     const measured = measureText({ text: clip.text, family: clip.font.family, size: clip.font.size })
     return { width: measured.naturalWidth, height: measured.naturalHeight }
   }
-  const state = mediaStates[clip.mediaId]
-  if (state === undefined || 'error' in state || state.info.kind === 'audio') return undefined
-  const natural = state.info.kind === 'video' ? state.info.video : state.info
+  if (clip.type === 'blur' || clip.type === 'highlight') return { width: clip.width, height: clip.height }
+  const natural = pictureSize(clip, mediaStates)
+  if (natural === undefined) return undefined
   const cropX = (propertyAt(clip, 'cropLeft', time) ?? 0) + (propertyAt(clip, 'cropRight', time) ?? 0)
   const cropY = (propertyAt(clip, 'cropTop', time) ?? 0) + (propertyAt(clip, 'cropBottom', time) ?? 0)
   return { width: natural.width - cropX, height: natural.height - cropY }
@@ -190,6 +298,23 @@ function isText(clip: Clip): clip is TextClip {
   return clip.type === 'text'
 }
 
+// Crop and placement of a clip at a moment, with whatever animates them.
+function placementAt(clip: Clip, time: number): { crop: Crop; transform: Transform } {
+  const at = (property: AnimatableProperty): number => propertyAt(clip, property, time) ?? 0
+  return {
+    crop: { left: at('cropLeft'), top: at('cropTop'), right: at('cropRight'), bottom: at('cropBottom') },
+    transform: { x: at('x'), y: at('y'), scaleX: at('scaleX'), scaleY: at('scaleY'), rotation: at('rotation') },
+  }
+}
+
+function isBlur(clip: Clip): clip is BlurClip {
+  return clip.type === 'blur'
+}
+
+function isHighlight(clip: Clip): clip is HighlightClip {
+  return clip.type === 'highlight'
+}
+
 function isAnimatedImage(clip: Clip, mediaStates: MediaStates): clip is VideoClip {
   if (clip.type !== 'video') return false
   const state = mediaStates[clip.mediaId]
@@ -201,9 +326,7 @@ function TextFields({ clips }: { clips: readonly TextClip[] }): ReactElement {
   const { store } = useSession()
   const [installed, setInstalled] = useState<readonly string[]>([])
   const isTypingRef = useRef(false)
-  const isPickingRef = useRef(false)
   const isTryingFontRef = useRef(false)
-  const colorRef = useRef<HTMLInputElement>(null)
   const ids = useMemo(() => clips.map((clip) => clip.id), [clips])
   const [firstId] = ids
   const text = sharedValue(clips.map((clip) => clip.text))
@@ -232,24 +355,6 @@ function TextFields({ clips }: { clips: readonly TextClip[] }): ReactElement {
     // Once per appearance of the panel: the list does not depend on which clips are selected.
   }, [])
 
-  // The colour picker reports every colour it passes over; they become one undo step, closed when the picker is.
-  useEffect(() => {
-    const field = colorRef.current
-    if (field === null) return
-    const endPicking = (): void => {
-      if (!isPickingRef.current) return
-      isPickingRef.current = false
-      store.commit()
-    }
-    field.addEventListener('change', endPicking)
-    field.addEventListener('blur', endPicking)
-    return () => {
-      field.removeEventListener('change', endPicking)
-      field.removeEventListener('blur', endPicking)
-      endPicking()
-    }
-  }, [store])
-
   function endTyping(): void {
     if (!isTypingRef.current || firstId === undefined) return
     isTypingRef.current = false
@@ -262,14 +367,12 @@ function TextFields({ clips }: { clips: readonly TextClip[] }): ReactElement {
   }
 
   // The picker has no transparency, so each clip keeps the transparency its colour had.
-  function onColor(picked: string): void {
-    const edit: Edit = (project) => {
+  function withColor(picked: string): Edit {
+    return (project) => {
       let edited = project
       for (const clip of clips) edited = setTextStyle(edited, [clip.id], { color: `${picked}${clip.color.slice(OPAQUE_COLOR_LENGTH)}` })
       return edited
     }
-    updateStep(store, 'Change Text Colour', edit, isPickingRef.current)
-    isPickingRef.current = true
   }
 
   // The font under the pointer, or reached with the arrow keys, is shown on the canvas at once; only choosing it makes it an undo step.
@@ -332,17 +435,7 @@ function TextFields({ clips }: { clips: readonly TextClip[] }): ReactElement {
         presets={TEXT_SIZES}
         edit={(size) => (project) => setTextStyle(project, ids, { size })}
       />
-      <label className="labelled">
-        <span className="field-label">Colour</span>
-        <input
-          ref={colorRef}
-          className="color-field"
-          type="color"
-          data-testid="text-color"
-          value={(color ?? clips[0]?.color ?? '').slice(0, OPAQUE_COLOR_LENGTH)}
-          onChange={(event) => onColor(event.target.value)}
-        />
-      </label>
+      <ColorField label="Colour" testId="text-color" command="Change Text Colour" value={color ?? clips[0]?.color} edit={withColor} />
       <div className="labelled">
         <span className="field-label">Alignment</span>
         <div className="segmented wide" role="group" aria-label="Alignment">
@@ -362,6 +455,167 @@ function TextFields({ clips }: { clips: readonly TextClip[] }): ReactElement {
   )
 }
 
+// What the selected zoom shows and how the camera gets there.
+function ZoomProperties({ index }: { index: number }): ReactElement | undefined {
+  const { store } = useSession()
+  const zoom = useEditorState((state) => state.project.camera?.[index])
+  const canvas = useEditorState((state) => state.project.canvas)
+  if (zoom === undefined) return undefined
+  const frameTicks = frameDuration(canvas.frameRate)
+  const frameSeconds = frameTicks / TICKS_PER_SECOND
+
+  function set(changesOf: (value: number) => ZoomChanges): (value: number) => Edit {
+    return (value) => (project) => setZoom(project, index, changesOf(value), frameTicks)
+  }
+
+  function onEasing(chosen: string): void {
+    const easing = EASINGS.find((entry) => entry.easing === chosen)?.easing
+    if (easing !== undefined) store.apply('Change Zoom Easing', (project) => setZoom(project, index, { easing }, frameTicks))
+  }
+
+  return (
+    <Group title="Zoom" icon="zoom" actions={<IconButton icon="trash" label="Delete zoom" testId="zoom-delete" onClick={() => store.apply('Delete Zoom', (project) => deleteZoom(project, index))} />}>
+      <EditField
+        label="Scale %"
+        testId="zoom-scale"
+        command="Change Zoom"
+        value={zoom.scale * PERCENT}
+        min={PERCENT}
+        max={MAX_CAMERA_SCALE * PERCENT}
+        decimals={1}
+        presets={ZOOM_SCALES}
+        edit={set((percent) => ({ scale: percent / PERCENT }))}
+      />
+      <EditField label="X" testId="zoom-x" command="Change Zoom" value={zoom.x} min={0} max={canvas.width} decimals={1} edit={set((x) => ({ x }))} />
+      <EditField label="Y" testId="zoom-y" command="Change Zoom" value={zoom.y} min={0} max={canvas.height} decimals={1} edit={set((y) => ({ y }))} />
+      <EditField
+        label="Length s"
+        testId="zoom-duration"
+        command="Change Zoom Length"
+        value={zoom.duration / TICKS_PER_SECOND}
+        min={frameSeconds}
+        max={MAX_SECONDS}
+        step={frameSeconds}
+        decimals={3}
+        presets={MOVE_SECONDS}
+        edit={set((length) => ({ duration: length * TICKS_PER_SECOND }))}
+      />
+      <div className="labelled">
+        <span className="field-label">Easing</span>
+        <Picker label="Easing" testId="zoom-easing" choices={EASINGS.map(({ easing, label }) => ({ value: easing, label }))} value={zoom.easing} onChoose={onEasing} />
+      </div>
+    </Group>
+  )
+}
+
+type TransitionFieldsProps = {
+  edge: TransitionEdge
+  label: string
+  clips: readonly VisualClip[]
+  frameTicks: number
+}
+
+// The transition at one end of the selected clips: which one, and for how long.
+function TransitionFields({ edge, label, clips, frameTicks }: TransitionFieldsProps): ReactElement {
+  const { store } = useSession()
+  const key = edge === 'in' ? 'transitionIn' : 'transitionOut'
+  const frameSeconds = frameTicks / TICKS_PER_SECOND
+
+  function onChoose(chosen: string): void {
+    const picked = TRANSITION_TYPES.find((candidate) => candidate === chosen)
+    store.apply(picked === undefined ? 'Remove Transition' : 'Change Transition', (project) => {
+      let edited = project
+      for (const clip of clips) {
+        const transition = picked === undefined ? undefined : { type: picked, duration: clip[key]?.duration ?? DEFAULT_TRANSITION }
+        edited = setTransition(edited, { clipId: clip.id, edge }, transition, frameTicks)
+      }
+      return edited
+    })
+  }
+
+  function setLength(length: number): Edit {
+    return (project) => {
+      let edited = project
+      for (const clip of clips) {
+        const current = clip[key]
+        if (current !== undefined) edited = setTransition(edited, { clipId: clip.id, edge }, { type: current.type, duration: length * TICKS_PER_SECOND }, frameTicks)
+      }
+      return edited
+    }
+  }
+
+  const choices = [{ value: NO_TRANSITION, label: 'None' }, ...TRANSITION_TYPES.map((type) => ({ value: type, label: TRANSITION_NAMES[type] }))]
+  return (
+    <>
+      <div className="labelled">
+        <span className="field-label">{label}</span>
+        <Picker label={`Transition at the ${label.toLowerCase()}`} testId={`transition-${edge}`} choices={choices} value={sharedValue(clips.map((clip) => clip[key]?.type ?? NO_TRANSITION))} onChoose={onChoose} />
+      </div>
+      {clips.some((clip) => clip[key] !== undefined) && (
+        <EditField
+          label={`${label} length s`}
+          testId={`transition-${edge}-length`}
+          command="Change Transition"
+          value={seconds(sharedValue(clips.map((clip) => clip[key]?.duration)))}
+          min={frameSeconds}
+          max={MAX_SECONDS}
+          step={frameSeconds}
+          decimals={3}
+          presets={MOVE_SECONDS}
+          edit={setLength}
+        />
+      )}
+    </>
+  )
+}
+
+// The outline of the selected blur or highlight clips and how soft its edge is.
+function ShapeFields({ clips }: { clips: readonly ShapeClip[] }): ReactElement {
+  const { store } = useSession()
+  const ids = clips.map((clip) => clip.id)
+  const current = sharedValue(clips.map((clip) => clip.shape))
+  return (
+    <>
+      <div className="labelled">
+        <span className="field-label">Shape</span>
+        <div className="segmented wide" role="group" aria-label="Shape">
+          {SHAPES.map(({ shape, label }) => (
+            <button key={shape} type="button" className="button" data-testid={`shape-${shape}`} aria-pressed={current === shape} onClick={() => store.apply('Change Shape', (project) => setShapeStyle(project, ids, { shape }))}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <EditField
+        label="Soft edge"
+        testId="shape-soft-edge"
+        command="Change Soft Edge"
+        value={sharedValue(clips.map((clip) => clip.softEdge))}
+        min={0}
+        max={MAX_POSITION}
+        decimals={1}
+        edit={(softEdge) => (project) => setShapeStyle(project, ids, { softEdge })}
+      />
+    </>
+  )
+}
+
+type SwitchFieldProps = {
+  label: string
+  testId: string
+  isOn: boolean
+  onSwitch(isOn: boolean): void
+}
+
+function SwitchField({ label, testId, isOn, onSwitch }: SwitchFieldProps): ReactElement {
+  return (
+    <label className="check-field">
+      <input type="checkbox" data-testid={testId} checked={isOn} onChange={(event) => onSwitch(event.target.checked)} />
+      {label}
+    </label>
+  )
+}
+
 function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const mediaStates = useEditorState((state) => state.mediaStates)
   const canvas = useEditorState((state) => state.project.canvas)
@@ -371,11 +625,20 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const frameTicks = frameDuration(canvas.frameRate)
   const { store } = useSession()
   const visual = clips.filter(isVisual)
+  const croppable = clips.filter(isCroppable)
   const texts = clips.filter(isText)
   const sourced = clips.filter(hasSource)
   const loopable = clips.filter((clip) => isAnimatedImage(clip, mediaStates))
   const isLooping = loopable.length > 0 && loopable.every((clip) => clip.loop === true)
   const sounding = sourced.filter((clip) => makesSound(clip, mediaStates))
+  const blurs = clips.filter(isBlur)
+  const highlights = clips.filter(isHighlight)
+  const isPixelated = blurs.length > 0 && blurs.every((clip) => clip.isPixelated === true)
+  const isSpotlight = highlights.length > 0 && highlights.every((clip) => clip.isSpotlight === true)
+
+  function styleShapes(label: string, style: ShapeStyle): void {
+    store.apply(label, (project) => setShapeStyle(project, ids, style))
+  }
 
   function shared(property: AnimatableProperty): number | undefined {
     return sharedValue(clips.map((clip) => propertyAt(clip, property, time)))
@@ -419,13 +682,29 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
     )
   }
 
+  // A typed crop hides or reveals picture on its side as the crop tool does: the rest of the picture stays where it is.
+  // It starts from the values at the playhead, so a clip whose place is animated does not jump.
+  function setCrop(side: keyof Crop, property: AnimatableProperty): (value: number) => Edit {
+    return (value) => (project) => {
+      let edited = project
+      for (const clip of croppable) {
+        const natural = pictureSize(clip, mediaStates)
+        if (natural === undefined) continue
+        const { crop, transform } = placementAt(clip, time)
+        const cropped = cropFromValue(natural, crop, transform, side, value)
+        edited = setProperties(edited, [clip.id], { [property]: cropped.crop[side], x: cropped.transform.x, y: cropped.transform.y }, time)
+      }
+      return edited
+    }
+  }
+
   function setStart(valueInSeconds: number): Edit {
     const start = wholeFrames(valueInSeconds)
     return (project) => {
       let edited = project
       for (const clip of clips) {
         const newTrack = { id: freeTrackId(edited, `${clip.id}-track`), name: nextTrackName(edited) }
-        edited = moveClips(edited, { clipIds: [clip.id], deltaTime: start - clip.start, targetTrackIndex: undefined, isRipple: false, newTrack })
+        edited = moveClips(edited, { clipIds: [clip.id], deltaTime: start - clip.start, trackShift: 0, isRipple: false, newTrack })
       }
       return edited
     }
@@ -454,12 +733,35 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   return (
     <>
       {texts.length > 0 && (
-        <Group title="Text">
+        <Group title="Text" icon="text">
           <TextFields clips={texts} />
         </Group>
       )}
+      {blurs.length > 0 && (
+        <Group title="Blur" icon="blur">
+          <ShapeFields clips={blurs} />
+          <EditField
+            label={isPixelated ? 'Block size' : 'Strength'}
+            testId="blur-strength"
+            command="Change Blur"
+            value={sharedValue(blurs.map((clip) => clip.strength))}
+            min={1}
+            max={MAX_POSITION}
+            decimals={1}
+            edit={(strength) => (project) => setShapeStyle(project, ids, { strength })}
+          />
+          <SwitchField label="Pixelate" testId="blur-pixelate" isOn={isPixelated} onSwitch={(isOn) => styleShapes(isOn ? 'Pixelate' : 'Blur', { isPixelated: isOn })} />
+        </Group>
+      )}
+      {highlights.length > 0 && (
+        <Group title="Highlight" icon="marker">
+          <ShapeFields clips={highlights} />
+          <ColorField label="Colour" testId="highlight-color" command="Change Highlight Colour" value={sharedValue(highlights.map((clip) => clip.color))} edit={(color) => (project) => setShapeStyle(project, ids, { color })} />
+          <SwitchField label="Spotlight: dim everything outside the shape" testId="highlight-spotlight" isOn={isSpotlight} onSwitch={(isOn) => styleShapes(isOn ? 'Make Spotlight' : 'Make Highlight', { isSpotlight: isOn })} />
+        </Group>
+      )}
       {visual.length > 0 && (
-        <Group title="Transform" actions={<IconButton icon="link" label="Keep the aspect ratio" testId="aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />}>
+        <Group title="Transform" icon="move" actions={<IconButton icon="link" label="Keep the aspect ratio" testId="aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />}>
           <EditField label="X" testId="clip-x" command="Move Clip" value={shared('x')} min={-MAX_POSITION} max={MAX_POSITION} decimals={1} edit={set('x')} />
           <EditField label="Y" testId="clip-y" command="Move Clip" value={shared('y')} min={-MAX_POSITION} max={MAX_POSITION} decimals={1} edit={set('y')} />
           <EditField label="Width" testId="clip-width" command="Resize Clip" value={sizeOf('width')} min={0} max={MAX_POSITION} decimals={1} edit={setSide('width')} />
@@ -488,7 +790,24 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
           />
         </Group>
       )}
-      <Group title="Timing">
+      {croppable.length > 0 && (
+        <Group title="Crop" icon="crop">
+          {CROP_SIDES.map(({ side, property, label }) => (
+            <EditField
+              key={side}
+              label={label}
+              testId={`clip-crop-${side}`}
+              command="Crop Clip"
+              value={sharedValue(croppable.map((clip) => propertyAt(clip, property, time)))}
+              min={0}
+              max={MAX_POSITION}
+              decimals={1}
+              edit={setCrop(side, property)}
+            />
+          ))}
+        </Group>
+      )}
+      <Group title="Timing" icon="clock">
         <EditField label="Start s" testId="clip-start" command="Move Clip" value={seconds(sharedValue(clips.map((clip) => clip.start)))} min={0} max={MAX_SECONDS} step={frameSeconds} decimals={3} edit={setStart} />
         <EditField
           label="Duration s"
@@ -539,7 +858,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
         )}
       </Group>
       {visual.length > 0 && (
-        <Group title="Opacity">
+        <Group title="Opacity" icon="droplet">
           <EditField
             label="Opacity %"
             testId="clip-opacity"
@@ -554,8 +873,15 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
           {fadeField('Fade out s', 'fadeOut', visual.map((clip) => clip.fadeOut))}
         </Group>
       )}
+      {visual.length > 0 && (
+        <Group title="Transitions" icon="transition">
+          {EDGES.map(({ edge, label }) => (
+            <TransitionFields key={edge} edge={edge} label={label} clips={visual} frameTicks={frameTicks} />
+          ))}
+        </Group>
+      )}
       {sounding.length > 0 && (
-        <Group title="Volume">
+        <Group title="Volume" icon="speaker">
           <EditField
             label="Volume %"
             testId="clip-volume"
@@ -574,9 +900,11 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   )
 }
 
-export function Properties(): ReactElement {
+export function Properties(): ReactElement | undefined {
   const project = useEditorState((state) => state.project)
   const selection = useEditorState((state) => state.selection)
+  const selectedZoom = useEditorState((state) => state.selectedZoom)
   const clips = useMemo(() => selectedClips(project, selection), [project, selection])
+  if (selectedZoom !== undefined) return <ZoomProperties index={selectedZoom} />
   return clips.length === 0 ? <ProjectSettings /> : <ClipProperties clips={clips} />
 }
