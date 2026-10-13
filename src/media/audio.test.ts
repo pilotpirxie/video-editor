@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { bundledFfmpeg } from '../../test/helpers.js'
 import { CLICK_SAMPLE_44K, mediaPath } from '../../test/media/generate.js'
-import { AUDIO_FILE, WAVEFORM_BUCKET_SAMPLES, WAVEFORM_FILE, createPeakFolder, openPreparedAudio, prepareAudio, readAudio } from './audio.js'
+import { AUDIO_FILE, WAVEFORM_BUCKET_SAMPLES, WAVEFORM_FILE, createPeakFolder, openPreparedAudio, prepareAudio, readAudio, waveformLevels } from './audio.js'
 import { probeMedia } from './probe.js'
 
 const ffmpeg = bundledFfmpeg()
@@ -219,6 +219,26 @@ describe('waveform', () => {
       }
       expect(Buffer.from(pieces.finish()).equals(Buffer.from(expected)), `chunks of ${chunkFrames} frames`).toBe(true)
     }
+  })
+
+  it('folds the peaks into levels an eighth the size, keeping the extremes of every bucket', () => {
+    const bucketCount = 10_000
+    const peaks = new Int8Array(bucketCount * 2)
+    for (let bucket = 0; bucket < bucketCount; bucket++) {
+      peaks[bucket * 2] = -(bucket % 100)
+      peaks[bucket * 2 + 1] = bucket % 50
+    }
+
+    const levels = waveformLevels(peaks)
+    expect(levels.map((level) => level.samplesPerBucket)).toEqual([480, 3840, 30_720])
+    expect(levels.map((level) => level.peaks.length / 2)).toEqual([10_000, 1250, 157])
+    expect(levels[0]?.peaks).toBe(peaks)
+
+    const second = levels[1]?.peaks ?? new Int8Array()
+    expect([second[0], second[1]]).toEqual([-7, 7])
+    expect([second[2 * 12], second[2 * 12 + 1]]).toEqual([-99, 49])
+    const last = levels[2]?.peaks ?? new Int8Array()
+    expect([last[2 * 156], last[2 * 156 + 1]]).toEqual([-99, 49])
   })
 
   it('needs 14.4 MB for a 20-hour file', () => {

@@ -23,10 +23,22 @@ function contextOf(canvas: OffscreenCanvas): OffscreenCanvasRenderingContext2D {
   return context
 }
 
-export function rasterizeText(layer: TextLayer, pixelsPerUnitX: number, pixelsPerUnitY: number): TextRaster {
-  const lines = layer.text.split('\n')
-  const family = layer.family.replaceAll('"', '\\"')
-  const font = `${layer.size}px "${family}", ${FALLBACK_FAMILY}`
+type TextMeasure = {
+  font: string
+  lines: string[]
+  lineWidths: number[]
+  ascent: number
+  lineHeight: number
+  padding: number
+  naturalWidth: number
+  naturalHeight: number
+}
+
+// The size of a text clip in canvas units. The editor's handles and hit testing use the same numbers the picture is drawn with.
+export function measureText(text: Pick<TextLayer, 'text' | 'family' | 'size'>): TextMeasure {
+  const lines = text.text.split('\n')
+  const family = text.family.replaceAll('"', '\\"')
+  const font = `${text.size}px "${family}", ${FALLBACK_FAMILY}`
 
   const measuring = contextOf(new OffscreenCanvas(1, 1))
   measuring.font = font
@@ -34,11 +46,21 @@ export function rasterizeText(layer: TextLayer, pixelsPerUnitX: number, pixelsPe
   const ascent = reference.fontBoundingBoxAscent
   const lineHeight = ascent + reference.fontBoundingBoxDescent
   const lineWidths = lines.map((line) => measuring.measureText(line).width)
-  const widestLine = Math.max(...lineWidths)
+  const padding = Math.ceil(text.size * PADDING_PER_FONT_SIZE)
+  return {
+    font,
+    lines,
+    lineWidths,
+    ascent,
+    lineHeight,
+    padding,
+    naturalWidth: Math.max(...lineWidths) + 2 * padding,
+    naturalHeight: lines.length * lineHeight + 2 * padding,
+  }
+}
 
-  const padding = Math.ceil(layer.size * PADDING_PER_FONT_SIZE)
-  const naturalWidth = widestLine + 2 * padding
-  const naturalHeight = lines.length * lineHeight + 2 * padding
+export function rasterizeText(layer: TextLayer, pixelsPerUnitX: number, pixelsPerUnitY: number): TextRaster {
+  const { font, lines, lineWidths, ascent, lineHeight, padding, naturalWidth, naturalHeight } = measureText(layer)
 
   const rasterWidth = Math.min(MAX_RASTER_SIDE, Math.max(1, Math.ceil(naturalWidth * pixelsPerUnitX)))
   const rasterHeight = Math.min(MAX_RASTER_SIDE, Math.max(1, Math.ceil(naturalHeight * pixelsPerUnitY)))

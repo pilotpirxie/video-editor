@@ -17,6 +17,6 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["src/renderer", "src/engine", "src/shared"],
-  "exclude": ["src/shared/**/*.test.ts"]
+  "include": ["src/renderer", "src/engine", "src/shared", "src/editor"],
+  "exclude": ["src/shared/**/*.test.ts", "src/editor/**/*.test.ts"]
 }

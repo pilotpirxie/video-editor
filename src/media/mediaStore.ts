@@ -1,18 +1,19 @@
-import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
+import { existsSync, type Stats } from 'node:fs'
 import { mkdir, readFile, stat, writeFile, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { FRAME_DECODE_PIXEL_BUDGET, MAX_OPEN_STREAMS } from '../shared/limits.js'
 import { describeError, logError } from '../shared/log.js'
-import type { ExportTarget, LoadedProject, MediaClient, MediaInfo, MediaState, RawFrame } from '../shared/mediaProtocol.js'
-import { parseProject, type MediaRef } from '../shared/project.js'
-import { openPreparedAudio, prepareAudio, readAudio } from './audio.js'
+import type { AddedMedia, ExportTarget, LoadedProject, MediaClient, MediaInfo, MediaState, Preparation, RawFrame, WaveformLevel } from '../shared/mediaProtocol.js'
+import { parseProject, type MediaRef, type Project } from '../shared/project.js'
+import { isAudioPrepared, openPreparedAudio, prepareAudio, readAudio, readWaveform } from './audio.js'
 import { startEncoder, type Encoder } from './encoder.js'
 import type { FfmpegRunner } from './ffmpeg.js'
 import { decodeFrame, openFrameStream, toArrayBuffer, type FrameStream, type VideoSource } from './frames.js'
 import { isPreviewComplete, openPreviewCopy, type PreviewCopy } from './previewCopy.js'
 import { ProbeError, probeMedia } from './probe.js'
+import { withSavedPaths, writeProjectFile } from './projectFile.js'
 
 const CACHE_KEY_LENGTH = 32
 const PREPARATION_GRACE_MS = 250
@@ -32,12 +33,28 @@ type MediaEntry = {
   directory: string
   preview: PreviewCopy | undefined
   audio: Promise<FileHandle> | undefined
+  hasFailed: boolean
 }
 
 type OpenProject = {
   media: Map<string, MediaEntry>
+  // Directory of the project file the media list came from; undefined for a project that was never saved.
+  directory: string | undefined
   lifetime: AbortController
   prepared: Promise<void>
+}
+
+function emptyProject(): OpenProject {
+  return { media: new Map(), directory: undefined, lifetime: new AbortController(), prepared: Promise.resolve() }
+}
+
+function preparationOf(entry: MediaEntry): Preparation {
+  const { info, hasFailed } = entry
+  if (info.kind === 'image') return { progress: 1, hasFailed }
+  if (info.kind === 'audio') return { progress: isAudioPrepared(entry.directory) ? 1 : 0, hasFailed }
+  if (isPreviewComplete(entry.directory)) return { progress: 1, hasFailed }
+  const builtFrames = entry.preview?.frameCount() ?? 0
+  return { progress: Math.min(1, builtFrames / info.video.frameCount), hasFailed }
 }
 
 function cacheKey(text: string): string {
@@ -97,7 +114,8 @@ function createWeightLimiter(capacity: number): WeightLimiter {
 }
 
 export class MediaSession implements MediaClient {
-  private project: OpenProject | undefined
+  private project = emptyProject()
+  private saving: Promise<void> = Promise.resolve()
   private readonly streams = new Map<number, FrameStream>()
   private readonly exports = new Map<number, Encoder>()
   private readonly frameDecodes = createWeightLimiter(FRAME_DECODE_PIXEL_BUDGET)
@@ -119,12 +137,11 @@ export class MediaSession implements MediaClient {
     if (!parsed.ok) throw new MediaError(parsed.message)
 
     await this.closeProject()
-    const projectCache = join(this.cacheDirectory, cacheKey(path))
     const media = new Map<string, MediaEntry>()
     const states: Record<string, MediaState> = {}
     for (const reference of parsed.project.media) {
       try {
-        const entry = await this.openMedia(reference, dirname(path), projectCache)
+        const entry = await this.openMedia(reference, dirname(path))
         media.set(reference.id, entry)
         states[reference.id] = { info: entry.info }
       } catch (error) {
@@ -134,13 +151,44 @@ export class MediaSession implements MediaClient {
     }
 
     const lifetime = new AbortController()
-    const prepared = forPreview ? this.prepareInBackground(media, lifetime.signal, path) : Promise.resolve()
-    this.project = { media, lifetime, prepared }
+    const prepared = forPreview ? this.prepareInBackground([...media.values()], lifetime.signal) : Promise.resolve()
+    this.project = { media, directory: dirname(path), lifetime, prepared }
     return { project: parsed.project, media: states }
   }
 
   async whenPrepared(): Promise<void> {
-    await this.project?.prepared
+    await this.project.prepared
+  }
+
+  async addMedia(path: string): Promise<AddedMedia> {
+    const project = this.project
+    const entry = await this.openFile(path)
+    const id = randomUUID()
+    project.media.set(id, entry)
+    project.prepared = this.prepareAfter(project.prepared, entry, project.lifetime.signal)
+    return { id, info: entry.info }
+  }
+
+  async preparation(): Promise<Record<string, Preparation>> {
+    const states: Record<string, Preparation> = {}
+    for (const [id, entry] of this.project.media) states[id] = preparationOf(entry)
+    return states
+  }
+
+  async waveform(mediaId: string): Promise<WaveformLevel[] | undefined> {
+    const entry = this.entryOf(mediaId)
+    if (!isAudioPrepared(entry.directory)) return undefined
+    return readWaveform(entry.directory)
+  }
+
+  // Saves run one at a time, so an autosave and a Save can never interleave their writes.
+  saveProject(path: string, project: Project): Promise<void> {
+    const resolvedPaths = new Map<string, string>()
+    for (const [id, entry] of this.project.media) resolvedPaths.set(id, entry.path)
+    const saved = withSavedPaths(project, { resolvedPaths, sourceDirectory: this.project.directory }, path)
+    const done = this.saveAfter(this.saving, path, saved)
+    this.saving = settled(done)
+    return done
   }
 
   async readImage(mediaId: string): Promise<ArrayBuffer> {
@@ -182,8 +230,7 @@ export class MediaSession implements MediaClient {
   async audio(mediaId: string, firstSample: number, sampleCount: number): Promise<Float32Array | undefined> {
     const entry = this.entryOf(mediaId)
     if (entry.info.kind === 'image' || entry.info.audio === undefined) return undefined
-    const lifetime = this.project?.lifetime.signal ?? AbortSignal.abort()
-    return readAudio(await this.preparedAudio(entry, lifetime), firstSample, sampleCount)
+    return readAudio(await this.preparedAudio(entry, this.project.lifetime.signal), firstSample, sampleCount)
   }
 
   async exportStart(target: ExportTarget): Promise<number> {
@@ -224,8 +271,7 @@ export class MediaSession implements MediaClient {
 
   private async closeProject(): Promise<void> {
     const project = this.project
-    if (project === undefined) return
-    this.project = undefined
+    this.project = emptyProject()
     project.lifetime.abort()
     for (const entry of project.media.values()) {
       await entry.preview?.close()
@@ -233,18 +279,27 @@ export class MediaSession implements MediaClient {
     }
   }
 
-  private async openMedia(reference: MediaRef, projectDirectory: string, projectCache: string): Promise<MediaEntry> {
+  private async openMedia(reference: MediaRef, projectDirectory: string): Promise<MediaEntry> {
     const candidates: string[] = []
     if (reference.path !== '') candidates.push(reference.path)
     if (reference.relativePath !== '') candidates.push(resolve(projectDirectory, reference.relativePath))
     const path = candidates.find((candidate) => existsSync(candidate))
     if (path === undefined) throw new MediaError(`"${basename(candidates[0] ?? reference.id)}" was not found.`)
+    return this.openFile(path)
+  }
 
-    const file = await stat(path)
-    const directory = join(projectCache, cacheKey(`${path}\n${file.size}\n${file.mtimeMs}`))
+  // The cache belongs to the media file, not to a project: an untitled project, Save As and a recovery file all reuse the same preview copy.
+  private async openFile(path: string): Promise<MediaEntry> {
+    let file: Stats
+    try {
+      file = await stat(path)
+    } catch (error) {
+      throw new MediaError(`"${basename(path)}" was not found.`, { cause: error })
+    }
+    const directory = join(this.cacheDirectory, cacheKey(`${path}\n${file.size}\n${file.mtimeMs}`))
     await mkdir(directory, { recursive: true })
     const info = await this.infoOf(path, directory)
-    return { path, info, directory, preview: undefined, audio: undefined }
+    return { path, info, directory, preview: undefined, audio: undefined, hasFailed: false }
   }
 
   private async infoOf(path: string, directory: string): Promise<MediaInfo> {
@@ -264,15 +319,26 @@ export class MediaSession implements MediaClient {
     return info
   }
 
-  private async prepareInBackground(media: ReadonlyMap<string, MediaEntry>, signal: AbortSignal, projectPath: string): Promise<void> {
-    const entries = [...media.values()]
+  private async prepareAfter(earlier: Promise<void>, entry: MediaEntry, signal: AbortSignal): Promise<void> {
+    await earlier
+    await this.prepareInBackground([entry], signal)
+  }
+
+  private async saveAfter(earlier: Promise<void>, path: string, project: Project): Promise<void> {
+    await earlier
+    await writeProjectFile(path, project)
+  }
+
+  private async prepareInBackground(entries: readonly MediaEntry[], signal: AbortSignal): Promise<void> {
     for (const entry of entries) {
       if (signal.aborted) return
       if (entry.info.kind === 'image' || entry.info.audio === undefined) continue
       try {
         await this.preparedAudio(entry, signal)
       } catch (error) {
-        if (!signal.aborted) logError('Could not prepare audio', error, { path: entry.path, project: projectPath })
+        if (signal.aborted) return
+        entry.hasFailed = true
+        logError('Could not prepare audio', error, { path: entry.path })
       }
     }
 
@@ -286,7 +352,9 @@ export class MediaSession implements MediaClient {
         entry.preview = await openPreviewCopy(this.ffmpeg, videoSource(entry), entry.directory, signal)
         await entry.preview.finished
       } catch (error) {
-        if (!signal.aborted) logError('Could not prepare the preview copy', error, { path: entry.path, project: projectPath })
+        if (signal.aborted) return
+        entry.hasFailed = true
+        logError('Could not prepare the preview copy', error, { path: entry.path })
       }
     }
   }
@@ -307,7 +375,7 @@ export class MediaSession implements MediaClient {
   }
 
   private entryOf(mediaId: string): MediaEntry {
-    const entry = this.project?.media.get(mediaId)
+    const entry = this.project.media.get(mediaId)
     if (entry === undefined) throw new MediaError(`Media "${mediaId}" is not available`)
     return entry
   }
@@ -332,6 +400,11 @@ async function openAudio(ffmpeg: FfmpegRunner, entry: MediaEntry, signal: AbortS
   const containerStart = entry.info.kind === 'image' ? 0 : entry.info.containerStart
   await prepareAudio(ffmpeg, { path: entry.path, containerStart }, entry.directory, signal)
   return openPreparedAudio(entry.directory)
+}
+
+// A failed save must not block the saves queued after it; its own caller still sees the failure.
+async function settled(work: Promise<void>): Promise<void> {
+  await Promise.allSettled([work])
 }
 
 async function closeWhenOpened(audio: Promise<FileHandle>): Promise<void> {

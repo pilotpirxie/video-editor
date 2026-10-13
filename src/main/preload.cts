@@ -18,4 +18,12 @@ contextBridge.exposeInMainWorld('host', {
   onCommand: (listener: (command: unknown) => void) => {
     ipcRenderer.on('command', (_event, command) => listener(command))
   },
+  documentInfo: () => ipcRenderer.invoke('document-info'),
+  setDocumentState: (state: unknown) => ipcRenderer.send('document-state', state),
+  setDocumentPath: (path: string) => ipcRenderer.send('document-path', path),
+  saveProjectDialog: () => ipcRenderer.invoke('save-project-dialog'),
+  importMediaDialog: () => ipcRenderer.invoke('import-media-dialog'),
+  confirmUnsavedChanges: () => ipcRenderer.invoke('confirm-unsaved-changes'),
+  replaceDocument: (next: unknown) => ipcRenderer.send('replace-document', next),
+  discardRecovery: () => ipcRenderer.send('discard-recovery'),
 })

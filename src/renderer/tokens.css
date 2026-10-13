@@ -1,0 +1,36 @@
+:root {
+  --window-background: #14171d;
+  --panel-background: #1b1f27;
+  --raised-surface: #252a34;
+  --hover-surface: #2e3440;
+  --divider: #363d4a;
+  --text-primary: #ffffff;
+  --text-secondary: #a7b0c0;
+  --text-disabled: #687183;
+  --primary: #3dba74;
+  --primary-hover: #4bc882;
+  --primary-pressed: #33a064;
+  --text-on-primary: #0d1a13;
+  --snap-guide: #e65fd3;
+  --danger: #e5484d;
+  --warning: #f2a93b;
+  --clip-video: #3c5a88;
+  --clip-audio: #2c6c80;
+  --clip-image: #5e4f8c;
+  --clip-annotation: #8a6a3a;
+  --clip-blur: #5b6474;
+  --preview-background: #000000;
+
+  --font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  --text-small: 11px;
+  --text-label: 12px;
+  --text-body: 13px;
+  --text-title: 15px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --radius: 6px;
+  --control-height: 28px;
+}

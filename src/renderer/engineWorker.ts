@@ -1,6 +1,6 @@
 import { createEngine, type Engine, type EngineEvent } from '../engine/engine.js'
 import { describeError } from '../shared/log.js'
-import type { HeadlessJob, JobEvent } from '../shared/mediaProtocol.js'
+import type { HeadlessJob, JobEvent, LoadedProject } from '../shared/mediaProtocol.js'
 import { createMediaClient } from './mediaClient.js'
 
 export type WorkerCommand =
@@ -8,6 +8,7 @@ export type WorkerCommand =
   | { type: 'media-port' }
   | { type: 'audio-port' }
   | { type: 'load'; path: string }
+  | { type: 'project'; loaded: LoadedProject }
   | { type: 'resize'; width: number; height: number }
   | { type: 'seek'; time: number }
   | { type: 'play'; outputLatency: number }
@@ -57,6 +58,8 @@ async function runJob(engine: Engine, job: HeadlessJob): Promise<void> {
 async function handle(engine: Engine, command: WorkerCommand, ports: readonly MessagePort[]): Promise<void> {
   if (command.type === 'load') {
     await engine.load(command.path, true)
+  } else if (command.type === 'project') {
+    engine.setProject(command.loaded)
   } else if (command.type === 'resize') {
     engine.setOutputSize({ width: command.width, height: command.height })
   } else if (command.type === 'seek') {

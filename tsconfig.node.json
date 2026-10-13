@@ -17,6 +17,6 @@
     "outDir": "dist/node",
     "types": ["node"]
   },
-  "include": ["src/main", "src/media", "src/shared", "test", "vite.config.ts"],
+  "include": ["src/main", "src/media", "src/shared", "src/editor", "test", "vite.config.ts"],
   "exclude": ["test/media/generated", "test/output"]
 }

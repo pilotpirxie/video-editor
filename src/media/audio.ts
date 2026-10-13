@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
-import { open, rename, rm, writeFile, type FileHandle } from 'node:fs/promises'
+import { open, readFile, rename, rm, writeFile, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { WaveformLevel } from '../shared/mediaProtocol.js'
 import { SAMPLE_RATE, TICKS_PER_SAMPLE } from '../shared/time.js'
 import type { FfmpegRunner } from './ffmpeg.js'
 
@@ -14,6 +15,8 @@ const BYTES_PER_FRAME = CHANNELS * BYTES_PER_SAMPLE
 const READ_TIMEOUT_MS = 30_000
 const INT8_PEAK = 127
 const INITIAL_BUCKET_CAPACITY = 4096
+const WAVEFORM_LEVEL_FACTOR = 8
+const SMALLEST_LEVEL_BUCKETS = 512
 
 export type AudioSource = {
   path: string
@@ -78,9 +81,47 @@ function wholeFrames(bytes: Buffer): Float32Array {
   return new Float32Array(aligned.buffer, aligned.byteOffset, frameBytes / BYTES_PER_SAMPLE)
 }
 
+export function isAudioPrepared(directory: string): boolean {
+  return existsSync(join(directory, AUDIO_FILE)) && existsSync(join(directory, WAVEFORM_FILE))
+}
+
+function coarserPeaks(peaks: Int8Array): Int8Array {
+  const bucketCount = Math.ceil(peaks.length / 2 / WAVEFORM_LEVEL_FACTOR)
+  const coarser = new Int8Array(bucketCount * 2)
+  for (let bucket = 0; bucket < bucketCount; bucket++) {
+    let lowest = INT8_PEAK
+    let highest = -INT8_PEAK
+    const firstPair = bucket * WAVEFORM_LEVEL_FACTOR
+    const pairsEnd = Math.min(firstPair + WAVEFORM_LEVEL_FACTOR, peaks.length / 2)
+    for (let pair = firstPair; pair < pairsEnd; pair++) {
+      lowest = Math.min(lowest, peaks[pair * 2] ?? 0)
+      highest = Math.max(highest, peaks[pair * 2 + 1] ?? 0)
+    }
+    coarser[bucket * 2] = lowest
+    coarser[bucket * 2 + 1] = highest
+  }
+  return coarser
+}
+
+// Drawing a 20-hour waveform zoomed out must not walk 7 million buckets per frame, so each level holds an eighth of the one before.
+export function waveformLevels(peaks: Int8Array): WaveformLevel[] {
+  const levels: WaveformLevel[] = [{ samplesPerBucket: WAVEFORM_BUCKET_SAMPLES, peaks }]
+  for (;;) {
+    const finest = levels[levels.length - 1]
+    if (finest === undefined || finest.peaks.length / 2 <= SMALLEST_LEVEL_BUCKETS) return levels
+    levels.push({ samplesPerBucket: finest.samplesPerBucket * WAVEFORM_LEVEL_FACTOR, peaks: coarserPeaks(finest.peaks) })
+  }
+}
+
+export async function readWaveform(directory: string): Promise<WaveformLevel[]> {
+  const bytes = await readFile(join(directory, WAVEFORM_FILE))
+  const peaks = new Int8Array(bytes.length)
+  peaks.set(bytes)
+  return waveformLevels(peaks)
+}
+
 export async function prepareAudio(ffmpeg: FfmpegRunner, source: AudioSource, directory: string, signal: AbortSignal): Promise<void> {
-  const isPrepared = existsSync(join(directory, AUDIO_FILE)) && existsSync(join(directory, WAVEFORM_FILE))
-  if (isPrepared) return
+  if (isAudioPrepared(directory)) return
 
   const firstSample = Math.round(source.containerStart / TICKS_PER_SAMPLE)
   const filter = `aresample=${SAMPLE_RATE}:async=1:first_pts=${firstSample},aformat=sample_fmts=flt:channel_layouts=stereo`

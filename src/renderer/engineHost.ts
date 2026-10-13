@@ -10,6 +10,7 @@ declare global {
 export type EngineHost = {
   send(command: WorkerCommand, transfer?: Transferable[]): void
   onEvent(listener: (event: WorkerEvent) => void): () => void
+  uiMediaPort: Promise<MessagePort>
 }
 
 function isMediaPortMessage(event: MessageEvent<unknown>): boolean {
@@ -24,8 +25,13 @@ export function startEngine(canvas: HTMLCanvasElement | undefined): EngineHost {
     worker.postMessage(command, transfer)
   }
 
-  window.addEventListener('message', (event: MessageEvent<unknown>) => {
-    if (event.source === window && isMediaPortMessage(event)) send({ type: 'media-port' }, [...event.ports])
+  const uiMediaPort = new Promise<MessagePort>((resolve) => {
+    window.addEventListener('message', (event: MessageEvent<unknown>) => {
+      if (event.source !== window || !isMediaPortMessage(event)) return
+      const [enginePort, uiPort] = event.ports
+      if (enginePort !== undefined) send({ type: 'media-port' }, [enginePort])
+      if (uiPort !== undefined) resolve(uiPort)
+    })
   })
 
   const offscreen = canvas?.transferControlToOffscreen()
@@ -39,5 +45,5 @@ export function startEngine(canvas: HTMLCanvasElement | undefined): EngineHost {
     return () => worker.removeEventListener('message', forward)
   }
 
-  return { send, onEvent }
+  return { send, onEvent, uiMediaPort }
 }

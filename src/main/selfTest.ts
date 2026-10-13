@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type { BrowserWindow } from 'electron'
+import { PageError, pageOf, selector, type Page } from './page.js'
 
 const POLL_INTERVAL_MS = 50
 const LOAD_TIMEOUT_MS = 60_000
@@ -19,58 +20,22 @@ export type SelfTestOptions = {
 
 export type SelfTestReport = Record<string, unknown>
 
-class SelfTestError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'SelfTestError'
-  }
-}
-
-type Page = {
-  text(testId: string): Promise<string>
-  click(testId: string): Promise<void>
-  evaluate(script: string): Promise<unknown>
-  waitFor(testId: string, check: (text: string) => boolean, timeoutMs: number, what: string): Promise<string>
+type HarnessPage = Page & {
   reportCount(): Promise<number>
   waitForFullQuality(since: number, what: string): Promise<string>
 }
 
-function selector(testId: string): string {
-  return `document.querySelector('[data-testid="${testId}"]')`
-}
-
-function pageOf(window: BrowserWindow): Page {
-  function evaluate(script: string): Promise<unknown> {
-    return window.webContents.executeJavaScript(script, true)
-  }
-
-  async function text(testId: string): Promise<string> {
-    const content = await evaluate(`${selector(testId)}?.textContent ?? ''`)
-    return typeof content === 'string' ? content : ''
-  }
-
-  async function click(testId: string): Promise<void> {
-    await evaluate(`${selector(testId)}.click()`)
-  }
-
-  async function waitFor(testId: string, check: (content: string) => boolean, timeoutMs: number, what: string): Promise<string> {
-    const deadline = Date.now() + timeoutMs
-    for (;;) {
-      const content = await text(testId)
-      if (check(content)) return content
-      if (Date.now() > deadline) throw new SelfTestError(`Timed out waiting for ${what}; ${testId} shows "${content}"`)
-      await sleep(POLL_INTERVAL_MS)
-    }
-  }
+function harnessPageOf(window: BrowserWindow): HarnessPage {
+  const page = pageOf(window)
 
   async function reportCount(): Promise<number> {
-    return Number(await evaluate(`${selector('stats')}?.dataset.sequence ?? 0`))
+    return Number(await page.evaluate(`${selector('stats')}?.dataset.sequence ?? 0`))
   }
 
   async function waitForFullQuality(since: number, what: string): Promise<string> {
     const deadline = Date.now() + STEP_TIMEOUT_MS
     for (;;) {
-      const snapshot = await evaluate(`(() => {
+      const snapshot = await page.evaluate(`(() => {
         const stats = ${selector('stats')}
         return { count: Number(stats?.dataset.sequence ?? 0), text: stats?.textContent ?? '' }
       })()`)
@@ -78,12 +43,12 @@ function pageOf(window: BrowserWindow): Page {
       if (isSnapshot && typeof snapshot.count === 'number' && typeof snapshot.text === 'string') {
         if (snapshot.count > since && snapshot.text.includes('full quality')) return snapshot.text
       }
-      if (Date.now() > deadline) throw new SelfTestError(`Timed out waiting for ${what}`)
+      if (Date.now() > deadline) throw new PageError(`Timed out waiting for ${what}`)
       await sleep(POLL_INTERVAL_MS)
     }
   }
 
-  return { text, click, evaluate, waitFor, reportCount, waitForFullQuality }
+  return { ...page, reportCount, waitForFullQuality }
 }
 
 function droppedFramesIn(stats: string): number {
@@ -100,7 +65,7 @@ async function pressSpace(window: BrowserWindow): Promise<void> {
   await sleep(POLL_INTERVAL_MS)
 }
 
-async function testExport(page: Page, exportPath: string): Promise<SelfTestReport> {
+async function testExport(page: HarnessPage, exportPath: string): Promise<SelfTestReport> {
   await page.click('export')
   await page.waitFor('cancel-export', (label) => /\((?!0%)\d+%\)/.test(label), EXPORT_TIMEOUT_MS, 'export progress')
   const existedDuringExport = existsSync(exportPath)
@@ -115,12 +80,12 @@ async function testExport(page: Page, exportPath: string): Promise<SelfTestRepor
 }
 
 export async function runSelfTest(window: BrowserWindow, options: SelfTestOptions): Promise<SelfTestReport> {
-  const page = pageOf(window)
+  const page = harnessPageOf(window)
   const startedAt = Date.now()
   const status = await page.waitFor('status', (content) => content !== '' && !content.startsWith('Open'), LOAD_TIMEOUT_MS, 'the project to load')
   const loadMilliseconds = Date.now() - startedAt
   const isLoaded = (await page.evaluate(`${selector('play')}.disabled === false`)) === true
-  if (!isLoaded) throw new SelfTestError(`The project did not load: ${status}`)
+  if (!isLoaded) throw new PageError(`The project did not load: ${status}`)
 
   const firstStats = await page.waitForFullQuality(0, 'the first full-quality frame')
   const timecodeAtStart = await page.text('timecode')

@@ -51,13 +51,20 @@ function perform(session: MediaSession, request: MediaRequest, signal: AbortSign
       return session.exportCancel(request.jobId)
     case 'writeFile':
       return session.writeFile(request.directory, request.name, request.data)
+    case 'addMedia':
+      return session.addMedia(request.path)
+    case 'preparation':
+      return session.preparation()
+    case 'waveform':
+      return session.waveform(request.mediaId)
+    case 'saveProject':
+      return session.saveProject(request.path, request.project)
     default:
       return unknownRequest(request)
   }
 }
 
-function serve(port: MessagePortMain, ffmpeg: FfmpegRunner, cacheDirectory: string): void {
-  const session = new MediaSession(ffmpeg, cacheDirectory)
+function listen(port: MessagePortMain, session: MediaSession, onClose: () => void): void {
   const inFlight = new Map<number, AbortController>()
 
   async function answer(id: number, request: MediaRequest): Promise<void> {
@@ -82,7 +89,18 @@ function serve(port: MessagePortMain, ffmpeg: FfmpegRunner, cacheDirectory: stri
     }
     void answer(message.id, message.request)
   })
+  port.on('close', onClose)
+  port.start()
+}
+
+// A window's engine worker and its UI thread each hold a port; both talk to the same session, so media the UI imports is known to the engine.
+function serve(ports: readonly MessagePortMain[], ffmpeg: FfmpegRunner, cacheDirectory: string): void {
+  const session = new MediaSession(ffmpeg, cacheDirectory)
+  let isShutDown = false
+
   async function shutDown(): Promise<void> {
+    if (isShutDown) return
+    isShutDown = true
     try {
       await session.dispose()
     } catch (error) {
@@ -90,8 +108,7 @@ function serve(port: MessagePortMain, ffmpeg: FfmpegRunner, cacheDirectory: stri
     }
   }
 
-  port.on('close', () => void shutDown())
-  port.start()
+  for (const port of ports) listen(port, session, () => void shutDown())
 }
 
 async function versionOf(ffmpeg: FfmpegRunner, binary: Binary): Promise<string> {
@@ -128,12 +145,11 @@ function start(): void {
       return
     }
 
-    const port = event.ports[0]
-    if (port === undefined || ffmpeg === undefined || cacheDirectory === undefined) {
+    if (event.ports.length === 0 || ffmpeg === undefined || cacheDirectory === undefined) {
       logError('A window connected before the media process was set up', new Error('missing setup or port'))
       return
     }
-    serve(port, ffmpeg, cacheDirectory)
+    serve(event.ports, ffmpeg, cacheDirectory)
   })
 }
 

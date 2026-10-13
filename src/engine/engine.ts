@@ -13,6 +13,14 @@ import { resolveFrame, type Layer } from './resolve.js'
 
 const AUDIO_BLOCK_SAMPLES = 2048
 
+function decodesNeeded(layers: readonly Layer[]): string {
+  const decodes: string[] = []
+  for (const layer of layers) {
+    if (layer.kind === 'video') decodes.push(`${layer.mediaId}:${layer.frame}:${layer.halvings}`)
+  }
+  return decodes.join(' ')
+}
+
 export type EngineEvent =
   | { type: 'loaded'; duration: number; canvas: Canvas; problems: string[] }
   | { type: 'position'; time: number; isPlaying: boolean; droppedFrames: number; fullQualityMs: number | undefined }
@@ -24,6 +32,7 @@ type OutputReport = { type: 'consumed'; samples: number }
 
 export type Engine = {
   load(projectPath: string, forPreview: boolean): Promise<void>
+  setProject(project: LoadedProject): void
   setOutputSize(size: Size): void
   attachAudio(port: MessagePort): void
   seek(time: number): void
@@ -65,6 +74,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
   let time = 0
   let generation = 0
   let refining: AbortController | undefined
+  let refiningFor = ''
   let audioPort: MessagePort | undefined
   let playback: Playback | undefined
   let outputLatency = 0
@@ -98,11 +108,16 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     if (project === undefined) return
     generation += 1
     const shown = generation
-    refining?.abort()
-    const controller = new AbortController()
-    refining = controller
     const layers = layersAt(project, time)
     const scale = outputScale(project)
+    // An edit that needs the same source frames keeps the running decodes: aborting them on every drag frame would never let a slow decode finish.
+    const needed = decodesNeeded(layers)
+    if (refining === undefined || refining.signal.aborted || needed !== refiningFor) {
+      refining?.abort()
+      refining = new AbortController()
+      refiningFor = needed
+    }
+    const controller = refining
     const startedAt = performance.now()
     try {
       const quick = await provider.itemsFor(layers, 'preview', scale, controller.signal)
@@ -216,15 +231,19 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     void showPaused()
   }
 
-  function seek(target: number): void {
-    const project = loaded
-    if (project === undefined) return
+  function frameStartNear(project: LoadedProject, target: number): number {
     const frameTicks = frameDuration(project.project.canvas.frameRate)
     const lastFrame = Math.max(0, Math.ceil(projectDuration(project.project) / frameTicks) - 1)
     const frame = Math.min(Math.max(frameAt(target, frameTicks), 0), lastFrame)
+    return frame * frameTicks
+  }
+
+  function seek(target: number): void {
+    const project = loaded
+    if (project === undefined) return
     const wasPlaying = playback !== undefined
     stopPlayback()
-    time = frame * frameTicks
+    time = frameStartNear(project, target)
     if (wasPlaying) {
       play(outputLatency)
     } else {
@@ -252,6 +271,14 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     surface.width = width
     surface.height = height
     if (playback === undefined) void showPaused()
+  }
+
+  // The playback loop holds the project it started with, so an edit pauses instead of swapping the project under it.
+  function setProject(project: LoadedProject): void {
+    stopPlayback()
+    loaded = project
+    time = frameStartNear(project, time)
+    void showPaused()
   }
 
   async function load(projectPath: string, forPreview: boolean): Promise<void> {
@@ -290,6 +317,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
 
   return {
     load,
+    setProject,
     setOutputSize,
     attachAudio,
     seek,

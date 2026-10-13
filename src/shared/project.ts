@@ -138,8 +138,8 @@ export type Project = {
 
 export type ParseResult = { ok: true; project: Project } | { ok: false; message: string }
 
-const MIN_CANVAS = { width: 160, height: 120 }
-const MAX_CANVAS = { width: 3840, height: 2160 }
+export const MIN_CANVAS = { width: 160, height: 120 }
+export const MAX_CANVAS = { width: 3840, height: 2160 }
 const MAX_VOLUME = 2
 
 const EASINGS: readonly Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut', 'hold']
@@ -236,12 +236,17 @@ class Fields {
   }
 
   gridTime(key: string, kind: 'zero or more' | 'positive'): number {
-    const value = this.record[key]
     const sign = kind === 'positive' ? 'positive' : 'non-negative'
     const problem = `must be a ${sign} multiple of ${TIMELINE_GRID}`
-    if (typeof value !== 'number' || !isOnTimelineGrid(value)) fail(this.at(key), problem)
+    const value = this.anyGridTime(key, problem)
     const minimum = kind === 'positive' ? TIMELINE_GRID : 0
     if (value < minimum) fail(this.at(key), problem)
+    return value
+  }
+
+  anyGridTime(key: string, problem = `must be a multiple of ${TIMELINE_GRID}`): number {
+    const value = this.record[key]
+    if (typeof value !== 'number' || !isOnTimelineGrid(value)) fail(this.at(key), problem)
     return value
   }
 
@@ -310,19 +315,19 @@ function valueRule(property: AnimatableProperty): NumberRule {
   return { min: 0 }
 }
 
-function parseKeyframeList(value: unknown, path: string, property: AnimatableProperty, clipDuration: number): Keyframe[] {
+function parseKeyframeList(value: unknown, path: string, property: AnimatableProperty): Keyframe[] {
   if (!Array.isArray(value) || value.length === 0) fail(path, 'must be a list with at least one keyframe')
 
   const keyframes: Keyframe[] = []
-  let previousTime = -1
+  let previousTime = -Infinity
   for (const [index, entry] of value.entries()) {
     const fields = readFields(entry, `${path}[${index}]`, ['time', 'value', 'easing'])
+    // Keyframes may sit before the clip start or after its end: a trimmed or split clip keeps the whole curve, so it renders exactly as before the edit.
     const keyframe: Keyframe = {
-      time: fields.gridTime('time', 'zero or more'),
+      time: fields.anyGridTime('time'),
       value: fields.number('value', valueRule(property)),
       easing: fields.oneOf('easing', EASINGS),
     }
-    if (keyframe.time > clipDuration) fail(fields.at('time'), 'is after the end of the clip')
     if (keyframe.time <= previousTime) fail(fields.at('time'), 'must be later than the previous keyframe')
     previousTime = keyframe.time
     keyframes.push(keyframe)
@@ -330,12 +335,12 @@ function parseKeyframeList(value: unknown, path: string, property: AnimatablePro
   return keyframes
 }
 
-function parseKeyframes(value: unknown, path: string, allowed: readonly AnimatableProperty[], clipDuration: number): Keyframes {
+function parseKeyframes(value: unknown, path: string, allowed: readonly AnimatableProperty[]): Keyframes {
   const fields = readFields(value, path, [], allowed)
   const keyframes: Keyframes = {}
   for (const property of allowed) {
     if (!fields.has(property)) continue
-    keyframes[property] = parseKeyframeList(fields.raw(property), fields.at(property), property, clipDuration)
+    keyframes[property] = parseKeyframeList(fields.raw(property), fields.at(property), property)
   }
   if (Object.keys(keyframes).length === 0) fail(path, 'is empty; leave it out instead')
   return keyframes
@@ -369,7 +374,7 @@ function parseTiming(fields: Fields, context: ParseContext, animatable: readonly
     duration: fields.gridTime('duration', 'positive'),
   }
   if (fields.has('keyframes')) {
-    timing.keyframes = parseKeyframes(fields.raw('keyframes'), fields.at('keyframes'), animatable, timing.duration)
+    timing.keyframes = parseKeyframes(fields.raw('keyframes'), fields.at('keyframes'), animatable)
   }
   return timing
 }

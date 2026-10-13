@@ -1,8 +1,10 @@
 import { createRoot } from 'react-dom/client'
+import { logError } from '../shared/log.js'
+import { createSession } from './document.js'
+import { Editor } from './Editor.js'
 import { Harness } from './Harness.js'
 import { startEngine } from './engineHost.js'
-
-const HEADLESS_MODE = 'headless'
+import { createMediaClient } from './mediaClient.js'
 
 class PageError extends Error {}
 
@@ -17,14 +19,44 @@ function runHeadless(): void {
   })
 }
 
-function runHarness(): void {
+function rootContainer(): HTMLElement {
   const container = document.getElementById('root')
   if (container === null) throw new PageError('The page has no root element')
-  createRoot(container).render(<Harness />)
+  return container
 }
 
-if (new URLSearchParams(location.search).get('mode') === HEADLESS_MODE) {
-  runHeadless()
-} else {
-  runHarness()
+async function runEditor(): Promise<void> {
+  // The engine must listen for its media port before the page finishes loading, so it starts before anything is awaited or rendered.
+  const preview = document.createElement('canvas')
+  preview.dataset.testid = 'preview'
+  preview.setAttribute('aria-label', 'Preview')
+  const engine = startEngine(preview)
+  const media = createMediaClient(await engine.uiMediaPort)
+  const session = createSession(engine, media, await window.host.documentInfo())
+  engine.onEvent((event) => {
+    if (event.type === 'error') session.store.notify(event.message)
+  })
+  createRoot(rootContainer()).render(<Editor session={session} preview={preview} />)
+  await session.open()
 }
+
+async function start(): Promise<void> {
+  const mode = new URLSearchParams(location.search).get('mode')
+  if (mode === 'headless') {
+    runHeadless()
+  } else if (mode === 'harness') {
+    createRoot(rootContainer()).render(<Harness />)
+  } else {
+    await runEditor()
+  }
+}
+
+async function run(): Promise<void> {
+  try {
+    await start()
+  } catch (error) {
+    logError('The window could not start', error)
+  }
+}
+
+void run()

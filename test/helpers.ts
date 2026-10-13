@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { afterAll } from 'vitest'
 import { createFfmpegRunner, writeAll, type FfmpegRunner } from '../src/media/ffmpeg.js'
 import { BARCODE_BITS, BARCODE_HEIGHT_FRACTION, barcodeSource, type VideoPattern } from './media/generate.js'
@@ -171,13 +171,15 @@ export type Size = {
   height: number
 }
 
+// A reference project by name, or any project file by its full path.
 export function projectPath(name: string): string {
-  return join(PROJECTS_DIRECTORY, `${name}.json`)
+  return isAbsolute(name) ? name : join(PROJECTS_DIRECTORY, `${name}.json`)
 }
 
-export function runApp(args: readonly string[], timeoutMs = APP_TIMEOUT_MS): Promise<AppResult> {
+// A test that launches the app twice passes the same profile, so the second launch sees what the first one stored.
+export function runApp(args: readonly string[], timeoutMs = APP_TIMEOUT_MS, keptProfile?: string): Promise<AppResult> {
   return new Promise((resolve, reject) => {
-    const profile = mkdtempSync(join(tmpdir(), 'video-editor-test-'))
+    const profile = keptProfile ?? mkdtempSync(join(tmpdir(), 'video-editor-test-'))
     const child = spawn(ELECTRON_BINARY, [ROOT, `--user-data-dir=${profile}`, ...args])
     let stdout = ''
     let stderr = ''
@@ -189,7 +191,7 @@ export function runApp(args: readonly string[], timeoutMs = APP_TIMEOUT_MS): Pro
     }, timeoutMs)
     child.on('close', (code) => {
       clearTimeout(timer)
-      rmSync(profile, { recursive: true, force: true })
+      if (keptProfile === undefined) rmSync(profile, { recursive: true, force: true })
       resolve({ stdout, stderr, exitCode: code ?? undefined })
     })
   })

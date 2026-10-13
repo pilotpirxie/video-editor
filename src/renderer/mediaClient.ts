@@ -1,4 +1,4 @@
-import type { LoadedProject, MediaClient, MediaMessage, MediaReply, MediaRequest, RawFrame } from '../shared/mediaProtocol.js'
+import type { AddedMedia, LoadedProject, MediaClient, MediaMessage, MediaReply, MediaRequest, Preparation, RawFrame, WaveformLevel } from '../shared/mediaProtocol.js'
 
 type Pending = {
   resolve(answer: unknown): void
@@ -26,6 +26,18 @@ function isRawFrame(value: unknown): value is RawFrame {
   return typeof value.width === 'number' && typeof value.height === 'number' && value.data instanceof ArrayBuffer
 }
 
+function isAddedMedia(value: unknown): value is AddedMedia {
+  return typeof value === 'object' && value !== null && 'id' in value && typeof value.id === 'string' && 'info' in value
+}
+
+function isPreparationRecord(value: unknown): value is Record<string, Preparation> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isWaveform(value: unknown): value is WaveformLevel[] {
+  return Array.isArray(value) && value.every((level) => typeof level === 'object' && level !== null && 'peaks' in level && level.peaks instanceof Int8Array)
+}
+
 function unexpectedAnswer(request: MediaRequest): MediaRequestError {
   return new MediaRequestError(`The media process gave an unexpected answer to ${request.method}`)
 }
@@ -46,6 +58,12 @@ export function createMediaClient(port: MessagePort): MediaClient {
       waiting.resolve(reply.result)
     }
   }
+
+  // Without this a request made just before the media process dies would wait forever, and so would Save.
+  port.addEventListener('close', () => {
+    for (const waiting of pending.values()) waiting.reject(new MediaRequestError('The media process stopped.'))
+    pending.clear()
+  })
 
   function call(request: MediaRequest, signal?: AbortSignal): Promise<unknown> {
     const id = nextId
@@ -122,5 +140,24 @@ export function createMediaClient(port: MessagePort): MediaClient {
     exportFinish: (jobId) => callForNothing({ method: 'exportFinish', jobId }),
     exportCancel: (jobId) => callForNothing({ method: 'exportCancel', jobId }),
     writeFile: (directory, name, data) => callForNothing({ method: 'writeFile', directory, name, data }),
+    async addMedia(path) {
+      const request: MediaRequest = { method: 'addMedia', path }
+      const answer = await call(request)
+      if (!isAddedMedia(answer)) throw unexpectedAnswer(request)
+      return answer
+    },
+    async preparation() {
+      const request: MediaRequest = { method: 'preparation' }
+      const answer = await call(request)
+      if (!isPreparationRecord(answer)) throw unexpectedAnswer(request)
+      return answer
+    },
+    async waveform(mediaId) {
+      const request: MediaRequest = { method: 'waveform', mediaId }
+      const answer = await call(request)
+      if (answer !== undefined && !isWaveform(answer)) throw unexpectedAnswer(request)
+      return answer
+    },
+    saveProject: (path, project) => callForNothing({ method: 'saveProject', path, project }),
   }
 }

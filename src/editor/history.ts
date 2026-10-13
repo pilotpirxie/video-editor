@@ -1,0 +1,40 @@
+import type { Project } from '../shared/project.js'
+
+export const MAX_UNDO_STEPS = 500
+
+// A step keeps the project before and after one command. Unchanged tracks and clips are shared between snapshots, so a step costs only what the command touched.
+export type Step = {
+  label: string
+  before: Project
+  after: Project
+}
+
+export type History = {
+  done: readonly Step[]
+  undone: readonly Step[]
+}
+
+export type Travel = {
+  history: History
+  project: Project
+}
+
+export const EMPTY_HISTORY: History = { done: [], undone: [] }
+
+export function record(history: History, step: Step): History {
+  const done = [...history.done, step]
+  if (done.length > MAX_UNDO_STEPS) done.shift()
+  return { done, undone: [] }
+}
+
+export function undo(history: History): Travel | undefined {
+  const step = history.done.at(-1)
+  if (step === undefined) return undefined
+  return { history: { done: history.done.slice(0, -1), undone: [...history.undone, step] }, project: step.before }
+}
+
+export function redo(history: History): Travel | undefined {
+  const step = history.undone.at(-1)
+  if (step === undefined) return undefined
+  return { history: { done: [...history.done, step], undone: history.undone.slice(0, -1) }, project: step.after }
+}

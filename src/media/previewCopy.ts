@@ -18,6 +18,7 @@ const BYTES_PER_INDEX_FIELD = 8
 
 export type PreviewCopy = {
   readFrame(frame: number): Promise<Buffer | undefined>
+  frameCount(): number
   finished: Promise<void>
   close(): Promise<void>
 }
@@ -155,5 +156,5 @@ export async function openPreviewCopy(ffmpeg: FfmpegRunner, source: VideoSource,
     await reader.close()
   }
 
-  return { readFrame, finished, close }
+  return { readFrame, frameCount: () => locations.length, finished, close }
 }

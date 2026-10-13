@@ -177,6 +177,15 @@ describe('parseProject', () => {
     }
   })
 
+  it('accepts keyframes before the clip start and after its end, as a trim or split leaves them', () => {
+    const outside = [
+      { time: -SECOND, value: 100, easing: 'easeInOut' },
+      { time: 9 * SECOND, value: 960, easing: 'linear' },
+    ]
+    const loaded = parseProject(withValue('tracks.0.clips.0.keyframes.x', outside))
+    expect(loaded.ok).toBe(true)
+  })
+
   it('reports the project duration as the end of the last clip', () => {
     expect(projectDuration(sampleProject())).toBe(14 * SECOND)
   })
@@ -213,7 +222,7 @@ describe('parseProject', () => {
     ['an empty keyframes object', withValue('tracks.0.clips.0.keyframes', {}), /keyframes is empty; leave it out instead$/],
     ['an empty keyframe list', withValue('tracks.0.clips.0.keyframes.x', []), /keyframes\.x must be a list with at least one keyframe$/],
     ['keyframes out of order', withValue('tracks.0.clips.0.keyframes.x.1.time', 0), /keyframes\.x\[1\]\.time must be later than the previous keyframe$/],
-    ['a keyframe after the clip end', withValue('tracks.0.clips.0.keyframes.x.1.time', 9 * SECOND), /keyframes\.x\[1\]\.time is after the end of the clip$/],
+    ['a keyframe off the time grid', withValue('tracks.0.clips.0.keyframes.x.1.time', 2 * SECOND + 1), /keyframes\.x\[1\]\.time must be a multiple of 100$/],
     ['an unknown easing', withValue('tracks.0.clips.0.keyframes.x.0.easing', 'bounce'), /easing must be one of linear, easeIn, easeOut, easeInOut, hold$/],
     ['a property the clip type cannot animate', withValue('tracks.1.clips.0.keyframes', { volume: [] }), /^tracks\[1\]\.clips\[0\]\.keyframes\.volume is not a known setting$/],
     ['a bad colour', withValue('tracks.1.clips.0.color', 'white'), /color must look like #RRGGBB or #RRGGBBAA$/],
