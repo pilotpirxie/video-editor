@@ -1303,7 +1303,243 @@ async function testZoom(driver: Driver): Promise<UiTestReport> {
   }
 }
 
+// The sound of a clip is drawn in the lower part of its row. A volume keyframe sits this far below the middle of the row at the recorded volume, and the top of the sound lies this far below it.
+const VOLUME_POINT_AT_UNITY = 15.5
+const VOLUME_POINT_AT_HALF = 20.75
+const NEAR_TOP_OF_SOUND = 6
+
+// Adds a callout, an arrow and a line from the Annotations tab, and changes them on the canvas and in Properties.
+async function testAnnotations(driver: Driver): Promise<UiTestReport> {
+  await fullQualityFrame(driver, 0)
+  await driver.page.click('tab-annotations')
+  await driver.page.click('add-callout')
+  await driver.untilUndoLabel('Undo Add Callout')
+  // A new callout opens for typing, like a new title.
+  await untilTextEditor(driver, true)
+  await driver.typeKeys('Look here')
+  await driver.press('Escape')
+  await untilTextEditor(driver, false)
+  await driver.untilUndoLabel('Undo Edit Text')
+  const added = await driver.savedProject('callout.json')
+
+  // The tail of the bubble is dragged to the bottom right of the canvas; shape, size and colours come from Properties.
+  await driver.drag(centerOf(await driver.rect('handle-tail')), await onCanvas(driver, 560, 320))
+  await driver.untilUndoLabel('Undo Move Callout Tail')
+  await pick(driver, 'callout-shape', 'thoughtBubble')
+  await driver.untilUndoLabel('Undo Change Callout Shape')
+  await driver.typeInto('callout-width', '240')
+  await driver.untilUndoLabel('Undo Resize Callout')
+  await choose(driver, 'callout-fill', '#ffee00')
+  await driver.untilUndoLabel('Undo Change Callout Fill')
+  await driver.typeInto('callout-border-width', '6')
+  await driver.untilUndoLabel('Undo Change Callout Border')
+  const shaped = await driver.savedProject('shaped.json')
+  await pick(driver, 'callout-shape', 'banner')
+  await driver.untilUndoLabel('Undo Change Callout Shape')
+  const banner = await driver.savedProject('banner.json')
+
+  // A new arrow lies level in the middle. Its end is dragged to the top right corner, its start stays where it is.
+  await driver.page.click('add-arrow')
+  await driver.untilUndoLabel('Undo Add Arrow')
+  await driver.until(`${selector('arrow-length')} !== null`, 'the new arrow to be selected')
+  const arrowAdded = await driver.savedProject('arrow-added.json')
+  await driver.drag(centerOf(await driver.rect('handle-arrow-end')), await onCanvas(driver, 600, 40))
+  await driver.untilUndoLabel('Undo Move Arrow End')
+  await pick(driver, 'arrow-startHead', 'dot')
+  await driver.untilUndoLabel('Undo Change Arrow Head')
+  await driver.typeInto('arrow-thickness', '8')
+  await driver.untilUndoLabel('Undo Change Arrow Thickness')
+  const pointed = await driver.savedProject('pointed.json')
+  await fullQualityFrame(driver, 0)
+  await driver.picture('annotations')
+
+  await driver.page.click('add-line')
+  await driver.untilUndoLabel('Undo Add Line')
+  return { added, shaped, banner, arrowAdded, pointed, withLine: await driver.savedProject('line.json') }
+}
+
+// Styles a title with everything the Text group of Properties offers.
+async function testTextStyle(driver: Driver): Promise<UiTestReport> {
+  await driver.page.click('tab-annotations')
+  await driver.page.click('add-text')
+  await untilTextEditor(driver, true)
+  await driver.typeKeys('Two words')
+  await driver.press('Escape')
+  await untilTextEditor(driver, false)
+
+  await pick(driver, 'text-weight', '700')
+  await driver.untilUndoLabel('Undo Change Weight')
+  await driver.typeInto('text-line-spacing', '1.5')
+  await driver.untilUndoLabel('Undo Change Line Spacing')
+  await clickOn(driver, 'text-outline')
+  await driver.untilUndoLabel('Undo Add Outline')
+  await driver.typeInto('text-outline-width', '4')
+  await driver.untilUndoLabel('Undo Change Outline')
+  await clickOn(driver, 'text-shadow')
+  await driver.untilUndoLabel('Undo Add Shadow')
+  await driver.typeInto('text-shadow-blur', '0')
+  await driver.untilUndoLabel('Undo Change Shadow')
+  await clickOn(driver, 'text-background')
+  await driver.untilUndoLabel('Undo Add Background')
+  await choose(driver, 'text-background-color', '#3c5a88')
+  await driver.untilUndoLabel('Undo Change Background')
+  const styled = await driver.savedProject('styled.json')
+
+  // Wrapping starts at the width the text has; made narrower, the two words stand on two lines and the box gets taller.
+  await clickOn(driver, 'text-wrap')
+  await driver.untilUndoLabel('Undo Wrap Text')
+  const heightOnOneLine = await driver.value('clip-height')
+  await driver.typeInto('text-box-width', '300')
+  await driver.untilUndoLabel('Undo Change Box Width')
+  const heightOnTwoLines = await driver.value('clip-height')
+  const wrapped = await driver.savedProject('wrapped.json')
+  await fullQualityFrame(driver, 0)
+  await driver.picture('text-style')
+
+  await clickOn(driver, 'text-wrap')
+  await driver.untilUndoLabel('Undo Stop Wrapping Text')
+  await clickOn(driver, 'text-outline')
+  await driver.untilUndoLabel('Undo Remove Outline')
+  return { styled, wrapped, heightOnOneLine, heightOnTwoLines, plain: await driver.savedProject('plain.json') }
+}
+
+// Gives the one clip of a project an animation at each end, and turns them into keyframes.
+async function testAnimations(driver: Driver): Promise<UiTestReport> {
+  const second = TICKS_PER_SECOND
+  await fullQualityFrame(driver, 0)
+  await driver.clickAt(await driver.timelinePoint(second, 0, 1))
+  await driver.until(`${selector('animation-in')} !== null`, 'the clip to be selected')
+  const canConvertBefore = await driver.page.evaluate(`!${selector('animation-convert')}.disabled`)
+  const offersTypewriter = await (async () => {
+    await openList(driver, 'animation-in', 'animation-in')
+    const isOffered = await driver.page.evaluate(`${selector('animation-in-option-typewriter')} !== null`)
+    await driver.press('Escape')
+    return isOffered
+  })()
+
+  await pick(driver, 'animation-in', 'pop')
+  await driver.untilUndoLabel('Undo Change Animation')
+  await driver.typeInto('animation-in-length', '1')
+  await pick(driver, 'animation-out', 'slideRight')
+  const animated = await driver.savedProject('animated.json')
+
+  await clickOn(driver, 'animation-convert')
+  await driver.untilUndoLabel('Undo Convert Animation to Keyframes')
+  const converted = await driver.savedProject('converted.json')
+  driver.menu('undo')
+  await driver.untilUndoLabel('Undo Change Animation')
+  await pick(driver, 'animation-in', 'none')
+  await driver.untilUndoLabel('Undo Remove Animation')
+  return { canConvertBefore, offersTypewriter, animated, converted, removed: await driver.savedProject('removed.json') }
+}
+
+// Groups the four clips of a mosaic, moves the group, changes a member from the inside, and takes the group apart again.
+async function testGroups(driver: Driver): Promise<UiTestReport> {
+  const second = TICKS_PER_SECOND
+  await fullQualityFrame(driver, 0)
+  await driver.clickAt(await driver.timelinePoint(second, 0, 4))
+  driver.menu('select-all')
+  driver.menu('group')
+  await driver.untilUndoLabel('Undo Group Clips')
+  await driver.until(`${selector('group-open')} !== null`, 'the group to be selected')
+  const grouped = await driver.savedProject('grouped.json')
+
+  // On the canvas the group is one thing: a press on any member grabs it, and all four move together.
+  await driver.drag(await onCanvas(driver, 160, 90), await onCanvas(driver, 200, 110))
+  await driver.untilUndoLabel('Undo Move Clip')
+  await driver.typeInto('clip-scale', '50')
+  await driver.untilUndoLabel('Undo Resize Clip')
+  const moved = await driver.savedProject('moved.json')
+  await fullQualityFrame(driver, 0)
+  await driver.picture('groups-closed')
+
+  // A double click on the timeline goes into the group: its four tracks are shown, and Properties changes one member.
+  await driver.doubleClickAt(await driver.timelinePoint(second, 3, 4))
+  await driver.until(`${selector('group-path')} !== null`, 'the group to open')
+  const tracksInside = await driver.page.evaluate(`document.querySelectorAll('.track-header').length`)
+  const isCameraToolOff = await driver.page.evaluate(`${selector('zoom-tool')}.disabled`)
+  await driver.clickAt(await driver.timelinePoint(second, 3, 4))
+  await driver.until(`${selector('clip-opacity')} !== null`, 'a member to be selected')
+  await driver.typeInto('clip-opacity', '40')
+  await driver.untilUndoLabel('Undo Change Opacity')
+  // The member is dragged on the canvas, which shows the whole project with the group at half its size.
+  await driver.drag(await onCanvas(driver, 280, 195), await onCanvas(driver, 300, 215))
+  await driver.untilUndoLabel('Undo Move Clip')
+  const inside = await driver.savedProject('inside.json')
+  await driver.picture('groups-open')
+
+  // Escape first lets go of the member, then leaves the group, which is selected again.
+  await driver.press('Escape')
+  await driver.press('Escape')
+  await driver.until(`${selector('group-path')} === null && ${selector('group-open')} !== null`, 'the group to close')
+
+  driver.menu('ungroup')
+  await driver.untilUndoLabel('Undo Ungroup Clip')
+  const ungrouped = await driver.savedProject('ungrouped.json')
+  for (const label of ['Undo Move Clip', 'Undo Change Opacity', 'Undo Resize Clip', 'Undo Move Clip', 'Undo Group Clips']) {
+    driver.menu('undo')
+    await driver.untilUndoLabel(label)
+  }
+  driver.menu('undo')
+  await driver.until(`${selector('group-open')} === null`, 'the group to be gone')
+  return { grouped, moved, tracksInside, isCameraToolOff, inside, ungrouped, undone: await driver.savedProject('undone.json') }
+}
+
+// Keys the volume of a clip in Properties, drags a keyframe on its waveform, and sets how its sound follows its speed.
+async function testSound(driver: Driver): Promise<UiTestReport> {
+  const second = TICKS_PER_SECOND
+  await fullQualityFrame(driver, 0)
+  await untilPrepared(driver)
+  await driver.clickAt(await driver.timelinePoint(second / 2, 0, 1))
+  await driver.until(`${selector('volume-keyframe')} !== null`, 'the clip to be selected')
+
+  // A keyframe at the start holds the volume there; with one on the clip, a new volume further on makes the next.
+  await clickOn(driver, 'volume-keyframe')
+  await driver.untilUndoLabel('Undo Add Volume Keyframe')
+  await seekOnRuler(driver, second, '00:00:01:00')
+  await driver.typeInto('clip-volume', '50')
+  await driver.untilUndoLabel('Undo Change Volume')
+  const keyed = await driver.savedProject('keyed.json')
+
+  // The second point is dragged half a second later and up to nearly the top of the sound.
+  const point = await driver.timelinePoint(second, 0, 1)
+  const later = await driver.timelinePoint(1.5 * second, 0, 1)
+  await driver.hover({ x: point.x, y: point.y + VOLUME_POINT_AT_HALF })
+  const cursorOverPoint = await driver.page.evaluate(`document.querySelector('[aria-label="Timeline"]').style.cursor`)
+  await driver.drag({ x: point.x, y: point.y + VOLUME_POINT_AT_HALF }, { x: later.x, y: later.y + NEAR_TOP_OF_SOUND })
+  await driver.untilUndoLabel('Undo Change Volume Keyframe')
+  const dragged = await driver.savedProject('dragged.json')
+  await driver.picture('sound-keyframes')
+
+  // A right click on the first point offers its easing and a way to delete it.
+  const first = await driver.timelinePoint(0, 0, 1)
+  await driver.rightClickAt({ x: first.x + 1, y: first.y + VOLUME_POINT_AT_UNITY })
+  await driver.page.click('menu-easing-easeIn')
+  await driver.untilUndoLabel('Undo Change Keyframe Easing')
+  const eased = await driver.savedProject('eased.json')
+  await driver.rightClickAt({ x: first.x + 1, y: first.y + VOLUME_POINT_AT_UNITY })
+  await driver.page.click('menu-keyframe-delete')
+  await driver.untilUndoLabel('Undo Delete Volume Keyframe')
+  const deleted = await driver.savedProject('deleted.json')
+
+  // The switch for sound above 400% is only there for a clip that fast.
+  const offersFastSoundAtFirst = await driver.page.evaluate(`${selector('clip-fast-sound')} !== null`)
+  await clickOn(driver, 'clip-keep-pitch')
+  await driver.untilUndoLabel('Undo Let Pitch Follow Speed')
+  await driver.typeInto('clip-speed', '800')
+  await driver.untilUndoLabel('Undo Change Speed')
+  await driver.until(`${selector('clip-fast-sound')} !== null`, 'the switch for fast sound')
+  await clickOn(driver, 'clip-fast-sound')
+  await driver.untilUndoLabel('Undo Play Fast Sound')
+  return { keyed, cursorOverPoint, dragged, eased, deleted, offersFastSoundAtFirst, fast: await driver.savedProject('fast.json') }
+}
+
 export const FEATURE_SCENARIOS: Record<string, Scenario> = {
+  annotations: testAnnotations,
+  'text-style': testTextStyle,
+  animations: testAnimations,
+  groups: testGroups,
+  sound: testSound,
   shapes: testShapes,
   effects: testEffects,
   transitions: testTransitions,

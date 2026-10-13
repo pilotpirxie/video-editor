@@ -1,14 +1,15 @@
 import { moveZoom, setZoom } from '../editor/camera.js'
-import { endOf, locateClip, makesSound, nextTrackName, type NewTrack } from '../editor/clips.js'
+import { endOf, hasVolume, locateClip, makesSound, nextTrackName, type NewTrack } from '../editor/clips.js'
 import { addEffect, takesEffects } from '../editor/effects.js'
 import { moveClips, trimClip } from '../editor/moveTrim.js'
 import { dropMedia, mediaFileName, type MediaDrop } from '../editor/place.js'
-import { setFade, type Fade } from '../editor/properties.js'
+import { changeKeyframe, setFade, type Fade } from '../editor/properties.js'
 import { snapDelta, timelineTargets } from '../editor/snapping.js'
 import {
   RULER_HEIGHT,
   TRACKS_TOP,
   TRACK_HEIGHT,
+  clipBands,
   clipsInMarquee,
   createClipIndex,
   fadeHandleAt,
@@ -21,14 +22,19 @@ import {
   trackTop,
   transitionBandAt,
   transitionBands,
+  volumeAtY,
+  volumePointAt,
+  volumePoints,
   xToTime,
   zoomAround,
   zoomBars,
+  type Band,
   type ClipHit,
   type FadeHandle,
   type Marquee,
   type TimelineView,
   type TransitionBand,
+  type VolumePoint,
   type ZoomHit,
   type ZoomLimits,
 } from '../editor/timelineView.js'
@@ -46,6 +52,7 @@ const FOLLOW_LEAD = 0.1
 const SCROLL_PAST_END = 0.5
 const START_PIXELS_PER_SECOND = 100
 const FADE_LABEL_DECIMALS = 2
+const PERCENT = 100
 
 // What can be dragged out of the tabs of the library.
 export type LibraryItem =
@@ -72,6 +79,12 @@ type Point = {
   y: number
 }
 
+// One volume keyframe of a clip, by its place among them.
+export type KeyframeRef = {
+  clipId: string
+  index: number
+}
+
 // What something held over the timeline would change, and where that is shown.
 type HeldDrop =
   | { kind: 'transition'; target: TransitionTarget; type: TransitionType; shown: DropTarget }
@@ -86,6 +99,7 @@ type Gesture =
   | { kind: 'move'; clipIds: readonly string[]; grabTime: number; grabbedRow: number; edges: number[]; targets: number[]; trackCount: number; newTrack: NewTrack }
   | { kind: 'trim'; clipId: string; edge: 'start' | 'end'; edgeTime: number; targets: number[] }
   | { kind: 'fade'; clipId: string; clipIds: readonly string[]; fade: Fade; clipStart: number; clipEnd: number; endTime: number; grabOffset: number; targets: number[] }
+  | { kind: 'volume-point'; clipId: string; index: number; clipStart: number; pointTime: number; grabOffset: number; band: Band; targets: number[] }
   | { kind: 'marquee'; from: Point; kept: readonly string[] }
 
 // The handles drawn over one clip: its fade handles and the grips of its transitions, and the one of them that is held.
@@ -94,6 +108,7 @@ type ShownHandles = {
   heldHandle: FadeHandle | undefined
   grips: TransitionBand[]
   heldGrip: TransitionBand | undefined
+  heldPoint: VolumePoint | undefined
   heldLabel: string
 }
 
@@ -128,9 +143,10 @@ export function isLibraryDrag(event: Event): event is CustomEvent<LibraryDragDet
 }
 
 // Draws the timeline and turns pointer input into commands. React only supplies the elements; nothing here re-renders components while dragging, scrolling or playing.
-export function createTimelineController(elements: TimelineElements, session: Session, openMenu: (at: Point) => void): TimelineController {
+// `openMenu` is told which volume keyframe was pressed, when the press was on one.
+export function createTimelineController(elements: TimelineElements, session: Session, openMenu: (at: Point, keyframe: KeyframeRef | undefined) => void): TimelineController {
   const { host, content, overlay, headers } = elements
-  const { store, transport, thumbnails } = session
+  const { store, transport, thumbnails, actions } = session
   const contentContext = contextOf(content)
   const overlayContext = contextOf(overlay)
   const colors = readColors(host)
@@ -193,6 +209,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
         selected = new Set(selectedList)
       }
       drawContent(contentContext, {
+        shown: state.scope,
         project: state.project,
         mediaStates: state.mediaStates,
         preparation: session.preparation(),
@@ -308,7 +325,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
     const clip = locateClip(store.getState().project, clipId)?.clip
     if (clip === undefined) return 0
     if (fade === 'fadeIn' || fade === 'fadeOut') return clip.type === 'audio' ? 0 : (clip[fade] ?? 0)
-    return clip.type === 'audio' || clip.type === 'video' ? (clip[fade] ?? 0) : 0
+    return hasVolume(clip) ? (clip[fade] ?? 0) : 0
   }
 
   function secondsLabel(ticks: number): string {
@@ -317,7 +334,8 @@ export function createTimelineController(elements: TimelineElements, session: Se
 
   // The fade handles and the transition grips are shown for one clip at a time: the one being changed, or else the one under the pointer.
   function shownHandles(): ShownHandles {
-    const none: ShownHandles = { handles: [], heldHandle: undefined, grips: [], heldGrip: undefined, heldLabel: '' }
+    const none: ShownHandles = { handles: [], heldHandle: undefined, grips: [], heldGrip: undefined, heldPoint: undefined, heldLabel: '' }
+    if (gesture?.kind === 'volume-point') return { ...none, ...heldVolumePoint(gesture) }
     const fading = gesture?.kind === 'fade' ? gesture : undefined
     const changing = gesture?.kind === 'transition' ? gesture : undefined
     const clipId = fading?.clipId ?? changing?.target.clipId ?? hoveredClipId
@@ -337,6 +355,53 @@ export function createTimelineController(elements: TimelineElements, session: Se
     if (fading === undefined) return { ...none, handles, grips }
     const heldHandle = handles.find((handle) => handle.fade === fading.fade)
     return { ...none, handles, heldHandle, heldLabel: secondsLabel(fadeLength(fading.fade, clipId)) }
+  }
+
+  // The volume keyframe that is being dragged, where it is now, with the volume it stands for.
+  function heldVolumePoint(dragging: Extract<Gesture, { kind: 'volume-point' }>): Pick<ShownHandles, 'heldPoint' | 'heldLabel'> {
+    const { project, mediaStates } = store.getState()
+    const shown = locateClip(project, dragging.clipId)
+    const volume = shown?.clip.keyframes?.volume?.[dragging.index]?.value
+    if (shown === undefined || volume === undefined) return { heldPoint: undefined, heldLabel: '' }
+    const rowTop = trackTop(shown.trackIndex, project.tracks.length, view)
+    const heldPoint = volumePoints(shown.clip, makesSound(shown.clip, mediaStates), view, rowTop)[dragging.index]
+    return { heldPoint, heldLabel: `${Math.round(volume * PERCENT)}%` }
+  }
+
+  function volumePointOn(hit: ClipHit, point: Point): VolumePoint | undefined {
+    const { project, mediaStates } = store.getState()
+    const rowTop = trackTop(hit.trackIndex, project.tracks.length, view)
+    return volumePointAt(volumePoints(hit.clip, makesSound(hit.clip, mediaStates), view, rowTop), point.x, point.y)
+  }
+
+  // A volume keyframe is dragged sideways to another time and up or down to another volume.
+  function startVolumePoint(hit: ClipHit, point: VolumePoint, at: Point): Gesture | undefined {
+    const { project, selection, mediaStates } = store.getState()
+    const { clip } = hit
+    const keyframe = clip.keyframes?.volume?.[point.index]
+    const rowTop = trackTop(hit.trackIndex, project.tracks.length, view)
+    const band = clipBands(clip, makesSound(clip, mediaStates), rowTop).sound
+    if (keyframe === undefined || band === undefined) return undefined
+    if (!selection.includes(clip.id)) store.select([clip.id])
+    const pointTime = clip.start + keyframe.time
+    store.begin('Change Volume Keyframe')
+    return {
+      kind: 'volume-point',
+      clipId: clip.id,
+      index: point.index,
+      clipStart: clip.start,
+      pointTime,
+      grabOffset: at.x - timeToX(pointTime, view),
+      band,
+      targets: timelineTargets(project, new Set(), transport.position().time),
+    }
+  }
+
+  function updateVolumePoint(dragging: Extract<Gesture, { kind: 'volume-point' }>, event: PointerEvent, point: Point): void {
+    const time = snappedTime(point.x - dragging.grabOffset, dragging.pointTime, dragging.targets, event) - dragging.clipStart
+    const value = volumeAtY(dragging.band, point.y)
+    const { clipId, index } = dragging
+    store.update((project) => changeKeyframe(project, clipId, 'volume', index, { time, value }))
   }
 
   // The transitions of a clip as they are drawn; where they lie depends on the clips next to it.
@@ -639,6 +704,14 @@ export function createTimelineController(elements: TimelineElements, session: Se
       invalidate('overlay')
       return
     }
+    const volumePoint = volumePointOn(hit, at)
+    const dragging = volumePoint === undefined ? undefined : startVolumePoint(hit, volumePoint, at)
+    if (dragging !== undefined) {
+      gesture = dragging
+      overlay.style.cursor = 'grabbing'
+      invalidate('overlay')
+      return
+    }
     const handle = fadeHandleOn(hit, at)
     if (handle !== undefined) {
       gesture = startFade(hit, handle, at)
@@ -661,6 +734,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
     let cursor = 'default'
     if (zoomHit !== undefined) cursor = zoomHit.part === 'start' ? 'ew-resize' : 'grab'
     else if (hit !== undefined && point !== undefined && transitionGripOn(hit, point) !== undefined) cursor = 'ew-resize'
+    else if (hit !== undefined && point !== undefined && volumePointOn(hit, point) !== undefined) cursor = 'grab'
     else if (hit !== undefined && point !== undefined && fadeHandleOn(hit, point) !== undefined) cursor = 'grab'
     else if (hit?.edge !== undefined) cursor = 'ew-resize'
     overlay.style.cursor = cursor
@@ -699,6 +773,8 @@ export function createTimelineController(elements: TimelineElements, session: Se
       updateTrim(gesture, event, point)
     } else if (gesture.kind === 'fade') {
       updateFade(gesture, event, point)
+    } else if (gesture.kind === 'volume-point') {
+      updateVolumePoint(gesture, event, point)
     } else if (gesture.kind === 'marquee') {
       updateMarquee(gesture, point)
     }
@@ -711,7 +787,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
     guide = undefined
     marquee = undefined
     if (ended === undefined) return
-    if (ended.kind === 'move' || ended.kind === 'trim' || ended.kind === 'fade' || ended.kind === 'zoom' || ended.kind === 'transition') {
+    if (ended.kind === 'move' || ended.kind === 'trim' || ended.kind === 'fade' || ended.kind === 'zoom' || ended.kind === 'transition' || ended.kind === 'volume-point') {
       if (finish === 'commit') store.commit()
       else store.cancel()
     }
@@ -741,8 +817,19 @@ export function createTimelineController(elements: TimelineElements, session: Se
     const point = pointOf(event)
     const { project, selection } = store.getState()
     const hit = hitClip(project.tracks, inOrder, view, point.x, point.y)
-    if (hit !== undefined && !hit.track.locked && !selection.includes(hit.clip.id)) store.select([hit.clip.id])
-    openMenu({ x: event.clientX, y: event.clientY })
+    const isOpen = hit !== undefined && !hit.track.locked
+    if (isOpen && !selection.includes(hit.clip.id)) store.select([hit.clip.id])
+    const volumePoint = isOpen ? volumePointOn(hit, point) : undefined
+    openMenu({ x: event.clientX, y: event.clientY }, volumePoint === undefined || hit === undefined ? undefined : { clipId: hit.clip.id, index: volumePoint.index })
+  }
+
+  // A double click on a group goes into it.
+  function onDoubleClick(event: MouseEvent): void {
+    const point = pointOf(event)
+    const hit = hitClip(store.getState().project.tracks, inOrder, view, point.x, point.y)
+    if (hit === undefined || hit.track.locked || hit.clip.type !== 'group') return
+    store.select([hit.clip.id])
+    actions.openGroup()
   }
 
   // Heard for every move of a drag out of the library, wherever in the window it is: only one over the timeline has something to show.
@@ -824,6 +911,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   overlay.addEventListener('pointerleave', leave)
   overlay.addEventListener('wheel', onWheel, { passive: false })
   overlay.addEventListener('contextmenu', onContextMenu)
+  overlay.addEventListener('dblclick', onDoubleClick)
   host.addEventListener(LIBRARY_DROP_EVENT, onLibraryDrop)
   window.addEventListener(LIBRARY_DRAG_EVENT, onLibraryDrag)
   window.addEventListener('keydown', onKeyDown)
@@ -847,6 +935,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
       overlay.removeEventListener('pointerleave', leave)
       overlay.removeEventListener('wheel', onWheel)
       overlay.removeEventListener('contextmenu', onContextMenu)
+      overlay.removeEventListener('dblclick', onDoubleClick)
       host.removeEventListener(LIBRARY_DROP_EVENT, onLibraryDrop)
       window.removeEventListener(LIBRARY_DRAG_EVENT, onLibraryDrag)
       window.removeEventListener('keydown', onKeyDown)

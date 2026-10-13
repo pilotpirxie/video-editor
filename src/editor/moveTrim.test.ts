@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FRAME, MEDIA_STATES, SECOND, audioClip, clipIds, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
+import { FRAME, MEDIA_STATES, SECOND, audioClip, clipIds, clipOf, groupClip, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import type { Clip, Project } from '../shared/project.js'
 import { moveClips, trimClip, type Move, type Trim } from './moveTrim.js'
 
@@ -229,5 +229,24 @@ describe('trimClip', () => {
   it('does nothing on a locked track', () => {
     const locked = projectOf([track('t1', [videoClip('a', 0, 2 * SECOND)], { locked: true })])
     expect(trimClip(locked, trim({ clipId: 'a', time: SECOND }))).toBe(locked)
+  })
+})
+
+describe('trimming a group', () => {
+  const grouped = projectOf([track('t1', [groupClip('group', 4 * SECOND, 4 * SECOND, [[videoClip('m', 0, 6 * SECOND)]], { contentStart: SECOND })])])
+
+  it('shows its members from later on, or from earlier as far as their time reaches back, without touching them', () => {
+    const later = trimClip(grouped, trim({ clipId: 'group', edge: 'start', time: 5 * SECOND }))
+    expect(clipOf(later, 'group')).toMatchObject({ start: 5 * SECOND, duration: 3 * SECOND, contentStart: 2 * SECOND })
+    const earliest = trimClip(grouped, trim({ clipId: 'group', edge: 'start', time: 0 }))
+    expect(clipOf(earliest, 'group')).toMatchObject({ start: 3 * SECOND, duration: 5 * SECOND })
+    expect(clipOf(reopened(earliest), 'group')).not.toHaveProperty('contentStart')
+    expect(clipOf(earliest, 'group')).toMatchObject({ tracks: [{ clips: [{ id: 'm', start: 0, duration: 6 * SECOND }] }] })
+    expect(reopened(later)).toEqual(later)
+  })
+
+  it('can be made as long as wanted at its end', () => {
+    const longer = trimClip(grouped, trim({ clipId: 'group', edge: 'end', time: 60 * SECOND }))
+    expect(clipOf(longer, 'group')).toMatchObject({ start: 4 * SECOND, duration: 56 * SECOND, contentStart: SECOND })
   })
 })

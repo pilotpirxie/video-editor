@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MediaInfo, VideoInfo } from '../shared/mediaProtocol.js'
-import { TRANSITION_TYPES, ease, type CameraKeyframe, type Clip, type Easing, type Keyframe, type Project, type Track, type TransitionType, type VideoClip } from '../shared/project.js'
-import { fadeFactor, resolveFrame, sourceHalvings, transitionChange, valueAt, type Layer, type MediaStates, type TransitionPart, type VideoLayer } from './resolve.js'
+import { TRANSITION_TYPES, ease, valueAt, type CameraKeyframe, type Clip, type Easing, type Keyframe, type Project, type Track, type TransitionType, type VideoClip } from '../shared/project.js'
+import { fadeFactor, groupFrameAt, resolveFrame, sourceHalvings, transitionChange, type Layer, type MediaStates, type TransitionPart, type VideoLayer } from './resolve.js'
 
 const SECOND = 24_000_000
 const FRAME_30 = 800_000
@@ -266,7 +266,7 @@ describe('other layer kinds', () => {
   it('resolves text without needing any media', () => {
     const text: Clip = { id: 'title', type: 'text', start: 0, duration: SECOND, text: 'Hello', font: { family: 'Helvetica', size: 72 }, color: '#FFFFFF', align: 'center', transform: { x: 960, y: 540, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1 }
     expect(resolveFrame(project([track([text])]), {}, 0, 1)).toEqual([
-      { kind: 'text', clipId: 'title', text: 'Hello', family: 'Helvetica', size: 72, color: '#FFFFFF', align: 'center', transform: text.transform, opacity: 1 },
+      { kind: 'text', clipId: 'title', look: { text: 'Hello', font: { family: 'Helvetica', size: 72 }, color: '#FFFFFF', align: 'center' }, sharpScaleX: 1, sharpScaleY: 1, transform: text.transform, opacity: 1 },
     ])
   })
 })
@@ -410,9 +410,9 @@ describe('transitions on a track', () => {
 
   it('moves the picture of a slide and leaves the place of the clip as it is', () => {
     const [leaving, arriving] = layersAt(cut('slide'), 2 * SECOND)
-    expect(leaving?.transition?.transform).toEqual(leaving?.transform)
+    expect(leaving?.placed).toEqual(leaving?.transform)
     expect(arriving?.transform.x).toBe(960)
-    expect(arriving?.transition?.transform.x).toBe(960 + 960)
+    expect(arriving?.placed?.x).toBe(960 + 960)
   })
 
   it('plays a clip on through its file beyond the cut', () => {
@@ -443,13 +443,13 @@ describe('transitions on a track', () => {
     expect(videoLayerAt(clip, SECOND / 4).opacity).toBeCloseTo(0.25, 12)
     expect(videoLayerAt(clip, SECOND).transition).toBeUndefined()
     expect(videoLayerAt(clip, 3 * SECOND - 100).transition).toBeUndefined()
-    expect(videoLayerAt(clip, 3 * SECOND + HALF).transition?.transform.x).toBe(960 - 960)
+    expect(videoLayerAt(clip, 3 * SECOND + HALF).placed?.x).toBe(960 - 960)
   })
 
   it('does not play the end transition of a clip whose cut has a transition of its own', () => {
     const clips = cut('crossDissolve', { transitionOut: { type: 'push', duration: SECOND } })
     const [leaving] = layersAt(clips, 2 * SECOND - HALF / 2)
-    expect(leaving?.transition?.transform).toEqual(leaving?.transform)
+    expect(leaving?.placed).toEqual(leaving?.transform)
     expect(layersAt(clips, SECOND + 100)[0]?.transition).toBeUndefined()
   })
 
@@ -536,5 +536,215 @@ describe('decode size under a camera zoom', () => {
     ]
     const layers = resolveFrame({ ...project([track(clips)]), camera: zoomAtThree }, MEDIA, SECOND, 1)
     expect(layers[0]).toMatchObject({ clipId: 'first', halvings: 0 })
+  })
+})
+
+describe('callouts and arrows', () => {
+  it('describes a callout and an arrow for the one who draws them', () => {
+    const base = { start: 0, duration: SECOND, transform: { x: 100, y: 200, scaleX: 2, scaleY: 3, rotation: 0 }, opacity: 1 }
+    const callout: Clip = { ...base, id: 'note', type: 'callout', width: 300, height: 100, shape: 'speechBubble', fill: '#FFFFFF', borderColor: '#000000', borderWidth: 4, tail: { x: -200, y: 90 }, text: 'Here', font: { family: 'Helvetica', size: 40, weight: 700 }, color: '#000000', align: 'center' }
+    const arrow: Clip = { ...base, id: 'pointer', type: 'arrow', length: 250, thickness: 10, color: '#FF0000', startHead: 'none', endHead: 'triangle' }
+    const [calloutLayer, arrowLayer] = resolveFrame(project([track([callout]), track([arrow])]), {}, 0, 1)
+    expect(calloutLayer).toEqual({
+      kind: 'callout',
+      clipId: 'note',
+      transform: base.transform,
+      opacity: 1,
+      sharpScaleX: 2,
+      sharpScaleY: 3,
+      look: { width: 300, height: 100, shape: 'speechBubble', fill: '#FFFFFF', borderColor: '#000000', borderWidth: 4, tail: { x: -200, y: 90 }, text: { text: 'Here', font: { family: 'Helvetica', size: 40, weight: 700 }, color: '#000000', align: 'center' } },
+    })
+    expect(arrowLayer).toMatchObject({ kind: 'arrow', clipId: 'pointer', look: { length: 250, thickness: 10, color: '#FF0000', startHead: 'none', endHead: 'triangle' } })
+  })
+
+  it('makes the picture of a text for the largest scale its keyframes reach', () => {
+    const grow: Keyframe[] = [{ time: 0, value: 0.5, easing: 'linear' }, { time: SECOND, value: 4, easing: 'linear' }]
+    const text: Clip = { id: 'title', type: 'text', start: 0, duration: 2 * SECOND, text: 'Hi', font: { family: 'Helvetica', size: 72 }, color: '#FFFFFF', align: 'left', transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, keyframes: { scaleX: grow, scaleY: grow } }
+    for (const time of [0, SECOND / 2, 2 * SECOND - FRAME_30]) {
+      expect(layersAt([text], time)[0]).toMatchObject({ sharpScaleX: 4, sharpScaleY: 4 })
+    }
+  })
+})
+
+describe('animations', () => {
+  const HALF = SECOND / 2
+  const text: Extract<Clip, { type: 'text' }> = { id: 'title', type: 'text', start: SECOND, duration: 4 * SECOND, text: 'Hello you', font: { family: 'Helvetica', size: 72 }, color: '#FFFFFF', align: 'left', transform: { x: 500, y: 300, scaleX: 2, scaleY: 2, rotation: 0 }, opacity: 0.8 }
+
+  function animated(changes: Partial<typeof text>, time: number): Layer | undefined {
+    return layersAt([{ ...text, ...changes }], time)[0]
+  }
+
+  it('leaves a clip without animations alone', () => {
+    const layer = animated({}, 2 * SECOND)
+    expect(layer?.placed).toBeUndefined()
+    expect(layer?.opacity).toBe(0.8)
+  })
+
+  it('fades in and out, on top of the clip\'s own opacity', () => {
+    const changes = { animationIn: { type: 'fade', duration: SECOND }, animationOut: { type: 'fade', duration: 2 * SECOND } } as const
+    expect(animated(changes, SECOND)?.opacity).toBe(0)
+    expect(animated(changes, SECOND + HALF)?.opacity).toBeCloseTo(0.4)
+    expect(animated(changes, 2 * SECOND)?.opacity).toBeCloseTo(0.8)
+    expect(animated(changes, 4 * SECOND)?.opacity).toBeCloseTo(0.4)
+  })
+
+  it('moves the drawn layer and keeps the clip\'s own place for the handles', () => {
+    const sliding = animated({ animationIn: { type: 'slideLeft', duration: SECOND } }, SECOND)
+    expect(sliding?.transform).toEqual(text.transform)
+    expect(sliding?.placed).toEqual({ ...text.transform, x: 500 - 1920 })
+    expect(animated({ animationIn: { type: 'slideLeft', duration: SECOND } }, 2 * SECOND)?.placed).toEqual(text.transform)
+    expect(animated({ animationOut: { type: 'slideDown', duration: SECOND } }, 5 * SECOND - 100)?.placed?.y).toBeGreaterThan(300 + 1070)
+    expect(animated({ animationIn: { type: 'slideRight', duration: SECOND } }, SECOND)?.placed?.x).toBe(500 + 1920)
+    expect(animated({ animationIn: { type: 'slideUp', duration: SECOND } }, SECOND)?.placed?.y).toBe(300 - 1080)
+  })
+
+  it('pops past its size and settles, and is drawn sharp for the largest size', () => {
+    const popping = { animationIn: { type: 'pop', duration: SECOND } } as const
+    expect(animated(popping, SECOND)?.placed?.scaleX).toBe(0)
+    expect(animated(popping, SECOND + 0.6 * SECOND)?.placed?.scaleX).toBeCloseTo(2.2)
+    expect(animated(popping, 2 * SECOND)?.placed?.scaleX).toBe(2)
+    expect(animated(popping, 3 * SECOND)).toMatchObject({ sharpScaleX: 2.2, sharpScaleY: 2.2 })
+  })
+
+  it('zooms in from half its size while it fades in, and out the same way backwards', () => {
+    const zooming = { animationIn: { type: 'zoom', duration: SECOND }, animationOut: { type: 'zoom', duration: SECOND } } as const
+    expect(animated(zooming, SECOND)).toMatchObject({ opacity: 0, placed: { scaleX: 1, scaleY: 1 } })
+    expect(animated(zooming, 5 * SECOND - HALF)?.opacity).toBeCloseTo(0.4)
+    expect(animated(zooming, 5 * SECOND - HALF)?.placed?.scaleX).toBeCloseTo(2 * (0.5 + 0.5 * (1 - 0.5 ** 3)))
+  })
+
+  it('types a text letter by letter', () => {
+    const typing = { animationIn: { type: 'typewriter', duration: 3 * SECOND } } as const
+    expect(animated(typing, SECOND)).toMatchObject({ shownLetters: 0 })
+    expect(animated(typing, 2 * SECOND)).toMatchObject({ shownLetters: 3 })
+    expect(animated({ ...typing, text: '👨‍👩‍👧 née\nab' }, 3 * SECOND)).toMatchObject({ shownLetters: 4 })
+    expect(animated(typing, 4 * SECOND)).not.toHaveProperty('shownLetters')
+  })
+
+  it('lets a transition move what the animation has placed', () => {
+    const both = animated({ animationIn: { type: 'pop', duration: 2 * SECOND }, transitionIn: { type: 'slide', duration: SECOND } }, SECOND)
+    expect(both?.placed?.scaleX).toBe(0)
+    expect(both?.placed?.x).toBe(500 + 1920)
+  })
+})
+
+describe('groups', () => {
+  type Group = Extract<Clip, { type: 'group' }>
+  const IDENTITY = { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }
+
+  function member(id: string, x: number, y: number, overrides: Partial<VideoClip> = {}): VideoClip {
+    return videoClip({ id, start: 0, duration: 4 * SECOND, transform: { x, y, scaleX: 0.5, scaleY: 0.25, rotation: 10 }, ...overrides })
+  }
+
+  function group(overrides: Partial<Group>, ...tracks: Clip[][]): Group {
+    return { id: 'group', type: 'group', start: 2 * SECOND, duration: 3 * SECOND, transform: IDENTITY, opacity: 1, volume: 1, tracks: tracks.map((clips) => track(clips)), ...overrides }
+  }
+
+  it('draws its members where the group puts them, bottom track first', () => {
+    const grouped = group({ transform: { x: 1000, y: 500, scaleX: 2, scaleY: 2, rotation: 90 } }, [member('below', 100, 0)], [member('above', 0, 50)])
+    const layers = layersAt([grouped], 2 * SECOND)
+    expect(layers.map((layer) => layer.clipId)).toEqual(['below', 'above'])
+    const [below, above] = layers
+    expect(below?.transform.x).toBeCloseTo(1000)
+    expect(below?.transform.y).toBeCloseTo(500 + 200)
+    expect(above?.transform.x).toBeCloseTo(1000 - 100)
+    expect(above?.transform.y).toBeCloseTo(500)
+    expect(below?.transform).toMatchObject({ scaleX: 1, scaleY: 0.5, rotation: 100 })
+    expect(below?.groups).toEqual(['group'])
+  })
+
+  it('leaves a member untouched when the group changes nothing', () => {
+    const alone = layersAt([member('m', 300, 200, { start: 2 * SECOND })], 3 * SECOND)[0]
+    const grouped = layersAt([group({}, [member('m', 300, 200)])], 3 * SECOND)[0]
+    expect(grouped).toEqual({ ...alone, groups: ['group'] })
+  })
+
+  it('shows its members in its own time, from its content start on', () => {
+    const late = member('late', 0, 0, { start: SECOND, duration: SECOND, sourceStart: 0 })
+    const grouped = group({ contentStart: SECOND / 2 }, [late])
+    expect(layersAt([grouped], 2 * SECOND)).toEqual([])
+    const shown = layersAt([grouped], 2 * SECOND + SECOND / 2 + 3 * FRAME_30)[0]
+    expect(shown).toMatchObject({ clipId: 'late', frame: 3 })
+    expect(layersAt([grouped], 3 * SECOND + SECOND / 2)).toEqual([])
+    expect(layersAt([grouped], SECOND)).toEqual([])
+  })
+
+  it('multiplies its opacity and fades into every member', () => {
+    const grouped = group({ opacity: 0.5, fadeIn: SECOND, keyframes: { opacity: [{ time: 0, value: 0.5, easing: 'linear' }] } }, [member('m', 0, 0, { opacity: 0.8 })])
+    expect(layersAt([grouped], 2 * SECOND + SECOND / 2)[0]?.opacity).toBeCloseTo(0.8 * 0.5 * 0.5)
+    expect(layersAt([grouped], 4 * SECOND)[0]?.opacity).toBeCloseTo(0.4)
+  })
+
+  it('follows the keyframes and animations of the group', () => {
+    const moving = group({ keyframes: { x: [{ time: 0, value: 0, easing: 'linear' }, { time: 2 * SECOND, value: 400, easing: 'linear' }] }, animationIn: { type: 'slideUp', duration: SECOND } }, [member('m', 10, 20)])
+    const start = layersAt([moving], 2 * SECOND)[0]
+    expect(start?.transform.x).toBe(10)
+    expect(start?.transform.y).toBe(20 - 1080)
+    const later = layersAt([moving], 3 * SECOND)[0]
+    expect(later?.transform.x).toBe(210)
+    expect(later?.transform.y).toBe(20)
+  })
+
+  it('adds its effects after the member\'s own and scales lengths with the group', () => {
+    const own = member('m', 0, 0, { effects: [{ type: 'border', width: 4, color: '#FFFFFF' }, { type: 'blackAndWhite', amount: 1, isOff: true }] })
+    const grouped = group({ transform: { ...IDENTITY, scaleX: 3, scaleY: 3 }, effects: [{ type: 'roundedCorners', radius: 10 }, { type: 'clipBlur', strength: 5, isOff: true }] }, [own])
+    const layer = layersAt([grouped], 2 * SECOND)[0]
+    expect(layer?.kind === 'video' && layer.effects).toEqual([{ type: 'border', width: 12, color: '#FFFFFF' }, { type: 'roundedCorners', radius: 10 }])
+  })
+
+  it('scales the strength and the soft edge of a blur inside, and gives it no effects', () => {
+    const blur: Clip = { id: 'blur', type: 'blur', start: 0, duration: 4 * SECOND, transform: IDENTITY, opacity: 1, width: 100, height: 50, shape: 'ellipse', softEdge: 4, strength: 10 }
+    const grouped = group({ transform: { ...IDENTITY, scaleX: 2, scaleY: 2 }, effects: [{ type: 'blackAndWhite', amount: 1 }] }, [blur])
+    expect(layersAt([grouped], 2 * SECOND)[0]).toEqual({ kind: 'blur', clipId: 'blur', groups: ['group'], transform: { ...IDENTITY, scaleX: 2, scaleY: 2 }, opacity: 1, width: 100, height: 50, shape: 'ellipse', softEdge: 8, strength: 20, isPixelated: false })
+  })
+
+  it('composes groups inside groups', () => {
+    const inner = group({ id: 'inner', start: 0, duration: 4 * SECOND, transform: { x: 100, y: 0, scaleX: 2, scaleY: 2, rotation: 0 }, opacity: 0.5 }, [member('m', 10, 0)])
+    const outer = group({ id: 'outer', transform: { x: 1000, y: 500, scaleX: 0.5, scaleY: 0.5, rotation: 180 }, opacity: 0.5 }, [inner])
+    const layer = layersAt([outer], 3 * SECOND)[0]
+    expect(layer?.transform.x).toBeCloseTo(1000 - 0.5 * (100 + 2 * 10))
+    expect(layer?.transform.y).toBeCloseTo(500)
+    expect(layer?.transform).toMatchObject({ scaleX: 0.5, scaleY: 0.25, rotation: 190 })
+    expect(layer?.opacity).toBeCloseTo(0.25)
+    expect(layer?.groups).toEqual(['outer', 'inner'])
+  })
+
+  it('plays a transition of the group on every member, without adding pictures up', () => {
+    const before = videoClip({ id: 'before', start: 0, duration: 2 * SECOND })
+    const grouped = group({ transitionIn: { type: 'crossDissolve', duration: SECOND } }, [member('a', 0, 0)], [member('b', 0, 0)])
+    const layers = layersAt([before, grouped], 2 * SECOND)
+    expect(layers.map((layer) => layer.clipId)).toEqual(['before', 'a', 'b'])
+    expect(layers.map((layer) => layer.opacity)).toEqual([0.5, 0.5, 0.5])
+    expect(layers.every((layer) => layer.transition?.mixKey === undefined)).toBe(true)
+
+    const wiped = layersAt([group({ transitionIn: { type: 'wipeLeft', duration: SECOND } }, [member('a', 0, 0)])], 2 * SECOND)[0]
+    expect(wiped?.transition?.reveal).toMatchObject({ kind: 'line' })
+  })
+
+  it('skips hidden tracks inside and draws nothing for an empty group', () => {
+    const grouped = group({}, [member('seen', 0, 0)], [member('unseen', 0, 0)])
+    grouped.tracks[1]!.hidden = true
+    expect(layersAt([grouped], 2 * SECOND).map((layer) => layer.clipId)).toEqual(['seen'])
+    expect(layersAt([group({})], 2 * SECOND)).toEqual([])
+  })
+
+  it('decodes a member for the largest size the group reaches', () => {
+    const grow: Keyframe[] = [{ time: 0, value: 0.25, easing: 'linear' }, { time: SECOND, value: 1, easing: 'linear' }]
+    const still = layersAt([group({ transform: { ...IDENTITY, scaleX: 0.25, scaleY: 0.25 } }, [member('m', 0, 0, { transform: IDENTITY })])], 2 * SECOND)[0]
+    const growing = layersAt([group({ transform: { ...IDENTITY, scaleX: 0.25, scaleY: 0.25 }, keyframes: { scaleX: grow, scaleY: grow } }, [member('m', 0, 0, { transform: IDENTITY })])], 2 * SECOND)[0]
+    expect(still).toMatchObject({ halvings: 2 })
+    expect(growing).toMatchObject({ halvings: 0 })
+  })
+
+  it('tells the editor where a group puts its members', () => {
+    const inner = group({ id: 'inner', start: SECOND, duration: SECOND, transform: { x: 100, y: 0, scaleX: 2, scaleY: 2, rotation: 0 } }, [member('m', 0, 0)])
+    const outer = group({ id: 'outer', transform: { x: 1000, y: 500, scaleX: 0.5, scaleY: 0.5, rotation: 90 } }, [inner])
+    const whole = project([track([outer])])
+    expect(groupFrameAt(whole, [], 3 * SECOND)).toMatchObject({ x: 0, y: 0, scale: 1, rotation: 0 })
+    expect(groupFrameAt(whole, ['outer'], 3 * SECOND)).toMatchObject({ x: 1000, y: 500, scale: 0.5, rotation: 90 })
+    const frame = groupFrameAt(whole, ['outer', 'inner'], 3 * SECOND)
+    expect(frame.x).toBeCloseTo(1000)
+    expect(frame.y).toBeCloseTo(550)
+    expect(frame).toMatchObject({ scale: 1, rotation: 90 })
   })
 })

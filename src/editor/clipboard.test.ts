@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SAMPLE_MEDIA, SECOND, audioClip, clipIds, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
+import { SAMPLE_MEDIA, SECOND, audioClip, clipIds, clipOf, groupClip, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import type { Project } from '../shared/project.js'
 import { copyClips, deleteClips, pasteClips, rippleDelete, spanEnd, type Paste } from './clipboard.js'
 
@@ -15,6 +15,7 @@ function paste(project: Project, ids: readonly string[], at: number): Paste {
     clipboard: copyClips(project, ids),
     at,
     clipIds: ['p1', 'p2', 'p3'],
+    memberIds: new Map(),
     newTracks: [
       { id: 'n1', name: 'Track 3' },
       { id: 'n2', name: 'Track 4' },
@@ -95,6 +96,25 @@ describe('copy and paste', () => {
     const pasted = pasteClips(withoutMusic, { ...paste(project, [], 0), clipboard, at: 20 * SECOND })
     expect(pasted.media.map((reference) => reference.id)).toEqual(['video', 'logo', 'music'])
     reopened(pasted)
+  })
+
+  it('pastes a group with copies of its members, and brings back the media they use', () => {
+    const inner = groupClip('inner', SECOND, SECOND, [[audioClip('music', 0, SECOND)]])
+    const project = projectOf([track('t1', [groupClip('group', 0, 2 * SECOND, [[videoClip('m', 0, SECOND), inner]])])])
+    const clipboard = copyClips(project, ['group'])
+    expect(clipboard.media.map((entry) => entry.id).sort()).toEqual(['music', 'video'])
+    const memberIds = new Map([
+      ['m', 'm-2'],
+      ['inner', 'inner-2'],
+      ['music', 'music-2'],
+    ])
+    const emptied = { ...project, media: [] }
+    const pasted = reopened(pasteClips(emptied, { ...paste(project, ['group'], 4 * SECOND), memberIds }))
+    expect(clipIds(pasted)).toEqual([['group', 'p1']])
+    const copy = clipOf(pasted, 'p1')
+    expect(copy.type === 'group' && copy.tracks[0]?.clips.map((clip) => clip.id)).toEqual(['m-2', 'inner-2'])
+    expect(pasted.media.map((entry) => entry.id).sort()).toEqual(['music', 'video'])
+    expect(pasteClips(emptied, paste(project, ['group'], 4 * SECOND))).toBe(emptied)
   })
 
   it('does nothing with an empty clipboard', () => {

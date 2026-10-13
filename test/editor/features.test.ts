@@ -212,6 +212,157 @@ describe('annotations', () => {
   })
 })
 
+describe('callouts, arrows and lines', () => {
+  it('adds them from the Annotations tab and changes them on the canvas and in Properties', async () => {
+    const report = await uiTest('annotations', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'annotations')])
+
+    // A new callout is a speech bubble in the middle, three tenths of the canvas wide, with the words that were typed into it.
+    const added = projectIn(report, 'added').tracks[1]?.clips[0]
+    expect(added).toMatchObject({ type: 'callout', shape: 'speechBubble', text: 'Look here', start: 0, duration: 5 * SECOND, width: 192, height: 72, tail: { x: -58, y: 65 }, transform: { x: 320, y: 180 } })
+
+    // The tail was dragged to the canvas point 560, 320, which is 240 right of and 140 below the middle of the callout.
+    const shaped = projectIn(report, 'shaped').tracks[1]?.clips[0]
+    expect(shaped).toMatchObject({ shape: 'thoughtBubble', width: 240, fill: '#ffee00', borderWidth: 6 })
+    expect(shaped?.type === 'callout' && Math.abs((shaped.tail?.x ?? 0) - 240)).toBeLessThanOrEqual(3)
+    expect(shaped?.type === 'callout' && Math.abs((shaped.tail?.y ?? 0) - 140)).toBeLessThanOrEqual(3)
+    const banner = projectIn(report, 'banner').tracks[1]?.clips[0]
+    expect(banner).toMatchObject({ shape: 'banner' })
+    expect(banner).not.toHaveProperty('tail')
+
+    expect(projectIn(report, 'arrowAdded').tracks[2]?.clips[0]).toMatchObject({ type: 'arrow', length: 160, thickness: 3, startHead: 'none', endHead: 'triangle', transform: { x: 320, y: 180, rotation: 0 } })
+    // Its end went from 400, 180 to 600, 40 while its start stayed at 240, 180.
+    const pointed = projectIn(report, 'pointed').tracks[2]?.clips[0]
+    expect(pointed).toMatchObject({ startHead: 'dot', thickness: 8 })
+    if (pointed?.type !== 'arrow') throw new Error('The arrow is gone')
+    expect(Math.abs(pointed.transform.x - 420)).toBeLessThanOrEqual(2)
+    expect(Math.abs(pointed.transform.y - 110)).toBeLessThanOrEqual(2)
+    expect(Math.abs(pointed.length - Math.hypot(360, 140))).toBeLessThanOrEqual(3)
+    expect(Math.abs(pointed.transform.rotation + 21.25)).toBeLessThanOrEqual(1)
+
+    expect(projectIn(report, 'withLine').tracks[3]?.clips[0]).toMatchObject({ type: 'arrow', startHead: 'none', endHead: 'none' })
+  })
+})
+
+describe('text styling', () => {
+  it('sets weight, spacing, outline, shadow, background and a fixed box from Properties', async () => {
+    const report = await uiTest('text-style', ['--out', join(scratch, 'text-style')])
+    const styled = projectIn(report, 'styled').tracks[0]?.clips[0]
+    expect(styled).toMatchObject({
+      type: 'text',
+      text: 'Two words',
+      font: { weight: 700 },
+      lineSpacing: 1.5,
+      outline: { color: '#000000', width: 4 },
+      shadow: { color: '#000000aa', blur: 0 },
+      background: { color: '#3c5a88aa' },
+    })
+    expect(styled).not.toHaveProperty('boxWidth')
+
+    // Narrower than its words, the box breaks them into two lines and grows taller.
+    expect(projectIn(report, 'wrapped').tracks[0]?.clips[0]).toMatchObject({ boxWidth: 300 })
+    expect(Number(report.heightOnTwoLines)).toBeGreaterThan(Number(report.heightOnOneLine) * 1.5)
+
+    const plain = projectIn(report, 'plain').tracks[0]?.clips[0]
+    expect(plain).toMatchObject({ shadow: { blur: 0 }, background: { color: '#3c5a88aa' } })
+    expect(plain).not.toHaveProperty('boxWidth')
+    expect(plain).not.toHaveProperty('outline')
+  })
+})
+
+describe('animation presets', () => {
+  it('applies them at either end and turns them into keyframes', async () => {
+    const report = await uiTest('animations', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'animations')])
+    expect(report.canConvertBefore).toBe(false)
+    // A video has no letters to type.
+    expect(report.offersTypewriter).toBe(false)
+
+    const animated = projectIn(report, 'animated').tracks[0]?.clips[0]
+    expect(animated).toMatchObject({ animationIn: { type: 'pop', duration: SECOND }, animationOut: { type: 'slideRight', duration: SECOND / 2 } })
+    expect(animated).not.toHaveProperty('keyframes')
+
+    const converted = projectIn(report, 'converted').tracks[0]?.clips[0]
+    expect(converted).not.toHaveProperty('animationIn')
+    expect(converted).not.toHaveProperty('animationOut')
+    // The pop became three scale keyframes that end at the size the clip has; the slide two position keyframes that end a canvas width away.
+    expect(converted?.keyframes?.scaleX?.map((keyframe) => keyframe.value)).toEqual([0, 2.2, 2])
+    expect(converted?.keyframes?.scaleY).toEqual(converted?.keyframes?.scaleX)
+    expect(converted?.keyframes?.x).toEqual([
+      { time: 1.5 * SECOND, value: 320, easing: 'easeIn' },
+      { time: 2 * SECOND, value: 960, easing: 'linear' },
+    ])
+
+    const removed = projectIn(report, 'removed').tracks[0]?.clips[0]
+    expect(removed).toMatchObject({ animationOut: { type: 'slideRight' } })
+    expect(removed).not.toHaveProperty('animationIn')
+  })
+})
+
+describe('groups', () => {
+  it('groups clips, changes a member from the inside, ungroups, and undoes it all', async () => {
+    const original = projectPath('02-mosaic')
+    const report = await uiTest('groups', ['--project', original, '--out', join(scratch, 'groups')])
+
+    // The group lies where the topmost clip was and holds the four clips on four tracks of its own, placed around its middle.
+    const grouped = projectIn(report, 'grouped')
+    expect(grouped.tracks.map((track) => track.clips.length)).toEqual([0, 0, 0, 1])
+    const group = grouped.tracks[3]?.clips[0]
+    expect(group).toMatchObject({ type: 'group', start: 0, duration: 2 * SECOND, transform: { x: 320, y: 180, scaleX: 1, scaleY: 1, rotation: 0 } })
+    if (group?.type !== 'group') throw new Error('There is no group')
+    expect(group.tracks.map((track) => track.clips.map((clip) => clip.id))).toEqual([['a'], ['b'], ['c'], ['d']])
+    expect(group.tracks[0]?.clips[0]).toMatchObject({ transform: { x: -160, y: -90 } })
+
+    // Dragged by one member, the whole group moved; its scale is one number.
+    const moved = projectIn(report, 'moved').tracks[3]?.clips[0]
+    expect(moved).toMatchObject({ transform: { scaleX: 0.5, scaleY: 0.5 } })
+    expect(moved?.type === 'group' && Math.abs(moved.transform.x - 360)).toBeLessThanOrEqual(2)
+    expect(moved?.type === 'group' && Math.abs(moved.transform.y - 200)).toBeLessThanOrEqual(2)
+
+    // Inside, the timeline shows the group's own tracks and the camera cannot be changed. Twenty canvas pixels are forty inside a group at half its size.
+    expect(report.tracksInside).toBe(4)
+    expect(report.isCameraToolOff).toBe(true)
+    const inside = projectIn(report, 'inside').tracks[3]?.clips[0]
+    if (inside?.type !== 'group') throw new Error('There is no group')
+    expect(inside.tracks[3]?.clips[0]).toMatchObject({ id: 'd', opacity: 0.4 })
+    const dragged = inside.tracks[0]?.clips[0]
+    expect(dragged?.type === 'video' && Math.abs(dragged.transform.x + 120)).toBeLessThanOrEqual(4)
+    expect(dragged?.type === 'video' && Math.abs(dragged.transform.y + 50)).toBeLessThanOrEqual(4)
+
+    // Ungrouped, the members are where and as large as the group showed them, the lowest where the group was and the others above it.
+    const ungrouped = projectIn(report, 'ungrouped')
+    expect(ungrouped.tracks.map((track) => track.clips.map((clip) => clip.id))).toEqual([[], [], [], ['a'], ['b'], ['c'], ['d']])
+    const last = ungrouped.tracks[6]?.clips[0]
+    expect(last).toMatchObject({ opacity: 0.4, transform: { scaleX: 0.5, scaleY: 0.5 } })
+    expect(last?.type === 'video' && Math.abs(last.transform.x - 440)).toBeLessThanOrEqual(2)
+    expect(last?.type === 'video' && Math.abs(last.transform.y - 245)).toBeLessThanOrEqual(2)
+
+    const undone = projectIn(report, 'undone')
+    expect(undone.tracks.map((track) => track.clips.map((clip) => clip.id))).toEqual([['a'], ['b'], ['c'], ['d']])
+    expect(undone.tracks[0]?.clips[0]).toMatchObject({ transform: { x: 160, y: 90, scaleX: 1 } })
+  })
+})
+
+describe('volume keyframes and the sound of fast clips', () => {
+  it('keys the volume in Properties, drags a keyframe on the waveform and sets how sound follows speed', async () => {
+    const report = await uiTest('sound', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'sound')])
+    expect(projectIn(report, 'keyed').tracks[0]?.clips[0]?.keyframes?.volume).toEqual([
+      { time: 0, value: 1, easing: 'linear' },
+      { time: SECOND, value: 0.5, easing: 'linear' },
+    ])
+
+    expect(report.cursorOverPoint).toBe('grab')
+    const [first, second] = projectIn(report, 'dragged').tracks[0]?.clips[0]?.keyframes?.volume ?? []
+    expect(first).toEqual({ time: 0, value: 1, easing: 'linear' })
+    expect(Math.abs((second?.time ?? 0) - 1.5 * SECOND)).toBeLessThanOrEqual(SECOND / 30)
+    expect(second?.value).toBeGreaterThan(1.7)
+
+    expect(projectIn(report, 'eased').tracks[0]?.clips[0]?.keyframes?.volume?.[0]).toMatchObject({ time: 0, easing: 'easeIn' })
+    expect(projectIn(report, 'deleted').tracks[0]?.clips[0]?.keyframes?.volume).toHaveLength(1)
+
+    expect(report.offersFastSoundAtFirst).toBe(false)
+    expect(projectIn(report, 'fast').tracks[0]?.clips[0]).toMatchObject({ speedPercent: 800, changesPitch: true, hasFastSound: true })
+  })
+})
+
 describe('effects', () => {
   it('adds effects by click and by dragging onto the timeline and the canvas, and changes a clip\'s list in Properties', async () => {
     const report = await uiTest('effects', ['--project', projectPath('02-mosaic'), '--out', join(scratch, 'effects')])

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MediaInfo } from '../shared/mediaProtocol.js'
-import type { AudioClip, Clip, Project, Track, VideoClip } from '../shared/project.js'
+import type { AudioClip, Clip, GroupClip, Project, Track, VideoClip } from '../shared/project.js'
 import { LIMITER_CEILING, LIMITER_WINDOW, cachedAudioReader, mix, type AudioReader } from './mixer.js'
 import type { MediaStates } from './resolve.js'
 
@@ -112,7 +112,7 @@ describe('mix', () => {
     expect((await mixRange(project([video]), 50, 1))[0]).toBe(sourceSample('voice', 50, 0))
 
     const silent = project(
-      [audioClip({ id: 'fast', speedPercent: 200 })],
+      [audioClip({ id: 'fast', speedPercent: 401 })],
       [audioClip({ id: 'no-audio', mediaId: 'silentVideo' })],
       [audioClip({ id: 'failed', mediaId: 'broken' })],
       [audioClip({ id: 'unknown', mediaId: 'nowhere' })],
@@ -160,6 +160,115 @@ describe('identical samples for playback and export', () => {
     const unsplit = await mixRange(project([whole]), 0, 170_000)
     const split = await mixRange(project([first, second]), 0, 170_000)
     expect(sameBits(split, unsplit)).toBe(true)
+  })
+})
+
+describe('volume keyframes', () => {
+  it('follows the keyframes sample by sample, with their easing', async () => {
+    const ramp = audioClip({ keyframes: { volume: [{ time: 0, value: 0, easing: 'linear' }, { time: 1000 * TICKS_PER_SAMPLE, value: 2, easing: 'hold' }, { time: 1500 * TICKS_PER_SAMPLE, value: 0.5, easing: 'linear' }] } })
+    const mixed = await mixRange(project([ramp]), 0, 2000)
+    for (const sample of [0, 1, 250, 999]) {
+      const expected = sourceSample('voice', sample, 0) * (2 * ((sample * TICKS_PER_SAMPLE) / (1000 * TICKS_PER_SAMPLE)))
+      expect(mixed[sample * 2], `sample ${sample}`).toBe(Math.fround(expected))
+    }
+    expect(mixed[1200 * 2]).toBe(Math.fround(sourceSample('voice', 1200, 0) * 2))
+    expect(mixed[1499 * 2]).toBe(Math.fround(sourceSample('voice', 1499, 0) * 2))
+    expect(mixed[1500 * 2]).toBe(Math.fround(sourceSample('voice', 1500, 0) * 0.5))
+    expect(mixed[1999 * 2 + 1]).toBe(Math.fround(sourceSample('voice', 1999, 1) * 0.5))
+  })
+
+  it('multiplies with the fades and stays the same curve after a split', async () => {
+    const whole = audioClip({ start: 3 * FRAME_2997, duration: 60 * FRAME_2997, volumeFadeIn: 5 * FRAME_2997, keyframes: { volume: [{ time: 10 * FRAME_2997, value: 0.2, easing: 'easeInOut' }, { time: 50 * FRAME_2997, value: 1.6, easing: 'linear' }] } })
+    const local = 27 * FRAME_2997
+    const first: AudioClip = { ...whole, id: 'first', duration: local }
+    const { volumeFadeIn: _fadeIn, ...withoutFadeIn } = whole
+    const shifted = whole.keyframes?.volume?.map((keyframe) => ({ ...keyframe, time: keyframe.time - local })) ?? []
+    const second: AudioClip = { ...withoutFadeIn, id: 'second', start: whole.start + local, duration: whole.duration - local, sourceStart: local, keyframes: { volume: shifted } }
+
+    const unsplit = await mixRange(project([whole]), 0, 110_000)
+    expect(sameBits(await mixRange(project([first, second]), 0, 110_000), unsplit)).toBe(true)
+    expect(peakOf(unsplit)).toBeGreaterThan(0.3)
+  })
+})
+
+// The sound at another speed, as the media process would hand it out: every sample tells its place in the stretched sound and how it was stretched.
+const readStretched: AudioReader = async (mediaId, firstSample, sampleCount, stretch) => {
+  if (stretch === undefined) return readSource(mediaId, firstSample, sampleCount)
+  const samples = new Float32Array(sampleCount * 2)
+  for (let index = 0; index < sampleCount; index++) {
+    samples[index * 2] = (firstSample + index) / 1_000_000
+    samples[index * 2 + 1] = (stretch.keepsPitch ? stretch.speedPercent : -stretch.speedPercent) / 1_000_000
+  }
+  return samples
+}
+
+describe('clip speed', () => {
+  function mixStretched(mixedProject: Project, firstSample: number, sampleCount: number): Promise<Float32Array> {
+    return mix(mixedProject, MEDIA, firstSample, sampleCount, readStretched)
+  }
+
+  it('reads a faster clip from the sound at that speed, counted from the start of the file', async () => {
+    const fast = audioClip({ start: 100 * TICKS_PER_SAMPLE, sourceStart: 1000 * TICKS_PER_SAMPLE, speedPercent: 200, volume: 0.25 })
+    const mixed = await mixStretched(project([fast]), 0, 400)
+    expect(mixed[99 * 2]).toBe(0)
+    expect(mixed[100 * 2]).toBe(Math.fround(Math.fround(500 / 1_000_000) * 0.25))
+    expect(mixed[399 * 2]).toBe(Math.fround(Math.fround(799 / 1_000_000) * 0.25))
+    expect(mixed[100 * 2 + 1]).toBe(Math.fround(Math.fround(200 / 1_000_000) * 0.25))
+  })
+
+  it('lets the pitch follow the speed when the clip says so', async () => {
+    const tape = audioClip({ speedPercent: 50, changesPitch: true })
+    expect((await mixStretched(project([tape]), 0, 10))[1]).toBe(Math.fround(-50 / 1_000_000))
+  })
+
+  it('is unchanged by splitting a clip that plays at another speed', async () => {
+    for (const speedPercent of [25, 150, 333]) {
+      const whole = audioClip({ start: 7 * FRAME_2997, duration: 90 * FRAME_2997, sourceStart: 12_300, speedPercent })
+      const local = 41 * FRAME_2997
+      const first: AudioClip = { ...whole, id: 'first', duration: local }
+      const second: AudioClip = { ...whole, id: 'second', start: whole.start + local, duration: whole.duration - local, sourceStart: whole.sourceStart + (local / 100) * speedPercent }
+      const unsplit = await mixStretched(project([whole]), 0, 170_000)
+      expect(sameBits(await mixStretched(project([first, second]), 0, 170_000), unsplit), `${speedPercent} %`).toBe(true)
+    }
+  })
+
+  it('is silent above four times the speed until the sound is switched on', async () => {
+    expect(peakOf(await mixStretched(project([audioClip({ speedPercent: 400 })]), 0, 100))).toBeGreaterThan(0)
+    expect(peakOf(await mixStretched(project([audioClip({ speedPercent: 5000 })]), 0, 100))).toBe(0)
+    expect(peakOf(await mixStretched(project([audioClip({ speedPercent: 5000, hasFastSound: true })]), 0, 100))).toBeGreaterThan(0)
+  })
+})
+
+describe('groups', () => {
+  function group(overrides: Partial<GroupClip>, ...tracks: Clip[][]): GroupClip {
+    const inner: Track[] = tracks.map((clips, index) => ({ id: `g${index}`, name: '', hidden: false, locked: false, muted: false, clips }))
+    return { id: 'group', type: 'group', start: 0, duration: 4 * SECOND, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, volume: 1, tracks: inner, ...overrides }
+  }
+
+  it('plays its members at the time the group gives them, and only while the group is there', async () => {
+    const member = audioClip({ start: 300 * TICKS_PER_SAMPLE, duration: 1000 * TICKS_PER_SAMPLE })
+    const grouped = group({ start: 2000 * TICKS_PER_SAMPLE, duration: 600 * TICKS_PER_SAMPLE, contentStart: 500 * TICKS_PER_SAMPLE }, [member])
+    const mixed = await mixRange(project([grouped]), 0, 4000)
+    expect(mixed[1999 * 2]).toBe(0)
+    // The group shows its content from sample 500 on, where the member has already played 200 samples.
+    expect(mixed[2000 * 2]).toBe(sourceSample('voice', 200, 0))
+    expect(mixed[2599 * 2]).toBe(sourceSample('voice', 799, 0))
+    expect(mixed[2600 * 2]).toBe(0)
+  })
+
+  it('multiplies the volume, fades and keyframes of every group around a sound', async () => {
+    const member = audioClip({ volume: 0.5 })
+    const inner = group({ id: 'inner', volume: 0.5, keyframes: { volume: [{ time: 0, value: 0, easing: 'linear' }, { time: 1000 * TICKS_PER_SAMPLE, value: 1, easing: 'linear' }] } }, [member])
+    const outer = group({ id: 'outer', volume: 2, volumeFadeIn: 2000 * TICKS_PER_SAMPLE }, [inner])
+    const mixed = await mixRange(project([outer]), 0, 3000)
+    expect(mixed[500 * 2]).toBe(Math.fround(sourceSample('voice', 500, 0) * 0.5 * 0.5 * (2 * 0.25)))
+    expect(mixed[2500 * 2]).toBe(Math.fround(sourceSample('voice', 2500, 0) * 0.5 * 2))
+  })
+
+  it('leaves out the members on a muted track', async () => {
+    const grouped = group({}, [audioClip()])
+    grouped.tracks[0]!.muted = true
+    expect(peakOf(await mixRange(project([grouped]), 0, 2000))).toBe(0)
   })
 })
 

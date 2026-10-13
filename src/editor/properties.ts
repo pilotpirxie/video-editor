@@ -1,8 +1,8 @@
-import { valueAt, type MediaStates } from '../engine/resolve.js'
+import type { MediaStates } from '../engine/resolve.js'
 import type { Size } from '../shared/exportPresets.js'
-import { MAX_CANVAS, MIN_CANVAS, type AnimatableProperty, type Clip, type Crop, type Keyframe, type Project, type Transform } from '../shared/project.js'
+import { MAX_CANVAS, MIN_CANVAS, valueAt, type AnimatableProperty, type Clip, type Crop, type Easing, type Keyframe, type Keyframes, type Project, type Transform } from '../shared/project.js'
 import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, TIMELINE_GRID, type FrameRate } from '../shared/time.js'
-import { editClips, hasSource, isCroppable, isVisual, locateClip, withFadesWithin } from './clips.js'
+import { editClips, hasSource, hasVolume, isCroppable, isVisual, locateClip, withFadesWithin } from './clips.js'
 import { neighbours, sourceDuration, timelineSpan, trimClip } from './moveTrim.js'
 
 function clampWhole(value: number, min: number, max: number): number {
@@ -43,7 +43,7 @@ function isTransformProperty(property: AnimatableProperty): property is keyof Tr
 
 // The value a property has while nothing animates it; undefined when this kind of clip does not have the property at all.
 function baseValue(clip: Clip, property: AnimatableProperty): number | undefined {
-  if (property === 'volume') return hasSource(clip) ? clip.volume : undefined
+  if (property === 'volume') return hasVolume(clip) ? clip.volume : undefined
   if (clip.type === 'audio') return undefined
   if (property === 'opacity') return clip.opacity
   if (isTransformProperty(property)) return clip.transform[property]
@@ -67,7 +67,7 @@ function limited(property: AnimatableProperty, value: number): number {
 }
 
 function withBaseValue(clip: Clip, property: AnimatableProperty, value: number): Clip {
-  if (property === 'volume') return hasSource(clip) ? { ...clip, volume: value } : clip
+  if (property === 'volume') return hasVolume(clip) ? { ...clip, volume: value } : clip
   if (clip.type === 'audio') return clip
   if (property === 'opacity') return { ...clip, opacity: value }
   if (isTransformProperty(property)) return { ...clip, transform: { ...clip.transform, [property]: value } }
@@ -91,19 +91,119 @@ function withProperty(clip: Clip, property: AnimatableProperty, value: number, t
   if (current === undefined || current === next) return clip
   const keyframes = clip.keyframes?.[property]
   if (keyframes === undefined) return withBaseValue(clip, property, next)
+  return { ...clip, keyframes: { ...clip.keyframes, [property]: withKeyframeAt(keyframes, localGridTime(clip, time), next) } }
+}
+
+// The moment of a clip that a project time falls on, on the time grid and inside the clip.
+function localGridTime(clip: Clip, time: number): number {
   const inside = Math.min(clip.duration, Math.max(0, time - clip.start))
-  const local = Math.round(inside / TIMELINE_GRID) * TIMELINE_GRID
-  return { ...clip, keyframes: { ...clip.keyframes, [property]: withKeyframeAt(keyframes, local, next) } }
+  return Math.round(inside / TIMELINE_GRID) * TIMELINE_GRID
+}
+
+// A group is scaled by one number, so either of its two scales sets both.
+function evenlyScaled(values: PropertyValues): PropertyValues {
+  const scale = values.scaleX ?? values.scaleY
+  return scale === undefined ? values : { ...values, scaleX: scale, scaleY: scale }
 }
 
 export function setProperties(project: Project, clipIds: readonly string[], values: PropertyValues, time: number): Project {
   return editClips(project, new Set(clipIds), (clip) => {
+    const wanted = clip.type === 'group' ? evenlyScaled(values) : values
     let edited = clip
     for (const property of ANIMATABLE) {
-      const value = values[property]
+      const value = wanted[property]
       if (value !== undefined) edited = withProperty(edited, property, value, time)
     }
     return edited
+  })
+}
+
+function withKeyframeList(clip: Clip, property: AnimatableProperty, list: readonly Keyframe[]): Clip {
+  const keyframes: Keyframes = { ...clip.keyframes, [property]: list.length === 0 ? undefined : [...list] }
+  const isLeft = Object.values(keyframes).some((other) => other !== undefined)
+  return { ...clip, keyframes: isLeft ? keyframes : undefined }
+}
+
+// Puts a keyframe at the given time, holding the value the property has there, or takes away the one that is there.
+function withKeyframeToggled(clip: Clip, property: AnimatableProperty, time: number): Clip {
+  const current = propertyAt(clip, property, time)
+  if (current === undefined) return clip
+  const local = localGridTime(clip, time)
+  const list = clip.keyframes?.[property] ?? []
+  const existing = list.find((keyframe) => keyframe.time === local)
+  if (existing === undefined) return withKeyframeList(clip, property, withKeyframeAt(list, local, current))
+  return withoutKeyframe(clip, property, list, existing)
+}
+
+// When the last keyframe goes, the property keeps the value that keyframe had, so nothing jumps.
+function withoutKeyframe(clip: Clip, property: AnimatableProperty, list: readonly Keyframe[], removed: Keyframe): Clip {
+  const remaining = list.filter((keyframe) => keyframe !== removed)
+  const settled = remaining.length === 0 ? withBaseValue(clip, property, removed.value) : clip
+  return withKeyframeList(settled, property, remaining)
+}
+
+export function toggleKeyframe(project: Project, clipIds: readonly string[], property: AnimatableProperty, time: number): Project {
+  return editClips(project, new Set(clipIds), (clip) => {
+    const isGroupScale = clip.type === 'group' && (property === 'scaleX' || property === 'scaleY')
+    if (!isGroupScale) return withKeyframeToggled(clip, property, time)
+    // The two scales of a group are one number, so they are keyed together.
+    return withKeyframeToggled(withKeyframeToggled(clip, 'scaleX', time), 'scaleY', time)
+  })
+}
+
+// Whether the property of a clip has a keyframe at the given time.
+export function hasKeyframeAt(clip: Clip, property: AnimatableProperty, time: number): boolean {
+  const local = localGridTime(clip, time)
+  return clip.keyframes?.[property]?.some((keyframe) => keyframe.time === local) === true
+}
+
+export type KeyframeChange = {
+  // Measured from the start of the clip. A keyframe never passes its neighbours.
+  time?: number
+  value?: number
+  easing?: Easing
+}
+
+// Changes one keyframe of a clip, counted from the first. A change of nothing returns the project as it is.
+export function changeKeyframe(project: Project, clipId: string, property: AnimatableProperty, index: number, change: KeyframeChange): Project {
+  return editClips(project, new Set([clipId]), (clip) => {
+    const list = clip.keyframes?.[property]
+    const keyframe = list?.[index]
+    if (list === undefined || keyframe === undefined) return clip
+    const earliest = (list[index - 1]?.time ?? -Infinity) + TIMELINE_GRID
+    const latest = (list[index + 1]?.time ?? Infinity) - TIMELINE_GRID
+    const wantedTime = Math.round((change.time ?? keyframe.time) / TIMELINE_GRID) * TIMELINE_GRID
+    const next: Keyframe = {
+      time: Math.min(latest, Math.max(earliest, wantedTime)),
+      value: change.value === undefined ? keyframe.value : limited(property, change.value),
+      easing: change.easing ?? keyframe.easing,
+    }
+    const isUnchanged = next.time === keyframe.time && next.value === keyframe.value && next.easing === keyframe.easing
+    return isUnchanged ? clip : withKeyframeList(clip, property, list.with(index, next))
+  })
+}
+
+export function removeKeyframe(project: Project, clipId: string, property: AnimatableProperty, index: number): Project {
+  return editClips(project, new Set([clipId]), (clip) => {
+    const list = clip.keyframes?.[property]
+    const keyframe = list?.[index]
+    return list === undefined || keyframe === undefined ? clip : withoutKeyframe(clip, property, list, keyframe)
+  })
+}
+
+export type SoundSwitches = {
+  changesPitch?: boolean
+  hasFastSound?: boolean
+}
+
+// How the sound of the chosen clips follows their speed. A switch that is off is left out of the clip, as the file format wants it.
+export function setSoundSwitches(project: Project, clipIds: readonly string[], switches: SoundSwitches): Project {
+  return editClips(project, new Set(clipIds), (clip) => {
+    if (!hasSource(clip)) return clip
+    const changesPitch = (switches.changesPitch ?? clip.changesPitch === true) ? true : undefined
+    const hasFastSound = (switches.hasFastSound ?? clip.hasFastSound === true) ? true : undefined
+    const isUnchanged = changesPitch === clip.changesPitch && hasFastSound === clip.hasFastSound
+    return isUnchanged ? clip : { ...clip, changesPitch, hasFastSound }
   })
 }
 
@@ -161,7 +261,7 @@ export function setLoop(project: Project, clipIds: readonly string[], isLooping:
 
 function withFade(clip: Clip, fade: Fade, length: number | undefined): Clip {
   const isVolumeFade = fade === 'volumeFadeIn' || fade === 'volumeFadeOut'
-  if (isVolumeFade) return hasSource(clip) ? { ...clip, [fade]: length } : clip
+  if (isVolumeFade) return hasVolume(clip) ? { ...clip, [fade]: length } : clip
   return isVisual(clip) ? { ...clip, [fade]: length } : clip
 }
 

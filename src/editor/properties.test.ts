@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { ALL_MEDIA, FRAME, MEDIA_STATES, SECOND, audioClip, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
+import { ALL_MEDIA, FRAME, MEDIA_STATES, SECOND, audioClip, clipOf, groupClip, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import type { Clip, Project } from '../shared/project.js'
-import { propertyAt, setCanvasSize, setDuration, setFade, setFrameRate, setLoop, setProperties, setSourceStart, setSpeed, sharedValue } from './properties.js'
+import { changeKeyframe, hasKeyframeAt, propertyAt, removeKeyframe, setCanvasSize, setDuration, setFade, setFrameRate, setLoop, setProperties, setSoundSwitches, setSourceStart, setSpeed, sharedValue, toggleKeyframe } from './properties.js'
 
 const TEXT: Clip = {
   id: 'title',
@@ -150,5 +150,86 @@ describe('sharedValue', () => {
     expect(sharedValue([3, 4])).toBeUndefined()
     expect(sharedValue([3, undefined])).toBeUndefined()
     expect(sharedValue([])).toBeUndefined()
+  })
+})
+
+describe('keyframes by hand', () => {
+  it('puts a keyframe at the playhead that holds the value the property has there', () => {
+    const keyed = toggleKeyframe(sample(), ['music', 'a'], 'volume', SECOND + 49)
+    expect(clipOf(keyed, 'music').keyframes).toEqual({ volume: [{ time: SECOND, value: 1, easing: 'linear' }] })
+    expect(hasKeyframeAt(clipOf(keyed, 'music'), 'volume', SECOND)).toBe(true)
+    expect(hasKeyframeAt(clipOf(keyed, 'music'), 'volume', 2 * SECOND)).toBe(false)
+    expect(reopened(keyed)).toEqual(keyed)
+  })
+
+  it('takes the keyframe at the playhead away again, and leaves the value the last one had', () => {
+    const keyed = setProperties(toggleKeyframe(sample(), ['music'], 'volume', SECOND), ['music'], { volume: 0.4 }, SECOND)
+    const plain = toggleKeyframe(keyed, ['music'], 'volume', SECOND)
+    expect(clipOf(plain, 'music')).toMatchObject({ volume: 0.4 })
+    expect(clipOf(reopened(plain), 'music')).not.toHaveProperty('keyframes')
+  })
+
+  it('does nothing for a property the clip does not have', () => {
+    const project = sample()
+    expect(toggleKeyframe(project, ['title'], 'volume', 0)).toBe(project)
+    expect(toggleKeyframe(project, ['music'], 'opacity', 0)).toBe(project)
+  })
+
+  it('moves a keyframe in time and value, never past its neighbours or out of range', () => {
+    let keyed = sample()
+    for (const seconds of [0, 1, 2]) keyed = toggleKeyframe(keyed, ['music'], 'volume', seconds * SECOND)
+    const moved = changeKeyframe(keyed, 'music', 'volume', 1, { time: 1.5 * SECOND + 30, value: 5, easing: 'easeOut' })
+    expect(clipOf(moved, 'music').keyframes?.volume?.[1]).toEqual({ time: 1.5 * SECOND, value: 2, easing: 'easeOut' })
+    expect(clipOf(changeKeyframe(keyed, 'music', 'volume', 1, { time: 9 * SECOND }), 'music').keyframes?.volume?.[1]?.time).toBe(2 * SECOND - 100)
+    expect(clipOf(changeKeyframe(keyed, 'music', 'volume', 1, { time: -SECOND }), 'music').keyframes?.volume?.[1]?.time).toBe(100)
+    expect(reopened(moved)).toEqual(moved)
+  })
+
+  it('leaves the project alone when a keyframe does not change or is not there', () => {
+    const keyed = toggleKeyframe(sample(), ['music'], 'volume', SECOND)
+    expect(changeKeyframe(keyed, 'music', 'volume', 0, { time: SECOND, value: 1 })).toBe(keyed)
+    expect(changeKeyframe(keyed, 'music', 'volume', 3, { value: 0 })).toBe(keyed)
+    expect(removeKeyframe(keyed, 'music', 'volume', 3)).toBe(keyed)
+  })
+
+  it('removes one keyframe, and with the last one the list', () => {
+    let keyed = sample()
+    for (const seconds of [0, 1]) keyed = toggleKeyframe(keyed, ['music'], 'volume', seconds * SECOND)
+    keyed = changeKeyframe(keyed, 'music', 'volume', 1, { value: 0.3 })
+    const one = removeKeyframe(keyed, 'music', 'volume', 0)
+    expect(clipOf(one, 'music').keyframes?.volume).toEqual([{ time: SECOND, value: 0.3, easing: 'linear' }])
+    const none = removeKeyframe(one, 'music', 'volume', 0)
+    expect(clipOf(none, 'music')).toMatchObject({ volume: 0.3 })
+    expect(clipOf(reopened(none), 'music')).not.toHaveProperty('keyframes')
+  })
+})
+
+describe('groups and sound', () => {
+  const grouped = projectOf([track('t1', [groupClip('group', 0, 4 * SECOND, [[videoClip('m', 0, 4 * SECOND)]]), audioClip('music', 5 * SECOND, SECOND)])])
+
+  it('scales a group by one number, whichever of the two is set', () => {
+    expect(clipOf(setProperties(grouped, ['group'], { scaleY: 3 }, 0), 'group')).toMatchObject({ transform: { scaleX: 3, scaleY: 3 } })
+    const keyed = toggleKeyframe(grouped, ['group'], 'scaleX', 0)
+    expect(reopened(keyed)).toEqual(keyed)
+    const scaled = setProperties(keyed, ['group'], { scaleX: 2 }, SECOND)
+    expect(clipOf(scaled, 'group').keyframes?.scaleY).toEqual(clipOf(scaled, 'group').keyframes?.scaleX)
+    expect(reopened(scaled)).toEqual(scaled)
+  })
+
+  it('sets the volume and the volume fades of a group', () => {
+    const quiet = setFade(setProperties(grouped, ['group'], { volume: 0.5 }, 0), ['group'], 'volumeFadeIn', SECOND)
+    expect(clipOf(quiet, 'group')).toMatchObject({ volume: 0.5, volumeFadeIn: SECOND })
+    expect(reopened(quiet)).toEqual(quiet)
+  })
+
+  it('switches how sound follows speed, and leaves a switch that is off out of the clip', () => {
+    const switched = setSoundSwitches(grouped, ['music', 'group'], { changesPitch: true, hasFastSound: true })
+    expect(clipOf(switched, 'music')).toMatchObject({ changesPitch: true, hasFastSound: true })
+    expect(clipOf(switched, 'group')).toBe(clipOf(grouped, 'group'))
+    expect(reopened(switched)).toEqual(switched)
+    const back = setSoundSwitches(switched, ['music'], { changesPitch: false })
+    expect(clipOf(reopened(back), 'music')).not.toHaveProperty('changesPitch')
+    expect(clipOf(back, 'music')).toMatchObject({ hasFastSound: true })
+    expect(setSoundSwitches(grouped, ['music'], { changesPitch: false })).toBe(grouped)
   })
 })

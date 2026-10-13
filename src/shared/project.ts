@@ -35,6 +35,20 @@ export type Keyframe = {
   easing: Easing
 }
 
+// The value a list of keyframes gives at a time measured from the start of its clip; before the first keyframe its value, after the last one its value.
+export function valueAt(keyframes: readonly Keyframe[], localTime: number): number | undefined {
+  let previous: Keyframe | undefined
+  for (const keyframe of keyframes) {
+    if (keyframe.time > localTime) {
+      if (previous === undefined) return keyframe.value
+      const progress = (localTime - previous.time) / (keyframe.time - previous.time)
+      return previous.value + (keyframe.value - previous.value) * ease(previous.easing, progress)
+    }
+    previous = keyframe
+  }
+  return previous?.value
+}
+
 export type AnimatableProperty =
   | 'x'
   | 'y'
@@ -90,6 +104,14 @@ export type Transition = {
   duration: number
 }
 
+export type AnimationType = 'fade' | 'pop' | 'slideLeft' | 'slideRight' | 'slideUp' | 'slideDown' | 'zoom' | 'typewriter'
+
+// A ready-made move at the start or the end of a clip. A slide is named after the side of the canvas the clip comes from, or leaves to.
+export type Animation = {
+  type: AnimationType
+  duration: number
+}
+
 type VisualSettings = {
   transform: Transform
   opacity: number
@@ -98,6 +120,8 @@ type VisualSettings = {
   // At the start of a clip that touches the clip before it on the same track, this is the transition on that cut.
   transitionIn?: Transition
   transitionOut?: Transition
+  animationIn?: Animation
+  animationOut?: Animation
 }
 
 // Every effect can be switched off without losing its settings.
@@ -126,6 +150,10 @@ type SourceSettings = {
   mediaId: string
   sourceStart: number
   speedPercent: number
+  // The sound gets higher or lower with the speed, as a tape does. Left out, it keeps its pitch.
+  changesPitch?: true
+  // Above four times the speed a clip is silent unless this is set.
+  hasFastSound?: true
 }
 
 type VolumeSettings = {
@@ -163,14 +191,56 @@ type ImageClip = ClipTiming &
 
 export type TextAlign = 'left' | 'center' | 'right'
 
-type TextClip = ClipTiming &
+// Lengths are canvas pixels. `weight` is the CSS font weight, 400 when left out; `lineSpacing` multiplies the line height of the font, 1 when left out.
+export type TextSettings = {
+  text: string
+  font: { family: string; size: number; weight?: number }
+  color: string
+  align: TextAlign
+  outline?: { color: string; width: number }
+  shadow?: { color: string; offsetX: number; offsetY: number; blur: number }
+  lineSpacing?: number
+}
+
+// Without `boxWidth` the box is as wide as the longest line; with it the words wrap at that width and the height follows the lines.
+export type TextClip = ClipTiming &
+  VisualSettings &
+  EffectSettings &
+  TextSettings & {
+    type: 'text'
+    background?: { color: string }
+    boxWidth?: number
+  }
+
+export type CalloutShape = 'rectangle' | 'roundedBox' | 'ellipse' | 'speechBubble' | 'thoughtBubble' | 'arrowBox' | 'banner' | 'burst'
+
+// A filled shape with words in it. The words may be empty. `tail` is the tip a bubble points with, measured from the middle of the box.
+export type CalloutClip = ClipTiming &
+  VisualSettings &
+  EffectSettings &
+  TextSettings & {
+    type: 'callout'
+    width: number
+    height: number
+    shape: CalloutShape
+    fill: string
+    borderColor: string
+    borderWidth: number
+    tail?: { x: number; y: number }
+  }
+
+export type ArrowHead = 'none' | 'triangle' | 'open' | 'dot'
+
+// A straight line of `length` along the clip's own horizontal, through its middle; turning and moving the clip places its two ends.
+export type ArrowClip = ClipTiming &
   VisualSettings &
   EffectSettings & {
-    type: 'text'
-    text: string
-    font: { family: string; size: number }
+    type: 'arrow'
+    length: number
+    thickness: number
     color: string
-    align: TextAlign
+    startHead: ArrowHead
+    endHead: ArrowHead
   }
 
 export type Shape = 'rectangle' | 'ellipse'
@@ -201,10 +271,21 @@ export type HighlightClip = ClipTiming &
     isSpotlight?: true
   }
 
-export type Clip = VideoClip | AudioClip | ImageClip | TextClip | BlurClip | HighlightClip
-export type PictureClip = VideoClip | ImageClip | TextClip
+// Clips that are moved, faded and changed as one. Its tracks have a time of their own: the group shows them from `contentStart` on (0 when left out).
+// The members are placed relative to the group's `transform`, which is scaled by one number: scaleX and scaleY are always equal.
+export type GroupClip = ClipTiming &
+  VisualSettings &
+  EffectSettings &
+  VolumeSettings & {
+    type: 'group'
+    tracks: Track[]
+    contentStart?: number
+  }
+
+export type Clip = VideoClip | AudioClip | ImageClip | TextClip | BlurClip | HighlightClip | CalloutClip | ArrowClip | GroupClip
+export type PictureClip = VideoClip | ImageClip | TextClip | CalloutClip | ArrowClip
 export type ShapeClip = BlurClip | HighlightClip
-export type VisualClip = PictureClip | ShapeClip
+export type VisualClip = PictureClip | ShapeClip | GroupClip
 
 export type Track = {
   id: string
@@ -252,12 +333,15 @@ export const MIN_CANVAS = { width: 160, height: 120 }
 export const MAX_CANVAS = { width: 3840, height: 2160 }
 export const MAX_CAMERA_SCALE = 10
 const MAX_VOLUME = 2
+const MAX_GROUP_DEPTH = 8
+const FONT_WEIGHT_STEP = 100
+const LINE_SPACING: NumberRule = { min: 0.5, max: 3 }
 
 const EASINGS: readonly Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut', 'hold']
 const TRANSFORM_PROPERTIES: readonly AnimatableProperty[] = ['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity']
 const CROP_PROPERTIES: readonly AnimatableProperty[] = ['cropLeft', 'cropTop', 'cropRight', 'cropBottom']
 const TEXT_ALIGNMENTS: readonly TextAlign[] = ['left', 'center', 'right']
-const CLIP_TYPES = ['video', 'audio', 'image', 'text', 'blur', 'highlight']
+const CLIP_TYPES = ['video', 'audio', 'image', 'text', 'blur', 'highlight', 'callout', 'arrow', 'group']
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/
 const OPAQUE_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
 export const TRANSITION_TYPES: readonly TransitionType[] = [
@@ -275,6 +359,9 @@ export const TRANSITION_TYPES: readonly TransitionType[] = [
 ]
 export const EFFECT_TYPES: readonly EffectType[] = ['colorAdjust', 'blackAndWhite', 'dropShadow', 'border', 'roundedCorners', 'clipBlur', 'chromaKey']
 const SHAPES: readonly Shape[] = ['rectangle', 'ellipse']
+export const ANIMATION_TYPES: readonly AnimationType[] = ['fade', 'pop', 'slideLeft', 'slideRight', 'slideUp', 'slideDown', 'zoom', 'typewriter']
+export const CALLOUT_SHAPES: readonly CalloutShape[] = ['rectangle', 'roundedBox', 'ellipse', 'speechBubble', 'thoughtBubble', 'arrowBox', 'banner', 'burst']
+export const ARROW_HEADS: readonly ArrowHead[] = ['none', 'triangle', 'open', 'dot']
 const AMOUNT: NumberRule = { min: 0, max: 1 }
 const ADJUSTMENT: NumberRule = { min: -1, max: 1 }
 
@@ -382,6 +469,12 @@ class Fields {
   array(key: string): unknown[] {
     const value = this.record[key]
     if (!Array.isArray(value)) fail(this.at(key), 'must be a list')
+    return value
+  }
+
+  color(key: string): string {
+    const value = this.string(key)
+    if (!COLOR_PATTERN.test(value)) fail(this.at(key), 'must look like #RRGGBB or #RRGGBBAA')
     return value
   }
 
@@ -551,13 +644,18 @@ const TIMING_KEYS = ['id', 'type', 'start', 'duration']
 const VISUAL_KEYS = ['transform', 'opacity']
 const SOURCE_KEYS = ['mediaId', 'sourceStart', 'speedPercent']
 const SHAPE_KEYS = ['width', 'height', 'shape', 'softEdge']
-const OPTIONAL_VISUAL_KEYS = ['fadeIn', 'fadeOut', 'transitionIn', 'transitionOut', 'keyframes']
+const TEXT_KEYS = ['text', 'font', 'color', 'align']
+const OPTIONAL_VISUAL_KEYS = ['fadeIn', 'fadeOut', 'transitionIn', 'transitionOut', 'animationIn', 'animationOut', 'keyframes']
 const OPTIONAL_PICTURE_KEYS = [...OPTIONAL_VISUAL_KEYS, 'effects']
 const OPTIONAL_VOLUME_KEYS = ['volumeFadeIn', 'volumeFadeOut']
+const OPTIONAL_SOURCE_KEYS = ['changesPitch', 'hasFastSound']
+const OPTIONAL_TEXT_KEYS = ['outline', 'shadow', 'lineSpacing']
 
 type ParseContext = {
   mediaIds: ReadonlySet<string>
   clipIds: Set<string>
+  // How many groups the clips being read are inside.
+  depth: number
 }
 
 function parseTiming(fields: Fields, context: ParseContext, animatable: readonly AnimatableProperty[]): ClipTiming {
@@ -576,6 +674,15 @@ function parseTiming(fields: Fields, context: ParseContext, animatable: readonly
   return timing
 }
 
+// Like a transition, an animation may be longer than its clip.
+function parseAnimation(fields: Fields, key: string): Animation {
+  const animation = readFields(fields.raw(key), fields.at(key), ['type', 'duration'])
+  const type = animation.oneOf('type', ANIMATION_TYPES)
+  // Only a text clip has letters to show one after the other.
+  if (type === 'typewriter' && fields.raw('type') !== 'text') fail(animation.at('type'), 'can only be "typewriter" on a text clip')
+  return { type, duration: animation.gridTime('duration', 'positive') }
+}
+
 function parseVisual(fields: Fields, clipDuration: number): VisualSettings {
   const visual: VisualSettings = {
     transform: parseTransform(fields.raw('transform'), fields.at('transform')),
@@ -585,6 +692,8 @@ function parseVisual(fields: Fields, clipDuration: number): VisualSettings {
   if (fields.has('fadeOut')) visual.fadeOut = parseFade(fields, 'fadeOut', clipDuration)
   if (fields.has('transitionIn')) visual.transitionIn = parseTransition(fields, 'transitionIn')
   if (fields.has('transitionOut')) visual.transitionOut = parseTransition(fields, 'transitionOut')
+  if (fields.has('animationIn')) visual.animationIn = parseAnimation(fields, 'animationIn')
+  if (fields.has('animationOut')) visual.animationOut = parseAnimation(fields, 'animationOut')
   return visual
 }
 
@@ -595,11 +704,14 @@ function parseMediaId(fields: Fields, context: ParseContext): string {
 }
 
 function parseSource(fields: Fields, context: ParseContext): SourceSettings {
-  return {
+  const source: SourceSettings = {
     mediaId: parseMediaId(fields, context),
     sourceStart: fields.integer('sourceStart', { min: 0 }),
     speedPercent: fields.integer('speedPercent', { min: MIN_SPEED_PERCENT, max: MAX_SPEED_PERCENT }),
   }
+  if (fields.has('changesPitch')) source.changesPitch = parseSwitch(fields, 'changesPitch')
+  if (fields.has('hasFastSound')) source.hasFastSound = parseSwitch(fields, 'hasFastSound')
+  return source
 }
 
 function parseVolume(fields: Fields, clipDuration: number): VolumeSettings {
@@ -620,7 +732,7 @@ function parseVideoClip(value: unknown, path: string, context: ParseContext): Vi
     value,
     path,
     [...TIMING_KEYS, ...VISUAL_KEYS, ...SOURCE_KEYS, 'volume'],
-    [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_VOLUME_KEYS, 'crop', 'isAudioSeparated', 'loop'],
+    [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_VOLUME_KEYS, ...OPTIONAL_SOURCE_KEYS, 'crop', 'isAudioSeparated', 'loop'],
   )
   const timing = parseTiming(fields, context, [...TRANSFORM_PROPERTIES, ...CROP_PROPERTIES, 'volume'])
   const clip: VideoClip = {
@@ -638,7 +750,7 @@ function parseVideoClip(value: unknown, path: string, context: ParseContext): Vi
 }
 
 function parseAudioClip(value: unknown, path: string, context: ParseContext): AudioClip {
-  const fields = readFields(value, path, [...TIMING_KEYS, ...SOURCE_KEYS, 'volume'], [...OPTIONAL_VOLUME_KEYS, 'keyframes'])
+  const fields = readFields(value, path, [...TIMING_KEYS, ...SOURCE_KEYS, 'volume'], [...OPTIONAL_VOLUME_KEYS, ...OPTIONAL_SOURCE_KEYS, 'keyframes'])
   const timing = parseTiming(fields, context, ['volume'])
   return { type: 'audio', ...timing, ...parseSource(fields, context), ...parseVolume(fields, timing.duration) }
 }
@@ -657,21 +769,126 @@ function parseImageClip(value: unknown, path: string, context: ParseContext): Im
   return clip
 }
 
+function parseFont(value: unknown, path: string): TextSettings['font'] {
+  const fields = readFields(value, path, ['family', 'size'], ['weight'])
+  const font: TextSettings['font'] = { family: fields.nonEmptyString('family'), size: fields.number('size', { above: 0 }) }
+  if (fields.has('weight')) {
+    const weight = fields.integer('weight', { min: 100, max: 900 })
+    if (weight % FONT_WEIGHT_STEP !== 0) fail(fields.at('weight'), 'must be a whole hundred from 100 to 900')
+    font.weight = weight
+  }
+  return font
+}
+
+function parseTextSettings(fields: Fields, text: string): TextSettings {
+  const settings: TextSettings = {
+    text,
+    font: parseFont(fields.raw('font'), fields.at('font')),
+    color: fields.color('color'),
+    align: fields.oneOf('align', TEXT_ALIGNMENTS),
+  }
+  if (fields.has('outline')) {
+    const outline = readFields(fields.raw('outline'), fields.at('outline'), ['color', 'width'])
+    settings.outline = { color: outline.color('color'), width: outline.number('width', { above: 0 }) }
+  }
+  if (fields.has('shadow')) {
+    const shadow = readFields(fields.raw('shadow'), fields.at('shadow'), ['color', 'offsetX', 'offsetY', 'blur'])
+    settings.shadow = { color: shadow.color('color'), offsetX: shadow.number('offsetX'), offsetY: shadow.number('offsetY'), blur: shadow.number('blur', { min: 0 }) }
+  }
+  if (fields.has('lineSpacing')) settings.lineSpacing = fields.number('lineSpacing', LINE_SPACING)
+  return settings
+}
+
 function parseTextClip(value: unknown, path: string, context: ParseContext): TextClip {
-  const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, 'text', 'font', 'color', 'align'], OPTIONAL_PICTURE_KEYS)
+  const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, ...TEXT_KEYS], [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_TEXT_KEYS, 'background', 'boxWidth'])
   const timing = parseTiming(fields, context, TRANSFORM_PROPERTIES)
-  const font = readFields(fields.raw('font'), fields.at('font'), ['family', 'size'])
-  const color = fields.string('color')
-  if (!COLOR_PATTERN.test(color)) fail(fields.at('color'), 'must look like #RRGGBB or #RRGGBBAA')
   const clip: TextClip = {
     type: 'text',
     ...timing,
     ...parseVisual(fields, timing.duration),
-    text: fields.nonEmptyString('text'),
-    font: { family: font.nonEmptyString('family'), size: font.number('size', { above: 0 }) },
-    color,
-    align: fields.oneOf('align', TEXT_ALIGNMENTS),
+    ...parseTextSettings(fields, fields.nonEmptyString('text')),
   }
+  if (fields.has('background')) {
+    const background = readFields(fields.raw('background'), fields.at('background'), ['color'])
+    clip.background = { color: background.color('color') }
+  }
+  if (fields.has('boxWidth')) clip.boxWidth = fields.number('boxWidth', { above: 0 })
+  if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'))
+  return clip
+}
+
+// The shapes that point at something with a tail.
+export function hasTail(shape: CalloutShape): boolean {
+  return shape === 'speechBubble' || shape === 'thoughtBubble'
+}
+
+function parseCalloutClip(value: unknown, path: string, context: ParseContext): CalloutClip {
+  const required = [...TIMING_KEYS, ...VISUAL_KEYS, ...TEXT_KEYS, 'width', 'height', 'shape', 'fill', 'borderColor', 'borderWidth']
+  const fields = readFields(value, path, required, [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_TEXT_KEYS, 'tail'])
+  const timing = parseTiming(fields, context, TRANSFORM_PROPERTIES)
+  const clip: CalloutClip = {
+    type: 'callout',
+    ...timing,
+    ...parseVisual(fields, timing.duration),
+    ...parseTextSettings(fields, fields.string('text')),
+    width: fields.number('width', { above: 0 }),
+    height: fields.number('height', { above: 0 }),
+    shape: fields.oneOf('shape', CALLOUT_SHAPES),
+    fill: fields.color('fill'),
+    borderColor: fields.color('borderColor'),
+    borderWidth: fields.number('borderWidth', { min: 0 }),
+  }
+  if (fields.has('tail') !== hasTail(clip.shape)) fail(fields.at('tail'), 'is needed by a speech bubble and a thought bubble, and by no other shape')
+  if (fields.has('tail')) {
+    const tail = readFields(fields.raw('tail'), fields.at('tail'), ['x', 'y'])
+    clip.tail = { x: tail.number('x'), y: tail.number('y') }
+  }
+  if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'))
+  return clip
+}
+
+function parseArrowClip(value: unknown, path: string, context: ParseContext): ArrowClip {
+  const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, 'length', 'thickness', 'color', 'startHead', 'endHead'], OPTIONAL_PICTURE_KEYS)
+  const timing = parseTiming(fields, context, TRANSFORM_PROPERTIES)
+  const clip: ArrowClip = {
+    type: 'arrow',
+    ...timing,
+    ...parseVisual(fields, timing.duration),
+    length: fields.number('length', { above: 0 }),
+    thickness: fields.number('thickness', { above: 0 }),
+    color: fields.color('color'),
+    startHead: fields.oneOf('startHead', ARROW_HEADS),
+    endHead: fields.oneOf('endHead', ARROW_HEADS),
+  }
+  if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'))
+  return clip
+}
+
+function parseTracks(value: readonly unknown[], path: string, context: ParseContext): Track[] {
+  const tracks: Track[] = []
+  for (const [index, track] of value.entries()) {
+    tracks.push(parseTrack(track, `${path}[${index}]`, context))
+  }
+  rejectDuplicateIds(tracks, path)
+  return tracks
+}
+
+function parseGroupClip(value: unknown, path: string, context: ParseContext): GroupClip {
+  if (context.depth >= MAX_GROUP_DEPTH) fail(path, `is a group inside more than ${MAX_GROUP_DEPTH} groups`)
+  const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, 'volume', 'tracks'], [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_VOLUME_KEYS, 'contentStart'])
+  const timing = parseTiming(fields, context, [...TRANSFORM_PROPERTIES, 'volume'])
+  const clip: GroupClip = {
+    type: 'group',
+    ...timing,
+    ...parseVisual(fields, timing.duration),
+    ...parseVolume(fields, timing.duration),
+    tracks: parseTracks(fields.array('tracks'), fields.at('tracks'), { ...context, depth: context.depth + 1 }),
+  }
+  // The members keep their shapes only when the group is scaled by one number.
+  const hasSameScaleKeyframes = JSON.stringify(timing.keyframes?.scaleX) === JSON.stringify(timing.keyframes?.scaleY)
+  const isEvenlyScaled = clip.transform.scaleX === clip.transform.scaleY && hasSameScaleKeyframes
+  if (!isEvenlyScaled) fail(fields.at('transform'), 'of a group must have the same scaleX and scaleY, in its keyframes too')
+  if (fields.has('contentStart')) clip.contentStart = fields.gridTime('contentStart', 'positive')
   if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'))
   return clip
 }
@@ -727,6 +944,12 @@ function parseClip(value: unknown, path: string, context: ParseContext): Clip {
     return parseBlurClip(value, path, context)
   } else if (type === 'highlight') {
     return parseHighlightClip(value, path, context)
+  } else if (type === 'callout') {
+    return parseCalloutClip(value, path, context)
+  } else if (type === 'arrow') {
+    return parseArrowClip(value, path, context)
+  } else if (type === 'group') {
+    return parseGroupClip(value, path, context)
   } else {
     return fail(`${path}.type`, `must be one of ${CLIP_TYPES.join(', ')}; this version cannot open other clip types`)
   }
@@ -813,12 +1036,8 @@ function parseDocument(document: unknown): Project {
   }
   rejectDuplicateIds(media, 'media')
 
-  const context: ParseContext = { mediaIds: new Set(media.map((entry) => entry.id)), clipIds: new Set() }
-  const tracks: Track[] = []
-  for (const [index, track] of fields.array('tracks').entries()) {
-    tracks.push(parseTrack(track, `tracks[${index}]`, context))
-  }
-  rejectDuplicateIds(tracks, 'tracks')
+  const context: ParseContext = { mediaIds: new Set(media.map((entry) => entry.id)), clipIds: new Set(), depth: 0 }
+  const tracks = parseTracks(fields.array('tracks'), 'tracks', context)
 
   const project: Project = {
     version: PROJECT_VERSION,

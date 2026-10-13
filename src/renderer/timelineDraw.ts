@@ -1,4 +1,5 @@
-import { endOf, hasMedia, makesSound } from '../editor/clips.js'
+import { CALLOUT_NAMES } from '../editor/annotations.js'
+import { endOf, hasMedia, hasVolume, makesSound } from '../editor/clips.js'
 import { takesEffects } from '../editor/effects.js'
 import {
   CAMERA_LANE_HEIGHT,
@@ -12,6 +13,7 @@ import {
   trackTop,
   transitionBands,
   visibleRange,
+  volumePoints,
   xToTime,
   zoomBars,
   type Band,
@@ -20,11 +22,12 @@ import {
   type Marquee,
   type TimelineView,
   type TransitionBand,
+  type VolumePoint,
 } from '../editor/timelineView.js'
 import type { MediaStates } from '../engine/resolve.js'
 import type { Size } from '../shared/exportPresets.js'
 import type { MediaInfo, Preparation, WaveformLevel } from '../shared/mediaProtocol.js'
-import type { AudioClip, Clip, Project, Track, VideoClip } from '../shared/project.js'
+import type { AudioClip, Clip, GroupClip, Project, Track, VideoClip } from '../shared/project.js'
 import { TICKS_PER_SAMPLE, TICKS_PER_SECOND, frameDuration, frameIndexAt, loopedTime, sourceTime, timecode } from '../shared/time.js'
 import type { Thumbnails } from './thumbnails.js'
 
@@ -58,6 +61,9 @@ const GRIP_HEIGHT = 16
 const ZOOM_BAR_HEIGHT = 6
 const ZOOM_BAR_OPACITY = 0.5
 const ZOOM_DIAMOND = 5
+const VOLUME_LINE_WIDTH = 1.5
+const VOLUME_POINT_RADIUS = 3
+const OUTSIDE_GROUP_OPACITY = 0.6
 
 export type TimelineColors = {
   background: string
@@ -95,6 +101,8 @@ export type ContentScene = {
   fonts: TimelineFonts
   inOrder: ClipIndex
   thumbnails: Thumbnails
+  // The part of the timeline an open group shows; the rest is shaded. Undefined while no group is open.
+  shown: { from: number; to: number } | undefined
 }
 
 // What something held over the timeline would change if it were released now: the end of a clip a transition would go to, or the clip an effect would go to.
@@ -131,6 +139,8 @@ export type OverlayScene = {
   // The grips of the transitions of that clip, and the one that is held.
   grips: readonly TransitionBand[]
   heldGrip: TransitionBand | undefined
+  // The volume keyframe that is being dragged.
+  heldPoint: VolumePoint | undefined
   heldLabel: string
 }
 
@@ -180,14 +190,24 @@ function clipColor(clip: Clip, scene: ContentScene): string {
   if (clip.type === 'video') return videoOf(clip, scene.mediaStates)?.isAnimatedImage === true ? colors.image : colors.video
   if (clip.type === 'audio') return colors.audio
   if (clip.type === 'image') return colors.image
-  if (clip.type === 'blur') return colors.blur
+  // A group has no kind of its own, so it takes the one colour that says nothing about what is inside.
+  if (clip.type === 'blur' || clip.type === 'group') return colors.blur
   return colors.annotation
+}
+
+function memberCount(group: GroupClip): number {
+  let count = 0
+  for (const track of group.tracks) count += track.clips.length
+  return count
 }
 
 function clipName(clip: Clip, mediaNames: ReadonlyMap<string, string>): string {
   if (clip.type === 'text') return clip.text.split('\n')[0] ?? ''
   if (clip.type === 'blur') return clip.isPixelated === true ? 'Pixelate' : 'Blur'
   if (clip.type === 'highlight') return clip.isSpotlight === true ? 'Spotlight' : 'Highlight'
+  if (clip.type === 'callout') return clip.text.split('\n')[0] || CALLOUT_NAMES[clip.shape]
+  if (clip.type === 'arrow') return clip.startHead === 'none' && clip.endHead === 'none' ? 'Line' : 'Arrow'
+  if (clip.type === 'group') return `Group of ${memberCount(clip)}`
   return mediaNames.get(clip.mediaId) ?? clip.mediaId
 }
 
@@ -352,15 +372,37 @@ function shapeOf(clip: Clip, scene: ContentScene, rowTop: number): ClipShape {
 
 function hasFades(clip: Clip): boolean {
   const pictureFades = clip.type !== 'audio' && (clip.fadeIn !== undefined || clip.fadeOut !== undefined)
-  const soundFades = (clip.type === 'audio' || clip.type === 'video') && (clip.volumeFadeIn !== undefined || clip.volumeFadeOut !== undefined)
+  const soundFades = hasVolume(clip) && (clip.volumeFadeIn !== undefined || clip.volumeFadeOut !== undefined)
   return pictureFades || soundFades
+}
+
+// The volume of a clip over its length, as a line through its volume keyframes with a dot on each. The way between two keyframes is drawn straight, whatever its easing.
+function drawVolumeLine(context: CanvasRenderingContext2D, shape: ClipShape, scene: ContentScene, rowTop: number): void {
+  const points = volumePoints(shape.clip, shape.sound !== undefined, scene.view, rowTop)
+  const [first] = points
+  const last = points.at(-1)
+  if (first === undefined || last === undefined) return
+  context.beginPath()
+  context.moveTo(shape.left, first.y)
+  for (const point of points) context.lineTo(point.x, point.y)
+  context.lineTo(shape.left + shape.width, last.y)
+  context.strokeStyle = scene.colors.primary
+  context.lineWidth = VOLUME_LINE_WIDTH
+  context.stroke()
+  context.fillStyle = scene.colors.textPrimary
+  for (const point of points) {
+    context.beginPath()
+    context.arc(point.x, point.y, VOLUME_POINT_RADIUS, 0, 2 * Math.PI)
+    context.fill()
+    context.stroke()
+  }
 }
 
 // What is drawn inside a clip: its thumbnail, waveform, fade ramps and name. A clip too narrow for a name has none of the first two either.
 function drawClipDetails(context: CanvasRenderingContext2D, shape: ClipShape, scene: ContentScene): void {
   const { clip, left, top, width, height, radius, picture, sound } = shape
   const isWide = width >= MIN_WIDTH_FOR_PICTURES
-  if (!isWide && !hasFades(clip)) return
+  if (!isWide && !hasFades(clip) && clip.keyframes?.volume === undefined) return
 
   context.save()
   context.beginPath()
@@ -378,10 +420,11 @@ function drawClipDetails(context: CanvasRenderingContext2D, shape: ClipShape, sc
     drawRamp(context, picture, left, clip.fadeIn, 1, scene)
     drawRamp(context, picture, left + width, clip.fadeOut, -1, scene)
   }
-  if ((clip.type === 'audio' || clip.type === 'video') && sound !== undefined) {
+  if (hasVolume(clip) && sound !== undefined) {
     drawRamp(context, sound, left, clip.volumeFadeIn, 1, scene)
     drawRamp(context, sound, left + width, clip.volumeFadeOut, -1, scene)
   }
+  if (clip.keyframes?.volume !== undefined) drawVolumeLine(context, shape, scene, top - CLIP_INSET)
   drawLabel(context, clip, scene, left, top, width)
   context.restore()
 }
@@ -494,6 +537,16 @@ export function drawContent(context: CanvasRenderingContext2D, scene: ContentSce
     const isVisible = rowTop + TRACK_HEIGHT > TRACKS_TOP && rowTop < size.height
     if (isVisible) drawTrack(context, track, scene, rowTop)
   }
+  if (scene.shown !== undefined) {
+    // What an open group does not show is still there to be edited, but it is not seen or heard in the project.
+    const from = Math.max(0, timeToX(scene.shown.from, view))
+    const to = Math.min(size.width, timeToX(scene.shown.to, view))
+    context.globalAlpha = OUTSIDE_GROUP_OPACITY
+    context.fillStyle = colors.background
+    context.fillRect(0, TRACKS_TOP, from, size.height - TRACKS_TOP)
+    context.fillRect(to, TRACKS_TOP, Math.max(0, size.width - to), size.height - TRACKS_TOP)
+    context.globalAlpha = 1
+  }
   drawRuler(context, scene)
   drawCameraLane(context, scene)
 }
@@ -584,6 +637,16 @@ export function drawOverlay(context: CanvasRenderingContext2D, scene: OverlaySce
     const labelWidth = context.measureText(scene.heldLabel).width
     const { gripX, gripY, edge } = scene.heldGrip
     drawChip(context, scene, scene.heldLabel, edge === 'in' ? gripX - HANDLE_LABEL_GAP - labelWidth : gripX + HANDLE_LABEL_GAP, gripY)
+  }
+
+  if (scene.heldPoint !== undefined) {
+    const { x, y } = scene.heldPoint
+    context.beginPath()
+    context.arc(x, y, HANDLE_RADIUS, 0, 2 * Math.PI)
+    context.fillStyle = colors.primary
+    context.fill()
+    context.font = scene.fonts.small
+    drawChip(context, scene, scene.heldLabel, x + HANDLE_LABEL_GAP, y)
   }
 
   if (scene.heldHandle !== undefined) {

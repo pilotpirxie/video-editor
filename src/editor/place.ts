@@ -3,10 +3,22 @@ import type { MediaStates } from '../engine/resolve.js'
 import type { MediaInfo, MediaUse, UnlinkedMedia } from '../shared/mediaProtocol.js'
 import { MAX_CANVAS, MIN_CANVAS, type Canvas, type Clip, type MediaRef, type Project, type Transform } from '../shared/project.js'
 import { NORMAL_SPEED_PERCENT, PROJECT_FRAME_RATES, TICKS_PER_SECOND, frameDuration, type FrameRate } from '../shared/time.js'
-import { hasMedia, placeOnTrack, type NewTrack } from './clips.js'
+import { allClips, hasMedia, placeOnTrack, type NewTrack } from './clips.js'
 
 // How long a clip without a source of its own length lasts when it is added: a still image, an animated image, a text.
-export const STILL_DURATION = 5 * TICKS_PER_SECOND
+const STILL_DURATION = 5 * TICKS_PER_SECOND
+
+// What every clip that is added without media starts with: five seconds in the middle of the canvas.
+export function centredStill(project: Project, added: { clipId: string; start: number }): { id: string; start: number; duration: number; transform: Transform; opacity: number } {
+  const { canvas } = project
+  return {
+    id: added.clipId,
+    start: added.start,
+    duration: STILL_DURATION,
+    transform: { x: canvas.width / 2, y: canvas.height / 2, scaleX: 1, scaleY: 1, rotation: 0 },
+    opacity: 1,
+  }
+}
 
 export type MediaDrop = {
   reference: MediaRef
@@ -79,12 +91,10 @@ export function mediaFileName(reference: MediaRef): string {
 // What the clips of a project need from one of its media files.
 export function mediaUses(project: Project, mediaId: string): MediaUse[] {
   const uses = new Set<MediaUse>()
-  for (const track of project.tracks) {
-    for (const clip of track.clips) {
-      if (!hasMedia(clip) || clip.mediaId !== mediaId) continue
-      if (clip.type === 'audio') uses.add('sound')
-      else uses.add(clip.type)
-    }
+  for (const clip of allClips(project.tracks)) {
+    if (!hasMedia(clip) || clip.mediaId !== mediaId) continue
+    if (clip.type === 'audio') uses.add('sound')
+    else uses.add(clip.type)
   }
   return [...uses]
 }

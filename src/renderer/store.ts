@@ -1,3 +1,4 @@
+import { scopeOf, scopedProject, withScopedProject, type Scope } from '../editor/groups.js'
 import { EMPTY_HISTORY, record, redo, undo, type History } from '../editor/history.js'
 import type { MediaStates } from '../engine/resolve.js'
 import type { LoadedProject, MediaState } from '../shared/mediaProtocol.js'
@@ -12,7 +13,14 @@ type ExportStatus =
   | { phase: 'failed'; fileName: string; message: string }
 
 export type EditorState = {
+  // What is being edited: the whole project, or, while groups are open, the tracks of the innermost open group in that group's own time.
   project: Project
+  // Everything, as it is saved, played and exported.
+  wholeProject: Project
+  // The groups that are open, the outermost first.
+  openGroups: readonly string[]
+  // Where the open tracks lie in the time of the whole project; undefined while no group is open.
+  scope: Scope | undefined
   mediaStates: MediaStates
   selection: readonly string[]
   // The zoom of the camera that is selected, by its place in the list. Selecting clips unselects it, and selecting it unselects the clips.
@@ -49,6 +57,10 @@ export type EditorStore = {
   undo(): void
   redo(): void
   select(clipIds: readonly string[]): void
+  // Goes into a group of the tracks that are open, to edit its members.
+  openGroup(groupId: string): void
+  // Leaves the innermost open groups, down to `depth` of them, and selects the outermost one that was left.
+  closeGroups(depth: number): void
   selectZoom(index: number | undefined): void
   setMediaState(mediaId: string, state: MediaState): void
   markSaved(project: Project, documentPath: string): void
@@ -69,6 +81,7 @@ export function updateStep(store: EditorStore, label: string, edit: Edit, isStep
   store.update(edit)
 }
 
+// `base` is the whole project as it was when the gesture began.
 type Gesture = {
   label: string
   base: Project
@@ -96,6 +109,9 @@ function withoutMissingClips(selection: readonly string[], project: Project): re
 export function createEditorStore(): EditorStore {
   let state: EditorState = {
     project: EMPTY_PROJECT,
+    wholeProject: EMPTY_PROJECT,
+    openGroups: NO_SELECTION,
+    scope: undefined,
     mediaStates: {},
     selection: NO_SELECTION,
     selectedZoom: undefined,
@@ -113,8 +129,25 @@ export function createEditorStore(): EditorStore {
   let gesture: Gesture | undefined
   const listeners = new Set<() => void>()
 
-  function setState(changes: Partial<EditorState>): void {
+  // The tracks that are open follow the whole project. A group that is gone, after an undo for example, is no longer open, nor are the groups inside it.
+  function withOpenTracks(next: EditorState): void {
+    let openGroups = next.openGroups
+    let scoped = scopedProject(next.wholeProject, openGroups)
+    while (scoped === undefined) {
+      openGroups = openGroups.slice(0, -1)
+      scoped = scopedProject(next.wholeProject, openGroups)
+    }
+    if (openGroups.length !== next.openGroups.length) next.openGroups = openGroups
+    next.scope = scopeOf(next.wholeProject, openGroups)
+    // Inside a group every change of the whole project gives a new object for the open tracks; views must only see one when something they show has changed.
+    const { project } = state
+    const isSameInside = openGroups.length > 0 && scoped.tracks === project.tracks && scoped.media === project.media && scoped.canvas === project.canvas && project.camera === undefined
+    next.project = isSameInside ? project : scoped
+  }
+
+  function setState(changes: Partial<Omit<EditorState, 'project' | 'scope'>>): void {
     const next = { ...state, ...changes }
+    if (next.wholeProject !== state.wholeProject || next.openGroups !== state.openGroups) withOpenTracks(next)
     if (next.project !== state.project) {
       next.selection = withoutMissingClips(next.selection, next.project)
       if (next.editingTextId !== undefined && withoutMissingClips([next.editingTextId], next.project).length === 0) next.editingTextId = undefined
@@ -128,7 +161,7 @@ export function createEditorStore(): EditorStore {
     if (gesture === undefined) return false
     const { base } = gesture
     gesture = undefined
-    if (state.project !== base) setState({ project: base })
+    if (state.wholeProject !== base) setState({ wholeProject: base })
     return true
   }
 
@@ -136,20 +169,24 @@ export function createEditorStore(): EditorStore {
     if (gesture === undefined) return
     const { label, base } = gesture
     gesture = undefined
-    if (state.project === base) return
-    setState({ history: record(state.history, { label, before: base, after: state.project }) })
+    if (state.wholeProject === base) return
+    setState({ history: record(state.history, { label, before: base, after: state.wholeProject }) })
   }
 
   function begin(label: string): void {
     cancel()
-    gesture = { label, base: state.project }
+    gesture = { label, base: state.wholeProject }
   }
 
   // Every update starts from the project as it was when the gesture began, so a drag is absolute and repeating an update changes nothing.
   function update(edit: Edit): boolean {
     if (gesture === undefined) return false
-    const project = edit(gesture.base)
-    if (project !== state.project) setState({ project })
+    const { base } = gesture
+    const { openGroups } = state
+    const open = scopedProject(base, openGroups)
+    // An edit is made to the tracks that are open, and what it gives is put back into the whole project.
+    const wholeProject = open === undefined ? base : withScopedProject(base, openGroups, edit(open))
+    if (wholeProject !== state.wholeProject) setState({ wholeProject })
     return true
   }
 
@@ -162,12 +199,12 @@ export function createEditorStore(): EditorStore {
   function travel(move: (history: History) => { history: History; project: Project } | undefined): void {
     cancel()
     const moved = move(state.history)
-    if (moved !== undefined) setState({ history: moved.history, project: moved.project })
+    if (moved !== undefined) setState({ history: moved.history, wholeProject: moved.project })
   }
 
   return {
     getState: () => state,
-    committedProject: () => gesture?.base ?? state.project,
+    committedProject: () => gesture?.base ?? state.wholeProject,
     subscribe(listener) {
       listeners.add(listener)
       return () => listeners.delete(listener)
@@ -175,7 +212,8 @@ export function createEditorStore(): EditorStore {
     open(loaded, documentPath, isSaved) {
       gesture = undefined
       setState({
-        project: loaded.project,
+        wholeProject: loaded.project,
+        openGroups: NO_SELECTION,
         mediaStates: loaded.media,
         selection: NO_SELECTION,
         selectedZoom: undefined,
@@ -194,11 +232,25 @@ export function createEditorStore(): EditorStore {
     undo: () => travel(undo),
     redo: () => travel(redo),
     select: (clipIds) => setState({ selection: clipIds, selectedZoom: undefined }),
+    openGroup(groupId) {
+      commit()
+      setState({ openGroups: [...state.openGroups, groupId], selection: NO_SELECTION, selectedZoom: undefined, editingTextId: undefined })
+    },
+    closeGroups(depth) {
+      const left = state.openGroups[depth]
+      if (left === undefined) return
+      commit()
+      setState({ openGroups: state.openGroups.slice(0, depth), selection: [left], editingTextId: undefined })
+    },
     selectZoom: (selectedZoom) => setState({ selectedZoom, selection: selectedZoom === undefined ? state.selection : NO_SELECTION }),
     setMediaState: (mediaId, mediaState) => setState({ mediaStates: { ...state.mediaStates, [mediaId]: mediaState } }),
     markSaved: (project, documentPath) => setState({ savedProject: project, documentPath }),
     notify: (notice) => setState({ notice }),
-    showExportDialog: (isExportDialogOpen) => setState({ isExportDialogOpen }),
+    // An export is of the whole project, so the dialog is opened on that.
+    showExportDialog(isExportDialogOpen) {
+      const isInsideGroup = isExportDialogOpen && state.openGroups.length > 0
+      setState(isInsideGroup ? { isExportDialogOpen, openGroups: NO_SELECTION, selection: NO_SELECTION } : { isExportDialogOpen })
+    },
     setExportStatus: (exportStatus) => setState({ exportStatus }),
     setPendingImports: (pendingImports) => setState({ pendingImports }),
     setSnapping: (isSnapping) => setState({ isSnapping }),

@@ -1,6 +1,6 @@
 import type { BlurClip, Clip, HighlightClip, Project, Shape, ShapeClip } from '../shared/project.js'
 import { editClips, placeOnTrack, type NewTrack } from './clips.js'
-import { STILL_DURATION } from './place.js'
+import { centredStill } from './place.js'
 
 const OPAQUE_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
 const SMALLEST_STRENGTH = 0.1
@@ -39,11 +39,7 @@ export function isShape(clip: Clip): clip is ShapeClip {
 export function addShape(project: Project, added: NewShape): Project {
   const { canvas } = project
   const base = {
-    id: added.clipId,
-    start: added.start,
-    duration: STILL_DURATION,
-    transform: { x: canvas.width / 2, y: canvas.height / 2, scaleX: 1, scaleY: 1, rotation: 0 },
-    opacity: 1,
+    ...centredStill(project, added),
     width: Math.round(canvas.width * WIDTH_SHARE),
     height: Math.round(canvas.height * HEIGHT_SHARE),
     softEdge: 0,

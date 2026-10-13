@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs'
-import { open, readFile, rename, rm, writeFile, type FileHandle } from 'node:fs/promises'
+import { open, readFile, readdir, rename, rm, stat, utimes, writeFile, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { WaveformLevel } from '../shared/mediaProtocol.js'
-import { SAMPLE_RATE, TICKS_PER_SAMPLE } from '../shared/time.js'
-import type { FfmpegRunner } from './ffmpeg.js'
+import type { AudioStretch, WaveformLevel } from '../shared/mediaProtocol.js'
+import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, NORMAL_SPEED_PERCENT, SAMPLE_RATE, TICKS_PER_SAMPLE } from '../shared/time.js'
+import type { FfmpegRunner, Job } from './ffmpeg.js'
 
 export const WAVEFORM_BUCKET_SAMPLES = 480
 export const AUDIO_FILE = 'audio.f32'
@@ -17,6 +17,18 @@ const INT8_PEAK = 127
 const INITIAL_BUCKET_CAPACITY = 4096
 const WAVEFORM_LEVEL_FACTOR = 8
 const SMALLEST_LEVEL_BUCKETS = 512
+// FFmpeg's tempo filter goes no slower than this in one step; slower speeds take several steps.
+const SLOWEST_TEMPO_STEP = 0.5
+// A stretched copy is as large as the sound it was made from, divided by the speed. Trying out speeds must not fill the disk.
+const MAX_STRETCHED_COPIES = 4
+const STRETCHED_FILE = /^audio-\d+[kc]\.f32$/
+
+class StretchError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'StretchError'
+  }
+}
 
 export type AudioSource = {
   path: string
@@ -120,6 +132,24 @@ export async function readWaveform(directory: string): Promise<WaveformLevel[]> 
   return waveformLevels(peaks)
 }
 
+// Writes everything a job puts out to a file. A job that fails or is cancelled leaves no file behind.
+async function writeOutput(job: Job, path: string, onChunk: (chunk: Buffer) => void): Promise<void> {
+  const output = await open(path, 'w')
+  try {
+    for (;;) {
+      const chunk = await job.readChunk(READ_TIMEOUT_MS)
+      if (chunk === undefined) break
+      await output.write(chunk)
+      onChunk(chunk)
+    }
+  } catch (error) {
+    await output.close()
+    await rm(path, { force: true })
+    throw error
+  }
+  await output.close()
+}
+
 export async function prepareAudio(ffmpeg: FfmpegRunner, source: AudioSource, directory: string, signal: AbortSignal): Promise<void> {
   if (isAudioPrepared(directory)) return
 
@@ -128,28 +158,72 @@ export async function prepareAudio(ffmpeg: FfmpegRunner, source: AudioSource, di
   const job = ffmpeg.spawnJob('ffmpeg', ['-copyts', '-i', source.path, '-map', '0:a:0', '-af', filter, '-f', 'f32le', '-'], { signal })
 
   const temporaryPath = join(directory, `${AUDIO_FILE}.tmp`)
-  const output = await open(temporaryPath, 'w')
   const peaks = createPeakFolder()
   let loose: Buffer = Buffer.alloc(0)
-  try {
-    for (;;) {
-      const chunk = await job.readChunk(READ_TIMEOUT_MS)
-      if (chunk === undefined) break
-      await output.write(chunk)
-      const joined = loose.length === 0 ? chunk : Buffer.concat([loose, chunk])
-      const frames = wholeFrames(joined)
-      peaks.add(frames)
-      loose = joined.subarray(frames.byteLength)
-    }
-  } catch (error) {
-    await output.close()
-    await rm(temporaryPath, { force: true })
-    throw error
-  }
-  await output.close()
+  await writeOutput(job, temporaryPath, (chunk) => {
+    const joined = loose.length === 0 ? chunk : Buffer.concat([loose, chunk])
+    const frames = wholeFrames(joined)
+    peaks.add(frames)
+    loose = joined.subarray(frames.byteLength)
+  })
 
   await writeFile(join(directory, WAVEFORM_FILE), peaks.finish())
   await rename(temporaryPath, join(directory, AUDIO_FILE))
+}
+
+// The FFmpeg filter that plays sound at another speed. The request comes from the window, so it is checked before it becomes part of a command and of a file name.
+export function tempoFilter(stretch: AudioStretch): string {
+  const { speedPercent } = stretch
+  const isUsable = Number.isInteger(speedPercent) && speedPercent >= MIN_SPEED_PERCENT && speedPercent <= MAX_SPEED_PERCENT && speedPercent !== NORMAL_SPEED_PERCENT
+  if (!isUsable || typeof stretch.keepsPitch !== 'boolean') throw new StretchError(`Sound cannot be played at "${String(speedPercent)}" percent of its speed`)
+
+  // Samples made for one rate and played at another are faster and higher, like a tape.
+  if (!stretch.keepsPitch) return `asetrate=${(SAMPLE_RATE * speedPercent) / NORMAL_SPEED_PERCENT},aresample=${SAMPLE_RATE}`
+
+  const steps: string[] = []
+  let tempo = speedPercent / NORMAL_SPEED_PERCENT
+  while (tempo < SLOWEST_TEMPO_STEP) {
+    steps.push(`atempo=${SLOWEST_TEMPO_STEP}`)
+    tempo /= SLOWEST_TEMPO_STEP
+  }
+  steps.push(`atempo=${tempo}`)
+  return steps.join(',')
+}
+
+export function stretchKey(stretch: AudioStretch): string {
+  return `${stretch.speedPercent}${stretch.keepsPitch ? 'k' : 'c'}`
+}
+
+async function removeOldestStretchedCopies(directory: string): Promise<void> {
+  const copies: { path: string; usedAt: number }[] = []
+  for (const name of await readdir(directory)) {
+    if (!STRETCHED_FILE.test(name)) continue
+    const path = join(directory, name)
+    copies.push({ path, usedAt: (await stat(path)).mtimeMs })
+  }
+  copies.sort((a, b) => a.usedAt - b.usedAt)
+  // One place is kept free for the copy that is about to be written.
+  for (const copy of copies.slice(0, Math.max(0, copies.length - MAX_STRETCHED_COPIES + 1))) await rm(copy.path, { force: true })
+}
+
+// The prepared sound of a file at another speed, made once per speed from the whole file, so that every clip that uses it, and both halves of a split, read the very same samples.
+export async function openStretchedAudio(ffmpeg: FfmpegRunner, directory: string, stretch: AudioStretch, signal: AbortSignal): Promise<FileHandle> {
+  const filter = tempoFilter(stretch)
+  const path = join(directory, `audio-${stretchKey(stretch)}.f32`)
+  if (existsSync(path)) {
+    // Its time says when it was last wanted, which is what decides the copy to remove.
+    const now = new Date()
+    await utimes(path, now, now)
+    return open(path, 'r')
+  }
+
+  await removeOldestStretchedCopies(directory)
+  const raw = ['-f', 'f32le', '-ar', String(SAMPLE_RATE), '-ac', String(CHANNELS)]
+  const job = ffmpeg.spawnJob('ffmpeg', [...raw, '-i', join(directory, AUDIO_FILE), '-af', filter, '-f', 'f32le', '-'], { signal })
+  const temporaryPath = `${path}.tmp`
+  await writeOutput(job, temporaryPath, () => {})
+  await rename(temporaryPath, path)
+  return open(path, 'r')
 }
 
 export function openPreparedAudio(directory: string): Promise<FileHandle> {

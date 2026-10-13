@@ -27,6 +27,7 @@ const PATHS = {
   music: 'M6 12V3l7-1.5v9M6 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM13 10.5a2 2 0 1 1-4 0 2 2 0 0 1 4 0z',
   chevronDown: 'M4 6l4 4 4-4',
   chevronRight: 'M6 4l4 4-4 4',
+  chevronLeft: 'M10 4L6 8l4 4',
   check: 'M3.5 8.5l3 3 6-7',
   list: 'M2 3h3.5v3.5H2zM8 4.75h6M2 9.5h3.5V13H2zM8 11.25h6',
   grid: 'M2.5 2.5h4.5V7H2.5zM9 2.5h4.5V7H9zM2.5 9h4.5v4.5H2.5zM9 9h4.5v4.5H9z',
@@ -43,6 +44,12 @@ const PATHS = {
   blur: 'M8 3a5 5 0 0 0 0 10M10 3.4l.5.3M12 5.2l.3.5M12.8 7.8v.5M12 10.3l-.3.5M10.5 12.3l-.5.3',
   marker: 'M3 13.5h10M5 10l5.5-7 2.5 2-5.5 7zM5 10l-.5 2.5 3-.5',
   spotlight: 'M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2',
+  keyframe: 'M8 2.5L13.5 8 8 13.5 2.5 8z',
+  callout: 'M2.5 3h11v7.5H7.5l-3 2.5v-2.5h-2z',
+  arrow: 'M3 13L13 3M7.5 3H13v5.5',
+  line: 'M3 13L13 3',
+  group: 'M2.5 2.5h7v7h-7zM6.5 6.5h7v7h-7z',
+  motion: 'M2 12.5c3.5 0 3-9 6.5-9S11 9 14 9M11.5 6.5L14 9l-2.5 2.5',
 } as const
 
 export type IconName = keyof typeof PATHS

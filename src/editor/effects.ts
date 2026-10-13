@@ -1,5 +1,5 @@
 import type { Size } from '../shared/exportPresets.js'
-import type { Clip, Effect, EffectType, PictureClip, Project } from '../shared/project.js'
+import type { Clip, Effect, EffectType, GroupClip, PictureClip, Project } from '../shared/project.js'
 import { editClips } from './clips.js'
 
 const OPAQUE_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
@@ -8,9 +8,9 @@ const SMALLEST_LENGTH = 0.1
 // New effects are sized for a canvas 1080 pixels high and scaled to the canvas they are added to, so they look the same on a small and on a 4K canvas.
 const REFERENCE_HEIGHT = 1080
 
-// Text, video and images have a picture that effects can change. Sound has none, and blur and highlight clips are effects on what is beneath them.
-export function takesEffects(clip: Clip): clip is PictureClip {
-  return clip.type === 'video' || clip.type === 'image' || clip.type === 'text'
+// Everything with a picture of its own takes effects, and a group passes its effects on to its members. Sound has no picture, and blur and highlight clips are effects on what is beneath them.
+export function takesEffects(clip: Clip): clip is PictureClip | GroupClip {
+  return clip.type !== 'audio' && clip.type !== 'blur' && clip.type !== 'highlight'
 }
 
 function between(value: number, least: number, most: number): number {
@@ -84,7 +84,7 @@ function hasSameSettings(first: Effect, second: Effect): boolean {
   return settings.length === others.size && settings.every(([key, value]) => others.get(key) === value)
 }
 
-function withEffects(clip: PictureClip, effects: Effect[]): PictureClip {
+function withEffects(clip: PictureClip | GroupClip, effects: Effect[]): Clip {
   return { ...clip, effects: effects.length === 0 ? undefined : effects }
 }
 

@@ -70,7 +70,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
   if (gl === null) throw new CompositorError('WebGL2 is not available on this machine')
   const compositor = createCompositor(gl)
   const provider = createFrameProvider(media, compositor)
-  const readAudio = cachedAudioReader((mediaId, firstSample, sampleCount) => media.audio(mediaId, firstSample, sampleCount), AUDIO_CACHE_BYTES)
+  const readAudio = cachedAudioReader((mediaId, firstSample, sampleCount, stretch) => media.audio(mediaId, firstSample, sampleCount, stretch), AUDIO_CACHE_BYTES)
 
   let loaded: LoadedProject | undefined
   let output: Size = { width: surface.width, height: surface.height }

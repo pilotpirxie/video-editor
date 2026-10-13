@@ -1,6 +1,6 @@
 import type { CameraKeyframe, Clip, Track } from '../shared/project.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
-import { endOf, isVisual } from './clips.js'
+import { endOf, hasVolume, isVisual } from './clips.js'
 import type { Fade } from './properties.js'
 import { transitionSpans, type TransitionEdge } from './transitions.js'
 
@@ -15,6 +15,7 @@ const PICTURE_SHARE = 0.6
 const FADE_HANDLE_INSET = 7
 const HANDLE_REACH = 8
 const MIN_WIDTH_FOR_FADES = 4 * FADE_HANDLE_INSET
+const MAX_VOLUME = 2
 const ZOOM_REACH = 6
 const ZOOM_START_REACH = 2 * ZOOM_REACH
 const MIN_WIDTH_FOR_ZOOM_START = 2 * ZOOM_START_REACH
@@ -242,7 +243,7 @@ export function fadeHandles(clip: Clip, makesSound: boolean, view: TimelineView,
     const y = bands.picture.top + FADE_HANDLE_INSET
     handles.push({ fade: 'fadeIn', x: fadeInX(clip.fadeIn), y }, { fade: 'fadeOut', x: fadeOutX(clip.fadeOut), y })
   }
-  if ((clip.type === 'audio' || clip.type === 'video') && bands.sound !== undefined) {
+  if (hasVolume(clip) && bands.sound !== undefined) {
     const y = bands.sound.top + bands.sound.height - FADE_HANDLE_INSET
     handles.push({ fade: 'volumeFadeIn', x: fadeInX(clip.volumeFadeIn), y }, { fade: 'volumeFadeOut', x: fadeOutX(clip.volumeFadeOut), y })
   }
@@ -265,6 +266,34 @@ function nearestInReach(handles: readonly { x: number; y: number }[], x: number,
 
 export function fadeHandleAt(handles: readonly FadeHandle[], x: number, y: number): FadeHandle | undefined {
   return handles[nearestInReach(handles, x, y)]
+}
+
+// A volume keyframe of a clip, where it is drawn on the clip's sound. `index` is its place among the clip's volume keyframes.
+export type VolumePoint = {
+  index: number
+  x: number
+  y: number
+}
+
+// The height in a band that stands for a volume: silence at the bottom, twice the recorded volume at the top.
+function volumeY(band: Band, volume: number): number {
+  return band.top + band.height * (1 - volume / MAX_VOLUME)
+}
+
+// The volume a height in a band stands for, within what a clip can have.
+export function volumeAtY(band: Band, y: number): number {
+  return Math.min(MAX_VOLUME, Math.max(0, (1 - (y - band.top) / band.height) * MAX_VOLUME))
+}
+
+export function volumePoints(clip: Clip, makesSound: boolean, view: TimelineView, rowTop: number): VolumePoint[] {
+  const keyframes = clip.keyframes?.volume
+  const band = clipBands(clip, makesSound, rowTop).sound
+  if (keyframes === undefined || band === undefined || !hasVolume(clip)) return []
+  return keyframes.map((keyframe, index) => ({ index, x: timeToX(clip.start + keyframe.time, view), y: volumeY(band, keyframe.value) }))
+}
+
+export function volumePointAt(points: readonly VolumePoint[], x: number, y: number): VolumePoint | undefined {
+  return points[nearestInReach(points, x, y)]
 }
 
 // Where a transition is drawn on its clip, and the grip that sets its length.

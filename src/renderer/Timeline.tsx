@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
+import { locateClip } from '../editor/clips.js'
+import { changeKeyframe, removeKeyframe } from '../editor/properties.js'
 import { shortcutFor, shortcutHint } from '../editor/shortcuts.js'
 import { TRACK_HEIGHT } from '../editor/timelineView.js'
 import { addTrack, deleteTrack, moveTrack, renameTrack, setTrackFlag, type TrackFlag } from '../editor/tracks.js'
-import type { Track } from '../shared/project.js'
+import type { Easing, Track } from '../shared/project.js'
 import { useEditorState, useSession } from './context.js'
 import { Icon, IconButton, type IconName } from './icons.js'
 import { PopupMenu, type MenuItem } from './Menu.js'
-import { createTimelineController, type TimelineController } from './timelineController.js'
+import { createTimelineController, type KeyframeRef, type TimelineController } from './timelineController.js'
 import { isKeyForTheEditor } from './transport.js'
 
 const ZOOM_STEP = 1.5
@@ -15,6 +17,20 @@ type Point = {
   x: number
   y: number
 }
+
+// The menu of the timeline, and the volume keyframe it was opened on, if any.
+type OpenMenu = {
+  at: Point
+  keyframe: KeyframeRef | undefined
+}
+
+const EASINGS: readonly { easing: Easing; label: string }[] = [
+  { easing: 'linear', label: 'Linear' },
+  { easing: 'easeIn', label: 'Ease In' },
+  { easing: 'easeOut', label: 'Ease Out' },
+  { easing: 'easeInOut', label: 'Ease In and Out' },
+  { easing: 'hold', label: 'Hold' },
+]
 
 const FLAGS: readonly { flag: TrackFlag; icon: IconName; on: string; off: string }[] = [
   { flag: 'locked', icon: 'lock', on: 'Unlock Track', off: 'Lock Track' },
@@ -105,6 +121,36 @@ function TrackHeader({ track, index }: { track: Track; index: number }): ReactEl
   )
 }
 
+// The way into the open group, from the project down. Each step before the last closes the groups after it.
+function GroupPath({ openGroups }: { openGroups: readonly string[] }): ReactElement {
+  const { store } = useSession()
+  const wholeProject = useEditorState((state) => state.wholeProject)
+  const steps: { label: string; depth: number }[] = [{ label: 'Project', depth: 0 }]
+  let project = wholeProject
+  for (const [index, groupId] of openGroups.entries()) {
+    const group = locateClip(project, groupId)?.clip
+    if (group?.type !== 'group') break
+    steps.push({ label: openGroups.length === 1 ? 'Group' : `Group ${index + 1}`, depth: index + 1 })
+    project = { ...project, tracks: group.tracks }
+  }
+  return (
+    <nav className="group-path" aria-label="Open group" data-testid="group-path">
+      {steps.map((step) =>
+        step.depth === openGroups.length ? (
+          <span key={step.depth} className="group-path-here" aria-current="location">
+            {step.label}
+          </span>
+        ) : (
+          <button key={step.depth} type="button" className="button" data-testid={`group-path-${step.depth}`} onClick={() => store.closeGroups(step.depth)}>
+            <Icon name="chevronLeft" />
+            {step.label}
+          </button>
+        ),
+      )}
+    </nav>
+  )
+}
+
 export function Timeline(): ReactElement {
   const session = useSession()
   const { store, actions } = session
@@ -112,13 +158,14 @@ export function Timeline(): ReactElement {
   const isSnapping = useEditorState((state) => state.isSnapping)
   const hasSelection = useEditorState((state) => state.selection.length > 0)
   const openCount = useEditorState((state) => state.openCount)
+  const openGroups = useEditorState((state) => state.openGroups)
   const hostRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const headersRef = useRef<HTMLDivElement>(null)
   const controllerRef = useRef<TimelineController | undefined>(undefined)
-  const [menuAt, setMenuAt] = useState<Point | undefined>(undefined)
-  const closeMenu = useCallback(() => setMenuAt(undefined), [])
+  const [menu, setMenu] = useState<OpenMenu | undefined>(undefined)
+  const closeMenu = useCallback(() => setMenu(undefined), [])
 
   useEffect(() => {
     const host = hostRef.current
@@ -126,12 +173,13 @@ export function Timeline(): ReactElement {
     const overlay = overlayRef.current
     const headers = headersRef.current
     if (host === null || content === null || overlay === null || headers === null) return
-    const controller = createTimelineController({ host, content, overlay, headers }, session, setMenuAt)
+    const controller = createTimelineController({ host, content, overlay, headers }, session, (at, keyframe) => setMenu({ at, keyframe }))
     controllerRef.current = controller
     return () => controller.dispose()
   }, [session])
 
-  useEffect(() => controllerRef.current?.zoomToFit(), [openCount])
+  // A new document and another group are another timeline, which is shown whole.
+  useEffect(() => controllerRef.current?.zoomToFit(), [openCount, openGroups])
 
   useEffect(() => {
     function onKeyDown(event: globalThis.KeyboardEvent): void {
@@ -148,10 +196,12 @@ export function Timeline(): ReactElement {
   }, [])
 
   // Worked out only while the menu is open: it looks at every selected clip.
-  const canSeparateAudio = menuAt !== undefined && actions.canSeparateAudio()
+  const canSeparateAudio = menu !== undefined && actions.canSeparateAudio()
   const clipMenu: MenuItem[] = [
     { label: 'Split at Playhead', testId: 'menu-split', onSelect: actions.split },
     { label: 'Separate Video and Audio', testId: 'menu-separate-audio', isDisabled: !canSeparateAudio, onSelect: actions.separateAudio },
+    { label: 'Group', testId: 'menu-group', isDisabled: !hasSelection, onSelect: actions.group },
+    { label: 'Ungroup', testId: 'menu-ungroup', isDisabled: !hasSelection, onSelect: actions.ungroup },
     { label: 'Copy', testId: 'menu-copy', isDisabled: !hasSelection, onSelect: actions.copy },
     { label: 'Paste', testId: 'menu-paste', onSelect: actions.paste },
     { label: 'Duplicate', testId: 'menu-duplicate', isDisabled: !hasSelection, onSelect: actions.duplicate },
@@ -159,12 +209,27 @@ export function Timeline(): ReactElement {
     { label: 'Ripple Delete', testId: 'menu-ripple-delete', isDisabled: !hasSelection, onSelect: () => actions.deleteSelection(true) },
   ]
 
+  // The menu of a volume keyframe: how the volume gets from it to the next one, and a way to take it out.
+  const { keyframe } = menu ?? {}
+  const keyframeMenu: MenuItem[] =
+    keyframe === undefined
+      ? []
+      : [
+          ...EASINGS.map(({ easing, label }) => ({
+            label,
+            testId: `menu-easing-${easing}`,
+            onSelect: () => store.apply('Change Keyframe Easing', (project) => changeKeyframe(project, keyframe.clipId, 'volume', keyframe.index, { easing })),
+          })),
+          { label: 'Delete Keyframe', testId: 'menu-keyframe-delete', onSelect: () => store.apply('Delete Volume Keyframe', (project) => removeKeyframe(project, keyframe.clipId, 'volume', keyframe.index)) },
+        ]
+
   return (
     <div className="timeline">
       <div className="timeline-toolbar" role="toolbar" aria-label="Timeline tools">
         <IconButton icon="plus" label="Add track" testId="add-track" onClick={actions.addTrack} />
         <IconButton icon="scissors" label="Split at playhead" testId="split" shortcut="⌘T" onClick={actions.split} />
         <IconButton icon="magnet" label="Snapping" testId="snapping" isPressed={isSnapping} onClick={() => store.setSnapping(!isSnapping)} />
+        {openGroups.length > 0 && <GroupPath openGroups={openGroups} />}
         <span className="spacer" />
         <IconButton icon="minus" label="Zoom out" testId="timeline-zoom-out" shortcut={shortcutHint('timeline-zoom-out')} onClick={() => controllerRef.current?.zoomBy(1 / ZOOM_STEP)} />
         <IconButton icon="fit" label="Show the whole project" testId="timeline-zoom-fit" shortcut={shortcutHint('timeline-zoom-fit')} onClick={() => controllerRef.current?.zoomToFit()} />
@@ -185,7 +250,7 @@ export function Timeline(): ReactElement {
           <canvas ref={overlayRef} aria-label="Timeline" />
         </div>
       </div>
-      {menuAt !== undefined && <PopupMenu label="Clip" items={clipMenu} at={menuAt} onClose={closeMenu} />}
+      {menu !== undefined && <PopupMenu label={keyframe === undefined ? 'Clip' : 'Volume keyframe'} items={keyframe === undefined ? clipMenu : keyframeMenu} at={menu.at} onClose={closeMenu} />}
     </div>
   )
 }

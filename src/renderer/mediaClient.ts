@@ -133,8 +133,8 @@ export function createMediaClient(port: MessagePort): MediaClient {
     openStream: (mediaId, frame, halvings) => callForNumber({ method: 'openStream', mediaId, frame, halvings }),
     streamFrame: (streamId, frame) => callForFrame({ method: 'streamFrame', streamId, frame }),
     closeStream: (streamId) => callForNothing({ method: 'closeStream', streamId }),
-    async audio(mediaId, firstSample, sampleCount) {
-      const request: MediaRequest = { method: 'audio', mediaId, firstSample, sampleCount }
+    async audio(mediaId, firstSample, sampleCount, stretch) {
+      const request: MediaRequest = { method: 'audio', mediaId, firstSample, sampleCount, stretch }
       const answer = await call(request)
       if (answer !== undefined && !(answer instanceof Float32Array)) throw unexpectedAnswer(request)
       return answer

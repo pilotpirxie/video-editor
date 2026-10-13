@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SECOND, audioClip, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
+import { SECOND, audioClip, clipOf, groupClip, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import { EFFECT_TYPES, type Clip, type Effect, type EffectType, type Project } from '../shared/project.js'
 import { addEffect, defaultEffect, moveEffect, removeEffect, setEffect, setEffectOff, takesEffects } from './effects.js'
 
@@ -92,5 +92,17 @@ describe('changing effects', () => {
     const none = removeEffect(removeEffect(fewer, ['a'], 'border'), ['a'], 'colorAdjust')
     expect(JSON.stringify(reopened(none))).not.toContain('effects')
     expect(removeEffect(none, ['a'], 'border')).toBe(none)
+  })
+})
+
+describe('effects on drawn clips and groups', () => {
+  it('gives an effect to a callout, an arrow and a group', () => {
+    const base = { start: 0, duration: SECOND, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1 }
+    const callout: Clip = { ...base, id: 'callout', type: 'callout', text: '', font: { family: 'Menlo', size: 20 }, color: '#000000', align: 'center', width: 200, height: 100, shape: 'banner', fill: '#ffffff', borderColor: '#000000', borderWidth: 2 }
+    const arrow: Clip = { ...base, id: 'arrow', type: 'arrow', length: 100, thickness: 4, color: '#ff0000', startHead: 'none', endHead: 'triangle' }
+    const project = projectOf([track('t1', [callout]), track('t2', [arrow]), track('t3', [groupClip('group', 0, SECOND, [[videoClip('m', 0, SECOND)]])])])
+    const added = addEffect(project, ['callout', 'arrow', 'group'], 'dropShadow')
+    for (const id of ['callout', 'arrow', 'group']) expect(kindsOn(added, id)).toEqual(['dropShadow'])
+    expect(reopened(added)).toEqual(added)
   })
 })

@@ -28,6 +28,8 @@ export type Transport = {
   pause(): void
   seek(time: number): void
   shuttle(direction: 1 | -1, limits: TimelineLimits): void
+  // While a group is open, times are those of its tracks: project time minus this offset.
+  setOffset(offset: number): void
 }
 
 type Shuttle = {
@@ -44,6 +46,7 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
   let position = START_POSITION
   let audio: AudioOutput | undefined
   let shuttling: Shuttle | undefined
+  let offset = 0
   const listeners = new Set<() => void>()
 
   function announce(): void {
@@ -62,7 +65,7 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
     if (event.type !== 'position') return
     const hasStopped = position.isPlaying && !event.isPlaying
     position = {
-      time: event.time,
+      time: event.time - offset,
       isPlaying: event.isPlaying,
       droppedFrames: event.droppedFrames,
       fullQualityMs: event.fullQualityMs,
@@ -72,6 +75,11 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
     if (hasStopped) void suspendSound()
     announce()
   })
+
+  // The engine knows project time only, and none before its start.
+  function seekEngine(time: number): void {
+    engine.send({ type: 'seek', time: Math.max(0, time + offset) })
+  }
 
   function endShuttle(): void {
     if (shuttling === undefined) return
@@ -116,7 +124,7 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
     const frame = Math.min(lastFrame, Math.max(0, frameAt(wanted, frameTicks)))
     if (frame !== active.shownFrame) {
       active.shownFrame = frame
-      engine.send({ type: 'seek', time: frame * frameTicks })
+      seekEngine(frame * frameTicks)
     }
     const hasReachedAnEnd = active.rate < 0 ? frame === 0 : frame === lastFrame
     if (hasReachedAnEnd) {
@@ -158,9 +166,16 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
     pause,
     seek(time) {
       endShuttle()
-      engine.send({ type: 'seek', time })
+      seekEngine(time)
     },
     shuttle,
+    setOffset(next) {
+      if (next === offset) return
+      endShuttle()
+      position = { ...position, time: position.time + offset - next, sequence: position.sequence + 1 }
+      offset = next
+      announce()
+    },
   }
 }
 

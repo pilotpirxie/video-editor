@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { afterAll, expect } from 'vitest'
+import { allClips } from '../src/editor/clips.js'
 import { createFfmpegRunner, writeAll, type FfmpegRunner } from '../src/media/ffmpeg.js'
 import { parseProject, serializeProject, type CameraKeyframe, type Clip, type MediaRef, type Project, type Transform, type VideoClip } from '../src/shared/project.js'
 import { BARCODE_BITS, BARCODE_HEIGHT_FRACTION, barcodeSource, type VideoPattern } from './media/generate.js'
@@ -229,15 +230,17 @@ export async function renderFrames(project: string, request: FrameRequest): Prom
 
 // The clips a test draws, one list per track with the bottom track first. Each clip names its media by its file in the generated test media.
 export function projectOfTracks(canvas: Size, tracks: readonly (readonly Clip[])[], camera?: CameraKeyframe[]): Project {
+  const projectTracks = tracks.map((clips, index) => ({ id: `track-${index}`, name: `Track ${index + 1}`, hidden: false, locked: false, muted: false, clips: [...clips] }))
   const media = new Map<string, MediaRef>()
-  for (const clip of tracks.flat()) {
+  // The members of groups use media too.
+  for (const clip of allClips(projectTracks)) {
     if ('mediaId' in clip) media.set(clip.mediaId, { id: clip.mediaId, path: join(ROOT, 'test', 'media', 'generated', clip.mediaId), relativePath: '' })
   }
   const project: Project = {
     version: 1,
     canvas: { ...canvas, frameRate: { num: 30, den: 1 } },
     media: [...media.values()],
-    tracks: tracks.map((clips, index) => ({ id: `track-${index}`, name: `Track ${index + 1}`, hidden: false, locked: false, muted: false, clips: [...clips] })),
+    tracks: projectTracks,
   }
   if (camera !== undefined) project.camera = camera
   return project

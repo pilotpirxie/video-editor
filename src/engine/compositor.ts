@@ -61,6 +61,7 @@ type PictureItem = {
   naturalHeight: number
   crop: Crop
   transform: Transform
+  placed?: Transform
   opacity: number
   hasAlphaBelow: boolean
   effects?: readonly Effect[]
@@ -511,7 +512,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     if (!(item.opacity > 0)) return
     const croppedWidth = item.naturalWidth - item.crop.left - item.crop.right
     const croppedHeight = item.naturalHeight - item.crop.top - item.crop.bottom
-    const box = boxOf(croppedWidth, croppedHeight, item.transition?.transform ?? item.transform, mapping)
+    const box = boxOf(croppedWidth, croppedHeight, item.placed ?? item.transform, mapping)
     if (box === undefined) return
 
     const finish: Finish = { opacity: item.opacity, look: item.transition }
@@ -558,7 +559,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
 
   function drawShape(item: BlurLayer | HighlightLayer): void {
     if (!(item.opacity > 0)) return
-    const box = boxOf(item.width, item.height, item.transition?.transform ?? item.transform, mapping)
+    const box = boxOf(item.width, item.height, item.placed ?? item.transform, mapping)
     if (box === undefined) return
 
     let kind = SHAPE_BLUR

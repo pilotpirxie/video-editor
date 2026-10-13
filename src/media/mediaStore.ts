@@ -7,6 +7,7 @@ import { FRAME_DECODE_PIXEL_BUDGET, MAX_OPEN_STREAMS } from '../shared/limits.js
 import { describeError, logError } from '../shared/log.js'
 import type {
   AddedMedia,
+  AudioStretch,
   ExportTarget,
   LoadedProject,
   MediaClient,
@@ -20,7 +21,7 @@ import type {
   WaveformLevel,
 } from '../shared/mediaProtocol.js'
 import { parseProject, type MediaRef, type Project } from '../shared/project.js'
-import { isAudioPrepared, openPreparedAudio, prepareAudio, readAudio, readWaveform } from './audio.js'
+import { isAudioPrepared, openPreparedAudio, openStretchedAudio, prepareAudio, readAudio, readWaveform, stretchKey } from './audio.js'
 import { startEncoder, type Encoder } from './encoder.js'
 import type { FfmpegRunner } from './ffmpeg.js'
 import { decodeFrame, openFrameStream, toArrayBuffer, type FrameStream, type VideoSource } from './frames.js'
@@ -46,6 +47,8 @@ type MediaEntry = {
   directory: string
   preview: PreviewCopy | undefined
   audio: Promise<FileHandle> | undefined
+  // The sound at other speeds, by speed and pitch setting.
+  stretched: Map<string, Promise<FileHandle>>
   hasFailed: boolean
 }
 
@@ -274,10 +277,13 @@ export class MediaSession implements MediaClient {
     this.streams.delete(streamId)
   }
 
-  async audio(mediaId: string, firstSample: number, sampleCount: number): Promise<Float32Array | undefined> {
+  async audio(mediaId: string, firstSample: number, sampleCount: number, stretch?: AudioStretch): Promise<Float32Array | undefined> {
     const entry = this.entryOf(mediaId)
     if (entry.info.kind === 'image' || entry.info.audio === undefined) return undefined
-    return readAudio(await this.preparedAudio(entry, this.project.lifetime.signal), firstSample, sampleCount)
+    const { signal } = this.project.lifetime
+    const prepared = await this.preparedAudio(entry, signal)
+    if (stretch === undefined) return readAudio(prepared, firstSample, sampleCount)
+    return readAudio(await this.stretchedAudio(entry, stretch, signal), firstSample, sampleCount)
   }
 
   async exportStart(target: ExportTarget): Promise<number> {
@@ -323,6 +329,7 @@ export class MediaSession implements MediaClient {
     for (const entry of project.media.values()) {
       await entry.preview?.close()
       if (entry.audio !== undefined) await closeWhenOpened(entry.audio)
+      for (const stretched of entry.stretched.values()) await closeWhenOpened(stretched)
     }
   }
 
@@ -342,7 +349,7 @@ export class MediaSession implements MediaClient {
     const directory = join(this.cacheDirectory, cacheKey(`${path}\n${file.size}\n${file.mtimeMs}`))
     await mkdir(directory, { recursive: true })
     const info = await this.infoOf(path, directory)
-    return { path, info, directory, preview: undefined, audio: undefined, hasFailed: false }
+    return { path, info, directory, preview: undefined, audio: undefined, stretched: new Map(), hasFailed: false }
   }
 
   private async infoOf(path: string, directory: string): Promise<MediaInfo> {
@@ -405,6 +412,22 @@ export class MediaSession implements MediaClient {
   private preparedAudio(entry: MediaEntry, signal: AbortSignal): Promise<FileHandle> {
     entry.audio ??= openAudio(this.ffmpeg, entry, signal)
     return entry.audio
+  }
+
+  // A copy that could not be made is asked for again the next time it is needed.
+  private async stretchedAudio(entry: MediaEntry, stretch: AudioStretch, signal: AbortSignal): Promise<FileHandle> {
+    const key = stretchKey(stretch)
+    let opening = entry.stretched.get(key)
+    if (opening === undefined) {
+      opening = openStretchedAudio(this.ffmpeg, entry.directory, stretch, signal)
+      entry.stretched.set(key, opening)
+    }
+    try {
+      return await opening
+    } catch (error) {
+      entry.stretched.delete(key)
+      throw error
+    }
   }
 
   private suspendIdleStreams(): void {

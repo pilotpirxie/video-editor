@@ -1,5 +1,6 @@
-import type { AudioClip, Clip, Project, VideoClip } from '../shared/project.js'
-import { NORMAL_SPEED_PERCENT, SAMPLE_RATE, TICKS_PER_SAMPLE } from '../shared/time.js'
+import type { AudioStretch } from '../shared/mediaProtocol.js'
+import { valueAt, type AudioClip, type Clip, type GroupClip, type Project, type Track, type VideoClip } from '../shared/project.js'
+import { FAST_SOUND_ABOVE_PERCENT, NORMAL_SPEED_PERCENT, SAMPLE_RATE, TICKS_PER_SAMPLE } from '../shared/time.js'
 import { createByteLru } from './byteLru.js'
 import { fadeFactor, type MediaStates } from './resolve.js'
 
@@ -12,9 +13,27 @@ const LIMITER_REACH = 2 * LIMITER_WINDOW
 const AUDIO_CHUNK_SAMPLES = SAMPLE_RATE
 const BYTES_PER_STEREO_SAMPLE = CHANNELS * Float32Array.BYTES_PER_ELEMENT
 
-export type AudioReader = (mediaId: string, firstSample: number, sampleCount: number) => Promise<Float32Array | undefined>
+// With a `stretch`, the samples are counted in the sound as it is at that speed.
+export type AudioReader = (mediaId: string, firstSample: number, sampleCount: number, stretch?: AudioStretch) => Promise<Float32Array | undefined>
 
 type SoundClip = VideoClip | AudioClip
+
+// A group around a sound, and how far the time of the track it is on lies behind project time.
+type Enclosing = {
+  group: GroupClip
+  shift: number
+}
+
+// A clip that is heard in the range being mixed.
+type Sounding = {
+  clip: SoundClip
+  // Project time minus the time of the track the clip is on; 0 outside groups.
+  shift: number
+  // The part of the range in which the clip, and every group around it, plays.
+  from: number
+  to: number
+  groups: readonly Enclosing[]
+}
 
 type Contribution = {
   offset: number
@@ -24,27 +43,57 @@ type Contribution = {
 function hasSound(clip: Clip, media: MediaStates): clip is SoundClip {
   if (clip.type !== 'video' && clip.type !== 'audio') return false
   if (clip.type === 'video' && clip.isAudioSeparated === true) return false
-  if (clip.speedPercent !== NORMAL_SPEED_PERCENT) return false
+  if (clip.speedPercent > FAST_SOUND_ABOVE_PERCENT && clip.hasFastSound !== true) return false
   const state = media[clip.mediaId]
   if (state === undefined || 'error' in state || state.info.kind === 'image') return false
   return state.info.audio !== undefined
 }
 
-async function contributionOf(clip: SoundClip, rangeFirst: number, rangeCount: number, readAudio: AudioReader): Promise<Contribution | undefined> {
-  const clipFirst = Math.ceil(clip.start / TICKS_PER_SAMPLE)
-  const clipEnd = Math.ceil((clip.start + clip.duration) / TICKS_PER_SAMPLE)
-  const first = Math.max(rangeFirst, clipFirst)
-  const end = Math.min(rangeFirst + rangeCount, clipEnd)
+// Walks into groups: the sound of their members is mixed like any other, inside the time the group is there.
+function collectSounds(tracks: readonly Track[], media: MediaStates, shift: number, window: { from: number; to: number }, groups: readonly Enclosing[], found: Sounding[]): void {
+  for (const track of tracks) {
+    if (track.muted) continue
+    for (const clip of track.clips) {
+      const from = Math.max(window.from, clip.start + shift)
+      const to = Math.min(window.to, clip.start + clip.duration + shift)
+      if (from >= to) continue
+      if (clip.type === 'group') {
+        const innerShift = shift + clip.start - (clip.contentStart ?? 0)
+        collectSounds(clip.tracks, media, innerShift, { from, to }, [...groups, { group: clip, shift }], found)
+      } else if (hasSound(clip, media)) {
+        found.push({ clip, shift, from, to, groups })
+      }
+    }
+  }
+}
+
+// How loud a clip or a group is at a moment of its own time: its volume, which keyframes may move, shaped by its fades.
+function gainAt(sound: SoundClip | GroupClip, localTime: number): number {
+  const keyframes = sound.keyframes?.volume
+  const volume = keyframes === undefined ? sound.volume : (valueAt(keyframes, localTime) ?? sound.volume)
+  return volume * fadeFactor(localTime, sound.duration, sound.volumeFadeIn, sound.volumeFadeOut)
+}
+
+async function contributionOf(sounding: Sounding, rangeFirst: number, readAudio: AudioReader): Promise<Contribution | undefined> {
+  const { clip, shift, groups } = sounding
+  const first = Math.ceil(sounding.from / TICKS_PER_SAMPLE)
+  const end = Math.ceil(sounding.to / TICKS_PER_SAMPLE)
   if (first >= end) return undefined
 
-  const sourceFirst = Math.floor((clip.sourceStart + first * TICKS_PER_SAMPLE - clip.start) / TICKS_PER_SAMPLE)
-  const source = await readAudio(clip.mediaId, sourceFirst, end - first)
+  // At another speed the samples come from the sound as it is at that speed. Counted from the start of the file, the place in it
+  // does not depend on where the clip begins, so both halves of a split read the same samples.
+  const speed = clip.speedPercent
+  const stretch = speed === NORMAL_SPEED_PERCENT ? undefined : { speedPercent: speed, keepsPitch: clip.changesPitch !== true }
+  const localTime = first * TICKS_PER_SAMPLE - shift - clip.start
+  const sourceFirst = Math.floor((clip.sourceStart * NORMAL_SPEED_PERCENT + localTime * speed) / (speed * TICKS_PER_SAMPLE))
+  const source = await readAudio(clip.mediaId, sourceFirst, end - first, stretch)
   if (source === undefined) return undefined
 
   const samples = new Float64Array((end - first) * CHANNELS)
   for (let sample = first; sample < end; sample++) {
-    const localTime = sample * TICKS_PER_SAMPLE - clip.start
-    const gain = clip.volume * fadeFactor(localTime, clip.duration, clip.volumeFadeIn, clip.volumeFadeOut)
+    const time = sample * TICKS_PER_SAMPLE
+    let gain = gainAt(clip, time - shift - clip.start)
+    for (const enclosing of groups) gain *= gainAt(enclosing.group, time - enclosing.shift - enclosing.group.start)
     const index = (sample - first) * CHANNELS
     samples[index] = (source[index] ?? 0) * gain
     samples[index + 1] = (source[index + 1] ?? 0) * gain
@@ -113,16 +162,15 @@ export async function mix(project: Project, media: MediaStates, firstSample: num
   const rangeCount = sampleCount + 2 * LIMITER_REACH
   const mixed = new Float64Array(rangeCount * CHANNELS)
 
-  for (const track of project.tracks) {
-    if (track.muted) continue
-    for (const clip of track.clips) {
-      if (!hasSound(clip, media)) continue
-      const contribution = await contributionOf(clip, rangeFirst, rangeCount, readAudio)
-      if (contribution === undefined) continue
-      const start = contribution.offset * CHANNELS
-      for (let index = 0; index < contribution.samples.length; index++) {
-        mixed[start + index] = (mixed[start + index] ?? 0) + (contribution.samples[index] ?? 0)
-      }
+  const sounds: Sounding[] = []
+  const range = { from: rangeFirst * TICKS_PER_SAMPLE, to: (rangeFirst + rangeCount) * TICKS_PER_SAMPLE }
+  collectSounds(project.tracks, media, 0, range, [], sounds)
+  for (const sounding of sounds) {
+    const contribution = await contributionOf(sounding, rangeFirst, readAudio)
+    if (contribution === undefined) continue
+    const start = contribution.offset * CHANNELS
+    for (let index = 0; index < contribution.samples.length; index++) {
+      mixed[start + index] = (mixed[start + index] ?? 0) + (contribution.samples[index] ?? 0)
     }
   }
   return limit(mixed, sampleCount)
@@ -131,20 +179,21 @@ export async function mix(project: Project, media: MediaStates, firstSample: num
 export function cachedAudioReader(read: AudioReader, maxBytes: number): AudioReader {
   const chunks = createByteLru<Promise<Float32Array | undefined>>(maxBytes, () => {})
 
-  function chunk(mediaId: string, chunkIndex: number): Promise<Float32Array | undefined> {
-    const key = `${mediaId}:${chunkIndex}`
+  function chunk(mediaId: string, chunkIndex: number, stretch: AudioStretch | undefined): Promise<Float32Array | undefined> {
+    const speed = stretch === undefined ? '' : `${stretch.speedPercent}:${stretch.keepsPitch}`
+    const key = `${mediaId}:${speed}:${chunkIndex}`
     const cached = chunks.get(key)
     if (cached !== undefined) return cached
-    const fetched = read(mediaId, chunkIndex * AUDIO_CHUNK_SAMPLES, AUDIO_CHUNK_SAMPLES)
+    const fetched = read(mediaId, chunkIndex * AUDIO_CHUNK_SAMPLES, AUDIO_CHUNK_SAMPLES, stretch)
     chunks.set(key, fetched, AUDIO_CHUNK_SAMPLES * BYTES_PER_STEREO_SAMPLE)
     return fetched
   }
 
-  return async function readCached(mediaId: string, firstSample: number, sampleCount: number): Promise<Float32Array | undefined> {
+  return async function readCached(mediaId: string, firstSample: number, sampleCount: number, stretch?: AudioStretch): Promise<Float32Array | undefined> {
     const samples = new Float32Array(sampleCount * CHANNELS)
     const end = firstSample + sampleCount
     for (let chunkIndex = Math.floor(firstSample / AUDIO_CHUNK_SAMPLES); chunkIndex * AUDIO_CHUNK_SAMPLES < end; chunkIndex++) {
-      const chunkSamples = await chunk(mediaId, chunkIndex)
+      const chunkSamples = await chunk(mediaId, chunkIndex, stretch)
       if (chunkSamples === undefined) return undefined
       const chunkFirst = chunkIndex * AUDIO_CHUNK_SAMPLES
       const from = Math.max(firstSample, chunkFirst)

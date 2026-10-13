@@ -1,11 +1,11 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { bundledFfmpeg } from '../../test/helpers.js'
 import { CLICK_SAMPLE_44K, mediaPath } from '../../test/media/generate.js'
-import { AUDIO_FILE, WAVEFORM_BUCKET_SAMPLES, WAVEFORM_FILE, createPeakFolder, openPreparedAudio, prepareAudio, readAudio, waveformLevels } from './audio.js'
+import { AUDIO_FILE, WAVEFORM_BUCKET_SAMPLES, WAVEFORM_FILE, createPeakFolder, openPreparedAudio, openStretchedAudio, prepareAudio, readAudio, tempoFilter, waveformLevels } from './audio.js'
 import { probeMedia } from './probe.js'
 
 const ffmpeg = bundledFfmpeg()
@@ -153,6 +153,79 @@ describe('prepareAudio', () => {
     await expect(rejected).rejects.toThrow(/cancelled/)
     expect(existsSync(join(directory, AUDIO_FILE))).toBe(false)
     expect(existsSync(join(directory, `${AUDIO_FILE}.tmp`))).toBe(false)
+  })
+})
+
+describe('sound at another speed', () => {
+  const never = new AbortController().signal
+
+  async function stretched(directory: string, speedPercent: number, keepsPitch: boolean): Promise<Float32Array> {
+    const audio = await openStretchedAudio(ffmpeg, directory, { speedPercent, keepsPitch }, never)
+    const samples = await readAudio(audio, 0, 200_000)
+    await audio.close()
+    return samples
+  }
+
+  function lastSound(samples: Float32Array): number {
+    for (let frame = samples.length / 2 - 1; frame >= 0; frame--) {
+      if (samples[frame * 2] !== 0) return frame
+    }
+    return 0
+  }
+
+  it('keeps the pitch with the tempo filter, in steps where one step cannot go that slow', () => {
+    expect(tempoFilter({ speedPercent: 200, keepsPitch: true })).toBe('atempo=2')
+    expect(tempoFilter({ speedPercent: 10_000, keepsPitch: true })).toBe('atempo=100')
+    expect(tempoFilter({ speedPercent: 25, keepsPitch: true })).toBe('atempo=0.5,atempo=0.5')
+    expect(tempoFilter({ speedPercent: 150, keepsPitch: false })).toBe('asetrate=72000,aresample=48000')
+  })
+
+  it('refuses a speed that is none', () => {
+    for (const speedPercent of [100, 24, 10_001, 150.5, Number.NaN]) {
+      expect(() => tempoFilter({ speedPercent, keepsPitch: true }), String(speedPercent)).toThrow(/cannot be played/)
+    }
+  })
+
+  // The tempo filter blends neighbouring pieces of sound, which spreads a click over some milliseconds; it must stay within a frame of where it belongs.
+  it('puts a sound where it is heard at that speed, within one frame', async () => {
+    const directory = await prepare('audio-44k-click.wav')
+    const oneFrame = 1600
+    for (const { speedPercent, keepsPitch } of [{ speedPercent: 200, keepsPitch: true }, { speedPercent: 150, keepsPitch: true }, { speedPercent: 50, keepsPitch: true }, { speedPercent: 200, keepsPitch: false }]) {
+      const samples = await stretched(directory, speedPercent, keepsPitch)
+      const expected = (24_000 * 100) / speedPercent
+      expect(Math.abs(loudestFrame(samples) - expected), `${speedPercent} % ${keepsPitch}`).toBeLessThanOrEqual(oneFrame)
+    }
+  })
+
+  it('is as long as the sound divided by the speed', async () => {
+    const directory = await prepare('audio.wav')
+    const tolerance = 4800
+    expect(Math.abs(lastSound(await stretched(directory, 200, true)) - RAMP_SAMPLES / 2)).toBeLessThanOrEqual(tolerance)
+    expect(Math.abs(lastSound(await stretched(directory, 400, false)) - RAMP_SAMPLES / 4)).toBeLessThanOrEqual(tolerance)
+  })
+
+  it('gives the same samples every time it is made', async () => {
+    const first = await stretched(await prepare('audio.wav'), 150, true)
+    const second = await stretched(await prepare('audio.wav'), 150, true)
+    expect(Buffer.from(first.buffer).equals(Buffer.from(second.buffer))).toBe(true)
+  })
+
+  it('keeps four copies per file and removes the one that was wanted longest ago', async () => {
+    const directory = await prepare('audio.wav')
+    for (const speedPercent of [110, 120, 130, 140]) {
+      await stretched(directory, speedPercent, true)
+      await new Promise((resolve) => setTimeout(resolve, 15))
+    }
+    await stretched(directory, 110, true)
+    await stretched(directory, 150, true)
+    const kept = (await readdir(directory)).filter((name) => name.startsWith('audio-')).sort()
+    expect(kept).toEqual(['audio-110k.f32', 'audio-130k.f32', 'audio-140k.f32', 'audio-150k.f32'])
+  })
+
+  it('leaves nothing behind when cancelled', async () => {
+    const directory = await prepare('audio.wav')
+    await expect(openStretchedAudio(ffmpeg, directory, { speedPercent: 300, keepsPitch: true }, AbortSignal.abort())).rejects.toThrow(/cancelled/)
+    expect((await readdir(directory)).filter((name) => name.startsWith('audio-'))).toEqual([])
   })
 })
 

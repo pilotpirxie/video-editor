@@ -1,5 +1,5 @@
 import type { MediaStates } from '../engine/resolve.js'
-import type { AudioClip, Clip, Keyframe, Keyframes, Project, Track, VideoClip, VisualClip } from '../shared/project.js'
+import type { AudioClip, Clip, GroupClip, Keyframe, Keyframes, Project, Track, VideoClip, VisualClip } from '../shared/project.js'
 
 export type NewTrack = {
   id: string
@@ -24,6 +24,41 @@ export function hasSource(clip: Clip): clip is VideoClip | AudioClip {
   return clip.type === 'video' || clip.type === 'audio'
 }
 
+// A clip with a volume of its own: one that plays a file, or a group, whose volume is that of everything in it.
+export function hasVolume(clip: Clip): clip is VideoClip | AudioClip | GroupClip {
+  return clip.type === 'video' || clip.type === 'audio' || clip.type === 'group'
+}
+
+// Every clip on the given tracks and inside the groups on them, however deep.
+export function allClips(tracks: readonly Track[]): Clip[] {
+  const clips: Clip[] = []
+  for (const track of tracks) {
+    for (const clip of track.clips) {
+      clips.push(clip)
+      if (clip.type === 'group') clips.push(...allClips(clip.tracks))
+    }
+  }
+  return clips
+}
+
+// A copy of a clip whose members, when it is a group, carry new ids. Two clips of a project never share an id, so a copy of a group needs one for every clip inside.
+// Nothing comes back when the map does not know a member.
+export function withMemberIds(clip: Clip, newIds: ReadonlyMap<string, string>): Clip | undefined {
+  if (clip.type !== 'group') return clip
+  const tracks: Track[] = []
+  for (const track of clip.tracks) {
+    const clips: Clip[] = []
+    for (const member of track.clips) {
+      const id = newIds.get(member.id)
+      const renamed = withMemberIds(member, newIds)
+      if (id === undefined || renamed === undefined) return undefined
+      clips.push({ ...renamed, id })
+    }
+    tracks.push({ ...track, clips })
+  }
+  return { ...clip, tracks }
+}
+
 // A clip that shows or plays a media file. Text, blur and highlight clips have none.
 export function hasMedia(clip: Clip): clip is Extract<Clip, { mediaId: string }> {
   return clip.type === 'video' || clip.type === 'audio' || clip.type === 'image'
@@ -41,7 +76,8 @@ export function hasLinkedAudio(clip: Clip, mediaStates: MediaStates): clip is Vi
   return state !== undefined && 'info' in state && state.info.kind === 'video' && state.info.audio !== undefined
 }
 
-export function makesSound(clip: Clip, mediaStates: MediaStates): clip is VideoClip | AudioClip {
+export function makesSound(clip: Clip, mediaStates: MediaStates): clip is VideoClip | AudioClip | GroupClip {
+  if (clip.type === 'group') return allClips(clip.tracks).some((member) => member.type !== 'group' && makesSound(member, mediaStates))
   return clip.type === 'audio' || hasLinkedAudio(clip, mediaStates)
 }
 
@@ -117,7 +153,7 @@ export function withFadesWithin(clip: Clip): Clip {
     return { ...clip, volumeFadeIn: fadeWithin(clip.volumeFadeIn, duration), volumeFadeOut: fadeWithin(clip.volumeFadeOut, duration) }
   }
   const visual = { ...clip, fadeIn: fadeWithin(clip.fadeIn, duration), fadeOut: fadeWithin(clip.fadeOut, duration) }
-  if (visual.type !== 'video') return visual
+  if (visual.type !== 'video' && visual.type !== 'group') return visual
   return { ...visual, volumeFadeIn: fadeWithin(visual.volumeFadeIn, duration), volumeFadeOut: fadeWithin(visual.volumeFadeOut, duration) }
 }
 

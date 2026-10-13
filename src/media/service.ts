@@ -40,7 +40,7 @@ function perform(session: MediaSession, request: MediaRequest, signal: AbortSign
     case 'closeStream':
       return session.closeStream(request.streamId)
     case 'audio':
-      return session.audio(request.mediaId, request.firstSample, request.sampleCount)
+      return session.audio(request.mediaId, request.firstSample, request.sampleCount, request.stretch)
     case 'exportStart':
       return session.exportStart(request.target)
     case 'exportWrite':

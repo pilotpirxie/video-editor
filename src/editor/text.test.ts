@@ -68,4 +68,57 @@ describe('setTextStyle', () => {
   it('lets typing pass through empty text', () => {
     expect(clipOf(setTextStyle(project, ['title'], { text: '' }), 'title')).toMatchObject({ text: '' })
   })
+
+  it('sets the weight in whole hundreds and leaves the regular weight out of the clip', () => {
+    const bold = setTextStyle(project, ['title'], { weight: 730 })
+    expect(clipOf(bold, 'title')).toMatchObject({ font: { family: 'Helvetica Neue', size: 90, weight: 700 } })
+    expect(reopened(bold)).toEqual(bold)
+    expect(clipOf(setTextStyle(bold, ['title'], { weight: 5000 }), 'title')).toMatchObject({ font: { weight: 900 } })
+    expect(clipOf(setTextStyle(bold, ['title'], { weight: 400 }), 'title')).toEqual(clipOf(project, 'title'))
+    expect(setTextStyle(project, ['title'], { weight: 400 })).toBe(project)
+  })
+
+  it('sets the line spacing within what the file accepts, and leaves the font\'s own out of the clip', () => {
+    const spaced = setTextStyle(project, ['title'], { lineSpacing: 1.5 })
+    expect(clipOf(spaced, 'title')).toMatchObject({ lineSpacing: 1.5 })
+    expect(reopened(spaced)).toEqual(spaced)
+    expect(clipOf(setTextStyle(project, ['title'], { lineSpacing: 9 }), 'title')).toMatchObject({ lineSpacing: 3 })
+    expect(clipOf(setTextStyle(project, ['title'], { lineSpacing: 0 }), 'title')).toMatchObject({ lineSpacing: 0.5 })
+    expect(clipOf(reopened(setTextStyle(spaced, ['title'], { lineSpacing: 1 })), 'title')).not.toHaveProperty('lineSpacing')
+  })
+
+  it('switches an outline, a shadow and a background on with a look that fits the size, and off again', () => {
+    const dressed = setTextStyle(project, ['title'], { hasOutline: true, hasShadow: true, hasBackground: true })
+    expect(clipOf(dressed, 'title')).toMatchObject({
+      outline: { color: '#000000', width: 5 },
+      shadow: { color: '#000000aa', offsetX: 6, offsetY: 6, blur: 6 },
+      background: { color: '#000000aa' },
+    })
+    expect(reopened(dressed)).toEqual(dressed)
+    expect(setTextStyle(dressed, ['title'], { hasOutline: true, hasShadow: true, hasBackground: true })).toBe(dressed)
+    const plain = reopened(setTextStyle(dressed, ['title'], { hasOutline: false, hasShadow: false, hasBackground: false }))
+    expect(plain).toEqual(reopened(project))
+  })
+
+  it('changes an outline, a shadow and a background that are there, and none that are not', () => {
+    const dressed = setTextStyle(project, ['title'], { hasOutline: true, hasShadow: true, hasBackground: true })
+    const changed = setTextStyle(dressed, ['title'], { outlineColor: '#ff0000', outlineWidth: 0, shadowOffsetX: -4, shadowBlur: -1, backgroundColor: '#112233' })
+    expect(clipOf(changed, 'title')).toMatchObject({
+      outline: { color: '#ff0000', width: 0.1 },
+      shadow: { color: '#000000aa', offsetX: -4, offsetY: 6, blur: 0 },
+      background: { color: '#112233' },
+    })
+    expect(reopened(changed)).toEqual(changed)
+    expect(setTextStyle(project, ['title'], { outlineColor: '#ff0000', shadowBlur: 3, backgroundColor: '#112233' })).toBe(project)
+    expect(setTextStyle(dressed, ['title'], { outlineColor: 'red', shadowColor: 'grey' })).toBe(dressed)
+  })
+
+  it('fixes the width of the box and lets it follow the lines again', () => {
+    const boxed = setTextStyle(project, ['title'], { boxWidth: 400 })
+    expect(clipOf(boxed, 'title')).toMatchObject({ boxWidth: 400 })
+    expect(reopened(boxed)).toEqual(boxed)
+    expect(clipOf(setTextStyle(boxed, ['title'], { boxWidth: 0 }), 'title')).toMatchObject({ boxWidth: 1 })
+    expect(clipOf(reopened(setTextStyle(boxed, ['title'], { boxWidth: 'auto' })), 'title')).not.toHaveProperty('boxWidth')
+    expect(setTextStyle(project, ['title'], { boxWidth: 'auto' })).toBe(project)
+  })
 })

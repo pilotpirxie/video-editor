@@ -29,7 +29,10 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
   const frameRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState<PreviewZoom>('fit')
   const [isCropping, setIsCropping] = useState(false)
-  const [isZooming, setIsZooming] = useState(false)
+  const [isZoomToolOn, setIsZoomToolOn] = useState(false)
+  // The camera looks at the whole project, so it is not changed from inside a group.
+  const isGroupOpen = useEditorState((state) => state.openGroups.length > 0)
+  const isZooming = isZoomToolOn && !isGroupOpen
   const isBusy = isPlaying || shuttleRate !== 0
 
   // While the zoom tool is used the paused picture is the whole canvas, so any part of it can be framed.
@@ -93,8 +96,8 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
           </span>
         )}
         <span className="spacer" />
-        <IconButton icon="zoom" label="Zoom and pan: frame what the camera shows" testId="zoom-tool" isPressed={isZooming} onClick={() => setIsZooming(!isZooming)} />
-        <IconButton icon="fit" label="Zoom to full: the camera shows the whole canvas from here" testId="zoom-to-full" onClick={actions.zoomToFull} />
+        <IconButton icon="zoom" label="Zoom and pan: frame what the camera shows" testId="zoom-tool" isPressed={isZooming} isDisabled={isGroupOpen} onClick={() => setIsZoomToolOn(!isZooming)} />
+        <IconButton icon="fit" label="Zoom to full: the camera shows the whole canvas from here" testId="zoom-to-full" isDisabled={isGroupOpen} onClick={actions.zoomToFull} />
         <IconButton icon="crop" label="Crop with the handles" testId="crop-mode" isPressed={isCropping} onClick={() => setIsCropping(!isCropping)} />
         <PreviewZoomButtons zoom={zoom} onZoom={setZoom} />
       </footer>

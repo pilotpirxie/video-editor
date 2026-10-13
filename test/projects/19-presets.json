@@ -1,0 +1,464 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 720,
+    "width": 1280
+  },
+  "media": [
+    {
+      "id": "white",
+      "path": "",
+      "relativePath": "../media/generated/image-white.png"
+    },
+    {
+      "id": "alpha",
+      "path": "",
+      "relativePath": "../media/generated/image-alpha.png"
+    },
+    {
+      "id": "h264",
+      "path": "",
+      "relativePath": "../media/generated/h264.mp4"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 72000000,
+          "id": "ground",
+          "mediaId": "white",
+          "opacity": 0.25,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 8,
+            "scaleY": 8,
+            "x": 640,
+            "y": 360
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "ground",
+      "locked": false,
+      "muted": false,
+      "name": "ground"
+    },
+    {
+      "clips": [
+        {
+          "animationIn": {
+            "duration": 24000000,
+            "type": "fade"
+          },
+          "animationOut": {
+            "duration": 12000000,
+            "type": "fade"
+          },
+          "duration": 72000000,
+          "id": "fade",
+          "mediaId": "alpha",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.6,
+            "scaleY": 0.6,
+            "x": 170,
+            "y": 150
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "p-fade",
+      "locked": false,
+      "muted": false,
+      "name": "p-fade"
+    },
+    {
+      "clips": [
+        {
+          "animationIn": {
+            "duration": 24000000,
+            "type": "pop"
+          },
+          "animationOut": {
+            "duration": 12000000,
+            "type": "pop"
+          },
+          "duration": 72000000,
+          "id": "pop",
+          "mediaId": "alpha",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.6,
+            "scaleY": 0.6,
+            "x": 480,
+            "y": 150
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "p-pop",
+      "locked": false,
+      "muted": false,
+      "name": "p-pop"
+    },
+    {
+      "clips": [
+        {
+          "animationIn": {
+            "duration": 24000000,
+            "type": "zoom"
+          },
+          "animationOut": {
+            "duration": 12000000,
+            "type": "zoom"
+          },
+          "duration": 72000000,
+          "id": "zoom",
+          "mediaId": "alpha",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.6,
+            "scaleY": 0.6,
+            "x": 790,
+            "y": 150
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "p-zoom",
+      "locked": false,
+      "muted": false,
+      "name": "p-zoom"
+    },
+    {
+      "clips": [
+        {
+          "animationIn": {
+            "duration": 24000000,
+            "type": "slideLeft"
+          },
+          "animationOut": {
+            "duration": 12000000,
+            "type": "slideLeft"
+          },
+          "duration": 72000000,
+          "id": "slideLeft",
+          "mediaId": "alpha",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.6,
+            "scaleY": 0.6,
+            "x": 1100,
+            "y": 150
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "p-slideLeft",
+      "locked": false,
+      "muted": false,
+      "name": "p-slideLeft"
+    },
+    {
+      "clips": [
+        {
+          "animationIn": {
+            "duration": 24000000,
+            "type": "slideRight"
+          },
+          "animationOut": {
+            "duration": 12000000,
+            "type": "slideRight"
+          },
+          "duration": 72000000,
+          "id": "slideRight",
+          "mediaId": "alpha",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.6,
+            "scaleY": 0.6,
+            "x": 170,
+            "y": 380
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "p-slideRight",
+      "locked": false,
+      "muted": false,
+      "name": "p-slideRight"
+    },
+    {
+      "clips": [
+        {
+          "animationIn": {
+            "duration": 24000000,
+            "type": "slideUp"
+          },
+          "animationOut": {
+            "duration": 12000000,
+            "type": "slideUp"
+          },
+          "duration": 72000000,
+          "id": "slideUp",
+          "mediaId": "alpha",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.6,
+            "scaleY": 0.6,
+            "x": 480,
+            "y": 380
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "p-slideUp",
+      "locked": false,
+      "muted": false,
+      "name": "p-slideUp"
+    },
+    {
+      "clips": [
+        {
+          "animationIn": {
+            "duration": 24000000,
+            "type": "slideDown"
+          },
+          "animationOut": {
+            "duration": 12000000,
+            "type": "slideDown"
+          },
+          "duration": 72000000,
+          "id": "slideDown",
+          "mediaId": "alpha",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.6,
+            "scaleY": 0.6,
+            "x": 790,
+            "y": 380
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "p-slideDown",
+      "locked": false,
+      "muted": false,
+      "name": "p-slideDown"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "animationIn": {
+            "duration": 24000000,
+            "type": "typewriter"
+          },
+          "animationOut": {
+            "duration": 12000000,
+            "type": "fade"
+          },
+          "color": "#FFFFFF",
+          "duration": 72000000,
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 34
+          },
+          "id": "typed",
+          "opacity": 1,
+          "outline": {
+            "color": "#000000",
+            "width": 2
+          },
+          "start": 0,
+          "text": "Typed letter\nby letter ✍️",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 1090,
+            "y": 380
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "typed",
+      "locked": false,
+      "muted": false,
+      "name": "typed"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "animationIn": {
+            "duration": 12000000,
+            "type": "pop"
+          },
+          "animationOut": {
+            "duration": 24000000,
+            "type": "typewriter"
+          },
+          "color": "#FFFFFF",
+          "duration": 64000000,
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 40
+          },
+          "id": "untyped",
+          "opacity": 1,
+          "start": 8000000,
+          "text": "Goes away",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 640,
+            "y": 620
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "typed-out",
+      "locked": false,
+      "muted": false,
+      "name": "typed-out"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "animationIn": {
+            "duration": 24000000,
+            "type": "slideDown"
+          },
+          "borderColor": "#14171D",
+          "borderWidth": 3,
+          "color": "#14171D",
+          "duration": 72000000,
+          "fadeOut": 12000000,
+          "fill": "#FFFFFF",
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 24
+          },
+          "height": 70,
+          "id": "keyed",
+          "keyframes": {
+            "opacity": [
+              {
+                "easing": "linear",
+                "time": 0,
+                "value": 1
+              },
+              {
+                "easing": "linear",
+                "time": 72000000,
+                "value": 0.5
+              }
+            ],
+            "x": [
+              {
+                "easing": "linear",
+                "time": 0,
+                "value": 300
+              },
+              {
+                "easing": "linear",
+                "time": 72000000,
+                "value": 500
+              }
+            ]
+          },
+          "opacity": 1,
+          "shape": "roundedBox",
+          "start": 0,
+          "text": "keyed + slide",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 400,
+            "y": 620
+          },
+          "type": "callout",
+          "width": 240
+        }
+      ],
+      "hidden": false,
+      "id": "keyed",
+      "locked": false,
+      "muted": false,
+      "name": "keyed"
+    },
+    {
+      "clips": [
+        {
+          "animationIn": {
+            "duration": 12000000,
+            "type": "zoom"
+          },
+          "animationOut": {
+            "duration": 24000000,
+            "type": "slideRight"
+          },
+          "duration": 48000000,
+          "id": "moving",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 24000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.5,
+            "scaleY": 0.5,
+            "x": 980,
+            "y": 620
+          },
+          "transitionIn": {
+            "duration": 12000000,
+            "type": "wipeLeft"
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "video",
+      "locked": false,
+      "muted": false,
+      "name": "video"
+    }
+  ],
+  "version": 1
+}

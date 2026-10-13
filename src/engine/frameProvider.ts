@@ -3,8 +3,9 @@ import { logError } from '../shared/log.js'
 import type { MediaClient } from '../shared/mediaProtocol.js'
 import { createByteLru } from './byteLru.js'
 import type { Compositor, DrawItem, GpuTexture } from './compositor.js'
-import type { ImageLayer, Layer, PictureLayer, TextLayer, VideoLayer } from './resolve.js'
-import { rasterizeText } from './text.js'
+import { rasterizeArrow, rasterizeCallout } from './annotations.js'
+import type { DrawnLayer, ImageLayer, Layer, PictureLayer, VideoLayer } from './resolve.js'
+import { rasterizeText, type Raster } from './text.js'
 
 const NO_CROP = { left: 0, top: 0, right: 0, bottom: 0 }
 
@@ -36,8 +37,14 @@ export type FrameProvider = {
 
 class PreviewNotReady extends Error {}
 
-function textKey(layer: TextLayer, scaleX: number, scaleY: number): string {
-  return `text:${JSON.stringify([layer.text, layer.family, layer.size, layer.color, layer.align, scaleX, scaleY])}`
+function isDrawn(layer: PictureLayer): layer is DrawnLayer {
+  return layer.kind === 'text' || layer.kind === 'callout' || layer.kind === 'arrow'
+}
+
+// Everything a drawn layer's picture depends on: what it shows, and how large it is drawn.
+function drawnKey(layer: DrawnLayer, outputScale: number): string {
+  const shownLetters = layer.kind === 'text' ? layer.shownLetters : undefined
+  return `${layer.kind}:${JSON.stringify([layer.look, shownLetters, layer.sharpScaleX * outputScale, layer.sharpScaleY * outputScale])}`
 }
 
 function videoKey(layer: VideoLayer, quality: 'preview' | 'full'): string {
@@ -56,8 +63,9 @@ function itemOf(layer: PictureLayer, picture: Picture): DrawItem {
     texture: picture.texture,
     naturalWidth: picture.naturalWidth,
     naturalHeight: picture.naturalHeight,
-    crop: layer.kind === 'text' ? NO_CROP : layer.crop,
+    crop: isDrawn(layer) ? NO_CROP : layer.crop,
     transform: layer.transform,
+    placed: layer.placed,
     opacity: layer.opacity,
     hasAlphaBelow: picture.hasAlphaBelow,
     effects: layer.effects,
@@ -104,8 +112,13 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     return { texture, naturalWidth: layer.width, naturalHeight: layer.height, hasAlphaBelow: false }
   }
 
-  function loadText(layer: TextLayer, scaleX: number, scaleY: number): Promise<Picture> {
-    const raster = rasterizeText(layer, scaleX, scaleY)
+  function loadDrawn(layer: DrawnLayer, outputScale: number): Promise<Picture> {
+    const scaleX = layer.sharpScaleX * outputScale
+    const scaleY = layer.sharpScaleY * outputScale
+    let raster: Raster
+    if (layer.kind === 'text') raster = rasterizeText(layer.look, layer.shownLetters, scaleX, scaleY)
+    else if (layer.kind === 'callout') raster = rasterizeCallout(layer.look, scaleX, scaleY)
+    else raster = rasterizeArrow(layer.look, scaleX, scaleY)
     const texture = compositor.uploadImage(raster.canvas)
     return Promise.resolve({ texture, naturalWidth: raster.naturalWidth, naturalHeight: raster.naturalHeight, hasAlphaBelow: false })
   }
@@ -150,11 +163,7 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
 
   function pictureFor(layer: PictureLayer, quality: FrameQuality, outputScale: number, signal: AbortSignal | undefined): Promise<Picture> {
     if (layer.kind === 'image') return cached(`image:${layer.mediaId}`, () => loadImage(layer))
-    if (layer.kind === 'text') {
-      const scaleX = layer.transform.scaleX * outputScale
-      const scaleY = layer.transform.scaleY * outputScale
-      return cached(textKey(layer, scaleX, scaleY), () => loadText(layer, scaleX, scaleY))
-    }
+    if (isDrawn(layer)) return cached(drawnKey(layer, outputScale), () => loadDrawn(layer, outputScale))
     if (quality === 'stream') return nextStreamFrame(layer)
     if (quality === 'full') return cached(videoKey(layer, 'full'), () => loadFull(layer, signal))
     return previewOrFull(layer, signal)
@@ -162,7 +171,7 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
 
   function playbackKey(layer: PictureLayer, outputScale: number): string {
     if (layer.kind === 'image') return `image:${layer.mediaId}`
-    if (layer.kind === 'text') return textKey(layer, layer.transform.scaleX * outputScale, layer.transform.scaleY * outputScale)
+    if (isDrawn(layer)) return drawnKey(layer, outputScale)
     return videoKey(layer, 'preview')
   }
 

@@ -453,7 +453,7 @@ Six risks get a spike in the first two weeks, before the editor is built on top 
 • T-23 Window layout — top bar, left sidebar, canvas, right sidebar, full-width timeline; panels resize and collapse; minimum 1280×720; layout remembered.
 • T-24 Design tokens and base controls — §3 palette and type; in-house buttons, inputs, scrubbable number fields, tabs, menus, tooltips; no raw colours; AA contrast.
 • T-25 Commands and undo/redo — every edit is a command; at least 500 steps; one gesture = one step; menu names the action; undo within 50 ms.
-• T-26 New, open, save — Save, Save As, Open, Open Recent, unsaved-changes prompt, atomic writes; a saved project reopens identically.
+• T-26 New, open, save — Save, Save As, Open, unsaved-changes prompt, atomic writes; a saved project reopens identically.
 • T-27 Autosave and recovery — recovery file every 10 s when changed; after a forced kill, relaunch restores with at most 10 s lost.
 • T-28 Import and Media tab — button or drag-drop; item with poster frame within 1 s; type and progress badges; unsupported files rejected with a message.
 • T-29 Timeline view — canvas-drawn ruler, tracks, clips with thumbnails and waveforms, playhead; zoom from whole project to single frames at 60 fps with 4,096 clips; trackpad pinch and swipe.

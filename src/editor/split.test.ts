@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FRAME, MEDIA_STATES, SECOND, audioClip, clipIds, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
+import { FRAME, MEDIA_STATES, SECOND, audioClip, clipIds, clipOf, groupClip, projectOf, reopened, textClip, track, videoClip } from '../../test/fixtures.js'
 import { mix, type AudioReader } from '../engine/mixer.js'
 import { resolveFrame, type Layer, type MediaStates } from '../engine/resolve.js'
 import type { Project } from '../shared/project.js'
@@ -134,5 +134,55 @@ describe('splitClips', () => {
     const project = projectOf([track('t1', [videoClip('a', 0, 2 * SECOND)]), track('t2', [videoClip('b', 0, 4 * SECOND)], { locked: true })])
     expect(splitClips(project, 3 * SECOND, new Map([['a', 'a-2']]))).toBe(project)
     expect(splitClips(project, SECOND, new Map([['b', 'b-2']]))).toBe(project)
+  })
+})
+
+describe('splitting groups and animated clips', () => {
+  const members = [[videoClip('m', 0, 4 * SECOND, { fadeOut: SECOND }), videoClip('n', 4 * SECOND, 2 * SECOND)], [audioClip('music', SECOND, 5 * SECOND)]]
+  const grouped = projectOf([track('t1', [groupClip('group', 2 * SECOND, 6 * SECOND, members, { volume: 0.5, volumeFadeOut: SECOND })])])
+  const newIds = new Map([
+    ['group', 'group-2'],
+    ['m', 'm-2'],
+    ['n', 'n-2'],
+    ['music', 'music-2'],
+  ])
+
+  it('shows the same members from the cut on in the second part, as copies with ids of their own', () => {
+    const parts = splitClips(grouped, 5 * SECOND, newIds)
+    expect(clipIds(parts)).toEqual([['group', 'group-2']])
+    expect(clipOf(parts, 'group')).toMatchObject({ start: 2 * SECOND, duration: 3 * SECOND })
+    expect(clipOf(parts, 'group')).not.toMatchObject({ volumeFadeOut: SECOND })
+    const second = clipOf(parts, 'group-2')
+    expect(second).toMatchObject({ start: 5 * SECOND, duration: 3 * SECOND, contentStart: 3 * SECOND, volumeFadeOut: SECOND })
+    expect(second.type === 'group' && second.tracks.map((inner) => inner.clips.map((clip) => clip.id))).toEqual([['m-2', 'n-2'], ['music-2']])
+    expect(reopened(parts)).toEqual(parts)
+  })
+
+  it('draws and sounds the same before and after', async () => {
+    const parts = splitClips(grouped, 5 * SECOND, newIds)
+    const reader: AudioReader = (_mediaId, firstSample, sampleCount) => {
+      const samples = new Float32Array(sampleCount * 2)
+      for (let index = 0; index < sampleCount; index++) samples[index * 2] = ((firstSample + index) % 977) / 4000
+      return Promise.resolve(samples)
+    }
+    expect(await mix(parts, MEDIA_STATES, 0, 9 * SAMPLES_PER_SECOND, reader)).toEqual(await mix(grouped, MEDIA_STATES, 0, 9 * SAMPLES_PER_SECOND, reader))
+    for (let time = 0; time < 9 * SECOND; time += FRAME * 7) {
+      const before = resolveFrame(grouped, MEDIA_STATES, time, 1).map((layer) => ({ ...layer, clipId: layer.clipId.replace('-2', ''), groups: [] }))
+      const after = resolveFrame(parts, MEDIA_STATES, time, 1).map((layer) => ({ ...layer, clipId: layer.clipId.replace('-2', ''), groups: [] }))
+      expect(after).toEqual(before)
+    }
+  })
+
+  it('does not split a group without ids for all of its members', () => {
+    expect(splitClips(grouped, 5 * SECOND, new Map([['group', 'group-2']]))).toBe(grouped)
+  })
+
+  it('leaves the animation in with the first part and the animation out with the second', () => {
+    const animated = textClip('title', 0, 4 * SECOND, { animationIn: { type: 'typewriter', duration: SECOND }, animationOut: { type: 'pop', duration: SECOND } })
+    const parts = reopened(splitClips(projectOf([track('t1', [animated])]), 2 * SECOND, new Map([['title', 'title-2']])))
+    expect(clipOf(parts, 'title')).toMatchObject({ animationIn: animated.animationIn })
+    expect(clipOf(parts, 'title')).not.toHaveProperty('animationOut')
+    expect(clipOf(parts, 'title-2')).toMatchObject({ animationOut: animated.animationOut })
+    expect(clipOf(parts, 'title-2')).not.toHaveProperty('animationIn')
   })
 })

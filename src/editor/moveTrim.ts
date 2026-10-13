@@ -155,11 +155,20 @@ export function timelineSpan(sourceSpan: number, speedPercent: number): number {
   return Math.floor(sourceSpan / speedPercent) * TIMELINE_GRID
 }
 
+// How much earlier a clip could start: as far as its file, or the content of a group, reaches back.
+function headroom(clip: Clip): number {
+  if (hasSource(clip)) return timelineSpan(clip.sourceStart, clip.speedPercent)
+  return clip.type === 'group' ? (clip.contentStart ?? 0) : Infinity
+}
+
 function trimmedStart(clip: Clip, start: number): Clip {
   const delta = start - clip.start
   const timing = { start, duration: clip.duration - delta, keyframes: shiftedKeyframes(clip.keyframes, -delta) }
-  if (!hasSource(clip)) return withFadesWithin({ ...clip, ...timing })
-  return withFadesWithin({ ...clip, ...timing, sourceStart: sourceTime(clip, start) })
+  if (hasSource(clip)) return withFadesWithin({ ...clip, ...timing, sourceStart: sourceTime(clip, start) })
+  if (clip.type !== 'group') return withFadesWithin({ ...clip, ...timing })
+  // A group shows its members from later on, or from earlier; the members themselves stay as they are.
+  const contentStart = (clip.contentStart ?? 0) + delta
+  return withFadesWithin({ ...clip, ...timing, contentStart: contentStart === 0 ? undefined : contentStart })
 }
 
 function shiftLater(project: Project, track: Track, from: number, delta: number, exceptId: string): Project {
@@ -187,8 +196,7 @@ export function trimClip(project: Project, trim: Trim): Project {
     return trim.isRipple ? shiftLater(trimmed, track, endOf(clip), end - endOf(clip), clip.id) : trimmed
   }
 
-  const headroom = hasSource(clip) ? timelineSpan(clip.sourceStart, clip.speedPercent) : Infinity
-  const earliest = trim.isRipple ? clip.start - headroom : Math.max(clip.start - headroom, previousEnd)
+  const earliest = trim.isRipple ? clip.start - headroom(clip) : Math.max(clip.start - headroom(clip), previousEnd)
   const start = Math.min(endOf(clip) - trim.frameTicks, Math.max(trim.time, earliest))
   if (start === clip.start) return project
   if (!trim.isRipple) return editClips(project, only, (found) => trimmedStart(found, start))

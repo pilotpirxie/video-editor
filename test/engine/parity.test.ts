@@ -24,6 +24,10 @@ const REFERENCE_PROJECTS: Case[] = [
   { project: '14-transitions', frames: [0, 11, 20, 25, 30, 35, 55, 60, 65, 90, 118, 125, 150, 180, 215, 240, 245, 270, 295, 300, 330, 335, 360, 370, 410, 419] },
   { project: '15-blur-highlight', frames: [0, 15, 30, 50] },
   { project: '16-effects', frames: [0, 10] },
+  { project: '17-callouts-arrows', frames: [0, 21, 59] },
+  { project: '18-text-styles', frames: [0, 33, 59] },
+  { project: '19-presets', frames: [0, 5, 14, 18, 29, 30, 45, 76, 80, 89] },
+  { project: '20-groups', frames: [0, 7, 15, 31, 45, 59, 80, 89, 90, 95, 120, 149] },
 ]
 
 const REDUCED_SIZE: Case[] = [
@@ -35,6 +39,10 @@ const REDUCED_SIZE: Case[] = [
   { project: '14-transitions', frames: [30, 300, 330], size: { width: 320, height: 180 } },
   { project: '15-blur-highlight', frames: [0, 30], size: { width: 480, height: 270 } },
   { project: '16-effects', frames: [0], size: { width: 640, height: 360 } },
+  { project: '17-callouts-arrows', frames: [30], size: { width: 320, height: 180 } },
+  { project: '18-text-styles', frames: [30], size: { width: 3840, height: 2160 } },
+  { project: '19-presets', frames: [10, 82], size: { width: 640, height: 360 } },
+  { project: '20-groups', frames: [20, 93], size: { width: 480, height: 270 } },
 ]
 
 async function expectSamePixels(testCase: Case): Promise<void> {

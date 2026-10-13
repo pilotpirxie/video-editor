@@ -68,6 +68,12 @@ export type WaveformLevel = {
   peaks: Int8Array
 }
 
+// The sound of a file played at another speed. With the pitch kept the voice stays a voice; without, it rises and falls with the speed.
+export type AudioStretch = {
+  speedPercent: number
+  keepsPitch: boolean
+}
+
 export type RawFrame = {
   width: number
   height: number
@@ -97,7 +103,8 @@ export type MediaClient = {
   openStream(mediaId: string, frame: number, halvings: number): Promise<number>
   streamFrame(streamId: number, frame: number): Promise<RawFrame>
   closeStream(streamId: number): Promise<void>
-  audio(mediaId: string, firstSample: number, sampleCount: number): Promise<Float32Array | undefined>
+  // With a `stretch`, the samples are counted in the stretched sound, not in the file.
+  audio(mediaId: string, firstSample: number, sampleCount: number, stretch?: AudioStretch): Promise<Float32Array | undefined>
   exportStart(target: ExportTarget): Promise<number>
   exportWrite(jobId: number, pixels: ArrayBuffer, audio: Float32Array): Promise<void>
   exportFinish(jobId: number): Promise<void>
@@ -119,7 +126,7 @@ export type MediaRequest =
   | { method: 'openStream'; mediaId: string; frame: number; halvings: number }
   | { method: 'streamFrame'; streamId: number; frame: number }
   | { method: 'closeStream'; streamId: number }
-  | { method: 'audio'; mediaId: string; firstSample: number; sampleCount: number }
+  | { method: 'audio'; mediaId: string; firstSample: number; sampleCount: number; stretch?: AudioStretch }
   | { method: 'exportStart'; target: ExportTarget }
   | { method: 'exportWrite'; jobId: number; pixels: ArrayBuffer; audio: Float32Array }
   | { method: 'exportFinish'; jobId: number }
@@ -189,6 +196,8 @@ export type MenuAction =
   | 'duplicate'
   | 'delete'
   | 'ripple-delete'
+  | 'group'
+  | 'ungroup'
 
 export type HostCommand =
   | { type: 'open-project'; path: string }

@@ -1,14 +1,16 @@
+import { addArrow, addCallout, type NewAnnotation } from '../editor/annotations.js'
 import { deleteZoom, setViewAt, zoomIndexAt } from '../editor/camera.js'
 import { copyClips, deleteClips, pasteClips, rippleDelete, spanEnd, type Clipboard } from '../editor/clipboard.js'
-import { isVisual, locateClip, nearestEdit, nextTrackName, unlockedClipIds, type NewTrack } from '../editor/clips.js'
+import { allClips, isVisual, locateClip, nearestEdit, nextTrackName, unlockedClipIds, type NewTrack } from '../editor/clips.js'
 import { addEffect, takesEffects } from '../editor/effects.js'
+import { groupClips, ungroupClips } from '../editor/groups.js'
 import { clipsToSeparate, separateAudio } from '../editor/separate.js'
 import { addShape, type ShapeKind } from '../editor/shapes.js'
 import { clipsToSplit, splitClips } from '../editor/split.js'
 import { addText } from '../editor/text.js'
 import { addTrack } from '../editor/tracks.js'
 import { DEFAULT_TRANSITION, setTransition } from '../editor/transitions.js'
-import { projectDuration, type Clip, type EffectType, type TransitionType } from '../shared/project.js'
+import { projectDuration, type Clip, type EffectType, type Project, type TransitionType } from '../shared/project.js'
 import { frameAt, frameDuration } from '../shared/time.js'
 import type { EditorStore } from './store.js'
 import type { TimelineLimits, Transport } from './transport.js'
@@ -21,6 +23,13 @@ export type Actions = {
   separateAudio(): void
   addText(): void
   addShape(kind: ShapeKind): void
+  addCallout(): void
+  addArrow(kind: 'arrow' | 'line'): void
+  group(): void
+  ungroup(): void
+  // Goes into the selected group; Escape and the path above the timeline lead out again.
+  openGroup(): void
+  closeGroup(): void
   // Both go to the selected clips, and say so in the top bar when no selected clip can take them.
   addEffect(type: EffectType): void
   addTransition(type: TransitionType): void
@@ -44,6 +53,8 @@ function plural(count: number, noun: string): string {
 // The editing commands that the menu, the keyboard, the timeline toolbar and the context menus all share.
 export function createActions(store: EditorStore, transport: Transport): Actions {
   let clipboard: Clipboard | undefined
+  // The groups that were open when the clipboard was filled. Members are placed from the middle of their group, so they only fit where they came from.
+  let clipboardPlace = ''
   let stepped: { time: number; sequence: number } | undefined
 
   function limits(): TimelineLimits {
@@ -55,19 +66,31 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     return Math.max(0, Math.ceil(duration / frameTicks) - 1) * frameTicks
   }
 
+  // A copy of a group needs an id for every clip inside it.
+  function addMemberIds(clip: Clip | undefined, newIds: Map<string, string>): void {
+    if (clip?.type !== 'group') return
+    for (const member of allClips(clip.tracks)) newIds.set(member.id, crypto.randomUUID())
+  }
+
   function splitAt(selection: readonly string[]): void {
     const { project } = store.getState()
     const cut = transport.position().time
+    const splitIds = clipsToSplit(project, selection, cut)
     const newIds = new Map<string, string>()
-    for (const clipId of clipsToSplit(project, selection, cut)) newIds.set(clipId, crypto.randomUUID())
-    if (newIds.size > 0) store.apply(`Split ${plural(newIds.size, 'Clip')}`, (current) => splitClips(current, cut, newIds))
+    for (const clipId of splitIds) {
+      newIds.set(clipId, crypto.randomUUID())
+      addMemberIds(locateClip(project, clipId)?.clip, newIds)
+    }
+    if (splitIds.length > 0) store.apply(`Split ${plural(splitIds.length, 'Clip')}`, (current) => splitClips(current, cut, newIds))
   }
 
   function pasteAt(copied: Clipboard, at: number, label: string): void {
     const { project } = store.getState()
     const clipIds = copied.clips.map(() => crypto.randomUUID())
+    const memberIds = new Map<string, string>()
+    for (const { clip } of copied.clips) addMemberIds(clip, memberIds)
     const newTracks: NewTrack[] = copied.clips.map((_clip, index) => ({ id: crypto.randomUUID(), name: `Track ${project.tracks.length + index + 1}` }))
-    store.apply(label, (current) => pasteClips(current, { clipboard: copied, at, clipIds, newTracks }))
+    store.apply(label, (current) => pasteClips(current, { clipboard: copied, at, clipIds, memberIds, newTracks }))
     store.select(clipIds)
   }
 
@@ -75,7 +98,16 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     const { project, selection } = store.getState()
     if (selection.length === 0) return false
     clipboard = copyClips(project, selection)
+    clipboardPlace = store.getState().openGroups.join('/')
     return true
+  }
+
+  // Adds one new clip at the playhead, on a new layer above everything else, and selects it.
+  function addOnTop(label: string, add: (project: Project, added: NewAnnotation) => Project): string {
+    const added = { clipId: crypto.randomUUID(), start: playheadFrame(), newTrack: { id: crypto.randomUUID(), name: nextTrackName(store.getState().project) } }
+    store.apply(label, (current) => add(current, added))
+    store.select([added.clipId])
+    return added.clipId
   }
 
   // The selected clips that pass a test, in the order they were selected.
@@ -126,24 +158,55 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       const newTracks: NewTrack[] = project.tracks.map((_track, index) => ({ id: crypto.randomUUID(), name: `Track ${project.tracks.length + index + 1}` }))
       store.apply('Separate Video and Audio', (current) => separateAudio(current, mediaStates, newIds, newTracks))
     },
-    // The new title opens for typing at once, so the usual next step needs no extra click.
-    addText() {
-      const { project } = store.getState()
-      const clipId = crypto.randomUUID()
-      const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
-      const start = playheadFrame()
-      store.apply('Add Text', (current) => addText(current, { clipId, start, newTrack }))
-      store.select([clipId])
-      store.editText(clipId)
+    // New words open for typing at once, so the usual next step needs no extra click.
+    addText: () => store.editText(addOnTop('Add Text', addText)),
+    addCallout: () => store.editText(addOnTop('Add Callout', addCallout)),
+    addArrow(kind) {
+      addOnTop(kind === 'arrow' ? 'Add Arrow' : 'Add Line', (project, added) => addArrow(project, { ...added, kind }))
     },
     addShape(kind) {
-      const { project } = store.getState()
-      const clipId = crypto.randomUUID()
-      const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
-      const start = playheadFrame()
       const label = `Add ${kind.charAt(0).toUpperCase()}${kind.slice(1)}`
-      store.apply(label, (current) => addShape(current, { kind, clipId, start, newTrack }))
-      store.select([clipId])
+      addOnTop(label, (project, added) => addShape(project, { ...added, kind }))
+    },
+    group() {
+      const { project } = store.getState()
+      const clipIds = selectedClipIds(() => true)
+      if (clipIds.length === 0) return
+      const groupId = crypto.randomUUID()
+      const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
+      store.apply(`Group ${plural(clipIds.length, 'Clip')}`, (current) => groupClips(current, { clipIds, groupId, newTrack }))
+      store.select([groupId])
+    },
+    ungroup() {
+      const { project } = store.getState()
+      const groupIds = selectedClipIds((clip) => clip.type === 'group')
+      if (groupIds.length === 0) return
+      const memberIds: string[] = []
+      const newTracks: NewTrack[] = []
+      for (const groupId of groupIds) {
+        const group = locateClip(project, groupId)?.clip
+        if (group?.type !== 'group') continue
+        for (const inner of group.tracks) {
+          newTracks.push({ id: crypto.randomUUID(), name: `Track ${project.tracks.length + newTracks.length + 1}` })
+          memberIds.push(...inner.clips.map((clip) => clip.id))
+        }
+      }
+      store.apply(`Ungroup ${plural(groupIds.length, 'Clip')}`, (current) => ungroupClips(current, { groupIds, newTracks }))
+      store.select(memberIds)
+    },
+    openGroup() {
+      const [groupId] = selectedClipIds((clip) => clip.type === 'group')
+      if (groupId === undefined) return
+      transport.pause()
+      store.openGroup(groupId)
+      // Inside, the playhead starts on something the group shows.
+      const { scope } = store.getState()
+      const { time } = transport.position()
+      if (scope !== undefined && (time < scope.from || time >= scope.to)) transport.seek(scope.from)
+    },
+    closeGroup() {
+      const { openGroups } = store.getState()
+      if (openGroups.length > 0) store.closeGroups(openGroups.length - 1)
     },
     addEffect(type) {
       const clipIds = selectedClipIds(takesEffects)
@@ -203,7 +266,12 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       return true
     },
     paste() {
-      if (clipboard !== undefined) pasteAt(clipboard, transport.position().time, `Paste ${plural(clipboard.clips.length, 'Clip')}`)
+      if (clipboard === undefined) return
+      if (clipboardPlace !== store.getState().openGroups.join('/')) {
+        store.notify('Clips copied inside a group can only be pasted in that group, and clips copied outside it only there.')
+        return
+      }
+      pasteAt(clipboard, transport.position().time, `Paste ${plural(clipboard.clips.length, 'Clip')}`)
     },
     duplicate() {
       const { project, selection } = store.getState()

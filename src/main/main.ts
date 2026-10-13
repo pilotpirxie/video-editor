@@ -630,6 +630,8 @@ function buildEditorMenu(state: AppState): void {
         { type: 'separator' },
         item('split', 'Split at Playhead', 'CmdOrCtrl+T'),
         item('split-all', 'Split All Tracks', 'Shift+CmdOrCtrl+T'),
+        item('group', 'Group', 'CmdOrCtrl+G'),
+        item('ungroup', 'Ungroup', 'CmdOrCtrl+U'),
         { type: 'separator' },
         item('select-all', 'Select All', 'CmdOrCtrl+A'),
         item('deselect-all', 'Deselect All', 'Shift+CmdOrCtrl+A'),

@@ -141,6 +141,130 @@ function sampleProject(): Project {
           },
         ],
       },
+      {
+        id: 't4',
+        name: 'Notes',
+        hidden: false,
+        locked: false,
+        muted: false,
+        clips: [
+          {
+            id: 'c-callout',
+            type: 'callout',
+            start: 0,
+            duration: 2 * SECOND,
+            transform: { x: 600, y: 400, scaleX: 1, scaleY: 1, rotation: 0 },
+            opacity: 1,
+            animationIn: { type: 'pop', duration: SECOND / 2 },
+            width: 400,
+            height: 200,
+            shape: 'speechBubble',
+            fill: '#FFFFFFE6',
+            borderColor: '#14171D',
+            borderWidth: 6,
+            tail: { x: -260, y: 180 },
+            text: 'Click here',
+            font: { family: 'Helvetica Neue', size: 48, weight: 700 },
+            color: '#14171D',
+            align: 'center',
+            lineSpacing: 1.2,
+          },
+          {
+            id: 'c-arrow',
+            type: 'arrow',
+            start: 2 * SECOND,
+            duration: 2 * SECOND,
+            transform: { x: 900, y: 500, scaleX: 1, scaleY: 1, rotation: -30 },
+            opacity: 1,
+            animationOut: { type: 'slideLeft', duration: SECOND },
+            length: 300,
+            thickness: 12,
+            color: '#E5484D',
+            startHead: 'dot',
+            endHead: 'triangle',
+            effects: [{ type: 'dropShadow', offsetX: 4, offsetY: 4, softness: 6, color: '#000000', opacity: 0.5 }],
+          },
+          {
+            id: 'c-group',
+            type: 'group',
+            start: 5 * SECOND,
+            duration: 4 * SECOND,
+            contentStart: SECOND,
+            transform: { x: 960, y: 540, scaleX: 0.5, scaleY: 0.5, rotation: 10 },
+            opacity: 0.9,
+            fadeIn: SECOND,
+            volume: 0.5,
+            volumeFadeOut: SECOND,
+            animationIn: { type: 'zoom', duration: SECOND },
+            keyframes: {
+              scaleX: [{ time: 0, value: 0.5, easing: 'linear' }],
+              scaleY: [{ time: 0, value: 0.5, easing: 'linear' }],
+              volume: [{ time: 0, value: 1, easing: 'linear' }],
+            },
+            effects: [{ type: 'blackAndWhite', amount: 1 }],
+            tracks: [
+              {
+                id: 'g1',
+                name: 'Track 1',
+                hidden: false,
+                locked: false,
+                muted: false,
+                clips: [
+                  {
+                    id: 'c-voice',
+                    type: 'audio',
+                    mediaId: 'm-music',
+                    start: 0,
+                    duration: 3 * SECOND,
+                    sourceStart: 0,
+                    speedPercent: 800,
+                    changesPitch: true,
+                    hasFastSound: true,
+                    volume: 1,
+                  },
+                ],
+              },
+              {
+                id: 'g2',
+                name: 'Track 2',
+                hidden: false,
+                locked: false,
+                muted: false,
+                clips: [
+                  {
+                    id: 'c-styled',
+                    type: 'text',
+                    start: SECOND,
+                    duration: 4 * SECOND,
+                    transform: { x: 0, y: -120, scaleX: 1, scaleY: 1, rotation: 0 },
+                    opacity: 1,
+                    animationIn: { type: 'typewriter', duration: 2 * SECOND },
+                    text: 'Wrapped and styled words',
+                    font: { family: 'Helvetica Neue', size: 64, weight: 300 },
+                    color: '#FFFFFF',
+                    align: 'left',
+                    outline: { color: '#000000', width: 3 },
+                    shadow: { color: '#00000080', offsetX: 4, offsetY: 6, blur: 8 },
+                    background: { color: '#14171DCC' },
+                    lineSpacing: 0.9,
+                    boxWidth: 420,
+                  },
+                  {
+                    id: 'c-inner-group',
+                    type: 'group',
+                    start: 5 * SECOND,
+                    duration: SECOND,
+                    transform: { x: 100, y: 0, scaleX: 1, scaleY: 1, rotation: 0 },
+                    opacity: 1,
+                    volume: 1,
+                    tracks: [],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
     ],
   }
 }
@@ -187,6 +311,26 @@ function messageFor(text: string): string {
   if (result.ok) throw new Error('expected the project to be rejected')
   return result.message
 }
+
+function nestedGroups(depth: number): unknown {
+  const clips = depth === 0 ? [] : [nestedGroups(depth - 1)]
+  const group = { id: `group-${depth}`, type: 'group', start: 0, duration: SECOND, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, volume: 1 }
+  return { ...group, tracks: [{ id: 't', name: '', hidden: false, locked: false, muted: false, clips }] }
+}
+
+describe('groups', () => {
+  it('may hold groups, eight deep, and no deeper', () => {
+    const eightDeep = withValue('tracks.3.clips', [nestedGroups(7)])
+    expect(parseProject(eightDeep).ok).toBe(true)
+    expect(messageFor(withValue('tracks.3.clips', [nestedGroups(8)]))).toMatch(/is a group inside more than 8 groups$/)
+  })
+
+  it('does not count the clips inside a group toward the length of the project', () => {
+    const lone = JSON.parse(withValue('tracks', [{ id: 't', name: '', hidden: false, locked: false, muted: false, clips: [sampleProject().tracks[3]?.clips[2]] }]))
+    const parsed = parseProject(JSON.stringify(lone))
+    expect(parsed.ok && projectDuration(parsed.project)).toBe(9 * SECOND)
+  })
+})
 
 describe('serializeProject', () => {
   it('sorts keys at every level and ends with a newline', () => {
@@ -280,7 +424,7 @@ describe('parseProject', () => {
     ['a speed above 10000%', withValue('tracks.0.clips.0.speedPercent', 20_000), /speedPercent must be at most 10000$/],
     ['a fractional speed', withValue('tracks.0.clips.0.speedPercent', 150.5), /speedPercent must be a whole number$/],
     ['an unknown media reference', withValue('tracks.0.clips.0.mediaId', 'nope'), /mediaId "nope" is not in the media list$/],
-    ['an unknown clip type', withValue('tracks.0.clips.0.type', 'callout'), /^tracks\[0\]\.clips\[0\]\.type must be one of video, audio, image, text, blur, highlight/],
+    ['an unknown clip type', withValue('tracks.0.clips.0.type', 'sticker'), /^tracks\[0\]\.clips\[0\]\.type must be one of video, audio, image, text, blur, highlight, callout, arrow, group;/],
     ['an unknown clip setting', withValue('tracks.0.clips.1.volume', 1), /^tracks\[0\]\.clips\[1\]\.volume is not a known setting$/],
     ['overlapping clips', withValue('tracks.0.clips.1.start', 2 * SECOND), /^tracks\[0\]\.clips has overlapping clips "c-video" and "c-image"$/],
     ['an opacity above 1', withValue('tracks.0.clips.0.opacity', 1.5), /opacity must be at most 1$/],
@@ -319,6 +463,32 @@ describe('parseProject', () => {
     ['a shape without a size', without('tracks.2.clips.1.width'), /^tracks\[2\]\.clips\[1\]\.width is missing$/],
     ['a negative soft edge', withValue('tracks.2.clips.1.softEdge', -1), /^tracks\[2\]\.clips\[1\]\.softEdge must be at least 0$/],
     ['a highlight colour with transparency', withValue('tracks.2.clips.1.color', '#FFE94D80'), /^tracks\[2\]\.clips\[1\]\.color must look like #RRGGBB$/],
+    ['an unknown callout shape', withValue('tracks.3.clips.0.shape', 'cloud'), /^tracks\[3\]\.clips\[0\]\.shape must be one of rectangle, roundedBox, ellipse, speechBubble, thoughtBubble, arrowBox, banner, burst$/],
+    ['a bubble without a tail', without('tracks.3.clips.0.tail'), /^tracks\[3\]\.clips\[0\]\.tail is needed by a speech bubble and a thought bubble, and by no other shape$/],
+    ['a tail on a shape that has none', withValue('tracks.3.clips.0.shape', 'banner'), /^tracks\[3\]\.clips\[0\]\.tail is needed by a speech bubble/],
+    ['a callout without a size', withValue('tracks.3.clips.0.width', 0), /^tracks\[3\]\.clips\[0\]\.width must be greater than 0$/],
+    ['a negative border', withValue('tracks.3.clips.0.borderWidth', -1), /^tracks\[3\]\.clips\[0\]\.borderWidth must be at least 0$/],
+    ['a font weight between the hundreds', withValue('tracks.3.clips.0.font.weight', 450), /^tracks\[3\]\.clips\[0\]\.font\.weight must be a whole hundred from 100 to 900$/],
+    ['a font weight that is too heavy', withValue('tracks.3.clips.0.font.weight', 1000), /font\.weight must be at most 900$/],
+    ['line spacing that puts lines on top of each other', withValue('tracks.3.clips.0.lineSpacing', 0.2), /^tracks\[3\]\.clips\[0\]\.lineSpacing must be at least 0\.5$/],
+    ['a typewriter on a clip without letters to type', withValue('tracks.3.clips.0.animationIn.type', 'typewriter'), /^tracks\[3\]\.clips\[0\]\.animationIn\.type can only be "typewriter" on a text clip$/],
+    ['an unknown animation', withValue('tracks.3.clips.0.animationIn.type', 'spin'), /animationIn\.type must be one of fade, pop, slideLeft, slideRight, slideUp, slideDown, zoom, typewriter$/],
+    ['an animation without a length', withValue('tracks.3.clips.1.animationOut.duration', 0), /animationOut\.duration must be a positive multiple of 100$/],
+    ['an animation on an audio clip', withValue('tracks.1.clips.1.animationIn', { type: 'fade', duration: SECOND }), /^tracks\[1\]\.clips\[1\]\.animationIn is not a known setting$/],
+    ['an arrow without a length', withValue('tracks.3.clips.1.length', 0), /^tracks\[3\]\.clips\[1\]\.length must be greater than 0$/],
+    ['an unknown arrow head', withValue('tracks.3.clips.1.endHead', 'heart'), /^tracks\[3\]\.clips\[1\]\.endHead must be one of none, triangle, open, dot$/],
+    ['a group that is stretched', withValue('tracks.3.clips.2.transform.scaleY', 0.75), /^tracks\[3\]\.clips\[2\]\.transform of a group must have the same scaleX and scaleY, in its keyframes too$/],
+    ['a group whose scale keyframes differ', withValue('tracks.3.clips.2.keyframes.scaleY.0.value', 0.75), /transform of a group must have the same scaleX and scaleY/],
+    ['a group without tracks', without('tracks.3.clips.2.tracks'), /^tracks\[3\]\.clips\[2\]\.tracks is missing$/],
+    ['a content start of nothing', withValue('tracks.3.clips.2.contentStart', 0), /contentStart must be a positive multiple of 100$/],
+    ['a member with the id of another clip', withValue('tracks.3.clips.2.tracks.0.clips.0.id', 'c-video'), /^tracks\[3\]\.clips\[2\]\.tracks\[0\]\.clips\[0\]\.id "c-video" is used by more than one clip$/],
+    ['two tracks of a group with the same id', withValue('tracks.3.clips.2.tracks.1.id', 'g1'), /^tracks\[3\]\.clips\[2\]\.tracks uses the id "g1" more than once$/],
+    ['members that overlap', withValue('tracks.3.clips.2.tracks.1.clips.1.start', 2 * SECOND), /^tracks\[3\]\.clips\[2\]\.tracks\[1\]\.clips has overlapping clips/],
+    ['an outline without a width', withValue('tracks.3.clips.2.tracks.1.clips.0.outline.width', 0), /outline\.width must be greater than 0$/],
+    ['a shadow that is blurred backwards', withValue('tracks.3.clips.2.tracks.1.clips.0.shadow.blur', -1), /shadow\.blur must be at least 0$/],
+    ['a text box without a width', withValue('tracks.3.clips.2.tracks.1.clips.0.boxWidth', 0), /boxWidth must be greater than 0$/],
+    ['a background on a callout', withValue('tracks.3.clips.0.background', { color: '#000000' }), /^tracks\[3\]\.clips\[0\]\.background is not a known setting$/],
+    ['a pitch switch that is off in words', withValue('tracks.3.clips.2.tracks.0.clips.0.changesPitch', false), /changesPitch must be true or left out$/],
   ])('rejects %s with a readable message', (_label, text, expected) => {
     expect(messageFor(text)).toMatch(expected)
   })

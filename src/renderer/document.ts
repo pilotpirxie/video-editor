@@ -47,7 +47,7 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
   let sent: SentProject | undefined
   let isSendScheduled = false
   let reportedState = ''
-  let recovered = store.getState().project
+  let recovered = store.getState().wholeProject
   let recoveryWork: Promise<void> = Promise.resolve()
   let hasRecoveryFailed = false
 
@@ -94,7 +94,7 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
 
   // Asks where a file went. The other missing files are looked for in the same folder, so one answer usually brings them all back.
   async function relink(mediaId: string): Promise<void> {
-    const { project, mediaStates } = store.getState()
+    const { wholeProject: project, mediaStates } = store.getState()
     const reference = project.media.find((candidate) => candidate.id === mediaId)
     if (reference === undefined) return
     const path = await window.host.chooseMediaFile(mediaFileName(reference))
@@ -115,14 +115,14 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
   // The engine gets the whole project at most once per frame, however many pointer events arrived in between.
   function sendToEngine(): void {
     isSendScheduled = false
-    const { project, mediaStates } = store.getState()
+    const { wholeProject: project, mediaStates } = store.getState()
     if (sent !== undefined && sent.project === project && sent.mediaStates === mediaStates) return
     sent = { project, mediaStates }
     engine.send({ type: 'project', loaded: { project, media: mediaStates } })
   }
 
   function reportDocumentState(): void {
-    const { project, savedProject, history } = store.getState()
+    const { wholeProject: project, savedProject, history } = store.getState()
     const state: DocumentState = {
       isDirty: project !== savedProject,
       undoLabel: history.done.at(-1)?.label,
@@ -135,6 +135,7 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
   }
 
   store.subscribe(() => {
+    transport.setOffset(store.getState().scope?.offset ?? 0)
     reportDocumentState()
     if (isSendScheduled) return
     isSendScheduled = true
@@ -230,15 +231,15 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
   }
 
   function openExportDialog(): void {
-    const { project, exportStatus } = store.getState()
-    if (exportStatus === undefined && projectDuration(project) > 0) store.showExportDialog(true)
+    const { wholeProject, exportStatus } = store.getState()
+    if (exportStatus === undefined && projectDuration(wholeProject) > 0) store.showExportDialog(true)
   }
 
   // New, Open and Close all leave the current document, so they share one unsaved-changes check.
   async function leaveFor(next: NextDocument): Promise<void> {
     store.cancel()
-    const { project, savedProject } = store.getState()
-    if (project !== savedProject) {
+    const { wholeProject, savedProject } = store.getState()
+    if (wholeProject !== savedProject) {
       const choice = await window.host.confirmUnsavedChanges()
       if (choice === 'cancel') return
       if (choice === 'save' && !(await save())) return
@@ -313,6 +314,10 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
       actions.deleteSelection(false)
     } else if (command.action === 'ripple-delete') {
       actions.deleteSelection(true)
+    } else if (command.action === 'group') {
+      actions.group()
+    } else if (command.action === 'ungroup') {
+      actions.ungroup()
     }
   })
 

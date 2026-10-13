@@ -407,6 +407,10 @@
   cursor: grab;
 }
 
+.canvas-handle.end {
+  cursor: move;
+}
+
 .canvas-handle.n,
 .canvas-handle.s {
   cursor: ns-resize;
@@ -504,3 +508,16 @@
   color: transparent;
 }
 
+
+/* The way into the open group, in the timeline toolbar. */
+.group-path {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+}
+
+.group-path-here {
+  padding: 0 var(--space-1);
+  color: var(--text-primary);
+}

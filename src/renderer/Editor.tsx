@@ -107,6 +107,11 @@ function Splitter({ label, testId, sizeKey, size, isHidden, growth, onPreview, o
   )
 }
 
+const ARROWS: readonly { kind: 'arrow' | 'line'; icon: IconName; label: string }[] = [
+  { kind: 'arrow', icon: 'arrow', label: 'Arrow' },
+  { kind: 'line', icon: 'line', label: 'Line' },
+]
+
 const SHAPES: readonly { kind: ShapeKind; icon: IconName; label: string }[] = [
   { kind: 'blur', icon: 'blur', label: 'Blur' },
   { kind: 'pixelate', icon: 'grid', label: 'Pixelate' },
@@ -114,7 +119,7 @@ const SHAPES: readonly { kind: ShapeKind; icon: IconName; label: string }[] = [
   { kind: 'spotlight', icon: 'spotlight', label: 'Spotlight' },
 ]
 
-// Callouts and arrows join these later; each is added at the playhead, on a layer of its own.
+// Each is added at the playhead, on a layer of its own.
 function AnnotationsTab(): ReactElement {
   const { actions } = useSession()
   return (
@@ -123,7 +128,18 @@ function AnnotationsTab(): ReactElement {
         <Icon name="text" />
         Text
       </button>
-      <p className="hint">Adds a title at the playhead. Double-click it on the canvas to change the words.</p>
+      <button type="button" className="button annotation-item" data-testid="add-callout" onClick={actions.addCallout}>
+        <Icon name="callout" />
+        Callout
+      </button>
+      <p className="hint">Adds a title or a speech bubble at the playhead. Double-click it on the canvas to change the words; the shape of a callout is in Properties.</p>
+      {ARROWS.map(({ kind, icon, label }) => (
+        <button key={kind} type="button" className="button annotation-item" data-testid={`add-${kind}`} onClick={() => actions.addArrow(kind)}>
+          <Icon name={icon} />
+          {label}
+        </button>
+      ))}
+      <p className="hint">Drag its two ends on the canvas to point it.</p>
       {SHAPES.map(({ kind, icon, label }) => (
         <button key={kind} type="button" className="button annotation-item" data-testid={`add-${kind}`} onClick={() => actions.addShape(kind)}>
           <Icon name={icon} />
@@ -272,8 +288,10 @@ function listenForEditingKeys(session: Session): () => void {
       actions.deleteSelection(event.metaKey)
     } else if (event.key === 'Escape') {
       // Escape abandons a drag in progress, wherever it started; only with nothing in progress does it clear the selection.
+      // After that it leaves the group that is open.
       if (store.cancel()) event.preventDefault()
-      else store.select([])
+      else if (store.getState().selection.length > 0) store.select([])
+      else actions.closeGroup()
     }
   }
 

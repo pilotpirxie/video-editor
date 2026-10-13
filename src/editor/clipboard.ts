@@ -1,5 +1,5 @@
 import type { Clip, MediaRef, Project } from '../shared/project.js'
-import { editClips, endOf, hasMedia, placeOnTrack, type NewTrack } from './clips.js'
+import { allClips, editClips, endOf, hasMedia, placeOnTrack, withMemberIds, type NewTrack } from './clips.js'
 
 type CopiedClip = {
   clip: Clip
@@ -17,6 +17,8 @@ export type Paste = {
   at: number
   // One id per pasted clip, and one track per source track in case its row is taken.
   clipIds: readonly string[]
+  // The ids for the copies of the clips inside pasted groups, by the id of the clip that was copied.
+  memberIds: ReadonlyMap<string, string>
   newTracks: readonly NewTrack[]
 }
 
@@ -52,7 +54,9 @@ export function copyClips(project: Project, clipIds: readonly string[]): Clipboa
     for (const clip of track.clips) {
       if (!chosen.has(clip.id)) continue
       clips.push({ clip, trackIndex })
-      if (hasMedia(clip)) mediaIds.add(clip.mediaId)
+      for (const copied of allClips([{ ...track, clips: [clip] }])) {
+        if (hasMedia(copied)) mediaIds.add(copied.mediaId)
+      }
     }
   }
   return { clips, media: project.media.filter((reference) => mediaIds.has(reference.id)) }
@@ -76,9 +80,10 @@ export function pasteClips(project: Project, paste: Paste): Project {
     for (const copied of clipboard.clips) {
       if (copied.trackIndex !== sourceRow) continue
       const id = paste.clipIds[nextClipId]
-      if (id === undefined) return project
+      const copy = withMemberIds(copied.clip, paste.memberIds)
+      if (id === undefined || copy === undefined) return project
       nextClipId += 1
-      clips.push({ ...copied.clip, id, start: copied.clip.start - firstStart + at })
+      clips.push({ ...copy, id, start: copied.clip.start - firstStart + at })
     }
     // Rows inserted for earlier groups push the later source rows up by one each.
     const trackIndex = sourceRow + (pasted.tracks.length - project.tracks.length)
