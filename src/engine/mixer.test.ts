@@ -14,7 +14,7 @@ const MEDIA: MediaStates = {
   music: { info: SOUND },
   loud: { info: SOUND },
   silentVideo: { info: { kind: 'video', duration: 60 * SECOND, containerStart: 0, video: { width: 16, height: 16, frameDuration: 800_000, frameCount: 1800, startOffset: 0, seekPreroll: 0, isVariableFrameRate: false, hasAlpha: false, colorMatrix: 'bt709', colorRange: 'tv', isHdr: false, codec: 'h264' } } },
-  broken: { error: 'unreadable' },
+  broken: { error: 'unreadable', isMissing: false },
 }
 
 function sourceSample(mediaId: string, index: number, channel: number): number {

@@ -1,13 +1,27 @@
-import { endOf } from '../editor/clips.js'
-import { RULER_HEIGHT, TRACK_HEIGHT, rulerStep, timeToX, trackTop, visibleRange, xToTime, type ClipIndex, type Marquee, type TimelineView } from '../editor/timelineView.js'
+import { endOf, makesSound } from '../editor/clips.js'
+import {
+  CLIP_INSET,
+  RULER_HEIGHT,
+  TRACK_HEIGHT,
+  clipBands,
+  rulerStep,
+  timeToX,
+  trackTop,
+  visibleRange,
+  xToTime,
+  type Band,
+  type ClipIndex,
+  type FadeHandle,
+  type Marquee,
+  type TimelineView,
+} from '../editor/timelineView.js'
 import type { MediaStates } from '../engine/resolve.js'
 import type { Size } from '../shared/exportPresets.js'
-import type { Preparation, VideoInfo, WaveformLevel } from '../shared/mediaProtocol.js'
+import type { MediaInfo, Preparation, WaveformLevel } from '../shared/mediaProtocol.js'
 import type { AudioClip, Clip, Project, Track, VideoClip } from '../shared/project.js'
-import { TICKS_PER_SAMPLE, frameDuration, frameIndexAt, sourceTime, timecode } from '../shared/time.js'
+import { TICKS_PER_SAMPLE, TICKS_PER_SECOND, frameDuration, frameIndexAt, loopedTime, sourceTime, timecode } from '../shared/time.js'
 import type { Thumbnails } from './thumbnails.js'
 
-const CLIP_INSET = 2
 const CLIP_RADIUS = 4
 const LABEL_PADDING = 6
 const LABEL_HEIGHT = 16
@@ -20,6 +34,9 @@ const SELECTION_WIDTH = 2
 const TICK_HEIGHT = 6
 const PLAYHEAD_HEAD = 5
 const INT8_PEAK = 127
+const RAMP_SHADE_OPACITY = 0.6
+const HANDLE_RADIUS = 4.5
+const HANDLE_LABEL_GAP = 9
 
 export type TimelineColors = {
   background: string
@@ -61,9 +78,14 @@ export type OverlayScene = {
   view: TimelineView
   size: Size
   colors: TimelineColors
+  fonts: TimelineFonts
   playhead: number
   guide: number | undefined
   marquee: Marquee | undefined
+  // Fade handles of the clip under the pointer or being changed, and which of them is held.
+  handles: readonly FadeHandle[]
+  heldHandle: FadeHandle | undefined
+  heldLabel: string
 }
 
 // The canvas cannot use CSS variables, so the design tokens are read once from the page.
@@ -97,8 +119,18 @@ export function readFonts(element: Element): TimelineFonts {
   }
 }
 
-function clipColor(clip: Clip, colors: TimelineColors): string {
-  if (clip.type === 'video') return colors.video
+type VideoMedia = Extract<MediaInfo, { kind: 'video' }>
+
+function videoOf(clip: VideoClip, mediaStates: MediaStates): VideoMedia | undefined {
+  const state = mediaStates[clip.mediaId]
+  if (state === undefined || 'error' in state || state.info.kind !== 'video') return undefined
+  return state.info
+}
+
+// An animated image is a moving clip, but to its user it is still an image.
+function clipColor(clip: Clip, scene: ContentScene): string {
+  const { colors } = scene
+  if (clip.type === 'video') return videoOf(clip, scene.mediaStates)?.isAnimatedImage === true ? colors.image : colors.video
   if (clip.type === 'audio') return colors.audio
   if (clip.type === 'image') return colors.image
   return colors.annotation
@@ -112,31 +144,22 @@ function clipName(clip: Clip, mediaNames: ReadonlyMap<string, string>): string {
 function badgeOf(clip: Clip, scene: ContentScene): { text: string; color: string } | undefined {
   if (clip.type === 'text') return undefined
   const state = scene.mediaStates[clip.mediaId]
-  if (state === undefined || 'error' in state) return { text: 'media missing', color: scene.colors.danger }
+  if (state === undefined || ('error' in state && state.isMissing)) return { text: 'media missing', color: scene.colors.danger }
+  if ('error' in state) return { text: 'media error', color: scene.colors.danger }
   const preparation = scene.preparation[clip.mediaId]
   if (preparation?.hasFailed === true) return { text: 'media error', color: scene.colors.danger }
   if (preparation !== undefined && preparation.progress < 1) return { text: 'preparing', color: scene.colors.warning }
   return undefined
 }
 
-function videoOf(clip: VideoClip, mediaStates: MediaStates): VideoInfo | undefined {
-  const state = mediaStates[clip.mediaId]
-  if (state === undefined || 'error' in state || state.info.kind !== 'video') return undefined
-  return state.info.video
-}
-
-// One small picture per tile, each showing the source frame at the tile's left edge.
-function drawFilmstrip(context: CanvasRenderingContext2D, clip: VideoClip, video: VideoInfo, scene: ContentScene, left: number, top: number, height: number): void {
-  const tileWidth = Math.max(1, (height * video.width) / video.height)
-  const firstTile = Math.max(0, Math.floor(-left / tileWidth))
-  const right = Math.min(timeToX(endOf(clip), scene.view), scene.size.width)
-  for (let tile = firstTile; left + tile * tileWidth < right; tile++) {
-    const x = left + tile * tileWidth
-    const time = Math.max(clip.start, xToTime(x, scene.view))
-    const frame = frameIndexAt(video, sourceTime(clip, time))
-    const picture = scene.thumbnails.filmstripFrame(clip.mediaId, video, frame)
-    if (picture !== undefined) context.drawImage(picture, x, top, tileWidth, height)
-  }
+// One small picture at the start of a video clip shows what it is. It scrolls away with the start of the clip.
+function drawThumbnail(context: CanvasRenderingContext2D, clip: VideoClip, media: VideoMedia, scene: ContentScene, left: number, band: Band): void {
+  const { video } = media
+  const pictureWidth = Math.max(1, (band.height * video.width) / video.height)
+  if (left + pictureWidth < 0) return
+  const frame = frameIndexAt(video, loopedTime(clip.sourceStart, media.duration, clip.loop === true))
+  const picture = scene.thumbnails.videoFrame(clip.mediaId, video, frame)
+  if (picture !== undefined) context.drawImage(picture, left, band.top, pictureWidth, band.height)
 }
 
 function levelFor(levels: readonly WaveformLevel[], samplesPerPixel: number): WaveformLevel | undefined {
@@ -147,7 +170,7 @@ function levelFor(levels: readonly WaveformLevel[], samplesPerPixel: number): Wa
   return chosen
 }
 
-function drawWaveform(context: CanvasRenderingContext2D, clip: AudioClip, scene: ContentScene, top: number, height: number): void {
+function drawWaveform(context: CanvasRenderingContext2D, clip: AudioClip | VideoClip, scene: ContentScene, top: number, height: number): void {
   const levels = scene.thumbnails.waveform(clip.mediaId)
   if (levels === undefined) return
   const { view } = scene
@@ -203,34 +226,92 @@ function drawLabel(context: CanvasRenderingContext2D, clip: Clip, scene: Content
   context.fillText(clipName(clip, scene.mediaNames), textX, top + LABEL_HEIGHT / 2, Math.max(0, left + width - textX - LABEL_PADDING))
 }
 
-function drawClip(context: CanvasRenderingContext2D, clip: Clip, scene: ContentScene, rowTop: number): void {
-  const left = timeToX(clip.start, scene.view)
-  const width = Math.max(1, timeToX(endOf(clip), scene.view) - left)
-  const top = rowTop + CLIP_INSET
-  const height = TRACK_HEIGHT - 2 * CLIP_INSET
-
-  context.save()
+// Shades what a fade takes away: a wedge that is widest at the clip edge and gone where the fade ends.
+function drawRamp(context: CanvasRenderingContext2D, band: Band, edgeX: number, fade: number | undefined, direction: 1 | -1, scene: ContentScene): void {
+  if (fade === undefined) return
+  const endX = edgeX + direction * (fade / TICKS_PER_SECOND) * scene.view.pixelsPerSecond
+  const opacity = context.globalAlpha
   context.beginPath()
-  context.roundRect(left, top, width, height, Math.min(CLIP_RADIUS, width / 2))
-  context.clip()
-  context.fillStyle = clipColor(clip, scene.colors)
-  context.fillRect(left, top, width, height)
-  if (width >= MIN_WIDTH_FOR_PICTURES) {
-    const video = clip.type === 'video' ? videoOf(clip, scene.mediaStates) : undefined
-    if (clip.type === 'video' && video !== undefined) drawFilmstrip(context, clip, video, scene, left, top, height)
-    if (clip.type === 'audio') drawWaveform(context, clip, scene, top, height)
-  }
-  drawLabel(context, clip, scene, left, top, width)
-  context.restore()
+  context.moveTo(edgeX, band.top)
+  context.lineTo(endX, band.top)
+  context.lineTo(edgeX, band.top + band.height)
+  context.closePath()
+  context.globalAlpha = opacity * RAMP_SHADE_OPACITY
+  context.fillStyle = scene.colors.background
+  context.fill()
+  context.globalAlpha = opacity
 
-  if (!scene.selection.has(clip.id)) return
-  context.strokeStyle = scene.colors.primary
-  context.lineWidth = SELECTION_WIDTH
   context.beginPath()
-  context.roundRect(left + 1, top + 1, Math.max(0, width - 2), height - 2, Math.min(CLIP_RADIUS, width / 2))
+  context.moveTo(edgeX, band.top + band.height)
+  context.lineTo(endX, band.top)
+  context.strokeStyle = scene.colors.textPrimary
+  context.lineWidth = 1
   context.stroke()
 }
 
+type ClipShape = {
+  clip: Clip
+  left: number
+  top: number
+  width: number
+  height: number
+  radius: number
+  picture: Band | undefined
+  sound: Band | undefined
+}
+
+function shapeOf(clip: Clip, scene: ContentScene, rowTop: number): ClipShape {
+  const left = timeToX(clip.start, scene.view)
+  const width = Math.max(1, timeToX(endOf(clip), scene.view) - left)
+  const bands = clipBands(clip, makesSound(clip, scene.mediaStates), rowTop)
+  return { clip, left, top: rowTop + CLIP_INSET, width, height: TRACK_HEIGHT - 2 * CLIP_INSET, radius: Math.min(CLIP_RADIUS, width / 2), ...bands }
+}
+
+function hasFades(clip: Clip): boolean {
+  const pictureFades = clip.type !== 'audio' && (clip.fadeIn !== undefined || clip.fadeOut !== undefined)
+  const soundFades = (clip.type === 'audio' || clip.type === 'video') && (clip.volumeFadeIn !== undefined || clip.volumeFadeOut !== undefined)
+  return pictureFades || soundFades
+}
+
+// What is drawn inside a clip: its thumbnail, waveform, fade ramps and name. A clip too narrow for a name has none of the first two either.
+function drawClipDetails(context: CanvasRenderingContext2D, shape: ClipShape, scene: ContentScene): void {
+  const { clip, left, top, width, height, radius, picture, sound } = shape
+  const isWide = width >= MIN_WIDTH_FOR_PICTURES
+  if (!isWide && !hasFades(clip)) return
+
+  context.save()
+  context.beginPath()
+  context.roundRect(left, top, width, height, radius)
+  context.clip()
+  if (isWide) {
+    const media = clip.type === 'video' ? videoOf(clip, scene.mediaStates) : undefined
+    if (clip.type === 'video' && media !== undefined && picture !== undefined) drawThumbnail(context, clip, media, scene, left, picture)
+    // Media that is missing has no waveform to ask for.
+    const state = clip.type === 'text' ? undefined : scene.mediaStates[clip.mediaId]
+    const isAvailable = state !== undefined && 'info' in state
+    if ((clip.type === 'audio' || clip.type === 'video') && sound !== undefined && isAvailable) drawWaveform(context, clip, scene, sound.top, sound.height)
+  }
+  if (clip.type !== 'audio' && picture !== undefined) {
+    drawRamp(context, picture, left, clip.fadeIn, 1, scene)
+    drawRamp(context, picture, left + width, clip.fadeOut, -1, scene)
+  }
+  if ((clip.type === 'audio' || clip.type === 'video') && sound !== undefined) {
+    drawRamp(context, sound, left, clip.volumeFadeIn, 1, scene)
+    drawRamp(context, sound, left + width, clip.volumeFadeOut, -1, scene)
+  }
+  drawLabel(context, clip, scene, left, top, width)
+  context.restore()
+}
+
+function drawSelection(context: CanvasRenderingContext2D, shape: ClipShape, scene: ContentScene): void {
+  context.strokeStyle = scene.colors.primary
+  context.lineWidth = SELECTION_WIDTH
+  context.beginPath()
+  context.roundRect(shape.left + 1, shape.top + 1, Math.max(0, shape.width - 2), shape.height - 2, shape.radius)
+  context.stroke()
+}
+
+// Thousands of clips can be in view at once, so their bodies are not drawn one by one: every body of one colour goes into one shape that is filled once.
 function drawTrack(context: CanvasRenderingContext2D, track: Track, scene: ContentScene, rowTop: number): void {
   const { view, size, colors } = scene
   context.fillStyle = colors.divider
@@ -238,10 +319,32 @@ function drawTrack(context: CanvasRenderingContext2D, track: Track, scene: Conte
 
   const clips = scene.inOrder(track)
   const range = visibleRange(clips, xToTime(0, view), xToTime(size.width, view))
-  context.globalAlpha = track.hidden ? HIDDEN_TRACK_OPACITY : 1
+  const shapes: ClipShape[] = []
+  const bodies = new Map<string, Path2D>()
+  const soundBands = new Path2D()
   for (let index = range.first; index < range.end; index++) {
     const clip = clips[index]
-    if (clip !== undefined) drawClip(context, clip, scene, rowTop)
+    if (clip === undefined) continue
+    const shape = shapeOf(clip, scene, rowTop)
+    shapes.push(shape)
+    const color = clipColor(clip, scene)
+    const body = bodies.get(color) ?? new Path2D()
+    bodies.set(color, body)
+    body.roundRect(shape.left, shape.top, shape.width, shape.height, shape.radius)
+    // The sound of a linked clip has the colour of an audio clip, under its picture.
+    if (clip.type === 'video' && shape.sound !== undefined) soundBands.roundRect(shape.left, shape.sound.top, shape.width, shape.sound.height, [0, 0, shape.radius, shape.radius])
+  }
+
+  context.globalAlpha = track.hidden ? HIDDEN_TRACK_OPACITY : 1
+  for (const [color, body] of bodies) {
+    context.fillStyle = color
+    context.fill(body)
+  }
+  context.fillStyle = colors.audio
+  context.fill(soundBands)
+  for (const shape of shapes) {
+    drawClipDetails(context, shape, scene)
+    if (scene.selection.has(shape.clip.id)) drawSelection(context, shape, scene)
   }
   context.globalAlpha = 1
 }
@@ -298,6 +401,29 @@ export function drawOverlay(context: CanvasRenderingContext2D, scene: OverlaySce
   if (scene.guide !== undefined) {
     context.fillStyle = colors.snapGuide
     context.fillRect(Math.round(timeToX(scene.guide, view)), RULER_HEIGHT, 1, size.height - RULER_HEIGHT)
+  }
+
+  for (const handle of scene.handles) {
+    context.beginPath()
+    context.arc(handle.x, handle.y, HANDLE_RADIUS, 0, 2 * Math.PI)
+    context.fillStyle = handle === scene.heldHandle ? colors.primary : colors.textPrimary
+    context.fill()
+    context.strokeStyle = colors.background
+    context.lineWidth = 1
+    context.stroke()
+  }
+  if (scene.heldHandle !== undefined) {
+    const { x, y } = scene.heldHandle
+    context.font = scene.fonts.small
+    context.textBaseline = 'middle'
+    const labelWidth = context.measureText(scene.heldLabel).width
+    // The length is written on the side of the handle that points into the clip, where there is room for it.
+    const isFadeIn = scene.heldHandle.fade === 'fadeIn' || scene.heldHandle.fade === 'volumeFadeIn'
+    const labelX = isFadeIn ? x + HANDLE_LABEL_GAP : x - HANDLE_LABEL_GAP - labelWidth
+    context.fillStyle = colors.background
+    context.fillRect(labelX - 3, y - 8, labelWidth + 6, 16)
+    context.fillStyle = colors.textPrimary
+    context.fillText(scene.heldLabel, labelX, y)
   }
 
   const playheadX = Math.round(timeToX(scene.playhead, view))

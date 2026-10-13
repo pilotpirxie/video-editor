@@ -1,3 +1,4 @@
+import type { MediaStates } from '../engine/resolve.js'
 import type { AudioClip, Clip, Keyframe, Keyframes, Project, Track, VideoClip, VisualClip } from '../shared/project.js'
 
 export type NewTrack = {
@@ -23,12 +24,50 @@ export function hasSource(clip: Clip): clip is VideoClip | AudioClip {
   return clip.type === 'video' || clip.type === 'audio'
 }
 
+// A video clip whose sound still belongs to it: the media has sound and it was not separated.
+export function hasLinkedAudio(clip: Clip, mediaStates: MediaStates): clip is VideoClip {
+  if (clip.type !== 'video' || clip.isAudioSeparated === true) return false
+  const state = mediaStates[clip.mediaId]
+  return state !== undefined && 'info' in state && state.info.kind === 'video' && state.info.audio !== undefined
+}
+
+export function makesSound(clip: Clip, mediaStates: MediaStates): clip is VideoClip | AudioClip {
+  return clip.type === 'audio' || hasLinkedAudio(clip, mediaStates)
+}
+
 export function locateClip(project: Project, clipId: string): ClipLocation | undefined {
   for (const [trackIndex, track] of project.tracks.entries()) {
     const clip = track.clips.find((candidate) => candidate.id === clipId)
     if (clip !== undefined) return { trackIndex, track, clip }
   }
   return undefined
+}
+
+// The closest clip start or end on the given side of `time`.
+export function nearestEdit(project: Project, time: number, direction: 1 | -1): number | undefined {
+  let nearest: number | undefined
+  for (const track of project.tracks) {
+    for (const clip of track.clips) {
+      for (const edit of [clip.start, endOf(clip)]) {
+        const isOnThatSide = direction === 1 ? edit > time : edit < time
+        const isCloser = nearest === undefined || Math.abs(edit - time) < Math.abs(nearest - time)
+        if (isOnThatSide && isCloser) nearest = edit
+      }
+    }
+  }
+  return nearest
+}
+
+// The ids of the clips on unlocked tracks that pass a test, bottom track first.
+export function unlockedClipIds(project: Project, isWanted: (clip: Clip) => boolean): string[] {
+  const ids: string[] = []
+  for (const track of project.tracks) {
+    if (track.locked) continue
+    for (const clip of track.clips) {
+      if (isWanted(clip)) ids.push(clip.id)
+    }
+  }
+  return ids
 }
 
 export function emptyTrack(track: NewTrack): Track {

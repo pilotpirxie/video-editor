@@ -53,6 +53,8 @@ function perform(session: MediaSession, request: MediaRequest, signal: AbortSign
       return session.writeFile(request.directory, request.name, request.data)
     case 'addMedia':
       return session.addMedia(request.path)
+    case 'relinkMedia':
+      return session.relinkMedia(request.path, request.wanted, request.others)
     case 'preparation':
       return session.preparation()
     case 'waveform':

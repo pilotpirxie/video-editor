@@ -1,7 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { FRAME, SECOND, track, videoClip } from '../../test/fixtures.js'
+import { FRAME, SECOND, audioClip, track, videoClip } from '../../test/fixtures.js'
 import type { Clip } from '../shared/project.js'
-import { RULER_HEIGHT, TRACK_HEIGHT, clipsInMarquee, createClipIndex, fitZoom, hitClip, rulerStep, timeToX, trackIndexAt, trackTop, visibleRange, xToTime, zoomAround } from './timelineView.js'
+import {
+  CLIP_INSET,
+  RULER_HEIGHT,
+  TRACK_HEIGHT,
+  clipBands,
+  clipsInMarquee,
+  createClipIndex,
+  fadeHandleAt,
+  fadeHandles,
+  fitZoom,
+  hitClip,
+  rulerStep,
+  timeToX,
+  trackIndexAt,
+  trackTop,
+  visibleRange,
+  xToTime,
+  zoomAround,
+} from './timelineView.js'
 
 const view = { pixelsPerSecond: 100, scrollX: 250, scrollY: 0 }
 const limits = { viewWidth: 1000, duration: 100 * SECOND, frameTicks: FRAME }
@@ -30,15 +48,22 @@ describe('zoomAround', () => {
     expect(xToTime(400, zoomed)).toBeCloseTo(xToTime(400, view), 3)
   })
 
-  it('stops at the whole project and at single frames', () => {
-    expect(zoomAround(view, 0.0001, 0, limits).pixelsPerSecond).toBe(fitZoom(limits))
+  it('stops at an hour in view for a short project, and at single frames', () => {
+    const zoomedOut = zoomAround(view, 0.0001, 0, limits)
+    expect(zoomedOut.pixelsPerSecond).toBe(1000 / 3600)
+    expect(zoomedOut.pixelsPerSecond).toBeLessThan(fitZoom(limits))
     expect(zoomAround(view, 100_000, 0, limits).pixelsPerSecond).toBe(20 * 30)
   })
 
-  it('shows a 20-hour project in one view', () => {
+  it('zooms out to ten times a long project, which still fits exactly on request', () => {
     const twentyHours = { ...limits, duration: 20 * 3600 * SECOND }
-    const zoomed = zoomAround(view, 0, 0, twentyHours)
-    expect(timeToX(20 * 3600 * SECOND, { ...zoomed, scrollX: 0 })).toBeCloseTo(1000, 6)
+    const zoomedOut = zoomAround(view, 0, 0, twentyHours)
+    expect(timeToX(20 * 3600 * SECOND, { ...zoomedOut, scrollX: 0 })).toBeCloseTo(100, 6)
+    expect(timeToX(20 * 3600 * SECOND, { ...view, pixelsPerSecond: fitZoom(twentyHours), scrollX: 0 })).toBeCloseTo(1000, 6)
+  })
+
+  it('keeps the start of the timeline at the left edge when zoomed out past the project', () => {
+    expect(zoomAround(view, 0, 700, limits).scrollX).toBe(0)
   })
 })
 
@@ -47,6 +72,8 @@ describe('rulerStep', () => {
     expect(rulerStep(100, FRAME)).toBe(SECOND)
     expect(rulerStep(10, FRAME)).toBe(10 * SECOND)
     expect(rulerStep(0.014, FRAME)).toBe(7200 * SECOND)
+    // Two hundred hours across a thousand pixels: a label a day.
+    expect(rulerStep(1000 / (200 * 3600), FRAME)).toBe(86_400 * SECOND)
     expect(rulerStep(600, FRAME)).toBe(5 * FRAME)
     expect(rulerStep(3000, FRAME)).toBe(FRAME)
   })
@@ -119,3 +146,73 @@ describe('hitClip and clipsInMarquee', () => {
     expect(clipsInMarquee(tracks, inOrder, flat, { left: 0, top: topRow, right: 1000, bottom: topRow + 5 })).toEqual([])
   })
 })
+
+describe('clipBands', () => {
+  const rowTop = 100
+  const top = rowTop + CLIP_INSET
+  const height = TRACK_HEIGHT - 2 * CLIP_INSET
+
+  it('gives a silent picture the whole clip', () => {
+    expect(clipBands(videoClip('a', 0, SECOND), false, rowTop)).toEqual({ picture: { top, height }, sound: undefined })
+  })
+
+  it('gives a sound the whole clip', () => {
+    expect(clipBands(audioClip('a', 0, SECOND), true, rowTop)).toEqual({ picture: undefined, sound: { top, height } })
+  })
+
+  it('shows the picture of a linked clip above its sound', () => {
+    const bands = clipBands(videoClip('a', 0, SECOND), true, rowTop)
+    expect(bands.picture).toEqual({ top, height: 31 })
+    expect(bands.sound).toEqual({ top: top + 31, height: height - 31 })
+  })
+})
+
+describe('fade handles', () => {
+  const flat = { pixelsPerSecond: 100, scrollX: 0, scrollY: 0 }
+  const rowTop = RULER_HEIGHT
+  const pictureY = rowTop + CLIP_INSET + 7
+  const soundY = rowTop + TRACK_HEIGHT - CLIP_INSET - 7
+
+  it('rest just inside the corners while there is no fade', () => {
+    expect(fadeHandles(videoClip('a', SECOND, 4 * SECOND), true, flat, rowTop)).toEqual([
+      { fade: 'fadeIn', x: 107, y: pictureY },
+      { fade: 'fadeOut', x: 493, y: pictureY },
+      { fade: 'volumeFadeIn', x: 107, y: soundY },
+      { fade: 'volumeFadeOut', x: 493, y: soundY },
+    ])
+  })
+
+  it('sit where their fade ends', () => {
+    const clip = videoClip('a', SECOND, 4 * SECOND, { fadeIn: SECOND, fadeOut: SECOND / 2, volumeFadeOut: 2 * SECOND })
+    expect(fadeHandles(clip, true, flat, rowTop).map((handle) => handle.x)).toEqual([200, 450, 107, 300])
+  })
+
+  it('stay inside the clip when a fade is as long as the clip', () => {
+    const clip = videoClip('a', SECOND, 4 * SECOND, { fadeIn: 4 * SECOND })
+    expect(fadeHandles(clip, false, flat, rowTop)[0]).toMatchObject({ fade: 'fadeIn', x: 493 })
+  })
+
+  it('offer only the fades a clip has', () => {
+    expect(fadeHandles(videoClip('a', 0, 4 * SECOND), false, flat, rowTop).map((handle) => handle.fade)).toEqual(['fadeIn', 'fadeOut'])
+    expect(fadeHandles(audioClip('a', 0, 4 * SECOND), true, flat, rowTop).map((handle) => handle.fade)).toEqual(['volumeFadeIn', 'volumeFadeOut'])
+  })
+
+  it('are left out of a clip too narrow to hold them', () => {
+    expect(fadeHandles(videoClip('a', 0, SECOND / 5), true, flat, rowTop)).toEqual([])
+  })
+
+  it('are grabbed within reach of the dot, the nearest one first', () => {
+    const handles = fadeHandles(videoClip('a', SECOND, 4 * SECOND), true, flat, rowTop)
+    expect(fadeHandleAt(handles, 107, pictureY)?.fade).toBe('fadeIn')
+    expect(fadeHandleAt(handles, 101, pictureY + 5)?.fade).toBe('fadeIn')
+    expect(fadeHandleAt(handles, 490, soundY - 3)?.fade).toBe('volumeFadeOut')
+    expect(fadeHandleAt(handles, 107, rowTop + TRACK_HEIGHT / 2)).toBeUndefined()
+    expect(fadeHandleAt(handles, 300, pictureY)).toBeUndefined()
+  })
+
+  it('leave most of the clip edge to trimming', () => {
+    const handles = fadeHandles(videoClip('a', SECOND, 4 * SECOND), true, flat, rowTop)
+    expect(fadeHandleAt(handles, 101, rowTop + TRACK_HEIGHT / 2)).toBeUndefined()
+  })
+})
+

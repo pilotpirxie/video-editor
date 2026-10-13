@@ -7,6 +7,7 @@ import {
   ipcMain,
   powerSaveBlocker,
   protocol,
+  shell,
   utilityProcess,
   type MenuItemConstructorOptions,
   type UtilityProcess,
@@ -14,7 +15,7 @@ import {
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { basename, extname, join, normalize, resolve } from 'node:path'
-import { EXPORT_PRESETS, isExportPreset } from '../shared/exportPresets.js'
+import { EXPORT_PRESETS, isExportPreset, isExportQuality } from '../shared/exportPresets.js'
 import { describeError, logError } from '../shared/log.js'
 import type {
   DocumentInfo,
@@ -31,9 +32,20 @@ import type {
   UnsavedChoice,
 } from '../shared/mediaProtocol.js'
 import { startMemoryMonitor, type MemoryMonitor } from './memory.js'
-import { discardRecoveredWork, discardRecovery, findRecovery, newRecoveryPath, rememberProjectPath, type FoundRecovery } from './recovery.js'
+import { isProjectFrameRate } from '../shared/time.js'
+import {
+  discardExportSnapshot,
+  discardRecoveredWork,
+  discardRecovery,
+  exportSnapshotPath,
+  findRecovery,
+  newRecoveryPath,
+  rememberProjectPath,
+  type FoundRecovery,
+} from './recovery.js'
 import { runSelfTest, type SelfTestOptions } from './selfTest.js'
-import { runUiTest, type DialogAnswers } from './uiTest.js'
+import type { DialogAnswers } from './uiDriver.js'
+import { runUiTest } from './uiTest.js'
 
 const RENDERER_DIRECTORY = join(import.meta.dirname, '..', '..', '..', 'renderer')
 const MEDIA_SERVICE_PATH = join(import.meta.dirname, '..', 'media', 'service.js')
@@ -84,6 +96,8 @@ type AppState = {
   exportWindow: BrowserWindow | undefined
   jobListeners: Map<number, (event: JobEvent) => void>
   exportPathOverride: string | undefined
+  // The file the last finished export wrote, for "Show in Finder".
+  lastExportPath: string | undefined
   dialogAnswers: DialogAnswers
   recoveryDirectory: string
   // False for test runs, which must not leave their scratch files in the system's Open Recent list.
@@ -137,12 +151,27 @@ function framesJobFromCli(projectPath: string, options: Map<string, string>): Fr
   return job
 }
 
+function isFrameRateChoice(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || !('num' in value) || !('den' in value)) return false
+  return typeof value.num === 'number' && typeof value.den === 'number' && isProjectFrameRate({ num: value.num, den: value.den })
+}
+
+function isTimeRange(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || !('start' in value) || !('end' in value)) return false
+  return typeof value.start === 'number' && typeof value.end === 'number' && value.start >= 0 && value.end > value.start
+}
+
+// A job arrives from a window, so every choice in it is checked before it is run.
 function isExportJob(value: unknown): value is ExportJob {
   if (typeof value !== 'object' || value === null) return false
   if (!('kind' in value) || value.kind !== 'export') return false
   if (!('projectPath' in value) || typeof value.projectPath !== 'string') return false
   if (!('outputPath' in value) || typeof value.outputPath !== 'string') return false
-  return 'preset' in value && typeof value.preset === 'string' && isExportPreset(value.preset)
+  if (!('preset' in value) || typeof value.preset !== 'string' || !isExportPreset(value.preset)) return false
+  if ('frameRate' in value && value.frameRate !== undefined && !isFrameRateChoice(value.frameRate)) return false
+  if ('quality' in value && value.quality !== undefined && !(typeof value.quality === 'string' && isExportQuality(value.quality))) return false
+  if ('range' in value && value.range !== undefined && !isTimeRange(value.range)) return false
+  return !('hasAudio' in value) || value.hasAudio === undefined || typeof value.hasAudio === 'boolean'
 }
 
 function isJobEvent(value: unknown): value is JobEvent {
@@ -288,6 +317,8 @@ async function loadPage(window: BrowserWindow, mode: WindowMode): Promise<void> 
   try {
     await window.loadURL(`app://editor/index.html?mode=${mode}`)
   } catch (error) {
+    // An export that is cancelled at once closes its window while the page is still loading; that is not a failure.
+    if (window.isDestroyed()) return
     logError('Could not load the window', error, { mode })
   }
 }
@@ -353,12 +384,14 @@ function startExportFor(state: AppState, requester: BrowserWindow, job: ExportJo
     return
   }
   const window = runHeadlessJob(state, job, (event) => {
+    if (event.type === 'done') state.lastExportPath = job.outputPath
     send(requester, { type: 'export-event', event })
     if (event.type !== 'progress') window.destroy()
   })
   state.exportWindow = window
   window.on('closed', () => {
     state.exportWindow = undefined
+    void discardExportSnapshot(job.projectPath, state.recoveryDirectory)
   })
 }
 
@@ -376,7 +409,8 @@ function showDocument(state: AppState, editor: Editor): void {
 }
 
 function documentFor(state: AppState, projectPath: string | undefined): DocumentInfo {
-  const document: DocumentInfo = { path: projectPath, loadFrom: projectPath, recoveryPath: newRecoveryPath(state.recoveryDirectory) }
+  const recoveryPath = newRecoveryPath(state.recoveryDirectory)
+  const document: DocumentInfo = { path: projectPath, loadFrom: projectPath, recoveryPath, exportSnapshotPath: exportSnapshotPath(recoveryPath) }
   if (projectPath !== undefined) {
     if (state.remembersRecentDocuments) app.addRecentDocument(projectPath)
     void rememberProjectPath(document.recoveryPath, projectPath)
@@ -460,6 +494,19 @@ function registerDocumentIpc(state: AppState): void {
     return chosen.filePaths
   })
 
+  ipcMain.handle('choose-media-file', async (event, name: unknown): Promise<string | undefined> => {
+    if (state.dialogAnswers.relinkMedia !== undefined) return state.dialogAnswers.relinkMedia
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    if (owner === null) return undefined
+    const chosen = await dialog.showOpenDialog(owner, {
+      message: typeof name === 'string' ? `Where is "${name}"?` : 'Where is the file?',
+      buttonLabel: 'Relink',
+      properties: ['openFile'],
+      filters: [{ name: 'Media', extensions: MEDIA_EXTENSIONS }],
+    })
+    return chosen.filePaths[0]
+  })
+
   ipcMain.handle('confirm-unsaved-changes', async (event): Promise<UnsavedChoice> => {
     const editor = editorOf(state, event.sender)
     return editor === undefined ? 'cancel' : askUnsavedChanges(state, editor)
@@ -486,6 +533,7 @@ function registerIpc(state: AppState): void {
   })
 
   ipcMain.handle('save-export-dialog', async (event, suggestedName: unknown): Promise<string | undefined> => {
+    if (state.dialogAnswers.exportPath !== undefined) return state.dialogAnswers.exportPath
     if (state.exportPathOverride !== undefined) return state.exportPathOverride
     const owner = BrowserWindow.fromWebContents(event.sender)
     if (owner === null) return undefined
@@ -507,6 +555,10 @@ function registerIpc(state: AppState): void {
   })
 
   ipcMain.on('cancel-export', () => state.exportWindow?.destroy())
+
+  ipcMain.on('show-last-export', () => {
+    if (state.lastExportPath !== undefined) shell.showItemInFolder(state.lastExportPath)
+  })
 }
 
 function buildHarnessMenu(state: AppState): void {
@@ -558,6 +610,7 @@ function buildEditorMenu(state: AppState): void {
         item('save-as', 'Save As…', 'Shift+CmdOrCtrl+S'),
         { type: 'separator' },
         item('import', 'Import Media…', 'CmdOrCtrl+I'),
+        item('export', 'Export…', 'CmdOrCtrl+E'),
         { type: 'separator' },
         { role: 'close' },
       ],
@@ -576,8 +629,10 @@ function buildEditorMenu(state: AppState): void {
         item('ripple-delete', 'Ripple Delete'),
         { type: 'separator' },
         item('split', 'Split at Playhead', 'CmdOrCtrl+T'),
+        item('split-all', 'Split All Tracks', 'Shift+CmdOrCtrl+T'),
         { type: 'separator' },
-        { role: 'selectAll' },
+        item('select-all', 'Select All', 'CmdOrCtrl+A'),
+        item('deselect-all', 'Deselect All', 'Shift+CmdOrCtrl+A'),
       ],
     },
     { role: 'viewMenu' },
@@ -615,7 +670,9 @@ async function shouldRestore(state: AppState, found: FoundRecovery): Promise<boo
 async function firstDocument(state: AppState, projectPath: string | undefined): Promise<DocumentInfo> {
   const found = await findRecovery(state.recoveryDirectory)
   if (found === undefined) return documentFor(state, projectPath)
-  if (await shouldRestore(state, found)) return { path: found.projectPath, loadFrom: found.recoveryPath, recoveryPath: found.recoveryPath }
+  if (await shouldRestore(state, found)) {
+    return { path: found.projectPath, loadFrom: found.recoveryPath, recoveryPath: found.recoveryPath, exportSnapshotPath: exportSnapshotPath(found.recoveryPath) }
+  }
   await discardRecovery(found.recoveryPath)
   return documentFor(state, projectPath)
 }
@@ -678,6 +735,9 @@ async function main(): Promise<void> {
   const uiTestScenario = options.get('uitest')
   const playSeconds = Number(options.get('seconds') ?? DEFAULT_SELFTEST_SECONDS)
   if (!(playSeconds > 0)) throw new UsageError('--seconds must be a positive number')
+  // A UI test restores recovery files without asking and changes stored settings, so it must never run on the profile that holds someone's real work.
+  const hasOwnProfile = app.commandLine.hasSwitch('user-data-dir')
+  if (uiTestScenario !== undefined && !hasOwnProfile) throw new UsageError('--uitest needs a profile of its own: add --user-data-dir=<empty folder>')
 
   // Two editors on one profile would each offer to restore the other's live recovery file.
   const isInteractive = cliJob === undefined && selfTestPath === undefined && uiTestScenario === undefined
@@ -703,6 +763,7 @@ async function main(): Promise<void> {
     exportWindow: undefined,
     jobListeners: new Map(),
     exportPathOverride: undefined,
+    lastExportPath: undefined,
     dialogAnswers: {},
     recoveryDirectory: join(app.getPath('userData'), 'recovery'),
     remembersRecentDocuments: isInteractive,

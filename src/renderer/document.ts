@@ -1,8 +1,9 @@
-import { withMedia } from '../editor/place.js'
+import { exportJobFor, selectionRange, type ExportChoices } from '../editor/export.js'
+import { mediaFileName, mediaUses, relinkedMedia, unlinkedMedia, withMedia } from '../editor/place.js'
 import type { MediaStates } from '../engine/resolve.js'
 import { describeError, logError } from '../shared/log.js'
-import type { DocumentInfo, DocumentState, HostCommand, MediaClient, NextDocument, Preparation } from '../shared/mediaProtocol.js'
-import type { Project } from '../shared/project.js'
+import type { DocumentInfo, DocumentState, HostCommand, JobEvent, MediaClient, NextDocument, Preparation } from '../shared/mediaProtocol.js'
+import { projectDuration, type Project } from '../shared/project.js'
 import { createActions, type Actions } from './actions.js'
 import type { EngineHost } from './engineHost.js'
 import { createEditorStore, type EditorStore } from './store.js'
@@ -25,6 +26,9 @@ export type Session = {
   open(): Promise<void>
   importFiles(paths: readonly string[]): Promise<void>
   chooseAndImport(): Promise<void>
+  relink(mediaId: string): Promise<void>
+  exportVideo(choices: ExportChoices): Promise<void>
+  cancelExport(): void
 }
 
 type SentProject = {
@@ -86,6 +90,26 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
 
   async function chooseAndImport(): Promise<void> {
     await importFiles(await window.host.importMediaDialog())
+  }
+
+  // Asks where a file went. The other missing files are looked for in the same folder, so one answer usually brings them all back.
+  async function relink(mediaId: string): Promise<void> {
+    const { project, mediaStates } = store.getState()
+    const reference = project.media.find((candidate) => candidate.id === mediaId)
+    if (reference === undefined) return
+    const path = await window.host.chooseMediaFile(mediaFileName(reference))
+    if (path === undefined) return
+
+    const others = unlinkedMedia(project, mediaStates).filter((unlinked) => unlinked.reference.id !== mediaId)
+    try {
+      const found = await media.relinkMedia(path, { reference, uses: mediaUses(project, mediaId) }, others)
+      for (const item of found) store.setMediaState(item.id, { info: item.info })
+      store.apply('Relink Media', (current) => relinkedMedia(current, found))
+      watchPreparation()
+      if (found.length > 1) store.notify(`${found.length - 1} more missing ${found.length === 2 ? 'file was' : 'files were'} found in the same folder.`)
+    } catch (error) {
+      store.notify(describeError(error))
+    }
   }
 
   // The engine gets the whole project at most once per frame, however many pointer events arrived in between.
@@ -166,6 +190,52 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
     return path === undefined ? false : saveTo(path)
   }
 
+  function fileNameOf(path: string): string {
+    return path.split('/').at(-1) ?? path
+  }
+
+  // The export reads a copy of the project written at this moment, so whatever is edited afterwards is not in the video.
+  async function exportVideo(choices: ExportChoices): Promise<void> {
+    const { documentPath, selection } = store.getState()
+    const projectName = documentPath === undefined ? 'Untitled' : fileNameOf(documentPath).replace(/\.json$/, '')
+    const outputPath = await window.host.saveExportDialog(`${projectName}.mp4`)
+    if (outputPath === undefined) return
+
+    const snapshot = store.committedProject()
+    try {
+      await media.saveProject(info.exportSnapshotPath, snapshot)
+    } catch (error) {
+      store.notify(`The export could not start: ${describeError(error)}`)
+      return
+    }
+    const job = exportJobFor(choices, selectionRange(snapshot, selection), { projectPath: info.exportSnapshotPath, outputPath })
+    store.setExportProgress({ fileName: fileNameOf(outputPath), done: 0, total: 1, startedAt: performance.now() })
+    window.host.startExport(job)
+  }
+
+  // Nothing comes back from a cancelled export: its window is closed and its unfinished file removed.
+  function cancelExport(): void {
+    window.host.cancelExport()
+    store.setExportProgress(undefined)
+  }
+
+  function onExportEvent(event: JobEvent): void {
+    const running = store.getState().exportProgress
+    if (running === undefined) return
+    if (event.type === 'progress') {
+      store.setExportProgress({ ...running, done: event.done, total: event.total })
+      return
+    }
+    store.setExportProgress(undefined)
+    if (event.type === 'done') store.notifyExported(`Exported "${running.fileName}".`)
+    else store.notify(`"${running.fileName}" was not exported. ${event.message}`)
+  }
+
+  function openExportDialog(): void {
+    const { project, exportProgress } = store.getState()
+    if (exportProgress === undefined && projectDuration(project) > 0) store.showExportDialog(true)
+  }
+
   // New, Open and Close all leave the current document, so they share one unsaved-changes check.
   async function leaveFor(next: NextDocument): Promise<void> {
     store.cancel()
@@ -197,11 +267,21 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
     }
   }
 
+  // Like Undo, the menu's Select All also arrives while a text field has focus, where it must select the text.
+  function selectAll(): void {
+    if (isTypingTarget(document.activeElement)) document.execCommand('selectAll')
+    else actions.selectAll()
+  }
+
   window.host.onCommand((command: HostCommand) => {
     if (command.type === 'open-project') {
       void leaveFor({ kind: 'open', path: command.path })
+    } else if (command.type === 'export-event') {
+      onExportEvent(command.event)
     } else if (command.type !== 'menu') {
       return
+    } else if (command.action === 'export') {
+      openExportDialog()
     } else if (command.action === 'new') {
       void leaveFor({ kind: 'new' })
     } else if (command.action === 'close') {
@@ -218,6 +298,12 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
       void chooseAndImport()
     } else if (command.action === 'split') {
       actions.split()
+    } else if (command.action === 'split-all') {
+      actions.splitAll()
+    } else if (command.action === 'select-all') {
+      selectAll()
+    } else if (command.action === 'deselect-all') {
+      store.select([])
     } else if (command.action === 'duplicate') {
       actions.duplicate()
     } else if (command.action === 'delete') {
@@ -235,6 +321,8 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
       store.open(loaded, info.path, !isRecovered)
       recovered = loaded.project
       watchPreparation()
+      const missingCount = unlinkedMedia(loaded.project, loaded.media).length
+      if (missingCount > 0) store.notify(`${missingCount} media ${missingCount === 1 ? 'file is' : 'files are'} missing. Use Relink in the Media tab to say where ${missingCount === 1 ? 'it is' : 'they are'}.`)
     } catch (error) {
       // The path is not kept: Save must ask where to write instead of replacing a file that could not be read.
       store.notify(describeError(error))
@@ -255,5 +343,8 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
     open,
     importFiles,
     chooseAndImport,
+    relink,
+    exportVideo,
+    cancelExport,
   }
 }

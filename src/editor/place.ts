@@ -1,10 +1,12 @@
 import type { Size } from '../shared/exportPresets.js'
-import type { MediaInfo } from '../shared/mediaProtocol.js'
+import type { MediaStates } from '../engine/resolve.js'
+import type { MediaInfo, MediaUse, UnlinkedMedia } from '../shared/mediaProtocol.js'
 import { MAX_CANVAS, MIN_CANVAS, type Canvas, type Clip, type MediaRef, type Project, type Transform } from '../shared/project.js'
 import { NORMAL_SPEED_PERCENT, PROJECT_FRAME_RATES, TICKS_PER_SECOND, frameDuration, type FrameRate } from '../shared/time.js'
 import { placeOnTrack, type NewTrack } from './clips.js'
 
-const STILL_DURATION = 5 * TICKS_PER_SECOND
+// How long a clip without a source of its own length lasts when it is added: a still image, an animated image, a text.
+export const STILL_DURATION = 5 * TICKS_PER_SECOND
 
 export type MediaDrop = {
   reference: MediaRef
@@ -33,7 +35,10 @@ export function clipForMedia(mediaId: string, info: MediaInfo, canvas: Canvas, c
   const source = { mediaId, sourceStart: 0, speedPercent: NORMAL_SPEED_PERCENT, volume: 1 }
   const timing = { id: clipId, start, duration: wholeFrames(info.duration, frameTicks) }
   if (info.kind === 'audio') return { ...timing, ...source, type: 'audio' }
-  return { ...timing, ...source, type: 'video', transform: centred(info.video, canvas), opacity: 1 }
+  const video: Clip = { ...timing, ...source, type: 'video', transform: centred(info.video, canvas), opacity: 1 }
+  if (info.isAnimatedImage !== true) return video
+  // An animated image behaves like a still that moves: it lasts as long as a still, and repeats to fill that time.
+  return { ...video, loop: true, duration: Math.max(timing.duration, STILL_DURATION) }
 }
 
 function nearestProjectFrameRate(frameTicks: number): FrameRate {
@@ -62,7 +67,50 @@ function canvasSizeFor(natural: Size): Size {
 export function canvasForFirstClip(info: MediaInfo, canvas: Canvas): Canvas {
   if (info.kind === 'audio') return canvas
   if (info.kind === 'image') return { ...canvas, ...canvasSizeFor(info) }
+  if (info.isAnimatedImage === true) return { ...canvas, ...canvasSizeFor(info.video) }
   return { ...canvasSizeFor(info.video), frameRate: nearestProjectFrameRate(info.video.frameDuration) }
+}
+
+export function mediaFileName(reference: MediaRef): string {
+  const path = reference.path === '' ? reference.relativePath : reference.path
+  return path.split('/').at(-1) ?? path
+}
+
+// What the clips of a project need from one of its media files.
+export function mediaUses(project: Project, mediaId: string): MediaUse[] {
+  const uses = new Set<MediaUse>()
+  for (const track of project.tracks) {
+    for (const clip of track.clips) {
+      if (clip.type === 'text' || clip.mediaId !== mediaId) continue
+      if (clip.type === 'audio') uses.add('sound')
+      else uses.add(clip.type)
+    }
+  }
+  return [...uses]
+}
+
+// The media whose files are not where the project expects them, with what the project's clips need from each.
+export function unlinkedMedia(project: Project, mediaStates: MediaStates): UnlinkedMedia[] {
+  const unlinked: UnlinkedMedia[] = []
+  for (const reference of project.media) {
+    const state = mediaStates[reference.id]
+    const isUnlinked = state === undefined || ('error' in state && state.isMissing)
+    if (isUnlinked) unlinked.push({ reference, uses: mediaUses(project, reference.id) })
+  }
+  return unlinked
+}
+
+// Points media at the files that were found for it. The path relative to the project file is worked out again when the project is saved.
+export function relinkedMedia(project: Project, found: readonly { id: string; path: string }[]): Project {
+  const paths = new Map(found.map((item) => [item.id, item.path]))
+  let hasChanged = false
+  const media = project.media.map((reference) => {
+    const path = paths.get(reference.id)
+    if (path === undefined || path === reference.path) return reference
+    hasChanged = true
+    return { id: reference.id, path, relativePath: '' }
+  })
+  return hasChanged ? { ...project, media } : project
 }
 
 function hasClips(project: Project): boolean {

@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { EXPORT_PRESETS, exportSize, fitCanvas, type ExportPreset } from '../../src/shared/exportPresets.js'
 import { temporaryPathFor } from '../../src/media/encoder.js'
-import { bundledFfmpeg, cropPicture, projectPath, readBarcode, runApp, scratchDirectory, type Picture } from '../helpers.js'
+import { bundledFfmpeg, cropPicture, probeExport, projectPath, readBarcode, runApp, scratchDirectory, type Picture } from '../helpers.js'
 
 const ffmpeg = bundledFfmpeg()
 const scratch = scratchDirectory('export')
@@ -11,36 +11,11 @@ const CANVAS = { width: 640, height: 360 }
 const FRAME_COUNT = 60
 const SAMPLE_RATE = 48_000
 
-type ProbedExport = {
-  video: Record<string, string>
-  audio: Record<string, string>
-  duration: number
-}
-
 async function exportCheckProject(preset: ExportPreset): Promise<string> {
   const path = join(scratch, `${preset}.mp4`)
   const result = await runApp(['--export', projectPath('export-check'), '--out', path, '--preset', preset])
   if (result.exitCode !== 0) throw new Error(`Export failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`)
   return path
-}
-
-function fieldsOf(line: string): Record<string, string> {
-  const fields: Record<string, string> = {}
-  for (const pair of line.split('|').slice(1)) {
-    const separator = pair.indexOf('=')
-    fields[pair.slice(0, separator)] = pair.slice(separator + 1)
-  }
-  return fields
-}
-
-async function probeExport(path: string): Promise<ProbedExport> {
-  const entries = 'stream=codec_type,codec_name,profile,pix_fmt,width,height,r_frame_rate,nb_frames,color_space,color_primaries,color_transfer,color_range,sample_rate,channels:format=duration'
-  const output = (await ffmpeg.runOnce('ffprobe', ['-show_entries', entries, '-of', 'compact', path], { timeoutMs: 30_000 })).toString()
-  const lines = output.trim().split('\n')
-  const video = fieldsOf(lines.find((line) => line.includes('codec_type=video')) ?? '')
-  const audio = fieldsOf(lines.find((line) => line.includes('codec_type=audio')) ?? '')
-  const format = fieldsOf(lines.find((line) => line.startsWith('format')) ?? '')
-  return { video, audio, duration: Number(format.duration) }
 }
 
 async function decodedFrames(path: string, preset: ExportPreset): Promise<Picture[]> {

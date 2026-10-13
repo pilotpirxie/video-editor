@@ -1,19 +1,24 @@
 import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
-import { clampLayout, parseLayout, type Layout } from '../editor/layout.js'
+import { clampLayout, parseLayout, widestSidebar, type Layout } from '../editor/layout.js'
+import { durationText, timeLeft } from '../editor/export.js'
+import { shortcutFor, type ShortcutAction } from '../editor/shortcuts.js'
 import type { Size } from '../shared/exportPresets.js'
 import { logError } from '../shared/log.js'
+import { projectDuration } from '../shared/project.js'
 import { CanvasPanel } from './CanvasPanel.js'
 import { SessionContext, useEditorState, useSession } from './context.js'
+import { ExportDialog } from './ExportDialog.js'
 import type { Session } from './document.js'
-import { IconButton } from './icons.js'
+import { Icon, IconButton } from './icons.js'
 import { MediaTab } from './MediaTab.js'
 import { Properties } from './Properties.js'
 import { Timeline } from './Timeline.js'
 import { installTooltips } from './tooltip.js'
-import { isTypingTarget, onSpaceKey } from './transport.js'
+import { isKeyForTheEditor, isTypingTarget } from './transport.js'
 
 const LAYOUT_KEY = 'layout'
 const KEYBOARD_RESIZE_STEP = 16
+const JUMP_FRAMES = 15
 const SIDEBAR_TABS = ['Media', 'Effects', 'Transitions', 'Annotations'] as const
 
 type SidebarTab = (typeof SIDEBAR_TABS)[number]
@@ -100,11 +105,26 @@ function Splitter({ label, testId, sizeKey, size, isHidden, growth, onPreview, o
   )
 }
 
+// Callouts, arrows, blurs and highlights join the text here later; each is added at the playhead, on a layer of its own.
+function AnnotationsTab(): ReactElement {
+  const { actions } = useSession()
+  return (
+    <div className="annotations-tab">
+      <button type="button" className="button annotation-item" data-testid="add-text" onClick={actions.addText}>
+        <Icon name="text" />
+        Text
+      </button>
+      <p className="hint">Adds a title at the playhead. Double-click it on the canvas to change the words.</p>
+    </div>
+  )
+}
+
 function Sidebar(): ReactElement {
   const [tab, setTab] = useState<SidebarTab>('Media')
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+    event.preventDefault()
     const direction = event.key === 'ArrowRight' ? 1 : -1
     const next = SIDEBAR_TABS[(SIDEBAR_TABS.indexOf(tab) + direction + SIDEBAR_TABS.length) % SIDEBAR_TABS.length]
     if (next !== undefined) setTab(next)
@@ -129,9 +149,46 @@ function Sidebar(): ReactElement {
         ))}
       </div>
       <div className="tab-panel" role="tabpanel" aria-label={tab}>
-        {tab === 'Media' ? <MediaTab /> : <p className="empty-state">Nothing here yet.</p>}
+        {tab === 'Media' && <MediaTab />}
+        {tab === 'Annotations' && <AnnotationsTab />}
+        {(tab === 'Effects' || tab === 'Transitions') && <p className="empty-state">Nothing here yet.</p>}
       </div>
     </>
+  )
+}
+
+// The one primary action of the window. While a video is being made it shows how far that is, what is left, and the way to stop it.
+function ExportControl(): ReactElement {
+  const session = useSession()
+  const progress = useEditorState((state) => state.exportProgress)
+  const hasContent = useEditorState((state) => projectDuration(state.project) > 0)
+
+  if (progress === undefined) {
+    return (
+      <button
+        type="button"
+        className="button primary"
+        data-testid="export"
+        data-tooltip={hasContent ? 'Export (⌘E)' : 'Add something to the timeline first'}
+        disabled={!hasContent}
+        onClick={() => session.store.showExportDialog(true)}
+      >
+        Export…
+      </button>
+    )
+  }
+  const left = timeLeft(progress.done, progress.total, performance.now() - progress.startedAt)
+  return (
+    <div className="export-progress" role="status" data-testid="export-progress">
+      <progress value={progress.done} max={progress.total} aria-label={`Exporting ${progress.fileName}`} />
+      <span className="export-progress-text">
+        Frame {progress.done.toLocaleString('en')} of {progress.total.toLocaleString('en')}
+        {left !== undefined && ` · ${durationText(left)} left`}
+      </span>
+      <button type="button" className="button" data-testid="export-cancel" onClick={session.cancelExport}>
+        Cancel
+      </button>
+    </div>
   )
 }
 
@@ -140,6 +197,7 @@ function TopBar({ layout, onToggle }: { layout: Layout; onToggle(key: 'isLeftCol
   const undoLabel = useEditorState((state) => state.history.done.at(-1)?.label)
   const redoLabel = useEditorState((state) => state.history.undone.at(-1)?.label)
   const notice = useEditorState((state) => state.notice)
+  const isNoticeAboutExport = useEditorState((state) => state.isNoticeAboutExport)
 
   return (
     <header className="top-bar">
@@ -148,30 +206,85 @@ function TopBar({ layout, onToggle }: { layout: Layout; onToggle(key: 'isLeftCol
       <IconButton icon="redo" label={redoLabel === undefined ? 'Redo' : `Redo ${redoLabel}`} testId="redo" isDisabled={redoLabel === undefined} onClick={store.redo} />
       <div className="notice-area">
         {notice !== undefined && (
-          <div className="notice" role="alert">
+          <div className={isNoticeAboutExport ? 'notice good' : 'notice'} role={isNoticeAboutExport ? 'status' : 'alert'}>
             <span data-testid="notice">{notice}</span>
+            {isNoticeAboutExport && (
+              <button type="button" className="button" data-testid="show-export" onClick={() => window.host.showLastExport()}>
+                Show in Finder
+              </button>
+            )}
             <button type="button" className="button" onClick={() => store.notify(undefined)}>
               Dismiss
             </button>
           </div>
         )}
       </div>
+      <ExportControl />
       <IconButton icon="panelBottom" label="Timeline" testId="toggle-timeline" isPressed={!layout.isTimelineCollapsed} onClick={() => onToggle('isTimelineCollapsed')} />
       <IconButton icon="panelRight" label="Properties panel" testId="toggle-right" isPressed={!layout.isRightCollapsed} onClick={() => onToggle('isRightCollapsed')} />
     </header>
   )
 }
 
-// Delete keys and the system clipboard shortcuts edit clips, unless a text field has the focus and needs them for typing.
+// Says whether the shortcut was one of the transport's; the timeline handles its own zoom keys.
+function runTransportShortcut({ actions, transport }: Session, action: ShortcutAction): boolean {
+  switch (action) {
+    case 'play-pause':
+      void transport.toggle()
+      return true
+    case 'step-back':
+      actions.stepFrames(-1)
+      return true
+    case 'step-forward':
+      actions.stepFrames(1)
+      return true
+    case 'jump-back':
+      actions.stepFrames(-JUMP_FRAMES)
+      return true
+    case 'jump-forward':
+      actions.stepFrames(JUMP_FRAMES)
+      return true
+    case 'previous-edit':
+      actions.jumpToEdit(-1)
+      return true
+    case 'next-edit':
+      actions.jumpToEdit(1)
+      return true
+    case 'go-to-start':
+      actions.jumpTo('start')
+      return true
+    case 'go-to-end':
+      actions.jumpTo('end')
+      return true
+    case 'shuttle-back':
+      actions.shuttle(-1)
+      return true
+    case 'shuttle-stop':
+      transport.pause()
+      return true
+    case 'shuttle-forward':
+      actions.shuttle(1)
+      return true
+    case 'timeline-zoom-in':
+    case 'timeline-zoom-out':
+    case 'timeline-zoom-fit':
+      return false
+  }
+}
+
+// The transport keys, the delete keys and the system clipboard shortcuts work on the project, unless a text field has the focus and needs them for typing.
 function listenForEditingKeys(session: Session): () => void {
   const { actions, store } = session
 
   function onKeyDown(event: globalThis.KeyboardEvent): void {
-    if (isTypingTarget(event.target)) return
-    if (event.key === 'Backspace' || event.key === 'Delete') {
+    if (!isKeyForTheEditor(event)) return
+    const shortcut = shortcutFor(event)
+    if (shortcut !== undefined && runTransportShortcut(session, shortcut)) {
+      event.preventDefault()
+    } else if (event.key === 'Backspace' || event.key === 'Delete') {
       event.preventDefault()
       actions.deleteSelection(event.metaKey)
-    } else if (event.key === 'Escape' && !event.defaultPrevented) {
+    } else if (event.key === 'Escape') {
       // Escape abandons a drag in progress, wherever it started; only with nothing in progress does it clear the selection.
       if (store.cancel()) event.preventDefault()
       else store.select([])
@@ -202,6 +315,11 @@ function listenForEditingKeys(session: Session): () => void {
   }
 }
 
+function ExportDialogWhenOpen(): ReactElement | undefined {
+  const isOpen = useEditorState((state) => state.isExportDialogOpen)
+  return isOpen ? <ExportDialog /> : undefined
+}
+
 export function Editor({ session, preview }: { session: Session; preview: HTMLCanvasElement }): ReactElement {
   const rootRef = useRef<HTMLDivElement>(null)
   const [stored, setStored] = useState<Layout>(storedLayout)
@@ -215,7 +333,6 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
   }, [])
 
   useEffect(() => (rootRef.current === null ? undefined : installTooltips(rootRef.current)), [])
-  useEffect(() => onSpaceKey(() => void session.transport.toggle()), [session])
   useEffect(() => listenForEditingKeys(session), [session])
 
   function remember(next: Layout): void {
@@ -227,8 +344,10 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
     }
   }
 
+  // A sidebar grows at the cost of the canvas only: the other sidebar stays as wide as it is.
   function showSize(sizeKey: SizeKey, dragged: number): Layout {
-    const resized = clampLayout({ ...layout, [sizeKey]: dragged }, size)
+    const wanted = sizeKey === 'timelineHeight' ? dragged : Math.min(dragged, widestSidebar(layout, sizeKey, size))
+    const resized = clampLayout({ ...layout, [sizeKey]: wanted }, size)
     rootRef.current?.style.setProperty(`--${sizeKey}`, `${resized[sizeKey]}px`)
     return resized
   }
@@ -267,6 +386,7 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
         <section className="timeline-panel" aria-label="Timeline" data-testid="timeline-panel" hidden={layout.isTimelineCollapsed}>
           <Timeline />
         </section>
+        <ExportDialogWhenOpen />
       </div>
     </SessionContext>
   )

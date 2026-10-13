@@ -1,19 +1,24 @@
-import { endOf, nextTrackName, type NewTrack } from '../editor/clips.js'
+import { endOf, locateClip, makesSound, nextTrackName, type NewTrack } from '../editor/clips.js'
 import { moveClips, trimClip } from '../editor/moveTrim.js'
-import { dropMedia } from '../editor/place.js'
+import { dropMedia, mediaFileName } from '../editor/place.js'
+import { setFade, type Fade } from '../editor/properties.js'
 import { snapDelta, timelineTargets } from '../editor/snapping.js'
 import {
   RULER_HEIGHT,
   TRACK_HEIGHT,
   clipsInMarquee,
   createClipIndex,
+  fadeHandleAt,
+  fadeHandles,
   fitZoom,
   hitClip,
   timeToX,
   trackIndexAt,
+  trackTop,
   xToTime,
   zoomAround,
   type ClipHit,
+  type FadeHandle,
   type Marquee,
   type TimelineView,
   type ZoomLimits,
@@ -30,6 +35,7 @@ const WHEEL_ZOOM_RATE = 0.01
 const FOLLOW_LEAD = 0.1
 const SCROLL_PAST_END = 0.5
 const START_PIXELS_PER_SECOND = 100
+const FADE_LABEL_DECIMALS = 2
 
 export const MEDIA_DROP_EVENT = 'media-drop'
 
@@ -49,6 +55,7 @@ type Gesture =
   | { kind: 'press'; hit: ClipHit; at: Point; wasSelected: boolean; hasModifier: boolean }
   | { kind: 'move'; clipIds: readonly string[]; grabTime: number; edges: number[]; targets: number[]; trackCount: number; newTrack: NewTrack }
   | { kind: 'trim'; clipId: string; edge: 'start' | 'end'; edgeTime: number; targets: number[] }
+  | { kind: 'fade'; clipId: string; clipIds: readonly string[]; fade: Fade; clipStart: number; clipEnd: number; endTime: number; grabOffset: number; targets: number[] }
   | { kind: 'marquee'; from: Point; kept: readonly string[] }
 
 export type TimelineElements = {
@@ -75,11 +82,6 @@ function contextOf(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   const context = canvas.getContext('2d')
   if (context === null) throw new TimelineError('The timeline cannot be drawn in this window')
   return context
-}
-
-function fileName(reference: MediaRef): string {
-  const path = reference.path === '' ? reference.relativePath : reference.path
-  return path.split('/').at(-1) ?? path
 }
 
 export function isMediaDrop(event: Event): event is CustomEvent<MediaDropDetail> {
@@ -110,6 +112,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   let mediaNames = new Map<string, string>()
   let selectedList: readonly string[] | undefined
   let selected = new Set<string>()
+  let hoveredClipId: string | undefined
 
   function frameTicks(): number {
     return frameDuration(store.getState().project.canvas.frameRate)
@@ -140,7 +143,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
       view = withScrollInRange(view, state.project)
       if (namedMedia !== state.project.media) {
         namedMedia = state.project.media
-        mediaNames = new Map(namedMedia.map((reference) => [reference.id, fileName(reference)]))
+        mediaNames = new Map(namedMedia.map((reference) => [reference.id, mediaFileName(reference)]))
       }
       if (selectedList !== state.selection) {
         selectedList = state.selection
@@ -166,8 +169,43 @@ export function createTimelineController(elements: TimelineElements, session: Se
     }
     if (isOverlayStale) {
       isOverlayStale = false
-      drawOverlay(overlayContext, { view, size, colors, playhead: transport.position().time, guide, marquee })
+      drawOverlay(overlayContext, { view, size, colors, fonts, playhead: transport.position().time, guide, marquee, ...shownHandles() })
     }
+  }
+
+  function isFadeIn(fade: Fade): boolean {
+    return fade === 'fadeIn' || fade === 'volumeFadeIn'
+  }
+
+  function fadeLength(fade: Fade, clipId: string): number {
+    const clip = locateClip(store.getState().project, clipId)?.clip
+    if (clip === undefined) return 0
+    if (fade === 'fadeIn' || fade === 'fadeOut') return clip.type === 'audio' ? 0 : (clip[fade] ?? 0)
+    return clip.type === 'audio' || clip.type === 'video' ? (clip[fade] ?? 0) : 0
+  }
+
+  // The fade handles are shown for one clip at a time: the one being changed, or else the one under the pointer.
+  function shownHandles(): { handles: FadeHandle[]; heldHandle: FadeHandle | undefined; heldLabel: string } {
+    const none = { handles: [], heldHandle: undefined, heldLabel: '' }
+    const fading = gesture?.kind === 'fade' ? gesture : undefined
+    const clipId = fading?.clipId ?? hoveredClipId
+    if (clipId === undefined || (gesture !== undefined && fading === undefined)) return none
+    const { project, mediaStates } = store.getState()
+    const shown = locateClip(project, clipId)
+    if (shown === undefined || shown.track.locked) return none
+
+    const rowTop = trackTop(shown.trackIndex, project.tracks.length, view)
+    const handles = fadeHandles(shown.clip, makesSound(shown.clip, mediaStates), view, rowTop)
+    if (fading === undefined) return { handles, heldHandle: undefined, heldLabel: '' }
+    const heldHandle = handles.find((handle) => handle.fade === fading.fade)
+    const seconds = fadeLength(fading.fade, clipId) / TICKS_PER_SECOND
+    return { handles, heldHandle, heldLabel: `${seconds.toFixed(FADE_LABEL_DECIMALS)} s` }
+  }
+
+  function fadeHandleOn(hit: ClipHit, point: Point): FadeHandle | undefined {
+    const { project, mediaStates } = store.getState()
+    const rowTop = trackTop(hit.trackIndex, project.tracks.length, view)
+    return fadeHandleAt(fadeHandles(hit.clip, makesSound(hit.clip, mediaStates), view, rowTop), point.x, point.y)
   }
 
   function invalidate(layer: 'content' | 'overlay'): void {
@@ -255,6 +293,51 @@ export function createTimelineController(elements: TimelineElements, session: Se
     }
   }
 
+  // A handle of a selected clip changes the fade of every selected clip that has that kind of fade.
+  function startFade(hit: ClipHit, handle: FadeHandle, at: Point): Gesture {
+    const { project, selection, mediaStates } = store.getState()
+    const { clip } = hit
+    const isSelected = selection.includes(clip.id)
+    if (!isSelected) store.select([clip.id])
+    const chosen = new Set(isSelected ? selection : [clip.id])
+    const isVolumeFade = handle.fade === 'volumeFadeIn' || handle.fade === 'volumeFadeOut'
+    const clipIds: string[] = []
+    for (const track of project.tracks) {
+      for (const other of track.clips) {
+        if (chosen.has(other.id) && (!isVolumeFade || makesSound(other, mediaStates))) clipIds.push(other.id)
+      }
+    }
+
+    const length = fadeLength(handle.fade, clip.id)
+    const endTime = isFadeIn(handle.fade) ? clip.start + length : endOf(clip) - length
+    store.begin('Change Fade')
+    return {
+      kind: 'fade',
+      clipId: clip.id,
+      clipIds,
+      fade: handle.fade,
+      clipStart: clip.start,
+      clipEnd: endOf(clip),
+      endTime,
+      // The handle is drawn a little inside the clip when the fade is short; the fade end still follows the pointer one to one from where it was.
+      grabOffset: at.x - timeToX(endTime, view),
+      targets: timelineTargets(project, new Set(), transport.position().time),
+    }
+  }
+
+  function updateFade(fading: Extract<Gesture, { kind: 'fade' }>, event: PointerEvent, point: Point): void {
+    let time = wholeFrames(xToTime(point.x - fading.grabOffset, view))
+    guide = undefined
+    if (isSnapping(event)) {
+      const snap = snapDelta([fading.endTime], time - fading.endTime, fading.targets, snapRange())
+      time = fading.endTime + snap.delta
+      guide = snap.guide
+    }
+    const length = isFadeIn(fading.fade) ? time - fading.clipStart : fading.clipEnd - time
+    const { clipIds, fade } = fading
+    store.update((project) => setFade(project, clipIds, fade, length))
+  }
+
   function updateMove(move: Extract<Gesture, { kind: 'move' }>, event: PointerEvent, point: Point): void {
     let deltaTime = wholeFrames(xToTime(point.x, view) - move.grabTime)
     guide = undefined
@@ -326,20 +409,37 @@ export function createTimelineController(elements: TimelineElements, session: Se
       gesture = { kind: 'marquee', from: at, kept }
       return
     }
+    const handle = fadeHandleOn(hit, at)
+    if (handle !== undefined) {
+      gesture = startFade(hit, handle, at)
+      overlay.style.cursor = 'grabbing'
+      invalidate('overlay')
+      return
+    }
     const wasSelected = selection.includes(hit.clip.id)
     selectOnPress(hit, event)
     gesture = { kind: 'press', hit, at, wasSelected, hasModifier }
   }
 
-  function showCursor(point: Point): void {
-    const hit = point.y < RULER_HEIGHT ? undefined : hitClip(store.getState().project.tracks, inOrder, view, point.x, point.y)
-    overlay.style.cursor = hit?.edge === undefined || hit.track.locked ? 'default' : 'ew-resize'
+  // The cursor says what a press here would do, and the clip under it shows its fade handles.
+  function showHover(point: Point | undefined): void {
+    const { project } = store.getState()
+    const found = point === undefined || point.y < RULER_HEIGHT ? undefined : hitClip(project.tracks, inOrder, view, point.x, point.y)
+    const hit = found === undefined || found.track.locked ? undefined : found
+    let cursor = 'default'
+    if (hit !== undefined && point !== undefined && fadeHandleOn(hit, point) !== undefined) cursor = 'grab'
+    else if (hit?.edge !== undefined) cursor = 'ew-resize'
+    overlay.style.cursor = cursor
+
+    if (hit?.clip.id === hoveredClipId) return
+    hoveredClipId = hit?.clip.id
+    invalidate('overlay')
   }
 
   function onPointerMove(event: PointerEvent): void {
     const point = pointOf(event)
     if (gesture === undefined) {
-      showCursor(point)
+      showHover(point)
       return
     }
     if (gesture.kind === 'press') {
@@ -354,6 +454,8 @@ export function createTimelineController(elements: TimelineElements, session: Se
       updateMove(gesture, event, point)
     } else if (gesture.kind === 'trim') {
       updateTrim(gesture, event, point)
+    } else if (gesture.kind === 'fade') {
+      updateFade(gesture, event, point)
     } else if (gesture.kind === 'marquee') {
       updateMarquee(gesture, point)
     }
@@ -366,7 +468,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
     guide = undefined
     marquee = undefined
     if (ended === undefined) return
-    if (ended.kind === 'move' || ended.kind === 'trim') {
+    if (ended.kind === 'move' || ended.kind === 'trim' || ended.kind === 'fade') {
       if (finish === 'commit') store.commit()
       else store.cancel()
     }
@@ -441,6 +543,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
 
   const cancel = (): void => endGesture('cancel')
   const commit = (): void => endGesture('commit')
+  const leave = (): void => showHover(undefined)
   const resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(host)
   const unsubscribe = [
@@ -454,6 +557,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   overlay.addEventListener('pointerup', commit)
   overlay.addEventListener('pointercancel', cancel)
   overlay.addEventListener('lostpointercapture', cancel)
+  overlay.addEventListener('pointerleave', leave)
   overlay.addEventListener('wheel', onWheel, { passive: false })
   overlay.addEventListener('contextmenu', onContextMenu)
   host.addEventListener(MEDIA_DROP_EVENT, onMediaDrop)
@@ -475,6 +579,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
       overlay.removeEventListener('pointerup', commit)
       overlay.removeEventListener('pointercancel', cancel)
       overlay.removeEventListener('lostpointercapture', cancel)
+      overlay.removeEventListener('pointerleave', leave)
       overlay.removeEventListener('wheel', onWheel)
       overlay.removeEventListener('contextmenu', onContextMenu)
       host.removeEventListener(MEDIA_DROP_EVENT, onMediaDrop)

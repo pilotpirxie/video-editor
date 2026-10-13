@@ -1,8 +1,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parseProject, serializeProject, type Clip, type Project, type Track } from '../../src/shared/project.js'
-import { ROOT, lastJsonLine, projectPath, runApp, scratchDirectory } from '../helpers.js'
+import { serializeProject, type Clip, type Project, type Track } from '../../src/shared/project.js'
+import { ROOT, projectIn, projectPath, runApp, scratchDirectory, uiTest } from '../helpers.js'
 
 const SECOND = 24_000_000
 const FRAME = SECOND / 30
@@ -11,14 +11,6 @@ const MAX_POSTER_MS = 1000
 const POINTER_TOLERANCE = 1.5
 
 const scratch = scratchDirectory('editor')
-
-async function uiTest(scenario: string, extraArgs: readonly string[] = [], profile?: string): Promise<Record<string, unknown>> {
-  const result = await runApp(['--uitest', scenario, ...extraArgs], 300_000, profile)
-  if (result.exitCode !== 0) throw new Error(`The UI test "${scenario}" failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`)
-  const report = lastJsonLine(result.stdout)
-  if (typeof report !== 'object' || report === null) throw new Error(`Unexpected UI test report: ${result.stdout}`)
-  return { ...report }
-}
 
 describe('window layout', () => {
   it('resizes and collapses panels, and remembers the layout for the next launch', async () => {
@@ -43,12 +35,6 @@ describe('commands', () => {
     })
   })
 })
-
-function projectIn(report: Record<string, unknown>, stage: string): Project {
-  const parsed = parseProject(JSON.stringify(report[stage]))
-  if (!parsed.ok) throw new Error(`The project saved at "${stage}" is not valid: ${parsed.message}`)
-  return parsed.project
-}
 
 // One line per track, bottom first: "video 0+2" is a video clip starting at 0 s and lasting 2 s.
 function outline(project: Project): string[] {

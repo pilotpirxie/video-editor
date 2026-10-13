@@ -1,5 +1,6 @@
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
 }
 
 html,
@@ -12,9 +13,12 @@ body,
 body {
   background: var(--window-background);
   color: var(--text-primary);
+  /* The system's own parts, scroll bars above all, are drawn for a dark window. */
+  color-scheme: dark;
   font: var(--text-body) var(--font-family);
   font-variant-numeric: tabular-nums;
   overflow: hidden;
+  scrollbar-color: var(--divider) transparent;
   user-select: none;
 }
 
@@ -40,12 +44,13 @@ body {
 .button,
 .field {
   height: var(--control-height);
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-2);
   border: 1px solid var(--divider);
   border-radius: var(--radius);
   background: var(--raised-surface);
   color: var(--text-primary);
   font: inherit;
+  font-size: var(--text-label);
 }
 
 .button:hover:not(:disabled) {
@@ -106,7 +111,6 @@ body {
 
 .field {
   width: 100%;
-  padding: 0 var(--space-2);
   user-select: text;
 }
 
@@ -114,8 +118,21 @@ body {
   display: flex;
 }
 
+/* Buttons that share the whole row between them. */
+.segmented.wide .button {
+  flex: 1;
+  width: auto;
+}
+
+/* One control made of several buttons: each keeps its outline, text or icon alike, and neighbours share the line between them. */
 .segmented .button {
+  border-color: var(--divider);
   border-radius: 0;
+  background: var(--raised-surface);
+}
+
+.segmented .button + .button {
+  margin-left: -1px;
 }
 
 .segmented .button:first-child {
@@ -123,11 +140,12 @@ body {
 }
 
 .segmented .button:last-child {
-  border-left: none;
   border-radius: 0 var(--radius) var(--radius) 0;
 }
 
+/* Raised above its neighbours so the whole of its outline shows. */
 .segmented .button[aria-pressed='true'] {
+  position: relative;
   border-color: var(--primary);
   color: var(--primary);
 }
@@ -139,7 +157,7 @@ body {
 
 .tab {
   flex: 1;
-  height: 32px;
+  height: 28px;
   padding: 0 var(--space-1);
   border: none;
   border-bottom: 2px solid transparent;
@@ -158,9 +176,9 @@ body {
   color: var(--text-primary);
 }
 
-.menu {
+.menu,
+.options {
   inset: auto;
-  min-width: 180px;
   margin: 0;
   padding: var(--space-1);
   border: 1px solid var(--divider);
@@ -169,8 +187,21 @@ body {
   color: var(--text-primary);
 }
 
-.menu-item {
-  display: block;
+.menu {
+  min-width: 180px;
+}
+
+/* Scrolling past either end of the list stops there: the panel behind does not start to move, which would close the list. */
+.options {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.menu-item,
+.option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   width: 100%;
   height: var(--control-height);
   padding: 0 var(--space-2);
@@ -179,13 +210,37 @@ body {
   background: none;
   color: inherit;
   font: inherit;
+  font-size: var(--text-label);
   text-align: left;
+  white-space: nowrap;
 }
 
 .menu-item:hover:not(:disabled),
-.menu-item:focus-visible {
+.menu-item:focus-visible,
+.option:focus {
   outline: none;
   background: var(--hover-surface);
+}
+
+/* The mark of the value in use keeps its place in every row, so the names line up. */
+.option {
+  padding-left: var(--space-1);
+}
+
+.option .icon {
+  flex: none;
+  color: var(--primary);
+  visibility: hidden;
+}
+
+.option[aria-selected='true'] .icon {
+  visibility: visible;
+}
+
+.options-heading {
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-small);
 }
 
 .menu-item:disabled {
@@ -205,26 +260,122 @@ body {
   pointer-events: none;
 }
 
-.number-field {
+/* Every control sits under its own small label and is as wide as its panel. */
+.labelled {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
-.number-field-label {
-  flex: 1;
+.field-label {
+  padding: 0;
   color: var(--text-secondary);
-  font-size: var(--text-label);
+  font-size: var(--text-small);
+  line-height: 14px;
+}
+
+.field-label.scrub {
   cursor: ew-resize;
 }
 
-.number-field-label.plain {
-  cursor: default;
+legend.field-label {
+  margin-bottom: 2px;
 }
 
-.number-field .field {
-  width: 92px;
-  text-align: right;
+/* A control with the list that opens under it, and the arrow that opens the list of ready-made values. */
+.field-box {
+  position: relative;
+  display: flex;
+}
+
+.field-box:has(.field-arrow) .field {
+  padding-right: var(--control-height);
+}
+
+.field-arrow {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height);
+  height: var(--control-height);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+}
+
+.field-arrow:hover {
+  color: var(--text-primary);
+}
+
+.picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+  text-align: left;
+  user-select: none;
+}
+
+.picker-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker .icon {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.group {
+  border-bottom: 1px solid var(--divider);
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  padding-right: var(--space-1);
+}
+
+.group-toggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  height: 28px;
+  padding: 0 var(--space-1);
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-label);
+  font-weight: 600;
+  text-align: left;
+}
+
+.group-toggle:focus-visible {
+  outline-offset: -2px;
+}
+
+.group-toggle .icon {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.group-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0 var(--space-2) var(--space-2);
 }
 
 .badge {
@@ -244,3 +395,88 @@ body {
   background: var(--danger);
   color: var(--text-on-primary);
 }
+
+.check-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height);
+  color: var(--text-secondary);
+  font-size: var(--text-label);
+}
+
+.check-field input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.check-field input:focus-visible,
+.color-field:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.color-field {
+  width: 100%;
+  height: var(--control-height);
+  padding: 2px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius);
+  background: var(--raised-surface);
+}
+
+.text-field {
+  height: auto;
+  padding: var(--space-1) var(--space-2);
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-label);
+  line-height: 1.4;
+}
+
+.dialog {
+  width: 440px;
+  padding: 0;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius);
+  background: var(--panel-background);
+  color: var(--text-primary);
+}
+
+.dialog::backdrop {
+  background: color-mix(in srgb, var(--window-background) 70%, transparent);
+}
+
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: var(--text-title);
+  font-weight: 600;
+}
+
+.dialog-summary {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-label);
+  line-height: 1.4;
+}
+
+.dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+

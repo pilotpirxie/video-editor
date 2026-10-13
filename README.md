@@ -2,9 +2,11 @@
 
 Lightweight non-linear video editor for macOS on Apple silicon. The specification and ticket
 list are in [AGENTS.md](AGENTS.md). What exists so far is ticket group 1, the core rendering
-engine, and tickets T-23 to T-39 of group 2: the editor window with its layout, undo, project
-files, autosave, media import, timeline, canvas handles and properties panel. Export from the
-editor window (T-45) is not there yet; `--export` renders a saved project.
+engine, and group 2, the basic editor: the window with its layout, undo, project files,
+autosave, media import and relink, the timeline with linked clips and fade handles, canvas
+handles, text clips, animated images, the properties panel, the transport with Camtasia-like
+keys, and the export dialog. The end-to-end run of T-47 with a new user on the 4 GB reference
+Mac is still to be done by hand.
 
 ## Commands
 
@@ -19,8 +21,9 @@ FFprobe binaries into `vendor/ffmpeg` and checks their SHA-256.
 | `npm run lint` | Unused files, exports and dependencies (knip) and duplicated code (jscpd); any finding fails |
 | `npm run test:unit` | Unit tests (time, project format, resolver, mixer, FFmpeg jobs, probe, decoding, caches, editing commands) |
 | `npm run test:engine` | Builds the app and tests it for real: golden images, preview/export parity, MP4 export, the harness window, split and hit-test parity |
-| `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents, crash recovery, and the responsiveness budgets on a 4,096-clip project |
+| `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents, crash recovery, transport keys, fades, text, animated images, relink, the export dialog, the controls (drop-down lists, groups, media tiles, wide sidebars, timeline zoom-out), and the responsiveness budgets on a 4,096-clip project |
 | `npm test` | All of the above |
+| `npm run test:acceptance` | Builds a ten-minute tutorial through the editor window and exports it at 1080p; takes several minutes and is not part of `npm test` |
 | `npm run dist` | Builds `release/Video Editor-<version>-arm64.dmg` |
 
 `UPDATE_GOLDEN=1 npm run test:engine` rewrites the golden images in `test/golden`.
@@ -40,9 +43,29 @@ npx electron . --selftest project.json --seconds 10 --report-memory
   as the paused preview does; `--via export` reads them in order, as an export does.
 - `--selftest` opens the dev harness, plays, pauses, scrubs and zooms through its own buttons
   and prints what the window showed. The window opens muted and without taking focus.
-- `--uitest <scenario>` opens the editor and runs one of the scenarios in `src/main/uiTest.ts`,
-  with `--media <folder>` for files to import and `--out <folder>` for saved projects and a
-  picture of the window as the scenario left it.
+- `--uitest <scenario>` opens the editor and runs one of the scenarios in `src/main/uiTest.ts`
+  and `src/main/uiScenarios.ts`, with `--media <folder>` for files to import and `--out <folder>`
+  for saved projects and a picture of the window as the scenario left it. It needs
+  `--user-data-dir=<empty folder>`: a UI test restores recovery files without asking, so it
+  refuses to run on the profile that holds your own work.
+
+## Keys
+
+Shortcuts follow Camtasia for Mac. Those that are a single key work whenever no text field has
+the focus; `src/editor/shortcuts.ts` is the table.
+
+| Keys | What they do |
+| --- | --- |
+| Space | Play or pause |
+| `,` `.` or ← → | One frame back or forward |
+| Ctrl+Shift+`,` `.` | Fifteen frames back or forward |
+| Ctrl+`,` `.` | Previous or next clip edge |
+| Cmd+Return, Cmd+Shift+Return | Start or end of the timeline |
+| J, K, L | Backwards, stop, forwards; J or L again doubles the speed, up to 8× (only normal forward speed has sound) |
+| Cmd+Shift+`=` `-` `0` | Timeline zoom in, out, fit |
+| Cmd+T, Cmd+Shift+T | Split the selected clips, or every clip under the playhead |
+| Delete, Cmd+Delete | Delete, ripple delete |
+| Cmd+E, Cmd+I | Export, import media |
 
 ## Project files
 

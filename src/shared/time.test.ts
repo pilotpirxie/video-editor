@@ -1,19 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  PROJECT_FRAME_RATES,
-  SAMPLE_RATE,
-  TICKS_PER_SAMPLE,
-  TICKS_PER_SECOND,
-  TIMELINE_GRID,
-  exactFrameDuration,
-  frameAt,
-  frameDuration,
-  frameIndexAt,
-  isOnTimelineGrid,
-  sampleAt,
-  sourceTime,
-  timecode,
-} from './time.js'
+import { PROJECT_FRAME_RATES, SAMPLE_RATE, TICKS_PER_SAMPLE, TICKS_PER_SECOND, TIMELINE_GRID, exactFrameDuration, frameAt, frameDuration, frameIndexAt, isOnTimelineGrid, loopedTime, sampleAt, sourceTime, timecode } from './time.js'
 
 const TWENTY_HOURS_SECONDS = 20 * 60 * 60
 
@@ -120,6 +106,20 @@ describe('frameIndexAt', () => {
     expect(frameIndexAt(delayed, 0)).toBe(0)
     expect(frameIndexAt(delayed, 2_002_000)).toBe(0)
     expect(frameIndexAt(delayed, 2_002_000 + 800_800)).toBe(1)
+  })
+})
+
+describe('loopedTime', () => {
+  it('starts over each time the source ends', () => {
+    expect(loopedTime(0, 1000, true)).toBe(0)
+    expect(loopedTime(999, 1000, true)).toBe(999)
+    expect(loopedTime(1000, 1000, true)).toBe(0)
+    expect(loopedTime(2750, 1000, true)).toBe(750)
+  })
+
+  it('leaves the time alone without a loop or without a source length', () => {
+    expect(loopedTime(2750, 1000, false)).toBe(2750)
+    expect(loopedTime(2750, 0, true)).toBe(2750)
   })
 })
 

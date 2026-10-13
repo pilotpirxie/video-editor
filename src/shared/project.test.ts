@@ -186,6 +186,17 @@ describe('parseProject', () => {
     expect(loaded.ok).toBe(true)
   })
 
+  it.each(['isAudioSeparated', 'loop'])('keeps the %s switch of a video clip, and accepts it only when on', (key) => {
+    const switchedOn = withValue(`tracks.0.clips.0.${key}`, true)
+    const parsed = parseProject(switchedOn)
+    expect(parsed.ok && parsed.project.tracks[0]?.clips[0]).toMatchObject({ [key]: true })
+    expect(parsed.ok && parseProject(serializeProject(parsed.project))).toEqual(parsed)
+
+    expect(messageFor(withValue(`tracks.0.clips.0.${key}`, false))).toContain(`tracks[0].clips[0].${key} must be true or left out`)
+    expect(messageFor(withValue(`tracks.0.clips.0.${key}`, 'yes'))).toContain(`${key} must be true or false`)
+    expect(messageFor(withValue(`tracks.0.clips.1.${key}`, true))).toContain(key)
+  })
+
   it('reports the project duration as the end of the last clip', () => {
     expect(projectDuration(sampleProject())).toBe(14 * SECOND)
   })

@@ -1,6 +1,10 @@
 import { describeError } from '../shared/log.js'
+import { TICKS_PER_SECOND, frameAt } from '../shared/time.js'
 import { createAudioOutput, type AudioOutput } from './audioOutput.js'
 import type { EngineHost } from './engineHost.js'
+
+const MAX_SHUTTLE_RATE = 8
+const MS_PER_SECOND = 1000
 
 export type Position = {
   time: number
@@ -8,21 +12,43 @@ export type Position = {
   droppedFrames: number
   fullQualityMs: number | undefined
   sequence: number
+  // How fast the J and L keys are moving the playhead: negative backwards, 0 when they are not.
+  shuttleRate: number
+}
+
+export type TimelineLimits = {
+  duration: number
+  frameTicks: number
 }
 
 export type Transport = {
   position(): Position
   subscribe(listener: () => void): () => void
   toggle(): Promise<void>
+  pause(): void
   seek(time: number): void
+  shuttle(direction: 1 | -1, limits: TimelineLimits): void
 }
 
-const START_POSITION: Position = { time: 0, isPlaying: false, droppedFrames: 0, fullQualityMs: undefined, sequence: 0 }
+type Shuttle = {
+  rate: number
+  fromTime: number
+  startedAt: number
+  limits: TimelineLimits
+  shownFrame: number
+}
+
+const START_POSITION: Position = { time: 0, isPlaying: false, droppedFrames: 0, fullQualityMs: undefined, sequence: 0, shuttleRate: 0 }
 
 export function createTransport(engine: EngineHost, onError: (message: string) => void): Transport {
   let position = START_POSITION
   let audio: AudioOutput | undefined
+  let shuttling: Shuttle | undefined
   const listeners = new Set<() => void>()
+
+  function announce(): void {
+    for (const listener of listeners) listener()
+  }
 
   async function suspendSound(): Promise<void> {
     try {
@@ -41,16 +67,20 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
       droppedFrames: event.droppedFrames,
       fullQualityMs: event.fullQualityMs,
       sequence: position.sequence + 1,
+      shuttleRate: position.shuttleRate,
     }
     if (hasStopped) void suspendSound()
-    for (const listener of listeners) listener()
+    announce()
   })
 
-  async function toggle(): Promise<void> {
-    if (position.isPlaying) {
-      engine.send({ type: 'pause' })
-      return
-    }
+  function endShuttle(): void {
+    if (shuttling === undefined) return
+    shuttling = undefined
+    position = { ...position, shuttleRate: 0 }
+    announce()
+  }
+
+  async function play(): Promise<void> {
     try {
       if (audio === undefined) {
         audio = await createAudioOutput()
@@ -63,6 +93,59 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
     }
   }
 
+  function pause(): void {
+    endShuttle()
+    if (position.isPlaying) engine.send({ type: 'pause' })
+  }
+
+  async function toggle(): Promise<void> {
+    if (position.isPlaying || shuttling !== undefined) {
+      pause()
+      return
+    }
+    await play()
+  }
+
+  // The engine plays forwards, at normal speed, with sound. Every other speed is shown by seeking frame after frame, silently.
+  function showShuttle(active: Shuttle): void {
+    if (shuttling !== active) return
+    const { duration, frameTicks } = active.limits
+    const elapsedSeconds = (performance.now() - active.startedAt) / MS_PER_SECOND
+    const wanted = active.fromTime + elapsedSeconds * active.rate * TICKS_PER_SECOND
+    const lastFrame = Math.max(0, Math.ceil(duration / frameTicks) - 1)
+    const frame = Math.min(lastFrame, Math.max(0, frameAt(wanted, frameTicks)))
+    if (frame !== active.shownFrame) {
+      active.shownFrame = frame
+      engine.send({ type: 'seek', time: frame * frameTicks })
+    }
+    const hasReachedAnEnd = active.rate < 0 ? frame === 0 : frame === lastFrame
+    if (hasReachedAnEnd) {
+      endShuttle()
+      return
+    }
+    requestAnimationFrame(() => showShuttle(active))
+  }
+
+  // Pressing the same direction again doubles the speed; the other direction starts over at normal speed.
+  function shuttle(direction: 1 | -1, limits: TimelineLimits): void {
+    let rate = position.isPlaying ? 1 : 0
+    if (shuttling !== undefined) rate = shuttling.rate
+    const isSameDirection = Math.sign(rate) === direction
+    const next = isSameDirection ? Math.min(MAX_SHUTTLE_RATE, Math.abs(rate) * 2) * direction : direction
+    if (next === 1) {
+      endShuttle()
+      if (!position.isPlaying) void play()
+      return
+    }
+
+    if (position.isPlaying) engine.send({ type: 'pause' })
+    const active: Shuttle = { rate: next, fromTime: position.time, startedAt: performance.now(), limits, shownFrame: frameAt(position.time, limits.frameTicks) }
+    shuttling = active
+    position = { ...position, shuttleRate: next }
+    announce()
+    requestAnimationFrame(() => showShuttle(active))
+  }
+
   function subscribe(listener: () => void): () => void {
     listeners.add(listener)
     return () => listeners.delete(listener)
@@ -72,13 +155,24 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
     position: () => position,
     subscribe,
     toggle,
-    seek: (time) => engine.send({ type: 'seek', time }),
+    pause,
+    seek(time) {
+      endShuttle()
+      engine.send({ type: 'seek', time })
+    },
+    shuttle,
   }
 }
 
 export function isTypingTarget(target: EventTarget | null): boolean {
   if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return true
   return target instanceof HTMLElement && target.isContentEditable
+}
+
+// Keys belong to a dialog, a menu or a list of options while one is open, and to a text field while it has the focus.
+export function isKeyForTheEditor(event: KeyboardEvent): boolean {
+  if (event.defaultPrevented || isTypingTarget(event.target)) return false
+  return !(event.target instanceof Element) || event.target.closest('dialog, [role="menu"], [role="listbox"]') === null
 }
 
 export function onSpaceKey(handler: () => void): () => void {

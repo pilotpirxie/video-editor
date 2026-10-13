@@ -1,6 +1,6 @@
 import type { Clip, Project } from '../shared/project.js'
 import { sourceTime } from '../shared/time.js'
-import { endOf, shiftedKeyframes, withFadesWithin } from './clips.js'
+import { endOf, shiftedKeyframes, unlockedClipIds, withFadesWithin } from './clips.js'
 
 function isCutInside(clip: Clip, cut: number): boolean {
   return cut > clip.start && cut < endOf(clip)
@@ -9,15 +9,7 @@ function isCutInside(clip: Clip, cut: number): boolean {
 // The clips a split at `cut` applies to: the selected ones, or every clip under the playhead when nothing is selected.
 export function clipsToSplit(project: Project, selection: readonly string[], cut: number): string[] {
   const selected = new Set(selection)
-  const ids: string[] = []
-  for (const track of project.tracks) {
-    if (track.locked) continue
-    for (const clip of track.clips) {
-      const isChosen = selected.size === 0 || selected.has(clip.id)
-      if (isChosen && isCutInside(clip, cut)) ids.push(clip.id)
-    }
-  }
-  return ids
+  return unlockedClipIds(project, (clip) => (selected.size === 0 || selected.has(clip.id)) && isCutInside(clip, cut))
 }
 
 function firstPart(clip: Clip, local: number): Clip {

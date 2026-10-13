@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
+import { shortcutFor, shortcutHint } from '../editor/shortcuts.js'
 import { TRACK_HEIGHT } from '../editor/timelineView.js'
 import { addTrack, deleteTrack, moveTrack, renameTrack, setTrackFlag, type TrackFlag } from '../editor/tracks.js'
 import type { Track } from '../shared/project.js'
@@ -6,6 +7,7 @@ import { useEditorState, useSession } from './context.js'
 import { IconButton, type IconName } from './icons.js'
 import { PopupMenu, type MenuItem } from './Menu.js'
 import { createTimelineController, type TimelineController } from './timelineController.js'
+import { isKeyForTheEditor } from './transport.js'
 
 const ZOOM_STEP = 1.5
 
@@ -131,8 +133,25 @@ export function Timeline(): ReactElement {
 
   useEffect(() => controllerRef.current?.zoomToFit(), [openCount])
 
+  useEffect(() => {
+    function onKeyDown(event: globalThis.KeyboardEvent): void {
+      if (!isKeyForTheEditor(event)) return
+      const shortcut = shortcutFor(event)
+      if (shortcut === 'timeline-zoom-in') controllerRef.current?.zoomBy(ZOOM_STEP)
+      else if (shortcut === 'timeline-zoom-out') controllerRef.current?.zoomBy(1 / ZOOM_STEP)
+      else if (shortcut === 'timeline-zoom-fit') controllerRef.current?.zoomToFit()
+      else return
+      event.preventDefault()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  // Worked out only while the menu is open: it looks at every selected clip.
+  const canSeparateAudio = menuAt !== undefined && actions.canSeparateAudio()
   const clipMenu: MenuItem[] = [
     { label: 'Split at Playhead', testId: 'menu-split', onSelect: actions.split },
+    { label: 'Separate Video and Audio', testId: 'menu-separate-audio', isDisabled: !canSeparateAudio, onSelect: actions.separateAudio },
     { label: 'Copy', testId: 'menu-copy', isDisabled: !hasSelection, onSelect: actions.copy },
     { label: 'Paste', testId: 'menu-paste', onSelect: actions.paste },
     { label: 'Duplicate', testId: 'menu-duplicate', isDisabled: !hasSelection, onSelect: actions.duplicate },
@@ -144,12 +163,12 @@ export function Timeline(): ReactElement {
     <div className="timeline">
       <div className="timeline-toolbar" role="toolbar" aria-label="Timeline tools">
         <IconButton icon="plus" label="Add track" testId="add-track" onClick={actions.addTrack} />
-        <IconButton icon="scissors" label="Split at playhead" testId="split" onClick={actions.split} />
+        <IconButton icon="scissors" label="Split at playhead" testId="split" shortcut="⌘T" onClick={actions.split} />
         <IconButton icon="magnet" label="Snapping" testId="snapping" isPressed={isSnapping} onClick={() => store.setSnapping(!isSnapping)} />
         <span className="spacer" />
-        <IconButton icon="minus" label="Zoom out" testId="timeline-zoom-out" onClick={() => controllerRef.current?.zoomBy(1 / ZOOM_STEP)} />
-        <IconButton icon="fit" label="Show the whole project" testId="timeline-zoom-fit" onClick={() => controllerRef.current?.zoomToFit()} />
-        <IconButton icon="plus" label="Zoom in" testId="timeline-zoom-in" onClick={() => controllerRef.current?.zoomBy(ZOOM_STEP)} />
+        <IconButton icon="minus" label="Zoom out" testId="timeline-zoom-out" shortcut={shortcutHint('timeline-zoom-out')} onClick={() => controllerRef.current?.zoomBy(1 / ZOOM_STEP)} />
+        <IconButton icon="fit" label="Show the whole project" testId="timeline-zoom-fit" shortcut={shortcutHint('timeline-zoom-fit')} onClick={() => controllerRef.current?.zoomToFit()} />
+        <IconButton icon="plus" label="Zoom in" testId="timeline-zoom-in" shortcut={shortcutHint('timeline-zoom-in')} onClick={() => controllerRef.current?.zoomBy(ZOOM_STEP)} />
       </div>
       <div className="timeline-body">
         <div className="track-headers-viewport">

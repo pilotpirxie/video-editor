@@ -106,13 +106,28 @@ export async function runSelfTest(window: BrowserWindow, options: SelfTestOption
   await sleep(PAUSE_SETTLE_MS)
   const timecodeStillPaused = await page.text('timecode')
 
+  // Playback can pause on the very frame the test scrubs to, and a slider set to the value it already shows reports nothing.
+  // So the slider first goes to the frame beside it, and once the harness shows that frame, to the frame the test wants.
+  // Both are worked out in the page, because the slider keeps a value within a project shorter than the scrub frame.
+  const scrubTo = (frame: 'wanted' | 'beside it'): Promise<unknown> =>
+    page.evaluate(`(() => {
+      const slider = ${selector('scrub')}
+      const step = Number(slider.step)
+      const wanted = Math.min(Number(slider.max), step * ${SCRUB_FRAME})
+      const besideIt = wanted >= step ? wanted - step : wanted + step
+      const value = ${JSON.stringify(frame)} === 'wanted' ? wanted : besideIt
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(slider, String(value))
+      slider.dispatchEvent(new Event('input', { bubbles: true }))
+      return value
+    })()`)
+  const besideIt = await scrubTo('beside it')
+  const deadline = Date.now() + STEP_TIMEOUT_MS
+  while ((await page.evaluate(`Number(${selector('scrub')}.value)`)) !== besideIt) {
+    if (Date.now() > deadline) throw new PageError('Timed out waiting for the harness to show the frame beside the scrub frame')
+    await sleep(POLL_INTERVAL_MS)
+  }
   const reportsBeforeScrub = await page.reportCount()
-  await page.evaluate(`(() => {
-    const slider = ${selector('scrub')}
-    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
-    setValue.call(slider, String(Number(slider.step) * ${SCRUB_FRAME}))
-    slider.dispatchEvent(new Event('input', { bubbles: true }))
-  })()`)
+  await scrubTo('wanted')
   const scrubStats = await page.waitForFullQuality(reportsBeforeScrub, 'the scrubbed full-quality frame')
   const timecodeAfterScrub = await page.text('timecode')
 

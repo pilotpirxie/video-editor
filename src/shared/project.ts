@@ -79,6 +79,10 @@ export type VideoClip = ClipTiming &
   VolumeSettings & {
     type: 'video'
     crop?: Crop
+    // Its sound was moved to an audio clip of its own, so this clip is silent.
+    isAudioSeparated?: true
+    // An animated image starts over when it reaches its end.
+    loop?: true
   }
 
 export type AudioClip = ClipTiming &
@@ -410,12 +414,18 @@ function parseVolume(fields: Fields, clipDuration: number): VolumeSettings {
   return settings
 }
 
+// A switch that is off is left out of the file, so a file never has two ways to say the same thing.
+function parseSwitch(fields: Fields, key: string): true {
+  if (!fields.boolean(key)) fail(fields.at(key), 'must be true or left out')
+  return true
+}
+
 function parseVideoClip(value: unknown, path: string, context: ParseContext): VideoClip {
   const fields = readFields(
     value,
     path,
     [...TIMING_KEYS, ...VISUAL_KEYS, ...SOURCE_KEYS, 'volume'],
-    [...OPTIONAL_VISUAL_KEYS, ...OPTIONAL_VOLUME_KEYS, 'crop'],
+    [...OPTIONAL_VISUAL_KEYS, ...OPTIONAL_VOLUME_KEYS, 'crop', 'isAudioSeparated', 'loop'],
   )
   const timing = parseTiming(fields, context, [...TRANSFORM_PROPERTIES, ...CROP_PROPERTIES, 'volume'])
   const clip: VideoClip = {
@@ -426,6 +436,8 @@ function parseVideoClip(value: unknown, path: string, context: ParseContext): Vi
     ...parseVolume(fields, timing.duration),
   }
   if (fields.has('crop')) clip.crop = parseCrop(fields.raw('crop'), fields.at('crop'))
+  if (fields.has('isAudioSeparated')) clip.isAudioSeparated = parseSwitch(fields, 'isAudioSeparated')
+  if (fields.has('loop')) clip.loop = parseSwitch(fields, 'loop')
   return clip
 }
 

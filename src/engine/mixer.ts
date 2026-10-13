@@ -23,6 +23,7 @@ type Contribution = {
 
 function hasSound(clip: Clip, media: MediaStates): clip is SoundClip {
   if (clip.type !== 'video' && clip.type !== 'audio') return false
+  if (clip.type === 'video' && clip.isAudioSeparated === true) return false
   if (clip.speedPercent !== NORMAL_SPEED_PERCENT) return false
   const state = media[clip.mediaId]
   if (state === undefined || 'error' in state || state.info.kind === 'image') return false

@@ -3,7 +3,7 @@ import type { Size } from '../shared/exportPresets.js'
 import { MAX_CANVAS, MIN_CANVAS, type AnimatableProperty, type Clip, type Crop, type Keyframe, type Project, type Transform } from '../shared/project.js'
 import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, TIMELINE_GRID, type FrameRate } from '../shared/time.js'
 import { editClips, hasSource, isVisual, locateClip, withFadesWithin } from './clips.js'
-import { neighbours, sourceDuration, trimClip } from './moveTrim.js'
+import { neighbours, sourceDuration, timelineSpan, trimClip } from './moveTrim.js'
 
 function clampWhole(value: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(value), min), max)
@@ -144,6 +144,21 @@ export function setSpeed(project: Project, clipIds: readonly string[], speedPerc
   return edited
 }
 
+// Only an animated image can loop. Switching the loop off ends the clip where one play of its source ends.
+export function setLoop(project: Project, clipIds: readonly string[], isLooping: boolean, mediaStates: MediaStates): Project {
+  return editClips(project, new Set(clipIds), (clip) => {
+    if (clip.type !== 'video' || (clip.loop === true) === isLooping) return clip
+    const state = mediaStates[clip.mediaId]
+    if (state === undefined || 'error' in state || state.info.kind !== 'video' || state.info.isAnimatedImage !== true) return clip
+    if (isLooping) return { ...clip, loop: true }
+
+    const { loop: _loop, ...once } = clip
+    const sourceStart = clip.sourceStart % state.info.duration
+    const longest = Math.max(TIMELINE_GRID, timelineSpan(state.info.duration - sourceStart, clip.speedPercent))
+    return withFadesWithin({ ...once, sourceStart, duration: Math.min(clip.duration, longest) })
+  })
+}
+
 function withFade(clip: Clip, fade: Fade, length: number | undefined): Clip {
   const isVolumeFade = fade === 'volumeFadeIn' || fade === 'volumeFadeOut'
   if (isVolumeFade) return hasSource(clip) ? { ...clip, [fade]: length } : clip
@@ -158,7 +173,7 @@ export function setFade(project: Project, clipIds: readonly string[], fade: Fade
 }
 
 // What a field shows for several clips: their common value, or nothing when they differ.
-export function sharedValue(values: readonly (number | undefined)[]): number | undefined {
+export function sharedValue<Value>(values: readonly Value[]): Value | undefined {
   const [first] = values
   return values.every((value) => value === first) ? first : undefined
 }

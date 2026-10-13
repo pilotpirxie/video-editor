@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent, type ReactElement } from 'react'
+import { mediaFileName } from '../editor/place.js'
+import { logError } from '../shared/log.js'
 import type { MediaInfo, MediaState, Preparation } from '../shared/mediaProtocol.js'
 import type { MediaRef, Track } from '../shared/project.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
 import { useEditorState, useSession } from './context.js'
-import { Icon } from './icons.js'
+import { Icon, IconButton } from './icons.js'
 import { MEDIA_DROP_EVENT, type MediaDropDetail } from './timelineController.js'
 
 const DRAG_THRESHOLD = 4
+const VIEW_KEY = 'media-view'
 const SECONDS_PER_MINUTE = 60
 const PERCENT = 100
+
+type MediaView = 'list' | 'grid'
 
 type Drag = {
   x: number
@@ -24,6 +29,10 @@ function durationLabel(info: MediaInfo): string {
   if (info.kind === 'image') return `${info.width} × ${info.height}`
   const seconds = Math.round(info.duration / TICKS_PER_SECOND)
   return `${Math.floor(seconds / SECONDS_PER_MINUTE)}:${String(seconds % SECONDS_PER_MINUTE).padStart(2, '0')}`
+}
+
+function kindLabel(info: MediaInfo): string {
+  return info.kind === 'video' && info.isAnimatedImage === true ? 'image' : info.kind
 }
 
 function usedMediaIds(tracks: readonly Track[]): Set<string> {
@@ -56,9 +65,11 @@ type MediaItemProps = {
 }
 
 function MediaItem({ reference, state, preparation, isUsed }: MediaItemProps): ReactElement {
-  const { thumbnails } = useSession()
+  const session = useSession()
+  const { thumbnails } = session
   const dragRef = useRef<Drag | undefined>(undefined)
-  const name = nameOf(reference.path === '' ? reference.relativePath : reference.path)
+  const name = mediaFileName(reference)
+  const problem = state !== undefined && 'error' in state ? state : undefined
   const info = state !== undefined && 'info' in state ? state.info : undefined
   const picture = info === undefined || info.kind === 'audio' ? undefined : thumbnails.poster(reference.id, info)
 
@@ -98,6 +109,8 @@ function MediaItem({ reference, state, preparation, isUsed }: MediaItemProps): R
     <li
       className="media-item"
       data-testid={`media-${name}`}
+      // Rows and tiles cut a long name short.
+      data-tooltip={name}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={(event) => endDrag(event, true)}
@@ -110,14 +123,23 @@ function MediaItem({ reference, state, preparation, isUsed }: MediaItemProps): R
       <div className="media-text">
         <span className="media-name">{name}</span>
         <span className="media-details">
-          {info !== undefined && <span className="badge">{info.kind}</span>}
+          {info !== undefined && <span className="badge">{kindLabel(info)}</span>}
           {info !== undefined && <span>{durationLabel(info)}</span>}
           {isUsed && <span className="badge" data-testid={`used-${name}`}>used</span>}
           {isPreparing && <span className="badge warning">preparing {Math.floor(preparation.progress * PERCENT)}%</span>}
           {preparation?.hasFailed === true && <span className="badge danger">media error</span>}
-          {state !== undefined && 'error' in state && <span className="badge danger">media missing</span>}
+          {problem !== undefined && (
+            <span className="badge danger" data-tooltip={problem.error}>
+              {problem.isMissing ? 'media missing' : 'media error'}
+            </span>
+          )}
         </span>
       </div>
+      {problem !== undefined && (
+        <button type="button" className="button" data-testid={`relink-${name}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => void session.relink(reference.id)}>
+          Relink…
+        </button>
+      )}
     </li>
   )
 }
@@ -130,26 +152,41 @@ export function MediaTab(): ReactElement {
   const pending = useEditorState((state) => state.pendingImports)
   const preparation = useSyncExternalStore(session.onPreparation, session.preparation)
   const [query, setQuery] = useState('')
+  const [view, setView] = useState<MediaView>(() => (localStorage.getItem(VIEW_KEY) === 'grid' ? 'grid' : 'list'))
   const [, setPictureCount] = useState(0)
   const used = useMemo(() => usedMediaIds(tracks), [tracks])
 
   // Posters arrive after the row is first shown; each arrival draws the list again.
   useEffect(() => session.thumbnails.subscribe(() => setPictureCount((count) => count + 1)), [session])
 
+  function show(next: MediaView): void {
+    setView(next)
+    try {
+      localStorage.setItem(VIEW_KEY, next)
+    } catch (error) {
+      logError('Could not remember how the media is shown', error)
+    }
+  }
+
   const wanted = query.trim().toLowerCase()
-  const shown = media.filter((reference) => nameOf(reference.path === '' ? reference.relativePath : reference.path).toLowerCase().includes(wanted))
+  const shown = media.filter((reference) => mediaFileName(reference).toLowerCase().includes(wanted))
   const isEmpty = media.length === 0 && pending.length === 0
 
   return (
     <div className="media-tab">
       <div className="media-tools">
         <input className="field" type="search" placeholder="Search media" aria-label="Search media" data-testid="media-search" value={query} onChange={(event) => setQuery(event.target.value)} />
-        <button type="button" className="button primary" data-testid="import" onClick={() => void session.chooseAndImport()}>
+        <div className="segmented" role="group" aria-label="Show media as">
+          <IconButton icon="list" label="List" testId="media-view-list" isPressed={view === 'list'} onClick={() => show('list')} />
+          <IconButton icon="grid" label="Grid" testId="media-view-grid" isPressed={view === 'grid'} onClick={() => show('grid')} />
+        </div>
+        {/* Importing is the first thing to do in an empty project; after that the window's one primary action is Export. */}
+        <button type="button" className={media.length === 0 ? 'button primary' : 'button'} data-testid="import" onClick={() => void session.chooseAndImport()}>
           Import
         </button>
       </div>
       {isEmpty && <p className="empty-state">Import video, audio or images, or drop files here.</p>}
-      <ul className="media-list" aria-label="Media">
+      <ul className={view === 'grid' ? 'media-list grid' : 'media-list'} aria-label="Media">
         {shown.map((reference) => (
           <MediaItem key={reference.id} reference={reference} state={mediaStates[reference.id]} preparation={preparation[reference.id]} isUsed={used.has(reference.id)} />
         ))}

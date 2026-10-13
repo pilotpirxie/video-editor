@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { afterAll } from 'vitest'
 import { createFfmpegRunner, writeAll, type FfmpegRunner } from '../src/media/ffmpeg.js'
+import { parseProject, type Project } from '../src/shared/project.js'
 import { BARCODE_BITS, BARCODE_HEIGHT_FRACTION, barcodeSource, type VideoPattern } from './media/generate.js'
 
 export const ROOT = join(import.meta.dirname, '..')
@@ -334,4 +335,48 @@ export function halved(picture: Picture): Picture {
     }
   }
   return { width, height, data }
+}
+
+const UI_TEST_TIMEOUT_MS = 300_000
+
+// Runs one scenario of the in-app UI tests and gives back what it reported.
+export async function uiTest(scenario: string, extraArgs: readonly string[] = [], profile?: string, timeoutMs = UI_TEST_TIMEOUT_MS): Promise<Record<string, unknown>> {
+  const result = await runApp(['--uitest', scenario, ...extraArgs], timeoutMs, profile)
+  if (result.exitCode !== 0) throw new Error(`The UI test "${scenario}" failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`)
+  const report = lastJsonLine(result.stdout)
+  if (typeof report !== 'object' || report === null) throw new Error(`Unexpected UI test report: ${result.stdout}`)
+  return { ...report }
+}
+
+export function projectIn(report: Record<string, unknown>, stage: string): Project {
+  const parsed = parseProject(JSON.stringify(report[stage]))
+  if (!parsed.ok) throw new Error(`The project saved at "${stage}" is not valid: ${parsed.message}`)
+  return parsed.project
+}
+
+export type ProbedExport = {
+  video: Record<string, string>
+  audio: Record<string, string>
+  duration: number
+}
+
+function fieldsOf(line: string): Record<string, string> {
+  const fields: Record<string, string> = {}
+  for (const pair of line.split('|').slice(1)) {
+    const separator = pair.indexOf('=')
+    fields[pair.slice(0, separator)] = pair.slice(separator + 1)
+  }
+  return fields
+}
+
+// What ffprobe says about an exported file; a stream that is not there gives an empty record.
+export async function probeExport(path: string): Promise<ProbedExport> {
+  const ffmpeg = bundledFfmpeg()
+  const entries = 'stream=codec_type,codec_name,profile,pix_fmt,width,height,r_frame_rate,nb_frames,color_space,color_primaries,color_transfer,color_range,sample_rate,channels:format=duration'
+  const output = (await ffmpeg.runOnce('ffprobe', ['-show_entries', entries, '-of', 'compact', path], { timeoutMs: 30_000 })).toString()
+  const lines = output.trim().split('\n')
+  const video = fieldsOf(lines.find((line) => line.includes('codec_type=video')) ?? '')
+  const audio = fieldsOf(lines.find((line) => line.includes('codec_type=audio')) ?? '')
+  const format = fieldsOf(lines.find((line) => line.startsWith('format')) ?? '')
+  return { video, audio, duration: Number(format.duration) }
 }

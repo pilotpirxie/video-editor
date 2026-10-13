@@ -41,6 +41,20 @@ export function isExportPreset(name: string): name is ExportPreset {
   return Object.hasOwn(PRESET_RULES, name)
 }
 
+export const EXPORT_QUALITIES = ['low', 'medium', 'high'] as const
+
+export type ExportQuality = (typeof EXPORT_QUALITIES)[number]
+
+export function isExportQuality(name: string): name is ExportQuality {
+  return EXPORT_QUALITIES.some((quality) => quality === name)
+}
+
+// Presets that keep the shape of the canvas are named after their short side.
+export function shortSideOf(preset: ExportPreset): number | undefined {
+  const rule: PresetRule = PRESET_RULES[preset]
+  return rule.kind === 'short-side' ? rule.shortSide : undefined
+}
+
 function nearestEven(value: number): number {
   return Math.max(2, Math.round(value / 2) * 2)
 }

@@ -84,15 +84,16 @@ export function neighbours(track: Track, clip: Clip): { previousEnd: number; nex
   return { previousEnd, nextStart }
 }
 
+// How much source a clip can draw on; undefined when nothing limits it, as for a clip that loops or whose media is unknown.
 export function sourceDuration(clip: Clip, mediaStates: MediaStates): number | undefined {
-  if (!hasSource(clip)) return undefined
+  if (!hasSource(clip) || (clip.type === 'video' && clip.loop === true)) return undefined
   const state = mediaStates[clip.mediaId]
   if (state === undefined || 'error' in state || state.info.kind === 'image') return undefined
   return state.info.duration
 }
 
 // Longest stretch of timeline a span of source can fill at the clip's speed, on the time grid.
-function timelineSpan(sourceSpan: number, speedPercent: number): number {
+export function timelineSpan(sourceSpan: number, speedPercent: number): number {
   return Math.floor(sourceSpan / speedPercent) * TIMELINE_GRID
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactElement } from 'react'
+import { useEffect, useRef, type KeyboardEvent, type ReactElement } from 'react'
 
 const EDGE_GAP = 8
 
@@ -16,7 +16,28 @@ type PopupMenuProps = {
   onClose(): void
 }
 
-// A context menu on the browser's own popover layer: it sits above everything, and a click elsewhere or Escape closes it.
+// Closes a menu or a list that is open above everything when the user turns to something else: a press or a scroll outside it, another window, a window of another size.
+// The browser's own way of closing a popover is not used: it also counts the release of the very press that opened one, when that release lands just beside it.
+export function closeOnTurningAway(element: HTMLElement, close: () => void): () => void {
+  function onEvent(event: Event): void {
+    const isInside = event.target instanceof Node && element.contains(event.target)
+    if (!isInside) close()
+  }
+
+  // A scroll is reported where it happens and does not travel up, so it is caught on the way down.
+  document.addEventListener('pointerdown', onEvent, true)
+  document.addEventListener('scroll', onEvent, true)
+  window.addEventListener('blur', onEvent)
+  window.addEventListener('resize', onEvent)
+  return () => {
+    document.removeEventListener('pointerdown', onEvent, true)
+    document.removeEventListener('scroll', onEvent, true)
+    window.removeEventListener('blur', onEvent)
+    window.removeEventListener('resize', onEvent)
+  }
+}
+
+// A context menu on the browser's top layer: it sits above everything, and a press elsewhere or Escape closes it.
 export function PopupMenu({ label, items, at, onClose }: PopupMenuProps): ReactElement {
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -28,16 +49,17 @@ export function PopupMenu({ label, items, at, onClose }: PopupMenuProps): ReactE
     menu.style.left = `${Math.max(EDGE_GAP, Math.min(at.x, window.innerWidth - box.width - EDGE_GAP))}px`
     menu.style.top = `${Math.max(EDGE_GAP, Math.min(at.y, window.innerHeight - box.height - EDGE_GAP))}px`
     menu.querySelector('button')?.focus()
-
-    function onToggle(event: Event): void {
-      if (event instanceof ToggleEvent && event.newState === 'closed') onClose()
-    }
-    menu.addEventListener('toggle', onToggle)
-    return () => menu.removeEventListener('toggle', onToggle)
+    return closeOnTurningAway(menu, onClose)
   }, [at, onClose])
 
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    onClose()
+  }
+
   return (
-    <div ref={menuRef} popover="auto" className="menu" role="menu" aria-label={label} data-testid="menu">
+    <div ref={menuRef} popover="manual" className="menu" role="menu" aria-label={label} data-testid="menu" onKeyDown={onKeyDown}>
       {items.map((item) => (
         <button
           key={item.testId}

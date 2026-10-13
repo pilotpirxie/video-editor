@@ -1,7 +1,7 @@
 .editor {
   display: grid;
   grid-template-columns: var(--leftWidth) auto minmax(0, 1fr) auto var(--rightWidth);
-  grid-template-rows: 40px minmax(0, 1fr) auto var(--timelineHeight);
+  grid-template-rows: 36px minmax(0, 1fr) auto var(--timelineHeight);
   grid-template-areas:
     'top top top top top'
     'left split-left canvas split-right right'
@@ -37,6 +37,10 @@
   font-size: var(--text-label);
 }
 
+.notice.good {
+  border-left-color: var(--primary);
+}
+
 .notice span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -55,9 +59,11 @@
   grid-area: left;
 }
 
+/* Room for the scroll bar is kept even when nothing scrolls, so folding a group never changes the width of the fields. */
 .sidebar.right {
   grid-area: right;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .splitter {
@@ -94,24 +100,10 @@
 }
 
 .empty-state {
-  margin: var(--space-4);
+  margin: var(--space-3);
   color: var(--text-secondary);
   font-size: var(--text-label);
   text-align: center;
-}
-
-.panel-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border-bottom: 1px solid var(--divider);
-}
-
-.panel-title {
-  margin: 0;
-  font-size: var(--text-label);
-  font-weight: 600;
 }
 
 .canvas-panel {
@@ -122,10 +114,15 @@
   min-height: 0;
 }
 
+/* A fitted picture never needs scrolling, and a scrollable area would change size while the picture is refitted to it. */
 .canvas-area {
   flex: 1;
   min-height: 0;
   padding: var(--space-4);
+  overflow: hidden;
+}
+
+.canvas-area.scrollable {
   overflow: auto;
 }
 
@@ -154,6 +151,18 @@
   padding: var(--space-1) var(--space-2);
   border-top: 1px solid var(--divider);
   background: var(--panel-background);
+  container-type: inline-size;
+}
+
+.timecode.total {
+  color: var(--text-secondary);
+}
+
+/* Beside very wide sidebars the canvas is narrow: the project length makes room so that no button is cut off. */
+@container (max-width: 450px) {
+  .timecode.total {
+    display: none;
+  }
 }
 
 .timeline-panel {
@@ -239,8 +248,17 @@
 
 .media-tools {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-1);
   padding: var(--space-2);
+}
+
+.media-tools .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.media-tools .button {
+  flex: none;
 }
 
 .media-list {
@@ -272,8 +290,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 72px;
-  height: 42px;
+  width: 56px;
+  height: 32px;
   border-radius: var(--space-1);
   background: var(--raised-surface);
   color: var(--text-secondary);
@@ -287,6 +305,7 @@
 }
 
 .media-text {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -306,6 +325,26 @@
   gap: var(--space-1);
   color: var(--text-secondary);
   font-size: var(--text-small);
+}
+
+/* As tiles: the picture above its name, as many across as the panel is wide. */
+.media-list.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: var(--space-1);
+}
+
+.media-list.grid .media-item {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.media-list.grid .media-thumbnail {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
 }
 
 .media-ghost {
@@ -372,8 +411,62 @@
   cursor: nesw-resize;
 }
 
-.field-row {
+.annotations-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+
+.annotation-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+}
+
+/* The field for typing a text clip in place. Its letters are invisible so the preview underneath stays what is seen; only the caret and the selection are drawn. */
+.text-editor-frame {
+  overflow: visible;
+}
+
+.text-editor {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--primary);
+  white-space: pre;
+}
+
+.text-editor::selection {
+  background: color-mix(in srgb, var(--primary) 45%, transparent);
+  color: transparent;
+}
+
+.export-progress {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  font-size: var(--text-label);
+  font-variant-numeric: tabular-nums;
 }
+
+.export-progress progress {
+  width: 120px;
+  height: 6px;
+  accent-color: var(--primary);
+}
+
+.export-progress-text {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+

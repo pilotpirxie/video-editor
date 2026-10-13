@@ -1,5 +1,5 @@
-import type { ExportPreset } from './exportPresets.js'
-import type { Project } from './project.js'
+import type { ExportPreset, ExportQuality } from './exportPresets.js'
+import type { MediaRef, Project } from './project.js'
 import type { FrameRate } from './time.js'
 
 export type VideoInfo = {
@@ -24,12 +24,14 @@ export type AudioInfo = {
   codec: string
 }
 
+// An animated GIF, WebP or APNG is moving pictures like any video; `isAnimatedImage` only says it came from an image file, so it may loop and is shown as an image.
 export type MediaInfo =
-  | { kind: 'video'; duration: number; containerStart: number; video: VideoInfo; audio?: AudioInfo }
+  | { kind: 'video'; duration: number; containerStart: number; video: VideoInfo; audio?: AudioInfo; isAnimatedImage?: true }
   | { kind: 'audio'; duration: number; containerStart: number; audio: AudioInfo }
-  | { kind: 'image'; width: number; height: number; hasAlpha: boolean; isAnimated: boolean }
+  | { kind: 'image'; width: number; height: number; hasAlpha: boolean }
 
-export type MediaState = { info: MediaInfo } | { error: string }
+// `isMissing` tells a file that is not where the project expects it from one that is there but cannot be read.
+export type MediaState = { info: MediaInfo } | { error: string; isMissing: boolean }
 
 export type LoadedProject = {
   project: Project
@@ -38,6 +40,20 @@ export type LoadedProject = {
 
 export type AddedMedia = {
   id: string
+  info: MediaInfo
+}
+
+// What the clips of a project use a media file for. A file relinked in its place has to offer the same.
+export type MediaUse = 'video' | 'image' | 'sound'
+
+export type UnlinkedMedia = {
+  reference: MediaRef
+  uses: MediaUse[]
+}
+
+export type RelinkedMedia = {
+  id: string
+  path: string
   info: MediaInfo
 }
 
@@ -63,6 +79,13 @@ export type ExportTarget = {
   width: number
   height: number
   frameRate: FrameRate
+  quality: ExportQuality
+  hasAudio: boolean
+}
+
+export type TimeRange = {
+  start: number
+  end: number
 }
 
 export type MediaClient = {
@@ -81,6 +104,7 @@ export type MediaClient = {
   exportCancel(jobId: number): Promise<void>
   writeFile(directory: string, name: string, data: ArrayBuffer): Promise<void>
   addMedia(path: string): Promise<AddedMedia>
+  relinkMedia(path: string, wanted: UnlinkedMedia, others: readonly UnlinkedMedia[]): Promise<RelinkedMedia[]>
   preparation(): Promise<Record<string, Preparation>>
   waveform(mediaId: string): Promise<WaveformLevel[] | undefined>
   saveProject(path: string, project: Project): Promise<void>
@@ -102,6 +126,7 @@ export type MediaRequest =
   | { method: 'exportCancel'; jobId: number }
   | { method: 'writeFile'; directory: string; name: string; data: ArrayBuffer }
   | { method: 'addMedia'; path: string }
+  | { method: 'relinkMedia'; path: string; wanted: UnlinkedMedia; others: UnlinkedMedia[] }
   | { method: 'preparation' }
   | { method: 'waveform'; mediaId: string }
   | { method: 'saveProject'; path: string; project: Project }
@@ -119,11 +144,16 @@ export type MediaProcessCommand = { type: 'setup'; setup: MediaProcessSetup } | 
 
 export type MediaProcessReport = { type: 'versions'; ffmpeg: string; ffprobe: string }
 
+// What is left out takes its default: the project's frame rate, high quality, the whole timeline, with sound.
 export type ExportJob = {
   kind: 'export'
   projectPath: string
   outputPath: string
   preset: ExportPreset
+  frameRate?: FrameRate
+  quality?: ExportQuality
+  range?: TimeRange
+  hasAudio?: boolean
 }
 
 export type FramesJob = {
@@ -153,6 +183,9 @@ export type MenuAction =
   | 'undo'
   | 'redo'
   | 'split'
+  | 'split-all'
+  | 'select-all'
+  | 'deselect-all'
   | 'duplicate'
   | 'delete'
   | 'ripple-delete'
@@ -168,6 +201,8 @@ export type DocumentInfo = {
   path: string | undefined
   loadFrom: string | undefined
   recoveryPath: string
+  // Where the project is written for an export to read: the export works on that copy while editing goes on.
+  exportSnapshotPath: string
 }
 
 export type DocumentState = {
@@ -193,6 +228,8 @@ export type Host = {
   setDocumentPath(path: string): void
   saveProjectDialog(): Promise<string | undefined>
   importMediaDialog(): Promise<string[]>
+  chooseMediaFile(name: string): Promise<string | undefined>
+  showLastExport(): void
   confirmUnsavedChanges(): Promise<UnsavedChoice>
   replaceDocument(next: NextDocument): void
   discardRecovery(): void

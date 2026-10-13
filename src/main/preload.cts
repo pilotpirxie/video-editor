@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('host', {
   setDocumentPath: (path: string) => ipcRenderer.send('document-path', path),
   saveProjectDialog: () => ipcRenderer.invoke('save-project-dialog'),
   importMediaDialog: () => ipcRenderer.invoke('import-media-dialog'),
+  chooseMediaFile: (name: string) => ipcRenderer.invoke('choose-media-file', name),
+  showLastExport: () => ipcRenderer.send('show-last-export'),
   confirmUnsavedChanges: () => ipcRenderer.invoke('confirm-unsaved-changes'),
   replaceDocument: (next: unknown) => ipcRenderer.send('replace-document', next),
   discardRecovery: () => ipcRenderer.send('discard-recovery'),

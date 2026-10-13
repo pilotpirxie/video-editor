@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { nextTrackName } from '../editor/clips.js'
 import { dropMedia } from '../editor/place.js'
+import { shortcutHint } from '../editor/shortcuts.js'
+import { projectDuration } from '../shared/project.js'
 import { timecode } from '../shared/time.js'
 import { CanvasOverlay } from './CanvasOverlay.js'
 import { useEditorState, usePosition, useSession } from './context.js'
@@ -14,8 +16,10 @@ type CanvasPanelProps = {
 }
 
 export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
-  const { engine, transport, store } = useSession()
+  const { engine, transport, store, actions } = useSession()
   const canvas = useEditorState((state) => state.project.canvas)
+  const duration = useEditorState((state) => projectDuration(state.project))
+  const shuttleRate = usePosition((position) => position.shuttleRate)
   const isPlaying = usePosition((position) => position.isPlaying)
   const time = usePosition((position) => position.time)
   const frameCount = usePosition((position) => position.sequence)
@@ -24,6 +28,7 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
   const frameRef = useRef<HTMLDivElement>(null)
   const [zoom, setZoom] = useState<PreviewZoom>('fit')
   const [isCropping, setIsCropping] = useState(false)
+  const isBusy = isPlaying || shuttleRate !== 0
 
   useEffect(() => {
     frameRef.current?.prepend(preview)
@@ -59,7 +64,7 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
 
   return (
     <main className="canvas-panel" aria-label="Canvas">
-      <div className="canvas-area">
+      <div className={zoom === 'fit' ? 'canvas-area' : 'canvas-area scrollable'}>
         <div className="preview-fit" ref={stageRef}>
           <div className="preview-frame" ref={frameRef}>
             <CanvasOverlay isCropping={isCropping} />
@@ -67,10 +72,20 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
         </div>
       </div>
       <footer className="canvas-footer">
-        <IconButton icon={isPlaying ? 'pause' : 'play'} label={isPlaying ? 'Pause' : 'Play'} testId="play" onClick={() => void transport.toggle()} />
+        <IconButton icon="stepBack" label="Previous frame" testId="step-back" shortcut={shortcutHint('step-back')} onClick={() => actions.stepFrames(-1)} />
+        <IconButton icon={isBusy ? 'pause' : 'play'} label={isBusy ? 'Pause' : 'Play'} testId="play" shortcut={shortcutHint('play-pause')} onClick={() => void transport.toggle()} />
+        <IconButton icon="stepForward" label="Next frame" testId="step-forward" shortcut={shortcutHint('step-forward')} onClick={() => actions.stepFrames(1)} />
         <output className="timecode" data-testid="timecode" aria-label="Timecode" data-frames={frameCount} data-full-quality={fullQualityMs !== undefined}>
           {timecode(time, canvas.frameRate)}
         </output>
+        <span className="timecode total" data-testid="duration" aria-label="Project length">
+          / {timecode(duration, canvas.frameRate)}
+        </span>
+        {shuttleRate !== 0 && (
+          <span className="badge" data-testid="shuttle-rate">
+            {shuttleRate < 0 ? `−${-shuttleRate}×` : `${shuttleRate}×`}
+          </span>
+        )}
         <span className="spacer" />
         <IconButton icon="crop" label="Crop with the handles" testId="crop-mode" isPressed={isCropping} onClick={() => setIsCropping(!isCropping)} />
         <PreviewZoomButtons zoom={zoom} onZoom={setZoom} />

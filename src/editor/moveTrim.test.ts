@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { FRAME, MEDIA_STATES, SECOND, audioClip, clipIds, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
-import type { Project } from '../shared/project.js'
+import type { Clip, Project } from '../shared/project.js'
 import { moveClips, trimClip, type Move, type Trim } from './moveTrim.js'
 
 const NEW_TRACK = { id: 'new-track', name: 'Track 3' }
@@ -146,8 +146,24 @@ describe('trimClip', () => {
     reopened(trimmed)
   })
 
+  it('stretches a still image or a text to any length', () => {
+    const placed = { start: 0, duration: 5 * SECOND, opacity: 1, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 } }
+    const still: Clip = { ...placed, id: 'still', type: 'image', mediaId: 'logo' }
+    const title: Clip = { ...placed, id: 'title', type: 'text', text: 'Title', font: { family: 'Helvetica Neue', size: 48 }, color: '#ffffff', align: 'center' }
+    const project = projectOf([track('t1', [still]), track('t2', [title])])
+    expect(clipOf(trimClip(project, trim({ clipId: 'still', time: 3600 * SECOND })), 'still').duration).toBe(3600 * SECOND)
+    expect(clipOf(trimClip(project, trim({ clipId: 'title', time: 3600 * SECOND })), 'title').duration).toBe(3600 * SECOND)
+  })
+
+  it('lets a looping clip run past the end of its source', () => {
+    const looping = projectOf([track('t1', [videoClip('gif', 0, SECOND, { mediaId: 'sticker', loop: true })])])
+    expect(clipOf(trimClip(looping, trim({ clipId: 'gif', time: 30 * SECOND })), 'gif').duration).toBe(30 * SECOND)
+    const once = projectOf([track('t1', [videoClip('gif', 0, SECOND, { mediaId: 'sticker' })])])
+    expect(clipOf(trimClip(once, trim({ clipId: 'gif', time: 30 * SECOND })), 'gif').duration).toBe(1.2 * SECOND)
+  })
+
   it('has no source limit for media that is missing', () => {
-    const lost = trimClip(sample(), trim({ clipId: 'c', time: 60 * SECOND, mediaStates: { video: { error: 'missing' } } }))
+    const lost = trimClip(sample(), trim({ clipId: 'c', time: 60 * SECOND, mediaStates: { video: { error: 'missing', isMissing: true } } }))
     expect(clipOf(lost, 'c').duration).toBe(52 * SECOND)
   })
 

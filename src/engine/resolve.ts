@@ -1,7 +1,7 @@
 import { minimumHalvings } from '../shared/limits.js'
 import type { MediaState, VideoInfo } from '../shared/mediaProtocol.js'
 import type { AnimatableProperty, Clip, Crop, Easing, Keyframe, Keyframes, Project, TextAlign, Transform, VisualClip } from '../shared/project.js'
-import { frameIndexAt, sourceTime } from '../shared/time.js'
+import { frameIndexAt, loopedTime, sourceTime } from '../shared/time.js'
 
 const MAX_HALVINGS = 6
 const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 }
@@ -155,7 +155,7 @@ function layerOf(clip: Clip, time: number, media: MediaStates, outputScale: numb
     kind: 'video',
     mediaId: clip.mediaId,
     video: info.video,
-    frame: frameIndexAt(info.video, sourceTime(clip, time)),
+    frame: frameIndexAt(info.video, loopedTime(sourceTime(clip, time), info.duration, clip.loop === true)),
     halvings: sourceHalvings(info.video, clip, outputScale),
     crop: cropAt(clip, localTime),
   }

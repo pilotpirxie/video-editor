@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { MEDIA_STATES, SAMPLE_MEDIA, SECOND, VIDEO_INFO, VIDEO_MEDIA, clipIds, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
+import { MEDIA_STATES, SAMPLE_MEDIA, SECOND, STICKER_MEDIA, VIDEO_INFO, VIDEO_MEDIA, audioClip, clipIds, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import type { MediaInfo } from '../shared/mediaProtocol.js'
 import type { MediaRef } from '../shared/project.js'
-import { canvasForFirstClip, clipForMedia, dropMedia, type MediaDrop } from './place.js'
+import { canvasForFirstClip, clipForMedia, dropMedia, mediaFileName, mediaUses, relinkedMedia, unlinkedMedia, type MediaDrop } from './place.js'
 
 const CANVAS = projectOf([]).canvas
 const NEW_TRACK = { id: 'new-track', name: 'Track' }
@@ -35,11 +35,21 @@ describe('clipForMedia', () => {
   })
 
   it('scales a picture larger than the canvas down to fit, and never enlarges a small one', () => {
-    const large: MediaInfo = { kind: 'image', width: 3840, height: 1080, hasAlpha: false, isAnimated: false }
+    const large: MediaInfo = { kind: 'image', width: 3840, height: 1080, hasAlpha: false }
     expect(clipForMedia('logo', large, CANVAS, 'c', 0)).toMatchObject({ type: 'image', duration: 5 * SECOND, transform: { scaleX: 0.5, scaleY: 0.5 } })
     const small = MEDIA_STATES.logo
     if (small === undefined || 'error' in small) throw new Error('fixture')
     expect(clipForMedia('logo', small.info, CANVAS, 'c', 0)).toMatchObject({ transform: { scaleX: 1, scaleY: 1 } })
+  })
+
+  it('makes an animated image a looping clip that lasts as long as a still', () => {
+    expect(clipForMedia('sticker', STICKER_MEDIA, CANVAS, 'c', 0)).toMatchObject({ type: 'video', loop: true, duration: 5 * SECOND, sourceStart: 0, speedPercent: 100 })
+    const long = { ...STICKER_MEDIA, duration: 8 * SECOND }
+    expect(clipForMedia('sticker', long, CANVAS, 'c', 0)).toMatchObject({ loop: true, duration: 8 * SECOND })
+  })
+
+  it('gives a still image five seconds', () => {
+    expect(clipForMedia('logo', { kind: 'image', width: 400, height: 200, hasAlpha: true }, CANVAS, 'c', SECOND)).toMatchObject({ type: 'image', start: SECOND, duration: 5 * SECOND })
   })
 
   it('makes an audio clip without a picture', () => {
@@ -68,8 +78,12 @@ describe('canvasForFirstClip', () => {
   it('keeps the aspect ratio when the source is larger or smaller than a canvas can be', () => {
     const huge: MediaInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, width: 7680, height: 4320 } }
     expect(canvasForFirstClip(huge, CANVAS)).toMatchObject({ width: 3840, height: 2160 })
-    const tiny: MediaInfo = { kind: 'image', width: 64, height: 64, hasAlpha: false, isAnimated: false }
+    const tiny: MediaInfo = { kind: 'image', width: 64, height: 64, hasAlpha: false }
     expect(canvasForFirstClip(tiny, CANVAS)).toMatchObject({ width: 160, height: 160 })
+  })
+
+  it('takes the size but not the frame rate from an animated image', () => {
+    expect(canvasForFirstClip(STICKER_MEDIA, CANVAS)).toEqual({ width: 214, height: 120, frameRate: CANVAS.frameRate })
   })
 
   it('leaves the canvas alone for audio', () => {
@@ -118,3 +132,37 @@ describe('dropMedia', () => {
     expect(dropMedia(occupied, drop({ trackIndex: 1 })).media).toEqual(SAMPLE_MEDIA)
   })
 })
+
+describe('media that moved', () => {
+  const project = projectOf([
+    track('t1', [videoClip('a', 0, SECOND), audioClip('sound-of-video', 2 * SECOND, SECOND, { mediaId: 'video' })]),
+    track('t2', [audioClip('music', 0, SECOND)]),
+    track('t3', [{ id: 'still', type: 'image', mediaId: 'logo', start: 0, duration: SECOND, opacity: 1, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 } }]),
+  ])
+
+  it('names a media file by the last part of its path', () => {
+    expect(mediaFileName({ id: 'a', path: '/footage/day 1/clip.mp4', relativePath: '' })).toBe('clip.mp4')
+    expect(mediaFileName({ id: 'a', path: '', relativePath: '../media/song.mp3' })).toBe('song.mp3')
+  })
+
+  it('knows what the clips need from a file', () => {
+    expect(mediaUses(project, 'video')).toEqual(['video', 'sound'])
+    expect(mediaUses(project, 'music')).toEqual(['sound'])
+    expect(mediaUses(project, 'logo')).toEqual(['image'])
+    expect(mediaUses(project, 'unused')).toEqual([])
+  })
+
+  it('lists the files that are missing, not the ones that are there or merely unreadable', () => {
+    const states = { ...MEDIA_STATES, video: { error: 'gone', isMissing: true }, music: { error: 'damaged', isMissing: false } }
+    expect(unlinkedMedia(project, states)).toEqual([{ reference: SAMPLE_MEDIA[0], uses: ['video', 'sound'] }])
+  })
+
+  it('points media at the files that were found and leaves the rest alone', () => {
+    const relinked = relinkedMedia(project, [{ id: 'video', path: '/new/video.mp4' }])
+    expect(relinked.media).toEqual([{ id: 'video', path: '/new/video.mp4', relativePath: '' }, SAMPLE_MEDIA[1], SAMPLE_MEDIA[2]])
+    expect(relinked.tracks).toBe(project.tracks)
+    expect(relinkedMedia(project, [{ id: 'video', path: '/footage/video.mp4' }])).toBe(project)
+    reopened(relinked)
+  })
+})
+

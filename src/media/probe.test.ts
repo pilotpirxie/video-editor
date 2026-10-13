@@ -28,7 +28,7 @@ describe('probeMedia', () => {
       expect(performance.now() - startedAt, name).toBeLessThan(MAX_PROBE_MS)
 
       let expectedKind = 'video'
-      if (/^(image|animated)/.test(name)) {
+      if (name.startsWith('image')) {
         expectedKind = 'image'
       } else if (name.startsWith('audio')) {
         expectedKind = 'audio'
@@ -109,14 +109,24 @@ describe('probeMedia', () => {
     expect(await probe('audio-44k-click.wav')).toMatchObject({ audio: { sampleRate: 44_100, channels: 1 } })
   })
 
-  it('reads still and animated images', async () => {
-    expect(await probe('image-alpha.png')).toEqual({ kind: 'image', width: 320, height: 180, hasAlpha: true, isAnimated: false })
-    expect(await probe('image.jpg')).toEqual({ kind: 'image', width: 320, height: 180, hasAlpha: false, isAnimated: false })
-    expect(await probe('image.webp')).toMatchObject({ kind: 'image', width: 320, height: 180, isAnimated: false })
-    expect(await probe('image.gif')).toMatchObject({ kind: 'image', isAnimated: false })
-    expect(await probe('animated.gif')).toMatchObject({ kind: 'image', width: 160, height: 90, isAnimated: true })
-    expect(await probe('animated.webp')).toMatchObject({ kind: 'image', isAnimated: true })
-    expect(await probe('animated.apng')).toMatchObject({ kind: 'image', isAnimated: true })
+  it('reads still images', async () => {
+    expect(await probe('image-alpha.png')).toEqual({ kind: 'image', width: 320, height: 180, hasAlpha: true })
+    expect(await probe('image.jpg')).toEqual({ kind: 'image', width: 320, height: 180, hasAlpha: false })
+    expect(await probe('image.webp')).toMatchObject({ kind: 'image', width: 320, height: 180 })
+    expect(await probe('image.gif')).toMatchObject({ kind: 'image' })
+  })
+
+  // Twelve pictures at ten a second. Only the GIF file states its length; the others are measured by their pictures.
+  it.each(['animated.gif', 'animated.webp', 'animated.apng'])('reads %s as moving pictures of 1.2 s', async (name) => {
+    const info = await probe(name)
+    expect(info).toMatchObject({
+      kind: 'video',
+      isAnimatedImage: true,
+      duration: 1.2 * SECOND,
+      containerStart: 0,
+      video: { width: 160, height: 90, frameDuration: SECOND / 10, frameCount: 12, startOffset: 0, isVariableFrameRate: false },
+    })
+    expect(info).not.toHaveProperty('audio')
   })
 
   it.each(UNREADABLE)('rejects %s with one plain sentence', async (name) => {

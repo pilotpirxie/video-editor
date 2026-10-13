@@ -35,6 +35,9 @@ export const SAMPLE_MEDIA: MediaRef[] = [
   { id: 'logo', path: '/footage/logo.png', relativePath: '' },
 ]
 
+// The sample media plus a video file with sound and an animated image; `MEDIA_STATES.talk` and `MEDIA_STATES.sticker` describe them.
+export const ALL_MEDIA: MediaRef[] = [...SAMPLE_MEDIA, { id: 'talk', path: '/footage/talk.mp4', relativePath: '' }, { id: 'sticker', path: '/footage/sticker.gif', relativePath: '' }]
+
 export function projectOf(tracks: Track[], media: MediaRef[] = SAMPLE_MEDIA): Project {
   return { version: 1, canvas: { width: 1920, height: 1080, frameRate: { num: 30, den: 1 } }, media, tracks }
 }
@@ -75,8 +78,19 @@ export const VIDEO_INFO: VideoInfo = {
 
 export const VIDEO_MEDIA: Extract<MediaInfo, { kind: 'video' }> = { kind: 'video', duration: 10 * SECOND, containerStart: 0, video: VIDEO_INFO }
 
+// An animated image: twelve pictures at ten a second.
+export const STICKER_MEDIA: Extract<MediaInfo, { kind: 'video' }> = {
+  kind: 'video',
+  duration: 1.2 * SECOND,
+  containerStart: 0,
+  video: { ...VIDEO_INFO, width: 160, height: 90, frameDuration: SECOND / 10, frameCount: 12, codec: 'gif' },
+  isAnimatedImage: true,
+}
+
 export const MEDIA_STATES: MediaStates = {
   video: { info: VIDEO_MEDIA },
+  talk: { info: { ...VIDEO_MEDIA, audio: { channels: 2, sampleRate: 48_000, codec: 'aac' } } },
+  sticker: { info: STICKER_MEDIA },
   music: { info: { kind: 'audio', duration: 60 * SECOND, containerStart: 0, audio: { channels: 2, sampleRate: 48_000, codec: 'mp3' } } },
-  logo: { info: { kind: 'image', width: 400, height: 200, hasAlpha: true, isAnimated: false } },
+  logo: { info: { kind: 'image', width: 400, height: 200, hasAlpha: true } },
 }

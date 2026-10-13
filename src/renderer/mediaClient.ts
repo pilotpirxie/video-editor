@@ -1,4 +1,4 @@
-import type { AddedMedia, LoadedProject, MediaClient, MediaMessage, MediaReply, MediaRequest, Preparation, RawFrame, WaveformLevel } from '../shared/mediaProtocol.js'
+import type { AddedMedia, LoadedProject, MediaClient, MediaMessage, MediaReply, MediaRequest, Preparation, RawFrame, RelinkedMedia, WaveformLevel } from '../shared/mediaProtocol.js'
 
 type Pending = {
   resolve(answer: unknown): void
@@ -28,6 +28,10 @@ function isRawFrame(value: unknown): value is RawFrame {
 
 function isAddedMedia(value: unknown): value is AddedMedia {
   return typeof value === 'object' && value !== null && 'id' in value && typeof value.id === 'string' && 'info' in value
+}
+
+function isRelinkedMedia(value: unknown): value is RelinkedMedia[] {
+  return Array.isArray(value) && value.every((item) => isAddedMedia(item) && 'path' in item && typeof item.path === 'string')
 }
 
 function isPreparationRecord(value: unknown): value is Record<string, Preparation> {
@@ -144,6 +148,12 @@ export function createMediaClient(port: MessagePort): MediaClient {
       const request: MediaRequest = { method: 'addMedia', path }
       const answer = await call(request)
       if (!isAddedMedia(answer)) throw unexpectedAnswer(request)
+      return answer
+    },
+    async relinkMedia(path, wanted, others) {
+      const request: MediaRequest = { method: 'relinkMedia', path, wanted, others: [...others] }
+      const answer = await call(request)
+      if (!isRelinkedMedia(answer)) throw unexpectedAnswer(request)
       return answer
     },
     async preparation() {

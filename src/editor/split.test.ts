@@ -101,7 +101,7 @@ describe('splitClips', () => {
   })
 
   it('mixes exactly the same samples as before the split', async () => {
-    const sounding: MediaStates = { ...MEDIA_STATES, video: MEDIA_STATES.music ?? { error: 'fixture' } }
+    const sounding: MediaStates = { ...MEDIA_STATES, video: MEDIA_STATES.music ?? { error: 'fixture', isMissing: false } }
     const before = projectOf([
       track('t1', [videoClip('a', SECOND / 2, 3 * SECOND, { sourceStart: 7_000_000, volume: 0.7, volumeFadeIn: SECOND / 2, volumeFadeOut: SECOND })]),
       track('t2', [audioClip('music', 0, 4 * SECOND, { volume: 0.5 })]),

@@ -5,6 +5,7 @@ import { logError } from '../shared/log.js'
 
 const RECOVERY_EXTENSION = '.json'
 const PROJECT_PATH_EXTENSION = '.path'
+const EXPORT_SNAPSHOT_EXTENSION = '.export'
 
 export type FoundRecovery = {
   recoveryPath: string
@@ -36,6 +37,17 @@ async function readProjectPath(recoveryPath: string): Promise<string | undefined
 
 export function newRecoveryPath(directory: string): string {
   return join(directory, `${randomUUID()}${RECOVERY_EXTENSION}`)
+}
+
+// The copy of a project that an export reads. It lives beside the recovery file and is never taken for one.
+export function exportSnapshotPath(recoveryPath: string): string {
+  return `${recoveryPath}${EXPORT_SNAPSHOT_EXTENSION}`
+}
+
+// Removes an export's copy of the project. Only files this app put in its own recovery folder are ever removed.
+export async function discardExportSnapshot(path: string, directory: string): Promise<void> {
+  const isOurs = dirname(path) === directory && path.endsWith(EXPORT_SNAPSHOT_EXTENSION)
+  if (isOurs) await discardRecoveredWork(path)
 }
 
 // The recovery file itself is a plain project file, so this note is the only record of which project it belongs to.
@@ -74,6 +86,8 @@ export async function findRecovery(directory: string): Promise<FoundRecovery | u
 
   let newest: (FoundRecovery & { writtenAt: number }) | undefined
   for (const name of names) {
+    // No export is running at launch, so a copy an interrupted one left behind is of no use any more.
+    if (name.endsWith(EXPORT_SNAPSHOT_EXTENSION)) await discardRecoveredWork(join(directory, name))
     if (!name.endsWith(RECOVERY_EXTENSION)) continue
     const recoveryPath = join(directory, name)
     const writtenAt = await modifiedAt(recoveryPath)

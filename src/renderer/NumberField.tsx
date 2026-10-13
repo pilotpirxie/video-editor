@@ -1,4 +1,6 @@
-import { useRef, useState, type ChangeEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
+import { useId, useRef, useState, type ChangeEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
+import { Icon } from './icons.js'
+import { OptionList } from './Picker.js'
 
 const BIG_STEP_FACTOR = 10
 
@@ -10,6 +12,8 @@ type NumberFieldProps = {
   max: number
   step?: number
   decimals?: number
+  // Ready-made values, offered in a list that opens from the arrow at the end of the field.
+  presets?: readonly number[]
   testId: string
   isDisabled?: boolean
   onBegin(): void
@@ -24,11 +28,15 @@ type Scrub = {
   hasMoved: boolean
 }
 
-// A typed value, an arrow key and a scrub are each one undo step; while scrubbing, every intermediate value is passed on so the canvas follows.
+// A typed value, an arrow key, a scrub and a ready-made value are each one undo step; while scrubbing or pointing at a ready-made value, every intermediate value is passed on so the canvas follows.
 export function NumberField(props: NumberFieldProps): ReactElement {
-  const { label, value, min, max, testId } = props
+  const { label, value, min, max, testId, presets } = props
   const step = props.step ?? 1
   const decimals = props.decimals ?? 0
+  const inputId = useId()
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [isListOpen, setIsListOpen] = useState(false)
+  const isPreviewingRef = useRef(false)
   const [draft, setDraft] = useState<string | undefined>(undefined)
   // Enter applies the text and then leaves the field, which asks to apply it again; the ref makes the second request see it is already done.
   const draftRef = useRef<string | undefined>(undefined)
@@ -58,7 +66,33 @@ export function NumberField(props: NumberFieldProps): ReactElement {
     applyOnce(typed)
   }
 
+  function previewPreset(preset: string): void {
+    if (!isPreviewingRef.current) props.onBegin()
+    isPreviewingRef.current = true
+    props.onChange(limited(Number(preset)))
+  }
+
+  function choosePreset(preset: string): void {
+    previewPreset(preset)
+    isPreviewingRef.current = false
+    props.onCommit()
+    setIsListOpen(false)
+    inputRef.current?.focus()
+  }
+
+  function closePresets(isByKey: boolean): void {
+    setIsListOpen(false)
+    if (isPreviewingRef.current) props.onCancel()
+    isPreviewingRef.current = false
+    if (isByKey) inputRef.current?.focus()
+  }
+
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === 'ArrowDown' && event.altKey && presets !== undefined) {
+      event.preventDefault()
+      setIsListOpen(true)
+      return
+    }
     if (event.key === 'Enter') {
       applyDraft()
       // With the field left, the next Cmd+Z undoes the edit instead of the typing.
@@ -74,13 +108,13 @@ export function NumberField(props: NumberFieldProps): ReactElement {
     }
   }
 
-  function onScrubStart(event: PointerEvent<HTMLSpanElement>): void {
+  function onScrubStart(event: PointerEvent<HTMLLabelElement>): void {
     if (props.isDisabled === true || value === undefined) return
     event.currentTarget.setPointerCapture(event.pointerId)
     scrubRef.current = { pointerX: event.clientX, value, hasMoved: false }
   }
 
-  function onScrubMove(event: PointerEvent<HTMLSpanElement>): void {
+  function onScrubMove(event: PointerEvent<HTMLLabelElement>): void {
     const scrub = scrubRef.current
     if (scrub === undefined) return
     const distance = event.clientX - scrub.pointerX
@@ -97,9 +131,10 @@ export function NumberField(props: NumberFieldProps): ReactElement {
   }
 
   return (
-    <label className="number-field">
-      <span
-        className="number-field-label"
+    <div className="labelled">
+      <label
+        className="field-label scrub"
+        htmlFor={inputId}
         onPointerDown={onScrubStart}
         onPointerMove={onScrubMove}
         onPointerUp={() => endScrub(props.onCommit)}
@@ -107,19 +142,54 @@ export function NumberField(props: NumberFieldProps): ReactElement {
         onLostPointerCapture={() => endScrub(props.onCommit)}
       >
         {label}
-      </span>
-      <input
-        className="field"
-        type="text"
-        inputMode="decimal"
-        data-testid={testId}
-        disabled={props.isDisabled}
-        placeholder={value === undefined ? 'Mixed' : undefined}
-        value={draft ?? value?.toFixed(decimals) ?? ''}
-        onChange={(event: ChangeEvent<HTMLInputElement>) => setDraftText(event.target.value)}
-        onKeyDown={onKeyDown}
-        onBlur={applyDraft}
-      />
-    </label>
+      </label>
+      <div className="field-box">
+        <input
+          ref={inputRef}
+          id={inputId}
+          className="field"
+          type="text"
+          inputMode="decimal"
+          role={presets === undefined ? undefined : 'combobox'}
+          aria-haspopup={presets === undefined ? undefined : 'listbox'}
+          aria-expanded={presets === undefined ? undefined : isListOpen}
+          data-testid={testId}
+          disabled={props.isDisabled}
+          placeholder={value === undefined ? 'Mixed' : undefined}
+          value={draft ?? value?.toFixed(decimals) ?? ''}
+          onChange={(event: ChangeEvent<HTMLInputElement>) => setDraftText(event.target.value)}
+          onKeyDown={onKeyDown}
+          onBlur={applyDraft}
+        />
+        {presets !== undefined && (
+          <button
+            type="button"
+            className="field-arrow"
+            tabIndex={-1}
+            aria-label={`${label}: ready-made values`}
+            data-testid={`${testId}-presets`}
+            disabled={props.isDisabled}
+            onPointerDown={(event) => {
+              // The list takes the focus as it opens; a press while it is open has already closed it.
+              event.preventDefault()
+              if (!isListOpen) setIsListOpen(true)
+            }}
+          >
+            <Icon name="chevronDown" />
+          </button>
+        )}
+        {presets !== undefined && isListOpen && (
+          <OptionList
+            label={label}
+            testId={testId}
+            choices={presets.map((preset) => ({ value: String(preset), label: String(preset) }))}
+            chosen={value === undefined ? undefined : String(Number(value.toFixed(decimals)))}
+            onPreview={previewPreset}
+            onChoose={choosePreset}
+            onClose={closePresets}
+          />
+        )}
+      </div>
+    </div>
   )
 }

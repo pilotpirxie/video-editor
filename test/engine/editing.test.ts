@@ -5,7 +5,7 @@ import { boxOf, containsPoint, toLocal, type Box } from '../../src/editor/geomet
 import { clipsToSplit, splitClips } from '../../src/editor/split.js'
 import { parseProject, serializeProject, type Crop, type Project, type Transform } from '../../src/shared/project.js'
 import { frameDuration } from '../../src/shared/time.js'
-import { ROOT, projectPath, renderFrames, sameBytes, scratchDirectory, type Picture } from '../helpers.js'
+import { ROOT, projectPath, readBarcode, renderFrames, sameBytes, scratchDirectory, type Picture } from '../helpers.js'
 
 const scratch = scratchDirectory('editing')
 const BYTES_PER_PIXEL = 4
@@ -53,6 +53,54 @@ describe('split', () => {
       const actualPicture = actual[index]
       if (expectedPicture === undefined || actualPicture === undefined) throw new Error(`Frame ${frame} was not rendered`)
       expect(sameBytes(actualPicture, expectedPicture), `frame ${frame}`).toBe(true)
+    }
+  })
+})
+
+// The animated test images hold twelve pictures at ten a second, each numbered by a barcode; the project runs at thirty a second.
+describe('animated images', () => {
+  const frames = [0, 2, 3, 4, 35, 36, 39, 71, 72, 89]
+  const pictureShown = [0, 0, 1, 1, 11, 0, 1, 11, 0, 5]
+
+  it.each(['animated.gif', 'animated.webp', 'animated.apng'])('plays %s picture by picture, loops it, and renders it the same paused and exported', async (name) => {
+    const project: Project = {
+      version: 1,
+      canvas: { width: 320, height: 180, frameRate: { num: 30, den: 1 } },
+      media: [{ id: 'animation', path: join(ROOT, 'test', 'media', 'generated', name), relativePath: '' }],
+      tracks: [
+        {
+          id: 'track',
+          name: 'Track 1',
+          hidden: false,
+          locked: false,
+          muted: false,
+          clips: [
+            {
+              id: 'clip',
+              type: 'video',
+              mediaId: 'animation',
+              start: 0,
+              duration: 3 * 24_000_000,
+              sourceStart: 0,
+              speedPercent: 100,
+              loop: true,
+              transform: { x: 160, y: 90, scaleX: 2, scaleY: 2, rotation: 0 },
+              opacity: 1,
+              volume: 1,
+            },
+          ],
+        },
+      ],
+    }
+    const path = saved(project, name)
+    const exported = await renderFrames(path, { via: 'export', frames })
+    const paused = await renderFrames(path, { via: 'paused', frames })
+    for (const [index, frame] of frames.entries()) {
+      const exportedPicture = exported[index]
+      const pausedPicture = paused[index]
+      if (exportedPicture === undefined || pausedPicture === undefined) throw new Error(`Frame ${frame} was not rendered`)
+      expect(readBarcode(exportedPicture), `frame ${frame}`).toBe(pictureShown[index])
+      expect(sameBytes(pausedPicture, exportedPicture), `frame ${frame}`).toBe(true)
     }
   })
 })

@@ -25,7 +25,6 @@ const STANDARD_RATES: readonly FrameRate[] = [
 ].sort((a, b) => framesPerSecond(a) - framesPerSecond(b))
 
 const IMAGE_FORMATS = /(^|,)(image2|png_pipe|jpeg_pipe|webp_pipe|webp_anim|gif|apng|bmp_pipe|tiff_pipe)(,|$)/
-const ANIMATION_FORMATS = /(^|,)(webp_anim|apng)(,|$)/
 const TIMING_SAMPLE_PACKETS = 120
 const UNEVEN_INTERVAL_TOLERANCE = 0.5
 const ALPHA_PIXEL_FORMATS = /^(ya\d|pal8)|yuva|rgba|bgra|argb|abgr|gbrap/
@@ -60,6 +59,7 @@ type ProbedStream = {
 type ProbedPacket = {
   stream_index?: number
   pts_time?: string
+  duration_time?: string
 }
 
 type ProbeOutput = {
@@ -189,7 +189,8 @@ function alphaDecoderOf(stream: ProbedStream): string | undefined {
 function videoInfo(stream: ProbedStream, output: ProbeOutput, containerStartSeconds: number, containerDuration: number): VideoInfo {
   const { width, height } = displaySize(stream)
   const timing = chooseFrameTiming(stream, output.packets ?? [])
-  const streamStartSeconds = Number(stream.start_time ?? containerStartSeconds)
+  const taggedStart = Number(stream.start_time)
+  const streamStartSeconds = Number.isFinite(taggedStart) ? taggedStart : containerStartSeconds
   const startOffset = Math.max(0, secondsToTicks(streamStartSeconds - containerStartSeconds))
 
   const countedFrames = Number(stream.nb_frames)
@@ -228,13 +229,7 @@ function audioInfo(stream: ProbedStream): AudioInfo {
   return { channels, sampleRate, codec: stream.codec_name ?? 'unknown' }
 }
 
-function imageInfo(stream: ProbedStream, output: ProbeOutput): MediaInfo {
-  const isAnimationFormat = ANIMATION_FORMATS.test(output.format?.format_name ?? '')
-  const isAnimated = isAnimationFormat || Number(stream.nb_frames) > 1
-  return { kind: 'image', ...displaySize(stream), hasAlpha: hasAlpha(stream), isAnimated }
-}
-
-function interpret(output: ProbeOutput): MediaInfo {
+function mainStreams(output: ProbeOutput): { video: ProbedStream | undefined; audio: ProbedStream | undefined } {
   let video: ProbedStream | undefined
   let audio: ProbedStream | undefined
   for (const stream of output.streams ?? []) {
@@ -242,11 +237,38 @@ function interpret(output: ProbeOutput): MediaInfo {
     if (stream.codec_type === 'video' && !isCoverArt) video ??= stream
     if (stream.codec_type === 'audio') audio ??= stream
   }
+  return { video, audio }
+}
 
+// The pictures of an image file: one for a still, more for an animation.
+function imagePackets(output: ProbeOutput): ProbedPacket[] {
+  const { video, audio } = mainStreams(output)
   const isImageFile = IMAGE_FORMATS.test(output.format?.format_name ?? '')
-  if (video !== undefined && audio === undefined && isImageFile) return imageInfo(video, output)
+  if (video === undefined || audio !== undefined || !isImageFile) return []
+  return (output.packets ?? []).filter((packet) => packet.stream_index === video.index)
+}
 
-  const durationSeconds = Number(output.format?.duration)
+function hasDuration(output: ProbeOutput): boolean {
+  return Number(output.format?.duration) > 0
+}
+
+// Animated WebP and APNG files do not state how long they run; the end of their last picture does.
+function endOfLastPacket(packets: readonly ProbedPacket[]): number {
+  let end = 0
+  for (const packet of packets) {
+    const packetEnd = Number(packet.pts_time) + Number(packet.duration_time)
+    if (Number.isFinite(packetEnd)) end = Math.max(end, packetEnd)
+  }
+  return end
+}
+
+function interpret(output: ProbeOutput): MediaInfo {
+  const { video, audio } = mainStreams(output)
+  const pictures = imagePackets(output)
+  if (video !== undefined && pictures.length === 1) return { kind: 'image', ...displaySize(video), hasAlpha: hasAlpha(video) }
+
+  const isAnimatedImage = pictures.length > 1
+  const durationSeconds = hasDuration(output) ? Number(output.format?.duration) : endOfLastPacket(pictures)
   if (!(durationSeconds > 0)) throw new UnusableMedia('it has no duration')
   const duration = secondsToTicks(durationSeconds)
   const containerStartSeconds = Number(output.format?.start_time ?? 0) || 0
@@ -255,31 +277,20 @@ function interpret(output: ProbeOutput): MediaInfo {
   if (video !== undefined) {
     const info: MediaInfo = { kind: 'video', duration, containerStart, video: videoInfo(video, output, containerStartSeconds, duration) }
     if (audio !== undefined) info.audio = audioInfo(audio)
+    if (isAnimatedImage) info.isAnimatedImage = true
     return info
   }
   if (audio !== undefined) return { kind: 'audio', duration, containerStart, audio: audioInfo(audio) }
   throw new UnusableMedia('it contains no picture and no sound')
 }
 
-export async function probeMedia(ffmpeg: FfmpegRunner, path: string): Promise<MediaInfo> {
-  const name = basename(path)
-  const unreadable = `"${name}" could not be read: it is damaged or not a supported media file.`
-  if (!existsSync(path)) throw new ProbeError(`"${name}" was not found.`)
-
+// Reads what ffprobe says about a file, with the times of its first packets or of all of them.
+async function readProbe(ffmpeg: FfmpegRunner, path: string, packets: 'first' | 'all', unreadable: string): Promise<ProbeOutput> {
   let json: Buffer
   try {
-    const args = [
-      '-print_format',
-      'json',
-      '-show_format',
-      '-show_streams',
-      '-show_entries',
-      'packet=stream_index,pts_time',
-      '-read_intervals',
-      `%+#${TIMING_SAMPLE_PACKETS}`,
-      path,
-    ]
-    json = await ffmpeg.runOnce('ffprobe', args, { timeoutMs: PROBE_TIMEOUT_MS })
+    const args = ['-print_format', 'json', '-show_format', '-show_streams', '-show_entries', 'packet=stream_index,pts_time,duration_time']
+    if (packets === 'first') args.push('-read_intervals', `%+#${TIMING_SAMPLE_PACKETS}`)
+    json = await ffmpeg.runOnce('ffprobe', [...args, path], { timeoutMs: PROBE_TIMEOUT_MS })
   } catch (error) {
     throw new ProbeError(unreadable, { cause: error })
   }
@@ -291,6 +302,18 @@ export async function probeMedia(ffmpeg: FfmpegRunner, path: string): Promise<Me
     throw new ProbeError(unreadable, { cause: error })
   }
   if (!isProbeOutput(output)) throw new ProbeError(unreadable)
+  return output
+}
+
+export async function probeMedia(ffmpeg: FfmpegRunner, path: string): Promise<MediaInfo> {
+  const name = basename(path)
+  const unreadable = `"${name}" could not be read: it is damaged or not a supported media file.`
+  if (!existsSync(path)) throw new ProbeError(`"${name}" was not found.`)
+
+  let output = await readProbe(ffmpeg, path, 'first', unreadable)
+  // An animated image that does not state its length is as long as all its pictures together, so all of them are read. These files are small.
+  const isAnimationOfUnknownLength = imagePackets(output).length > 1 && !hasDuration(output)
+  if (isAnimationOfUnknownLength) output = await readProbe(ffmpeg, path, 'all', unreadable)
 
   try {
     return interpret(output)

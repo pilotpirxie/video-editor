@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { FRAME, MEDIA_STATES, SECOND, audioClip, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
+import { ALL_MEDIA, FRAME, MEDIA_STATES, SECOND, audioClip, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import type { Clip, Project } from '../shared/project.js'
-import { propertyAt, setCanvasSize, setDuration, setFade, setFrameRate, setProperties, setSourceStart, setSpeed, sharedValue } from './properties.js'
+import { propertyAt, setCanvasSize, setDuration, setFade, setFrameRate, setLoop, setProperties, setSourceStart, setSpeed, sharedValue } from './properties.js'
 
 const TEXT: Clip = {
   id: 'title',
@@ -119,6 +119,28 @@ describe('timing', () => {
     expect(clipOf(faded, 'music')).not.toHaveProperty('fadeIn')
     const removed = reopened(setFade(faded, ['a'], 'fadeIn', 0))
     expect(clipOf(removed, 'a')).not.toHaveProperty('fadeIn')
+  })
+})
+
+describe('setLoop', () => {
+  const stretched = projectOf([track('t1', [videoClip('gif', 0, 8 * SECOND, { mediaId: 'sticker', loop: true, sourceStart: 1.5 * SECOND, fadeOut: 2 * SECOND }), videoClip('a', 10 * SECOND, SECOND)])], ALL_MEDIA)
+
+  it('ends a clip after one play of its source when the loop is switched off', () => {
+    const once = setLoop(stretched, ['gif'], false, MEDIA_STATES)
+    const clip = clipOf(once, 'gif')
+    expect(clip).toMatchObject({ sourceStart: 0.3 * SECOND, duration: 0.9 * SECOND, fadeOut: 0.9 * SECOND })
+    expect(clip).not.toHaveProperty('loop')
+    reopened(once)
+  })
+
+  it('switches the loop on again without changing the length', () => {
+    const once = setLoop(stretched, ['gif'], false, MEDIA_STATES)
+    expect(clipOf(setLoop(once, ['gif'], true, MEDIA_STATES), 'gif')).toMatchObject({ loop: true, duration: 0.9 * SECOND })
+  })
+
+  it('only loops animated images', () => {
+    expect(setLoop(stretched, ['a'], true, MEDIA_STATES)).toBe(stretched)
+    expect(setLoop(stretched, ['gif'], true, MEDIA_STATES)).toBe(stretched)
   })
 })
 

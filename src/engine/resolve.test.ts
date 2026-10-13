@@ -27,8 +27,8 @@ function videoMedia(video: Partial<VideoInfo> = {}): MediaInfo {
 
 const MEDIA: MediaStates = {
   footage: { info: videoMedia() },
-  logo: { info: { kind: 'image', width: 400, height: 200, hasAlpha: true, isAnimated: false } },
-  broken: { error: '"broken.mp4" could not be read.' },
+  logo: { info: { kind: 'image', width: 400, height: 200, hasAlpha: true } },
+  broken: { error: '"broken.mp4" could not be read.', isMissing: false },
 }
 
 function videoClip(overrides: Partial<VideoClip> = {}): VideoClip {
@@ -142,6 +142,18 @@ describe('source frame', () => {
     expect(videoLayerAt(videoClip({ speedPercent: 5000 }), FRAME_30 * 3).frame).toBe(150)
     expect(videoLayerAt(videoClip({ speedPercent: 10_000 }), FRAME_30 * 2).frame).toBe(200)
     expect(videoLayerAt(videoClip({ speedPercent: 10_000 }), FRAME_30 * 5).frame).toBe(299)
+  })
+
+  it('starts a looping clip over when its source ends, and holds the last frame of one that does not loop', () => {
+    const short: MediaStates = { footage: { info: { kind: 'video', duration: 12 * FRAME_30, containerStart: 0, video: { ...VIDEO, frameCount: 12 }, isAnimatedImage: true } } }
+    function frameAt(clip: VideoClip, frame: number): number {
+      const layer = resolveFrame(project([track([clip])]), short, frame * FRAME_30, 1)[0]
+      return layer?.kind === 'video' ? layer.frame : -1
+    }
+    const looping = videoClip({ loop: true })
+    expect([0, 5, 11, 12, 13, 24, 30].map((frame) => frameAt(looping, frame))).toEqual([0, 5, 11, 0, 1, 0, 6])
+    expect([11, 12, 30].map((frame) => frameAt(videoClip(), frame))).toEqual([11, 11, 11])
+    expect(frameAt(videoClip({ loop: true, sourceStart: 10 * FRAME_30, speedPercent: 200 }), 3)).toBe(4)
   })
 
   it('accounts for a picture that starts after the container', () => {

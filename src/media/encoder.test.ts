@@ -12,6 +12,7 @@ const ffmpeg = bundledFfmpeg()
 const scratch = await mkdtemp(join(tmpdir(), 'encoder-'))
 const SIZE = { width: 64, height: 36 }
 const FRAME_RATE = { num: 30, den: 1 }
+const DEFAULTS = { frameRate: FRAME_RATE, quality: 'high', hasAudio: true } as const
 const SAMPLES_PER_FRAME = 1600
 
 afterAll(() => rm(scratch, { recursive: true, force: true }))
@@ -24,7 +25,7 @@ function grayFrame(level: number): ArrayBuffer {
 describe('startEncoder', () => {
   it('writes the file under its final name only when finished', async () => {
     const path = join(scratch, 'finished.mp4')
-    const encoder = startEncoder(ffmpeg, { path, ...SIZE, frameRate: FRAME_RATE })
+    const encoder = startEncoder(ffmpeg, { path, ...SIZE, ...DEFAULTS })
     for (let frame = 0; frame < 45; frame++) {
       await encoder.write(grayFrame(frame * 5), new Float32Array(SAMPLES_PER_FRAME * 2))
       expect(existsSync(path)).toBe(false)
@@ -40,7 +41,7 @@ describe('startEncoder', () => {
 
   it('leaves no file behind when cancelled', async () => {
     const path = join(scratch, 'cancelled.mp4')
-    const encoder = startEncoder(ffmpeg, { path, ...SIZE, frameRate: FRAME_RATE })
+    const encoder = startEncoder(ffmpeg, { path, ...SIZE, ...DEFAULTS })
     for (let frame = 0; frame < 10; frame++) await encoder.write(grayFrame(128), new Float32Array(SAMPLES_PER_FRAME * 2))
     await encoder.cancel()
     expect(existsSync(path)).toBe(false)
@@ -49,11 +50,11 @@ describe('startEncoder', () => {
   })
 
   it('refuses a picture size H.264 cannot hold', () => {
-    expect(() => startEncoder(ffmpeg, { path: join(scratch, 'odd.mp4'), width: 65, height: 36, frameRate: FRAME_RATE })).toThrow(EncoderError)
+    expect(() => startEncoder(ffmpeg, { path: join(scratch, 'odd.mp4'), width: 65, height: 36, ...DEFAULTS })).toThrow(EncoderError)
   })
 
   it('reports why FFmpeg stopped when the target cannot be written', async () => {
-    const encoder = startEncoder(ffmpeg, { path: '/nonexistent-directory/out.mp4', ...SIZE, frameRate: FRAME_RATE })
+    const encoder = startEncoder(ffmpeg, { path: '/nonexistent-directory/out.mp4', ...SIZE, ...DEFAULTS })
     async function writeUntilFailure(): Promise<void> {
       for (let frame = 0; frame < 500; frame++) await encoder.write(grayFrame(128), new Float32Array(SAMPLES_PER_FRAME * 2))
     }
@@ -66,7 +67,7 @@ describe('MediaSession exports', () => {
   it('removes a running export when its window goes away', async () => {
     const path = join(scratch, 'abandoned.mp4')
     const session = new MediaSession(ffmpeg, join(scratch, 'cache'))
-    const jobId = await session.exportStart({ path, ...SIZE, frameRate: FRAME_RATE })
+    const jobId = await session.exportStart({ path, ...SIZE, ...DEFAULTS })
     for (let frame = 0; frame < 10; frame++) await session.exportWrite(jobId, grayFrame(64), new Float32Array(SAMPLES_PER_FRAME * 2))
     await session.dispose()
     expect(existsSync(path)).toBe(false)

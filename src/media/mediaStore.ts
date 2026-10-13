@@ -5,7 +5,20 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { FRAME_DECODE_PIXEL_BUDGET, MAX_OPEN_STREAMS } from '../shared/limits.js'
 import { describeError, logError } from '../shared/log.js'
-import type { AddedMedia, ExportTarget, LoadedProject, MediaClient, MediaInfo, MediaState, Preparation, RawFrame, WaveformLevel } from '../shared/mediaProtocol.js'
+import type {
+  AddedMedia,
+  ExportTarget,
+  LoadedProject,
+  MediaClient,
+  MediaInfo,
+  MediaState,
+  MediaUse,
+  Preparation,
+  RawFrame,
+  RelinkedMedia,
+  UnlinkedMedia,
+  WaveformLevel,
+} from '../shared/mediaProtocol.js'
 import { parseProject, type MediaRef, type Project } from '../shared/project.js'
 import { isAudioPrepared, openPreparedAudio, prepareAudio, readAudio, readWaveform } from './audio.js'
 import { startEncoder, type Encoder } from './encoder.js'
@@ -64,7 +77,9 @@ function cacheKey(text: string): string {
 
 function isMediaInfo(value: unknown): value is MediaInfo {
   if (typeof value !== 'object' || value === null || !('kind' in value)) return false
-  return typeof value.kind === 'string' && MEDIA_KINDS.includes(value.kind)
+  // Animated images used to be described as stills; such a remembered answer is not used, so the file is looked at again.
+  const isOutdatedAnimation = 'isAnimated' in value && value.isAnimated === true
+  return typeof value.kind === 'string' && MEDIA_KINDS.includes(value.kind) && !isOutdatedAnimation
 }
 
 type WeightLimiter = {
@@ -140,13 +155,18 @@ export class MediaSession implements MediaClient {
     const media = new Map<string, MediaEntry>()
     const states: Record<string, MediaState> = {}
     for (const reference of parsed.project.media) {
+      const found = existingPath(reference, dirname(path))
+      if (found === undefined) {
+        states[reference.id] = { error: `"${fileNameOf(reference)}" was not found.`, isMissing: true }
+        continue
+      }
       try {
-        const entry = await this.openMedia(reference, dirname(path))
+        const entry = await this.openFile(found)
         media.set(reference.id, entry)
         states[reference.id] = { info: entry.info }
       } catch (error) {
         if (!(error instanceof ProbeError) && !(error instanceof MediaError)) throw error
-        states[reference.id] = { error: error.message }
+        states[reference.id] = { error: error.message, isMissing: false }
       }
     }
 
@@ -162,11 +182,38 @@ export class MediaSession implements MediaClient {
 
   async addMedia(path: string): Promise<AddedMedia> {
     const project = this.project
-    const entry = await this.openFile(path)
     const id = randomUUID()
-    project.media.set(id, entry)
-    project.prepared = this.prepareAfter(project.prepared, entry, project.lifetime.signal)
+    const entry = await this.openFile(path)
+    this.register(project, id, entry)
     return { id, info: entry.info }
+  }
+
+  // Puts the file the user pointed at in the place of unlinked media, then looks beside it for the other unlinked files by name.
+  async relinkMedia(path: string, wanted: UnlinkedMedia, others: readonly UnlinkedMedia[]): Promise<RelinkedMedia[]> {
+    const project = this.project
+    const chosen = await this.openFile(path)
+    const lacking = wanted.uses.find((use) => !offers(chosen.info, use))
+    if (lacking !== undefined) {
+      throw new MediaError(`"${basename(path)}" cannot take the place of "${fileNameOf(wanted.reference)}": the project uses that file for its ${lacking}.`)
+    }
+    this.register(project, wanted.reference.id, chosen)
+    const relinked: RelinkedMedia[] = [{ id: wanted.reference.id, path, info: chosen.info }]
+
+    for (const other of others) {
+      const beside = join(dirname(path), fileNameOf(other.reference))
+      if (project.media.has(other.reference.id) || !existsSync(beside)) continue
+      try {
+        const entry = await this.openFile(beside)
+        if (!other.uses.every((use) => offers(entry.info, use))) continue
+        this.register(project, other.reference.id, entry)
+        relinked.push({ id: other.reference.id, path: beside, info: entry.info })
+      } catch (error) {
+        // A neighbour that cannot be read simply stays unlinked; the file that was asked for is relinked all the same.
+        if (!(error instanceof ProbeError) && !(error instanceof MediaError)) throw error
+        logError('A file beside the relinked one could not be used', error, { path: beside })
+      }
+    }
+    return relinked
   }
 
   async preparation(): Promise<Record<string, Preparation>> {
@@ -279,13 +326,9 @@ export class MediaSession implements MediaClient {
     }
   }
 
-  private async openMedia(reference: MediaRef, projectDirectory: string): Promise<MediaEntry> {
-    const candidates: string[] = []
-    if (reference.path !== '') candidates.push(reference.path)
-    if (reference.relativePath !== '') candidates.push(resolve(projectDirectory, reference.relativePath))
-    const path = candidates.find((candidate) => existsSync(candidate))
-    if (path === undefined) throw new MediaError(`"${basename(candidates[0] ?? reference.id)}" was not found.`)
-    return this.openFile(path)
+  private register(project: OpenProject, id: string, entry: MediaEntry): void {
+    project.media.set(id, entry)
+    project.prepared = this.prepareAfter(project.prepared, entry, project.lifetime.signal)
   }
 
   // The cache belongs to the media file, not to a project: an untitled project, Save As and a recovery file all reuse the same preview copy.
@@ -389,6 +432,24 @@ export class MediaSession implements MediaClient {
     if (encoder === undefined) throw new MediaError(`Export ${jobId} is not running`)
     return encoder
   }
+}
+
+function fileNameOf(reference: MediaRef): string {
+  return basename(reference.path === '' ? reference.relativePath : reference.path)
+}
+
+// Where a project's media file is now: where it was, or where it is relative to the project file that may have moved with it.
+function existingPath(reference: MediaRef, projectDirectory: string): string | undefined {
+  const candidates: string[] = []
+  if (reference.path !== '') candidates.push(reference.path)
+  if (reference.relativePath !== '') candidates.push(resolve(projectDirectory, reference.relativePath))
+  return candidates.find((candidate) => existsSync(candidate))
+}
+
+function offers(info: MediaInfo, use: MediaUse): boolean {
+  if (use === 'video') return info.kind === 'video'
+  if (use === 'image') return info.kind === 'image'
+  return info.kind === 'audio' || (info.kind === 'video' && info.audio !== undefined)
 }
 
 function videoSource(entry: MediaEntry): VideoSource {

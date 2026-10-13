@@ -60,6 +60,12 @@ export function sourceTime(clip: SourceMapping, time: number): number {
   return clip.sourceStart + ((time - clip.start) / TIMELINE_GRID) * clip.speedPercent
 }
 
+// Where in a source of the given length a looping clip is at a source time: it starts over each time it reaches the end.
+export function loopedTime(time: number, sourceDuration: number, isLooping: boolean): number {
+  if (!isLooping || sourceDuration <= 0 || time < sourceDuration) return time
+  return time % sourceDuration
+}
+
 export type FrameTiming = {
   readonly startOffset: number
   readonly frameDuration: number

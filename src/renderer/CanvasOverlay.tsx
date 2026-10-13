@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type PointerEvent, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
+import { locateClip } from '../editor/clips.js'
 import {
   HANDLES,
   boundsOf,
@@ -21,6 +22,7 @@ import type { Size } from '../shared/exportPresets.js'
 import type { Crop, Project, Transform } from '../shared/project.js'
 import { useEditorState, usePosition, useSession } from './context.js'
 import type { Edit } from './store.js'
+import { TextEditor } from './TextEditor.js'
 
 const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 }
 const SNAP_RANGE_PIXELS = 8
@@ -34,6 +36,7 @@ const MARGIN_PIXELS = 14
 // One drawn layer with everything the handles need to change it.
 type Shown = {
   clipId: string
+  isText: boolean
   natural: Size
   crop: Crop
   transform: Transform
@@ -66,7 +69,7 @@ function shownLayers(project: Project, mediaStates: MediaStates, time: number): 
   for (const layer of resolveFrame(project, mediaStates, time, 1)) {
     const natural = naturalSize(layer)
     const crop = layer.kind === 'text' ? NO_CROP : layer.crop
-    shown.push({ clipId: layer.clipId, natural, crop, transform: layer.transform, box: boxOf(natural, crop, layer.transform) })
+    shown.push({ clipId: layer.clipId, isText: layer.kind === 'text', natural, crop, transform: layer.transform, box: boxOf(natural, crop, layer.transform) })
   }
   return shown
 }
@@ -109,6 +112,7 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
   const project = useEditorState((state) => state.project)
   const mediaStates = useEditorState((state) => state.mediaStates)
   const selection = useEditorState((state) => state.selection)
+  const editingTextId = useEditorState((state) => state.editingTextId)
   const isPlaying = usePosition((position) => position.isPlaying)
   const time = usePosition((position) => position.time)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -133,8 +137,10 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
   const shown = isPlaying ? [] : shownLayers(project, mediaStates, time)
   const selected = shown.filter((item) => selection.includes(item.clipId))
   const [only] = selected.length === 1 ? selected : []
+  const editing = editingTextId === undefined ? undefined : locateClip(project, editingTextId)?.clip
+  const editedText = editing?.type === 'text' ? editing : undefined
 
-  function pointOf(event: PointerEvent<SVGSVGElement>): Point {
+  function pointOf(event: MouseEvent<SVGSVGElement>): Point {
     const box = event.currentTarget.getBoundingClientRect()
     return { x: (event.clientX - box.left - MARGIN_PIXELS) * canvasPerPixel, y: (event.clientY - box.top - MARGIN_PIXELS) * canvasPerPixel }
   }
@@ -144,8 +150,13 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
     return shown.findLast((item) => !locked.has(item.clipId) && containsPoint(item.box, point))
   }
 
+  function isInTextEditor(target: EventTarget): boolean {
+    return target instanceof Element && target.closest('foreignObject') !== null
+  }
+
   function onPointerDown(event: PointerEvent<SVGSVGElement>): void {
-    if (event.button !== 0 || isPlaying) return
+    // A press inside the text being typed places the caret; it is not the start of a drag.
+    if (event.button !== 0 || isPlaying || isInTextEditor(event.target)) return
     event.currentTarget.setPointerCapture(event.pointerId)
     const point = pointOf(event)
     const grabbed = event.target instanceof SVGElement ? event.target.dataset.handle : undefined
@@ -178,6 +189,14 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
     const others = shown.filter((item) => !moving.includes(item.clipId)).map((item) => boundsOf(item.box))
     store.begin(items.length === 1 ? 'Move Clip' : 'Move Clips')
     gestureRef.current = { kind: 'move', from: point, items, others }
+  }
+
+  function onDoubleClick(event: MouseEvent<SVGSVGElement>): void {
+    if (isPlaying || isInTextEditor(event.target)) return
+    const hit = topmostAt(pointOf(event))
+    if (hit === undefined || !hit.isText) return
+    store.select([hit.clipId])
+    store.editText(hit.clipId)
   }
 
   function snapRange(event: PointerEvent<SVGSVGElement>): number | undefined {
@@ -249,6 +268,7 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
       data-testid="canvas-overlay"
       data-selected={selected.length}
       onPointerDown={onPointerDown}
+      onDoubleClick={onDoubleClick}
       onPointerMove={onPointerMove}
       onPointerUp={() => endGesture(store.commit)}
       onPointerCancel={() => endGesture(store.cancel)}
@@ -259,12 +279,18 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
       {selected.map((item) => {
         const width = Math.max(minBox, item.box.width)
         const height = Math.max(minBox, item.box.height)
-        const isOnly = item === only
+        const isEdited = item.clipId === editedText?.id
+        const isOnly = item === only && !isEdited
         // As in Camtasia the rotate handle sits inside the clip, above its centre: it stays reachable when the clip fills the canvas.
         const rotateReach = Math.min(ROTATE_HANDLE_OFFSET_PIXELS * canvasPerPixel, height * ROTATE_HANDLE_MAX_REACH)
         return (
           <g key={item.clipId} transform={`translate(${item.box.centerX} ${item.box.centerY}) rotate(${item.box.rotation})`}>
             <rect className={guides.isSizeSnapped ? 'selection-box snapped' : 'selection-box'} x={-width / 2} y={-height / 2} width={width} height={height} />
+            {isEdited && editedText !== undefined && (
+              <g transform={`scale(${item.transform.scaleX} ${item.transform.scaleY})`}>
+                <TextEditor key={editedText.id} clip={editedText} />
+              </g>
+            )}
             {isOnly && <line className="selection-box" x1={0} y1={0} x2={0} y2={-rotateReach} />}
             {isOnly && <circle className="canvas-handle rotate" data-handle="rotate" data-testid="handle-rotate" cx={0} cy={-rotateReach} r={handleSize / 2} />}
             {isOnly &&

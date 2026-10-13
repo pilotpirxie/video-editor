@@ -18,10 +18,9 @@ export const DEFAULT_LAYOUT: Layout = {
   isTimelineCollapsed: false,
 }
 
-const TOP_BAR_HEIGHT = 40
+const TOP_BAR_HEIGHT = 36
 const SPLITTER_SIZE = 5
 const MIN_SIDEBAR_WIDTH = 220
-const MAX_SIDEBAR_WIDTH = 520
 const MIN_TIMELINE_HEIGHT = 140
 const MIN_CANVAS = { width: 360, height: 220 }
 
@@ -29,22 +28,39 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max))
 }
 
+function widthForSidebars(window: Size): number {
+  return window.width - MIN_CANVAS.width - 2 * SPLITTER_SIZE
+}
+
 // Whatever was stored, the canvas keeps a usable size and no panel can be dragged out of the window.
+// A sidebar has no largest width of its own: it may take whatever the canvas and the other sidebar leave.
 export function clampLayout(layout: Layout, window: Size): Layout {
-  const widthForSidebars = window.width - MIN_CANVAS.width - 2 * SPLITTER_SIZE
-  let leftWidth = clamp(layout.leftWidth, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH)
-  let rightWidth = clamp(layout.rightWidth, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH)
+  let leftWidth = Math.max(layout.leftWidth, MIN_SIDEBAR_WIDTH)
+  let rightWidth = Math.max(layout.rightWidth, MIN_SIDEBAR_WIDTH)
+  const leftSpare = layout.isLeftCollapsed ? 0 : leftWidth - MIN_SIDEBAR_WIDTH
+  const rightSpare = layout.isRightCollapsed ? 0 : rightWidth - MIN_SIDEBAR_WIDTH
   const shownLeft = layout.isLeftCollapsed ? 0 : leftWidth
   const shownRight = layout.isRightCollapsed ? 0 : rightWidth
-  const excess = shownLeft + shownRight - widthForSidebars
-  if (excess > 0) {
-    if (!layout.isLeftCollapsed) leftWidth = clamp(leftWidth - excess / 2, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH)
-    if (!layout.isRightCollapsed) rightWidth = clamp(rightWidth - excess / 2, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH)
+  const excess = shownLeft + shownRight - widthForSidebars(window)
+  const spare = leftSpare + rightSpare
+  if (excess > 0 && spare > 0) {
+    // Each gives up in proportion to what it has above the narrowest width, so the canvas keeps exactly its own.
+    const cut = Math.min(excess, spare)
+    leftWidth -= (cut * leftSpare) / spare
+    rightWidth -= (cut * rightSpare) / spare
   }
 
   const heightForTimeline = window.height - TOP_BAR_HEIGHT - SPLITTER_SIZE - MIN_CANVAS.height
   const timelineHeight = clamp(layout.timelineHeight, MIN_TIMELINE_HEIGHT, heightForTimeline)
-  return { ...layout, leftWidth: Math.round(leftWidth), rightWidth: Math.round(rightWidth), timelineHeight: Math.round(timelineHeight) }
+  return { ...layout, leftWidth: Math.floor(leftWidth), rightWidth: Math.floor(rightWidth), timelineHeight: Math.round(timelineHeight) }
+}
+
+// How wide a sidebar can be dragged: the other one stays as it is, so only the canvas gives way, down to its smallest width.
+export function widestSidebar(layout: Layout, side: 'leftWidth' | 'rightWidth', window: Size): number {
+  const isOtherCollapsed = side === 'leftWidth' ? layout.isRightCollapsed : layout.isLeftCollapsed
+  const otherWidth = side === 'leftWidth' ? layout.rightWidth : layout.leftWidth
+  const shownOther = isOtherCollapsed ? 0 : otherWidth
+  return Math.max(MIN_SIDEBAR_WIDTH, widthForSidebars(window) - shownOther)
 }
 
 function sizeFrom(stored: Record<string, unknown>, key: keyof Layout, fallback: number): number {
