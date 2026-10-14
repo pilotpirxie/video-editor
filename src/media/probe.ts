@@ -295,7 +295,8 @@ function interpret(output: ProbeOutput, laterPackets: readonly (readonly ProbedP
   const durationSeconds = hasDuration(output) ? Number(output.format?.duration) : endOfLastPacket(pictures)
   if (!(durationSeconds > 0)) throw new UnusableMedia('it has no duration')
   const duration = secondsToTicks(durationSeconds)
-  const containerStartSeconds = Number(output.format?.start_time ?? 0) || 0
+  const statedStartSeconds = Number(output.format?.start_time ?? 0)
+  const containerStartSeconds = Number.isFinite(statedStartSeconds) ? statedStartSeconds : 0
   const containerStart = secondsToTicks(containerStartSeconds)
 
   if (video !== undefined) {

@@ -13,6 +13,7 @@ import {
   trackTop,
   transitionBands,
   visibleRange,
+  volumeLineAt,
   volumePoints,
   xToTime,
   zoomBars,
@@ -377,15 +378,19 @@ function hasFades(clip: Clip): boolean {
 }
 
 // The volume of a clip over its length, as a line through its volume keyframes with a dot on each. The way between two keyframes is drawn straight, whatever its easing.
+// The volume line runs across the clip's sound, level at its volume until it has keyframes, and then through them.
 function drawVolumeLine(context: CanvasRenderingContext2D, shape: ClipShape, scene: ContentScene, rowTop: number): void {
-  const points = volumePoints(shape.clip, shape.sound !== undefined, scene.view, rowTop)
-  const [first] = points
-  const last = points.at(-1)
-  if (first === undefined || last === undefined) return
+  const { clip } = shape
+  const makesSound = shape.sound !== undefined
+  const points = volumePoints(clip, makesSound, scene.view, rowTop)
+  const level = volumeLineAt(clip, makesSound, scene.view, rowTop, timeToX(clip.start, scene.view))?.y
+  const firstY = points[0]?.y ?? level
+  const lastY = points.at(-1)?.y ?? level
+  if (firstY === undefined || lastY === undefined) return
   context.beginPath()
-  context.moveTo(shape.left, first.y)
+  context.moveTo(shape.left, firstY)
   for (const point of points) context.lineTo(point.x, point.y)
-  context.lineTo(shape.left + shape.width, last.y)
+  context.lineTo(shape.left + shape.width, lastY)
   context.strokeStyle = scene.colors.primary
   context.lineWidth = VOLUME_LINE_WIDTH
   context.stroke()
@@ -424,7 +429,7 @@ function drawClipDetails(context: CanvasRenderingContext2D, shape: ClipShape, sc
     drawRamp(context, sound, left, clip.volumeFadeIn, 1, scene)
     drawRamp(context, sound, left + width, clip.volumeFadeOut, -1, scene)
   }
-  if (clip.keyframes?.volume !== undefined) drawVolumeLine(context, shape, scene, top - CLIP_INSET)
+  if (hasVolume(clip) && sound !== undefined) drawVolumeLine(context, shape, scene, top - CLIP_INSET)
   drawLabel(context, clip, scene, left, top, width)
   context.restore()
 }

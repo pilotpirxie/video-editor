@@ -22,6 +22,9 @@ import {
   transitionBandAt,
   transitionBands,
   visibleRange,
+  volumeChange,
+  volumeLineAt,
+  volumeLineNear,
   xToTime,
   zoomAround,
   zoomBars,
@@ -283,5 +286,34 @@ describe('camera lane', () => {
     expect(hitZoom(camera, flat, 201)).toEqual({ index: 0, part: 'zoom' })
     expect(hitZoom(camera, flat, 209)).toEqual({ index: 1, part: 'start' })
     expect(hitZoom(camera, flat, 230)).toEqual({ index: 1, part: 'zoom' })
+  })
+})
+
+describe('volume line', () => {
+  const flat = { pixelsPerSecond: 100, scrollX: 0, scrollY: 0 }
+  const rowTop = TRACKS_TOP
+  const band = { top: rowTop + CLIP_INSET, height: TRACK_HEIGHT - 2 * CLIP_INSET }
+
+  it('lies level at the volume of a clip without keyframes, across the clip only', () => {
+    const music = audioClip('music', SECOND, 4 * SECOND, { volume: 1 })
+    expect(volumeLineAt(music, true, flat, rowTop, 300)).toEqual({ y: band.top + band.height / 2, band, indices: [] })
+    expect(volumeLineAt(music, true, flat, rowTop, 50)).toBeUndefined()
+    expect(volumeLineNear(music, true, flat, rowTop, { x: 300, y: band.top + band.height / 2 + 3 })).toBeDefined()
+    expect(volumeLineNear(music, true, flat, rowTop, { x: 300, y: band.top + band.height / 2 + 6 })).toBeUndefined()
+  })
+
+  it('names the keyframes at the ends of the stretch under the pointer', () => {
+    const keyframes = [
+      { time: SECOND, value: 2, easing: 'linear' as const },
+      { time: 3 * SECOND, value: 0, easing: 'linear' as const },
+    ]
+    const music = audioClip('music', 0, 4 * SECOND, { keyframes: { volume: keyframes } })
+    expect(volumeLineAt(music, true, flat, rowTop, 50)).toEqual({ y: band.top, band, indices: [0] })
+    expect(volumeLineAt(music, true, flat, rowTop, 200)).toEqual({ y: band.top + band.height / 2, band, indices: [0, 1] })
+    expect(volumeLineAt(music, true, flat, rowTop, 350)).toEqual({ y: band.top + band.height, band, indices: [1] })
+  })
+
+  it('turns a drag up the band into more volume', () => {
+    expect(volumeChange(band, 40, 40 - band.height / 4)).toBeCloseTo(0.5)
   })
 })

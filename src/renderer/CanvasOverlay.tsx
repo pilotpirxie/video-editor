@@ -47,7 +47,7 @@ const TRANSFORM_KEYS = ['x', 'y', 'scaleX', 'scaleY', 'rotation'] as const
 const NO_PIVOT: Point = { x: 0, y: 0 }
 
 // One clip of the open tracks as it is drawn, with everything the handles need to change it. A closed group is one of them, whatever it has inside.
-type Shown = {
+export type Shown = {
   clipId: string
   // A picture is a video or an image, which can be cropped; a shape is a blur or a highlight, which has no picture for an effect to change.
   kind: 'picture' | 'text' | 'callout' | 'arrow' | 'shape' | 'group'
@@ -122,7 +122,7 @@ function shownGroup(group: GroupClip, members: readonly Shown[], transform: Tran
   return { clipId: group.id, kind: 'group', natural, crop: NO_CROP, transform, box, hitBoxes: members.map((member) => member.box), pivot }
 }
 
-type Open = {
+export type Open = {
   // The tracks that are open, in their own time, and the moment of it the playhead is on.
   project: Project
   time: number
@@ -133,7 +133,7 @@ type Open = {
 
 // The clips of the open tracks at the playhead, bottom first, placed exactly where the compositor draws them.
 // What lies outside the open group is drawn but cannot be grabbed, so it is not among them.
-function shownClips(wholeProject: Project, mediaStates: MediaStates, wholeTime: number, open: Open): Shown[] {
+export function shownClips(wholeProject: Project, mediaStates: MediaStates, wholeTime: number, open: Open): Shown[] {
   // Bottom first: a clip as it is shown, or the id of a closed group at the place of its lowest member.
   const order: (Shown | string)[] = []
   const membersOf = new Map<string, Shown[]>()
@@ -239,6 +239,17 @@ function unionOf(boxes: readonly Bounds[]): Bounds {
     right: Math.max(...boxes.map((box) => box.right)),
     bottom: Math.max(...boxes.map((box) => box.bottom)),
   }
+}
+
+// A place on the canvas as values of a clip of the open tracks: inside a group they are measured in the group's own units.
+export function valuesInOpenTracks(openGroups: readonly string[], openFrame: GroupFrame, item: Shown, placed: Partial<Transform>): PropertyValues {
+  if (openGroups.length === 0) return placed
+  const inside = intoGroup(openFrame, { ...item.transform, ...placed })
+  const values: PropertyValues = {}
+  for (const key of TRANSFORM_KEYS) {
+    if (placed[key] !== undefined) values[key] = inside[key]
+  }
+  return values
 }
 
 // Selection outlines and handles over the preview. It is a layer of its own above the picture, so nothing here can end up in an export.
@@ -419,18 +430,8 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
   }
 
   // The values a clip needs to be drawn on the canvas as `placed` says. Inside an open group they are counted from that group.
-  function valuesFor(item: Shown, placed: Partial<Transform>): PropertyValues {
-    if (openGroups.length === 0) return placed
-    const inside = intoGroup(openFrame, { ...item.transform, ...placed })
-    const values: PropertyValues = {}
-    for (const key of TRANSFORM_KEYS) {
-      if (placed[key] !== undefined) values[key] = inside[key]
-    }
-    return values
-  }
-
   function edit(item: Shown, placed: Partial<Transform>, crop: PropertyValues = {}): Edit {
-    const values = { ...valuesFor(item, placed), ...crop }
+    const values = { ...valuesInOpenTracks(openGroups, openFrame, item, placed), ...crop }
     return (current) => setProperties(current, [item.clipId], values, time)
   }
 
@@ -464,7 +465,7 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
     if (gesture.kind === 'path') {
       const { item, time: keyTime } = gesture
       const placed = { x: gesture.start.x + point.x - gesture.from.x, y: gesture.start.y + point.y - gesture.from.y }
-      store.update((current) => setProperties(current, [item.clipId], valuesFor(item, placed), keyTime))
+      store.update((current) => setProperties(current, [item.clipId], valuesInOpenTracks(openGroups, openFrame, item, placed), keyTime))
       return
     }
 

@@ -232,6 +232,11 @@ export type MenuAction =
   | 'toggle-library'
   | 'toggle-properties'
   | 'toggle-timeline'
+  | 'preview-mode'
+  | 'settings'
+
+// The keys the menu shows for the commands whose keys can be changed, as Electron accelerators. The page itself answers to those keys.
+export type MenuShortcuts = Partial<Record<MenuAction, string>>
 
 export type HostCommand =
   | { type: 'open-project'; path: string }
@@ -258,7 +263,6 @@ export type DocumentState = {
 
 export type UnsavedChoice = 'save' | 'discard' | 'cancel'
 
-export type NextDocument = { kind: 'new' } | { kind: 'open'; path: string } | { kind: 'close' }
 
 export type Host = {
   openProjectDialog(): Promise<string | undefined>
@@ -276,6 +280,8 @@ export type Host = {
   chooseMediaFile(name: string): Promise<string | undefined>
   showLastExport(): void
   confirmUnsavedChanges(): Promise<UnsavedChoice>
-  replaceDocument(next: NextDocument): void
+  // Closes the window once its unsaved changes have been dealt with.
+  closeDocument(): void
   discardRecovery(): void
+  setMenuShortcuts(shortcuts: MenuShortcuts): void
 }

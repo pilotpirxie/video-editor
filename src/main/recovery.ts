@@ -74,17 +74,17 @@ export async function discardRecovery(recoveryPath: string): Promise<void> {
   await discardRecoveredWork(`${recoveryPath}${PROJECT_PATH_EXTENSION}`)
 }
 
-// Returns the newest recovery file that still holds work the project file does not.
-export async function findRecovery(directory: string): Promise<FoundRecovery | undefined> {
+// The recovery files that still hold work their project files do not, the newest first: one for each window that had unsaved changes.
+export async function findRecoveries(directory: string): Promise<FoundRecovery[]> {
   let names: string[]
   try {
     names = await readdir(directory)
   } catch (error) {
-    if (isMissingFile(error)) return undefined
+    if (isMissingFile(error)) return []
     throw error
   }
 
-  let newest: (FoundRecovery & { writtenAt: number }) | undefined
+  const found: (FoundRecovery & { writtenAt: number })[] = []
   for (const name of names) {
     // No export is running at launch, so a copy an interrupted one left behind is of no use any more.
     if (name.endsWith(EXPORT_SNAPSHOT_EXTENSION)) await discardRecoveredWork(join(directory, name))
@@ -100,8 +100,8 @@ export async function findRecovery(directory: string): Promise<FoundRecovery | u
       await discardRecovery(recoveryPath)
       continue
     }
-    if (newest === undefined || writtenAt > newest.writtenAt) newest = { recoveryPath, projectPath, writtenAt }
+    found.push({ recoveryPath, projectPath, writtenAt })
   }
-  if (newest === undefined) return undefined
-  return { recoveryPath: newest.recoveryPath, projectPath: newest.projectPath }
+  found.sort((a, b) => b.writtenAt - a.writtenAt)
+  return found.map(({ recoveryPath, projectPath }) => ({ recoveryPath, projectPath }))
 }

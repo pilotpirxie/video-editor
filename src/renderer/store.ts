@@ -35,6 +35,9 @@ export type EditorState = {
   // Files that are being probed right now; they show as placeholders in the Media tab.
   pendingImports: readonly string[]
   isSnapping: boolean
+  // The panels are hidden and the canvas has the window to itself, with the transport only.
+  isPreviewing: boolean
+  isSettingsOpen: boolean
   // Counts the documents opened in this window, so views can reset themselves for a new one.
   openCount: number
   // The text clip whose words are being typed on the canvas.
@@ -69,6 +72,8 @@ export type EditorStore = {
   setExportStatus(status: ExportStatus | undefined): void
   setPendingImports(paths: readonly string[]): void
   setSnapping(isSnapping: boolean): void
+  setPreviewing(isPreviewing: boolean): void
+  showSettings(isOpen: boolean): void
   editText(clipId: string | undefined): void
 }
 
@@ -123,6 +128,8 @@ export function createEditorStore(): EditorStore {
     exportStatus: undefined,
     pendingImports: [],
     isSnapping: true,
+    isPreviewing: false,
+    isSettingsOpen: false,
     openCount: 0,
     editingTextId: undefined,
   }
@@ -254,6 +261,8 @@ export function createEditorStore(): EditorStore {
     setExportStatus: (exportStatus) => setState({ exportStatus }),
     setPendingImports: (pendingImports) => setState({ pendingImports }),
     setSnapping: (isSnapping) => setState({ isSnapping }),
+    setPreviewing: (isPreviewing) => setState({ isPreviewing }),
+    showSettings: (isSettingsOpen) => setState({ isSettingsOpen }),
     editText: (editingTextId) => setState({ editingTextId }),
   }
 }

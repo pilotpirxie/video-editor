@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('host', {
   chooseMediaFile: (name: string) => ipcRenderer.invoke('choose-media-file', name),
   showLastExport: () => ipcRenderer.send('show-last-export'),
   confirmUnsavedChanges: () => ipcRenderer.invoke('confirm-unsaved-changes'),
-  replaceDocument: (next: unknown) => ipcRenderer.send('replace-document', next),
+  closeDocument: () => ipcRenderer.send('close-document'),
   discardRecovery: () => ipcRenderer.send('discard-recovery'),
+  setMenuShortcuts: (shortcuts: unknown) => ipcRenderer.send('menu-shortcuts', shortcuts),
 })

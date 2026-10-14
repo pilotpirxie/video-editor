@@ -4,6 +4,7 @@ import { copyClips, deleteClips, pasteClips, rippleDelete, spanEnd, type Clipboa
 import { allClips, isVisual, locateClip, nearestEdit, nextTrackName, unlockedClipIds, type NewTrack } from '../editor/clips.js'
 import { addEffect, takesEffects } from '../editor/effects.js'
 import { groupClips, ungroupClips } from '../editor/groups.js'
+import { dropMedia, placeableMedia } from '../editor/place.js'
 import { clipsToSeparate, separateAudio } from '../editor/separate.js'
 import { clipsToSplit, splitClips } from '../editor/split.js'
 import { addTrack } from '../editor/tracks.js'
@@ -21,6 +22,8 @@ export type Actions = {
   separateAudio(): void
   // Adds one at the playhead on a new layer above everything else, with its middle at `centre` (the middle of the canvas when left out).
   addAnnotation(kind: AnnotationKind, centre?: { x: number; y: number }): void
+  // Adds the files that can be placed at the playhead, one after another on a new layer above everything else.
+  addMedia(mediaIds: readonly string[]): void
   group(): void
   ungroup(): void
   // Goes into the selected group; Escape and the path above the timeline lead out again.
@@ -152,6 +155,15 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       store.select([added.clipId])
       // New words open for typing at once, so the usual next step needs no extra click.
       if (kind === 'text' || kind === 'callout') store.editText(added.clipId)
+    },
+    addMedia(mediaIds) {
+      const { project, mediaStates } = store.getState()
+      const media = placeableMedia(project, mediaStates, mediaIds, () => crypto.randomUUID())
+      if (media.length === 0) return
+      const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
+      const start = transport.position().time
+      store.apply(media.length === 1 ? 'Add Clip' : `Add ${media.length} Clips`, (current) => dropMedia(current, { media, start, trackIndex: current.tracks.length, newTrack }))
+      store.select(media.map((dropped) => dropped.clipId))
     },
     group() {
       const { project } = store.getState()

@@ -134,27 +134,33 @@ describe('tracks', () => {
 })
 
 describe('documents', () => {
-  it('asks about unsaved changes on New and Open, and follows each answer', async () => {
+  it('opens each project in a window of its own and asks about unsaved changes when one closes', async () => {
     const report = await uiTest('documents', ['--out', join(scratch, 'documents')])
     expect(report.start).toEqual({ title: 'Untitled', isEdited: false })
-    expect(report.afterCancel).toEqual({ title: 'Untitled', isEdited: true, width: '1280' })
-    expect(report.afterSaveAndNew).toEqual({ title: 'Untitled', isEdited: false, wasSaved: true })
-    expect(report.afterOpen).toEqual({ title: 'first.json', isEdited: false })
-    expect(projectIn(report, 'savedAfterDiscard').canvas.width).toBe(1280)
-    expect(report.afterSave).toEqual({ title: 'second.json', isEdited: false })
-    expect(report.recoveryFiles).toEqual([])
+    expect(report.afterNew).toEqual({
+      windows: 2,
+      first: { title: 'Untitled', isEdited: true, width: '1280' },
+      other: { title: 'Untitled', isEdited: false, width: '1920' },
+    })
+    expect(report.afterSaveAs).toEqual({ title: 'second.json', isEdited: false })
+    expect(report.afterOpenInPlace).toEqual({ windows: 2, other: { title: 'first.json', isEdited: false, width: '1280' } })
+    expect(report.afterOpenOfOpen).toEqual({ windows: 2, other: { title: 'first.json', isEdited: false } })
     expect(report.afterCancelledClose).toEqual({ isOpen: true, width: '700' })
+    expect(projectIn(report, 'secondAfterDiscard').canvas.width).toBe(1000)
+    expect(report.afterOpenInNew).toEqual({ windows: 2, third: { title: 'second.json', isEdited: false, width: '1000' } })
+    expect(projectIn(report, 'secondAfterSave').canvas.width).toBe(640)
+    expect(report.recoveryFiles).toEqual([])
   })
 
-  it('restores unsaved work after the editor was killed', async () => {
+  it('restores the unsaved work of every window after the editor was killed', async () => {
     const profile = join(scratch, 'recovery-profile')
     mkdirSync(profile, { recursive: true })
     const crashed = await runApp(['--uitest', 'crash'], 120_000, profile)
     expect(crashed.exitCode).not.toBe(0)
 
     const report = await uiTest('restore', ['--out', join(scratch, 'restored')], profile)
-    expect(report).toMatchObject({ title: 'Untitled', isEdited: true, width: '1280' })
-    expect(projectIn(report, 'saved').canvas.width).toBe(1280)
+    expect(report).toMatchObject({ title: 'Untitled', isEdited: true, windows: 2, widths: ['1280', '800'] })
+    expect(projectIn(report, 'saved').canvas.width).toBe(Number(report.width))
   })
 })
 

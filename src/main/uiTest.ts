@@ -11,10 +11,12 @@ import {
   RULER_HEIGHT,
   STEP_TIMEOUT_MS,
   TRACK_HEIGHT,
+  attachedDriver,
   canvasPoint,
   centerOf,
   dragMedia,
-  driverOf,
+  driverOfNewWindow,
+  editorWindows,
   fullQualityFrame,
   mediaFile,
   numbersIn,
@@ -24,6 +26,7 @@ import {
   type Scenario,
   type UiTestOptions,
   type UiTestReport,
+  untilWindowCount,
 } from './uiDriver.js'
 import { FEATURE_SCENARIOS } from './uiScenarios.js'
 
@@ -243,54 +246,73 @@ async function untilEdited(driver: Driver, isEdited: boolean): Promise<void> {
   }
 }
 
-// New, Open and Save with every answer to "save your changes?".
+async function documentWith(driver: Driver): Promise<{ title: string; isEdited: boolean; width: string }> {
+  return { ...documentShown(driver), width: await driver.value('canvas-width') }
+}
+
+// One project per window: New and Open with several windows, and every answer to "save your changes?" when one closes.
 async function testDocuments(driver: Driver): Promise<UiTestReport> {
   const { answers, outputDirectory } = driver.options
   if (outputDirectory === undefined) throw new PageError('This UI test needs --out <directory>')
   const firstPath = join(outputDirectory, 'first.json')
+  const secondPath = join(outputDirectory, 'second.json')
   const start = documentShown(driver)
 
+  // New opens a window of its own; the first keeps its unsaved change.
   await driver.typeInto('canvas-width', '1280')
   await untilEdited(driver, true)
-  answers.unsavedChanges = 'cancel'
   driver.menu('new')
-  await sleep(10 * POLL_INTERVAL_MS)
-  const afterCancel = { ...documentShown(driver), width: await driver.value('canvas-width') }
+  const other = await driverOfNewWindow(driver, [driver.window])
+  await untilWidth(other, '1920')
+  const afterNew = { windows: editorWindows().length, first: await documentWith(driver), other: await documentWith(other) }
 
-  answers.unsavedChanges = 'save'
   answers.saveProject = firstPath
-  driver.menu('new')
-  await untilWidth(driver, '1920')
-  const afterSaveAndNew = { ...documentShown(driver), wasSaved: existsSync(firstPath) }
-
-  answers.openProject = firstPath
-  driver.menu('open-project')
-  await untilWidth(driver, '1280')
-  const afterOpen = documentShown(driver)
-
-  await driver.typeInto('canvas-width', '1000')
-  await untilEdited(driver, true)
-  answers.unsavedChanges = 'discard'
-  driver.menu('new')
-  await untilWidth(driver, '1920')
-  const savedAfterDiscard: unknown = JSON.parse(await readFile(firstPath, 'utf8'))
-
-  await driver.typeInto('canvas-width', '800')
-  await untilEdited(driver, true)
-  answers.saveProject = join(outputDirectory, 'second.json')
   driver.menu('save')
   await untilEdited(driver, false)
-  const afterSave = documentShown(driver)
-  const recoveryFiles = existsSync(recoveryDirectory()) ? (await readdir(recoveryDirectory())).filter((name) => name.endsWith('.json')) : []
+  await driver.typeInto('canvas-width', '1000')
+  await untilEdited(driver, true)
+  answers.saveProject = secondPath
+  driver.menu('save-as')
+  await untilEdited(driver, false)
+  const afterSaveAs = documentShown(driver)
 
-  // Closing the window with unsaved changes asks too; Cancel keeps the window and the work.
+  // Opened from the untitled window without changes, a project takes that window over.
+  answers.openProject = firstPath
+  other.menu('open-project')
+  await untilWidth(other, '1280')
+  const afterOpenInPlace = { windows: editorWindows().length, other: await documentWith(other) }
+
+  // A project that is open already is not opened twice.
+  answers.openProject = secondPath
+  other.menu('open-project')
+  await sleep(10 * POLL_INTERVAL_MS)
+  const afterOpenOfOpen = { windows: editorWindows().length, other: documentShown(other) }
+
+  // Closing a window with unsaved changes asks: Cancel keeps it, Don't Save closes it and leaves the file as it was.
   await driver.typeInto('canvas-width', '700')
   await untilEdited(driver, true)
   answers.unsavedChanges = 'cancel'
   driver.window.close()
   await sleep(10 * POLL_INTERVAL_MS)
   const afterCancelledClose = { isOpen: !driver.window.isDestroyed(), width: await driver.value('canvas-width') }
-  return { start, afterCancel, afterSaveAndNew, afterOpen, savedAfterDiscard, afterSave, recoveryFiles, afterCancelledClose }
+  answers.unsavedChanges = 'discard'
+  driver.window.close()
+  await untilWindowCount(1)
+  const secondAfterDiscard: unknown = JSON.parse(await readFile(secondPath, 'utf8'))
+
+  // Opened from a window that holds a project, a project gets a window of its own; Save on closing writes it.
+  other.menu('open-project')
+  const third = await driverOfNewWindow(other, [other.window])
+  await untilWidth(third, '1000')
+  const afterOpenInNew = { windows: editorWindows().length, third: await documentWith(third) }
+  await third.typeInto('canvas-width', '640')
+  await untilEdited(third, true)
+  answers.unsavedChanges = 'save'
+  third.window.close()
+  await untilWindowCount(1)
+  const secondAfterSave: unknown = JSON.parse(await readFile(secondPath, 'utf8'))
+  const recoveryFiles = existsSync(recoveryDirectory()) ? (await readdir(recoveryDirectory())).filter((name) => name.endsWith('.json')) : []
+  return { start, afterNew, afterSaveAs, afterOpenInPlace, afterOpenOfOpen, afterCancelledClose, secondAfterDiscard, afterOpenInNew, secondAfterSave, recoveryFiles }
 }
 
 function recoveryDirectory(): string {
@@ -301,10 +323,15 @@ function recoveryDirectory(): string {
 async function testCrash(driver: Driver): Promise<UiTestReport> {
   await driver.typeInto('canvas-width', '1280')
   await untilEdited(driver, true)
+  // A second window has unsaved work of its own.
+  driver.menu('new')
+  const other = await driverOfNewWindow(driver, [driver.window])
+  await other.typeInto('canvas-width', '800')
+  await untilEdited(other, true)
   const deadline = Date.now() + AUTOSAVE_TIMEOUT_MS
   for (;;) {
     const files = existsSync(recoveryDirectory()) ? await readdir(recoveryDirectory()) : []
-    if (files.some((name) => name.endsWith('.json'))) break
+    if (files.filter((name) => name.endsWith('.json')).length === 2) break
     if (Date.now() > deadline) throw new PageError('Timed out waiting for the autosave')
     await sleep(POLL_INTERVAL_MS)
   }
@@ -312,10 +339,14 @@ async function testCrash(driver: Driver): Promise<UiTestReport> {
   return {}
 }
 
+// Every window that had unsaved work comes back with it.
 async function testRestore(driver: Driver): Promise<UiTestReport> {
-  await untilWidth(driver, '1280')
+  const other = await driverOfNewWindow(driver, [driver.window])
   await untilEdited(driver, true)
-  return { ...documentShown(driver), width: await driver.value('canvas-width'), saved: await driver.savedProject('restored.json') }
+  await untilEdited(other, true)
+  const width = await driver.value('canvas-width')
+  const widths = [width, await other.value('canvas-width')].sort()
+  return { ...documentShown(driver), windows: editorWindows().length, width, widths, saved: await driver.savedProject('restored.json') }
 }
 
 // Measures the §3 budgets on whatever project is open; the test opens a 20-hour project with 4,096 clips.
@@ -403,11 +434,7 @@ const SCENARIOS: Record<string, Scenario> = {
 export async function runUiTest(window: BrowserWindow, options: UiTestOptions): Promise<UiTestReport> {
   const scenario = SCENARIOS[options.scenario]
   if (scenario === undefined) throw new PageError(`There is no UI test "${options.scenario}"; use one of ${Object.keys(SCENARIOS).join(', ')}`)
-  // The test window is shown without taking focus from whoever runs the tests; the page must still behave as a focused one.
-  window.webContents.debugger.attach()
-  await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
-  const driver = driverOf(window, options)
-  await driver.until(`${selector('editor')} !== null`, 'the editor to appear')
+  const driver = await attachedDriver(window, options)
   try {
     return await scenario(driver)
   } finally {

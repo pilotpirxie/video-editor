@@ -159,3 +159,15 @@ export function setTextStyle(project: Project, clipIds: readonly string[], style
     return { ...clip, ...settings, background, boxWidth }
   })
 }
+
+// The fonts that words of these clips are set in and this Mac does not have, in alphabetical order. Their words are drawn in the system font, and the names stay in the file for a Mac that has them.
+export function missingFonts(clips: readonly Clip[], installed: readonly string[]): string[] {
+  // Font names are matched as CSS matches them, without regard to case.
+  const known = new Set(installed.map((family) => family.toLowerCase()))
+  const missing = new Set<string>()
+  for (const clip of clips) {
+    if (clip.type !== 'text' && clip.type !== 'callout') continue
+    if (!known.has(clip.font.family.toLowerCase())) missing.add(clip.font.family)
+  }
+  return [...missing].sort((a, b) => a.localeCompare(b))
+}

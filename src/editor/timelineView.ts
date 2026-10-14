@@ -16,6 +16,7 @@ const FADE_HANDLE_INSET = 7
 const HANDLE_REACH = 8
 const MIN_WIDTH_FOR_FADES = 4 * FADE_HANDLE_INSET
 const MAX_VOLUME = 2
+const VOLUME_LINE_REACH = 4
 const ZOOM_REACH = 6
 const ZOOM_START_REACH = 2 * ZOOM_REACH
 const MIN_WIDTH_FOR_ZOOM_START = 2 * ZOOM_START_REACH
@@ -294,6 +295,43 @@ export function volumePoints(clip: Clip, makesSound: boolean, view: TimelineView
 
 export function volumePointAt(points: readonly VolumePoint[], x: number, y: number): VolumePoint | undefined {
   return points[nearestInReach(points, x, y)]
+}
+
+// How much the volume changes when the line is dragged from one height to another.
+export function volumeChange(band: Band, fromY: number, toY: number): number {
+  return ((fromY - toY) / band.height) * MAX_VOLUME
+}
+
+// The volume line of a clip at one point across it, as it is drawn: straight from keyframe to keyframe, level before the first and after the last, and level at the clip's volume when it has none.
+export type VolumeLineSpot = {
+  y: number
+  band: Band
+  // The keyframes at the two ends of the stretch of line there: none without keyframes, only one before the first or after the last.
+  indices: number[]
+}
+
+export function volumeLineAt(clip: Clip, makesSound: boolean, view: TimelineView, rowTop: number, x: number): VolumeLineSpot | undefined {
+  const band = clipBands(clip, makesSound, rowTop).sound
+  if (band === undefined || !hasVolume(clip)) return undefined
+  if (x < timeToX(clip.start, view) || x > timeToX(endOf(clip), view)) return undefined
+  const points = volumePoints(clip, makesSound, view, rowTop)
+  const first = points[0]
+  const last = points.at(-1)
+  if (first === undefined || last === undefined) return { y: volumeY(band, clip.volume), band, indices: [] }
+  if (x <= first.x) return { y: first.y, band, indices: [first.index] }
+  if (x >= last.x) return { y: last.y, band, indices: [last.index] }
+  const afterIndex = points.findIndex((point) => point.x >= x)
+  const after = points[afterIndex]
+  const before = points[afterIndex - 1]
+  if (after === undefined || before === undefined) return undefined
+  const share = (x - before.x) / (after.x - before.x)
+  return { y: before.y + (after.y - before.y) * share, band, indices: [before.index, after.index] }
+}
+
+// The stretch of volume line under the pointer, when the pointer is close enough to grab it.
+export function volumeLineNear(clip: Clip, makesSound: boolean, view: TimelineView, rowTop: number, point: { x: number; y: number }): VolumeLineSpot | undefined {
+  const spot = volumeLineAt(clip, makesSound, view, rowTop, point.x)
+  return spot !== undefined && Math.abs(spot.y - point.y) <= VOLUME_LINE_REACH ? spot : undefined
 }
 
 // Where a transition is drawn on its clip, and the grip that sets its length.

@@ -1,4 +1,5 @@
 import { createContext, useContext, useSyncExternalStore } from 'react'
+import { hintOf, type ShortcutAction } from '../editor/shortcuts.js'
 import type { Session } from './document.js'
 import type { EditorState } from './store.js'
 import type { Position } from './transport.js'
@@ -27,4 +28,11 @@ export function useEditorState<Selected>(select: (state: EditorState) => Selecte
 export function usePosition<Selected>(select: (position: Position) => Selected): Selected {
   const { transport } = useSession()
   return useSyncExternalStore(transport.subscribe, () => select(transport.position()))
+}
+
+// The first key of an action as a tooltip writes it, following any change made in the settings.
+export function useShortcutHint(action: ShortcutAction): string | undefined {
+  const { shortcuts } = useSession()
+  const [first] = useSyncExternalStore(shortcuts.subscribe, shortcuts.get)[action]
+  return first === undefined ? undefined : hintOf(first)
 }

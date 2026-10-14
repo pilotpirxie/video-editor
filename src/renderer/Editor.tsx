@@ -1,6 +1,6 @@
-import { useEffect, useEffectEvent, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
 import { clampLayout, parseLayout, widestSidebar, type Layout } from '../editor/layout.js'
-import { shortcutFor, type ShortcutAction } from '../editor/shortcuts.js'
+import { actionFor, type ShortcutAction } from '../editor/shortcuts.js'
 import type { Size } from '../shared/exportPresets.js'
 import { logError } from '../shared/log.js'
 import { CanvasPanel } from './CanvasPanel.js'
@@ -11,6 +11,7 @@ import type { Panel, Session } from './document.js'
 import { AnnotationsTab, EffectsTab, TransitionsTab } from './LibraryTabs.js'
 import { MediaTab } from './MediaTab.js'
 import { Properties } from './Properties.js'
+import { ShortcutSettings } from './ShortcutSettings.js'
 import { Timeline } from './Timeline.js'
 import { installTooltips } from './tooltip.js'
 import { isKeyForTheEditor, isModalOpen, isTypingTarget } from './transport.js'
@@ -19,6 +20,22 @@ const LAYOUT_KEY = 'layout'
 const KEYBOARD_RESIZE_STEP = 16
 const JUMP_FRAMES = 15
 const SIDEBAR_TABS = ['Media', 'Effects', 'Transitions', 'Annotations'] as const
+const LETTER_OR_DIGIT_KEY = /^(?:Key|Digit)/
+const PREVIEW_ACTIONS = new Set<ShortcutAction | undefined>([
+  'play-pause',
+  'step-back',
+  'step-forward',
+  'jump-back',
+  'jump-forward',
+  'previous-edit',
+  'next-edit',
+  'go-to-start',
+  'go-to-end',
+  'shuttle-back',
+  'shuttle-stop',
+  'shuttle-forward',
+  'preview-mode',
+])
 
 const PANEL_FLAGS: Record<Panel, 'isLeftCollapsed' | 'isRightCollapsed' | 'isTimelineCollapsed'> = {
   library: 'isLeftCollapsed',
@@ -167,8 +184,8 @@ function Notice(): ReactElement {
   )
 }
 
-// Says whether the shortcut was one of the transport's; the timeline handles its own zoom keys.
-function runTransportShortcut({ actions, transport }: Session, action: ShortcutAction): boolean {
+// Runs the action of a shortcut and says whether it was handled here; the timeline handles its own zoom keys.
+function runShortcut({ actions, transport, runMenuAction }: Session, action: ShortcutAction): boolean {
   switch (action) {
     case 'play-pause':
       void transport.toggle()
@@ -210,28 +227,47 @@ function runTransportShortcut({ actions, transport }: Session, action: ShortcutA
     case 'timeline-zoom-out':
     case 'timeline-zoom-fit':
       return false
+    case 'split':
+    case 'split-all':
+    case 'duplicate':
+    case 'delete':
+    case 'ripple-delete':
+    case 'group':
+    case 'ungroup':
+    case 'import':
+    case 'export':
+    case 'preview-mode':
+      runMenuAction(action)
+      return true
   }
 }
 
-// The transport keys, the delete keys and the system clipboard shortcuts work on the project, unless a text field has the focus and needs them for typing.
+// Plain keys belong to a text field that has the focus. A text field has no use for Cmd with a letter or a digit, except the standard keys, which are not shortcuts here.
+function isShortcutFor(event: globalThis.KeyboardEvent): boolean {
+  if (isKeyForTheEditor(event)) return true
+  const isCommandKey = event.metaKey && LETTER_OR_DIGIT_KEY.test(event.code)
+  return isCommandKey && isTypingTarget(event.target) && !isModalOpen() && !event.defaultPrevented
+}
+
+// The shortcuts, as chosen on this Mac, the Escape key and the system clipboard shortcuts work on the project, unless a text field or a dialog needs the keys.
 function listenForEditingKeys(session: Session): () => void {
-  const { actions, store } = session
+  const { actions, store, shortcuts } = session
 
   function onKeyDown(event: globalThis.KeyboardEvent): void {
-    if (!isKeyForTheEditor(event)) return
-    const shortcut = shortcutFor(event)
-    if (shortcut !== undefined && runTransportShortcut(session, shortcut)) {
+    const action = actionFor(shortcuts.get(), event)
+    // In preview mode the clips cannot be seen, so only the transport and leaving the mode answer to keys.
+    const isAllowed = !store.getState().isPreviewing || PREVIEW_ACTIONS.has(action)
+    if (action !== undefined && isAllowed && isShortcutFor(event) && runShortcut(session, action)) {
       event.preventDefault()
-    } else if (event.key === 'Backspace' || event.key === 'Delete') {
-      event.preventDefault()
-      actions.deleteSelection(event.metaKey)
-    } else if (event.key === 'Escape') {
-      // Escape abandons a drag in progress, wherever it started; only with nothing in progress does it clear the selection.
-      // After that it leaves the group that is open.
-      if (store.cancel()) event.preventDefault()
-      else if (store.getState().selection.length > 0) store.select([])
-      else actions.closeGroup()
+      return
     }
+    if (!isKeyForTheEditor(event) || event.key !== 'Escape') return
+    // Escape abandons a drag in progress, wherever it started; only with nothing in progress does it leave preview mode, then clear the selection.
+    // After that it leaves the group that is open.
+    if (store.cancel()) event.preventDefault()
+    else if (store.getState().isPreviewing) store.setPreviewing(false)
+    else if (store.getState().selection.length > 0) store.select([])
+    else actions.closeGroup()
   }
 
   const abandonDrag = (): void => void store.cancel()
@@ -258,6 +294,11 @@ function listenForEditingKeys(session: Session): () => void {
   }
 }
 
+function SettingsWhenOpen(): ReactElement | undefined {
+  const isOpen = useEditorState((state) => state.isSettingsOpen)
+  return isOpen ? <ShortcutSettings /> : undefined
+}
+
 // First the choices, then, from the moment the export starts until its result has been read, how it is going.
 function ExportDialogWhenOpen(): ReactElement | undefined {
   const isChoosing = useEditorState((state) => state.isExportDialogOpen)
@@ -268,6 +309,8 @@ function ExportDialogWhenOpen(): ReactElement | undefined {
 
 export function Editor({ session, preview }: { session: Session; preview: HTMLCanvasElement }): ReactElement {
   const rootRef = useRef<HTMLDivElement>(null)
+  // The session is provided below this component, so its store is read directly.
+  const isPreviewing = useSyncExternalStore(session.store.subscribe, () => session.store.getState().isPreviewing)
   const [stored, setStored] = useState<Layout>(storedLayout)
   const [size, setSize] = useState<Size>(windowSize)
   const layout = clampLayout(stored, size)
@@ -325,7 +368,7 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
 
   return (
     <SessionContext value={session}>
-      <div className="editor" ref={rootRef} style={style} data-testid="editor" onDragOver={(event) => event.preventDefault()} onDrop={onFilesDropped}>
+      <div className={isPreviewing ? 'editor previewing' : 'editor'} ref={rootRef} style={style} data-testid="editor" onDragOver={(event) => event.preventDefault()} onDrop={onFilesDropped}>
         <aside className="sidebar left" aria-label="Library" data-testid="left-sidebar" hidden={layout.isLeftCollapsed}>
           <Sidebar />
         </aside>
@@ -342,6 +385,7 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
         </section>
         <Notice />
         <ExportDialogWhenOpen />
+        <SettingsWhenOpen />
       </div>
     </SessionContext>
   )

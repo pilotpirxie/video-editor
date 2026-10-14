@@ -45,6 +45,15 @@ const PATHS = {
   line: 'M3 13L13 3',
   group: 'M2.5 2.5h7v7h-7zM6.5 6.5h7v7h-7z',
   motion: 'M2 12.5c3.5 0 3-9 6.5-9S11 9 14 9M11.5 6.5L14 9l-2.5 2.5',
+  edgeLeft: 'M2.5 2v12M4.5 4h8v3h-8zM4.5 9h5v3h-5z',
+  edgeCenter: 'M8 2v12M3.5 4h9v3h-9zM5.5 9h5v3h-5z',
+  edgeRight: 'M13.5 2v12M3.5 4h8v3h-8zM6.5 9h5v3h-5z',
+  edgeTop: 'M2 2.5h12M4 4.5h3v8H4zM9 4.5h3v5H9z',
+  edgeMiddle: 'M2 8h12M4 3.5h3v9H4zM9 5.5h3v5H9z',
+  edgeBottom: 'M2 13.5h12M4 3.5h3v8H4zM9 6.5h3v5H9z',
+  spreadAcross: 'M2 2v12M14 2v12M6.5 4.5h3v7h-3z',
+  spreadDown: 'M2 2h12M2 14h12M4.5 6.5h7v3h-7z',
+  preview: 'M2 3h12v10H2zM6.5 5.5l4 2.5-4 2.5z',
 } as const
 
 export type IconName = keyof typeof PATHS

@@ -1,4 +1,4 @@
-import type { MediaStates } from '../engine/resolve.js'
+import { scaledEffect, type MediaStates } from '../engine/resolve.js'
 import type { Size } from '../shared/exportPresets.js'
 import { MAX_CANVAS, MIN_CANVAS, valueAt, type AnimatableProperty, type Clip, type Crop, type Easing, type Keyframe, type Keyframes, type Project, type Transform } from '../shared/project.js'
 import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, TIMELINE_GRID, frameAt, frameDuration, type FrameRate } from '../shared/time.js'
@@ -10,11 +10,59 @@ function clampWhole(value: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(value), min), max)
 }
 
+// How the picture moves into a canvas of another size: one scale about the middle of each canvas.
+type Rescale = {
+  scale: number
+  x(value: number): number
+  y(value: number): number
+}
+
+function rescaledList(list: readonly Keyframe[] | undefined, map: (value: number) => number): Keyframe[] | undefined {
+  return list?.map((keyframe) => ({ ...keyframe, value: map(keyframe.value) }))
+}
+
+function rescaledKeyframes(keyframes: Keyframes | undefined, rescale: Rescale): Keyframes | undefined {
+  if (keyframes === undefined) return undefined
+  const byScale = (value: number): number => value * rescale.scale
+  const rescaled: Keyframes = { ...keyframes }
+  if (keyframes.x !== undefined) rescaled.x = rescaledList(keyframes.x, rescale.x)
+  if (keyframes.y !== undefined) rescaled.y = rescaledList(keyframes.y, rescale.y)
+  if (keyframes.scaleX !== undefined) rescaled.scaleX = rescaledList(keyframes.scaleX, byScale)
+  if (keyframes.scaleY !== undefined) rescaled.scaleY = rescaledList(keyframes.scaleY, byScale)
+  return rescaled
+}
+
+// Lengths that are canvas pixels and that the clip's own scale does not enlarge get the canvas's scale too.
+// The members of a group are left as they are: the group's scale carries them, their effects and their blur.
+function rescaledClip(clip: Clip, rescale: Rescale): Clip {
+  if (!isVisual(clip)) return clip
+  const { transform } = clip
+  const placed = {
+    ...clip,
+    transform: { ...transform, x: rescale.x(transform.x), y: rescale.y(transform.y), scaleX: transform.scaleX * rescale.scale, scaleY: transform.scaleY * rescale.scale },
+    keyframes: rescaledKeyframes(clip.keyframes, rescale),
+  }
+  if (placed.type === 'blur') return { ...placed, strength: placed.strength * rescale.scale, softEdge: placed.softEdge * rescale.scale }
+  if (placed.type === 'highlight') return { ...placed, softEdge: placed.softEdge * rescale.scale }
+  if (placed.effects === undefined) return placed
+  return { ...placed, effects: placed.effects.map((effect) => scaledEffect(effect, rescale.scale)) }
+}
+
+// The whole picture is fitted into the new canvas: it keeps its proportions, nothing of it is cut off, and it stays centred.
 export function setCanvasSize(project: Project, size: Size): Project {
   const width = clampWhole(size.width, MIN_CANVAS.width, MAX_CANVAS.width)
   const height = clampWhole(size.height, MIN_CANVAS.height, MAX_CANVAS.height)
-  if (width === project.canvas.width && height === project.canvas.height) return project
-  return { ...project, canvas: { ...project.canvas, width, height } }
+  const { canvas } = project
+  if (width === canvas.width && height === canvas.height) return project
+  const scale = Math.min(width / canvas.width, height / canvas.height)
+  const rescale: Rescale = {
+    scale,
+    x: (value) => width / 2 + (value - canvas.width / 2) * scale,
+    y: (value) => height / 2 + (value - canvas.height / 2) * scale,
+  }
+  const tracks = project.tracks.map((track) => ({ ...track, clips: track.clips.map((clip) => rescaledClip(clip, rescale)) }))
+  const camera = project.camera?.map((zoom) => ({ ...zoom, x: rescale.x(zoom.x), y: rescale.y(zoom.y) }))
+  return { ...project, canvas: { ...canvas, width, height }, tracks, camera }
 }
 
 export function setFrameRate(project: Project, frameRate: FrameRate): Project {

@@ -1,7 +1,7 @@
-import { mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { serializeProject, type Project } from '../../src/shared/project.js'
+import { parseProject, serializeProject, type Project, type Transform } from '../../src/shared/project.js'
 import { ROOT, probeExport, projectIn, projectPath, scratchDirectory, uiTest } from '../helpers.js'
 
 const SECOND = 24_000_000
@@ -176,17 +176,30 @@ describe('arranging by dragging', () => {
     expect(projectIn(report, 'kept').tracks).toEqual(projectIn(report, 'lowered').tracks)
 
     // A hundred pixels cropped off the left of the 320-wide picture: the centre moved right by fifty, so what is left did not move.
-    expect(report.groupIcons).toEqual(['Transform 2', 'Crop 2', 'Timing 2', 'Opacity 2', 'Transitions 2', 'Animation 2', 'Volume 2'])
+    expect(report.groupIcons).toEqual(['Transform 2', 'Layout 2', 'Crop 2', 'Timing 2', 'Opacity 2', 'Transitions 2', 'Animation 2', 'Volume 2'])
     expect(projectIn(report, 'cropped').tracks[0]?.clips[0]).toMatchObject({ crop: { left: 100, top: 0, right: 0, bottom: 0 }, transform: { x: 210, y: 90 } })
     expect(report.widthAfterCrop).toBe('220.0')
 
     // A click and a Cmd-click picked two files; dragged together they showed one outline and landed one after the other on the empty top track.
     expect(report.selectedFiles).toEqual(['media-audio.wav', 'media-image.jpg'])
+    expect(report.focusAfterClicks).not.toBe('option')
     expect(report.heldTogether).toEqual({ start: 0.5 * SECOND, trackIndex: 2, isNewTrack: false })
     const together = projectIn(report, 'droppedTogether').tracks[2]?.clips ?? []
     expect(together.map((clip) => clip.type)).toEqual(['audio', 'image'])
     expect(together[0]?.start).toBe(0.5 * SECOND)
     expect(together[1]?.start).toBe((together[0]?.start ?? 0) + (together[0]?.duration ?? 0))
+
+    // With the keys alone: Right picked the sound, Shift-Right added the picture, and Return laid both at the playhead on a new top track.
+    expect(report.listRole).toBe('listbox true')
+    expect(report.pickedByKeys).toEqual(['media-audio.wav', 'media-image.jpg'])
+    expect(report.focusAfterKeys).toBe('media-image.jpg')
+    expect(report.timecodeAfterKeys).toBe(report.timecodeBeforeKeys)
+    const byKeys = projectIn(report, 'addedByKeys')
+    expect(byKeys.tracks).toHaveLength(4)
+    const typed = byKeys.tracks[3]?.clips ?? []
+    expect(typed.map((clip) => clip.type)).toEqual(['audio', 'image'])
+    expect(typed[0]?.start).toBe(framesOf(report.timecodeBeforeKeys) * (SECOND / FRAMES_PER_SECOND))
+    expect(typed[1]?.start).toBe((typed[0]?.start ?? 0) + (typed[0]?.duration ?? 0))
     expect(report.hintSize).toBe('13px')
   })
 })
@@ -288,6 +301,32 @@ describe('text styling', () => {
   })
 })
 
+describe('missing fonts', () => {
+  it('warns on opening and in the Text group, and keeps the name of a font this Mac does not have', async () => {
+    const missing = 'No Such Font Family'
+    const parsed = parseProject(readFileSync(projectPath('09-text'), 'utf8'))
+    if (!parsed.ok) throw new Error(parsed.message)
+    // The copy lives in the scratch folder, so its one media file is given by its full path.
+    const project: Project = {
+      ...parsed.project,
+      media: parsed.project.media.map((reference) => ({ ...reference, path: join(MEDIA_DIRECTORY, 'h264.mp4') })),
+      tracks: parsed.project.tracks.map((track) => ({
+        ...track,
+        clips: track.clips.map((clip) => (clip.id === 'latin' && clip.type === 'text' ? { ...clip, font: { ...clip.font, family: missing } } : clip)),
+      })),
+    }
+    const path = join(scratch, 'missing-font.json')
+    writeFileSync(path, serializeProject(project))
+    const report = await uiTest('missing-font', ['--project', path, '--out', join(scratch, 'missing-font')])
+
+    expect(report.openNotice).toContain(`The font "${missing}" is not installed on this Mac.`)
+    expect(report.warning).toContain(`${missing} is not installed on this Mac`)
+    expect(report.fontShown).toBe(`${missing} (not installed)`)
+    const saved = projectIn(report, 'saved').tracks[1]?.clips[0]
+    expect(saved).toMatchObject({ type: 'text', font: { family: missing } })
+  })
+})
+
 describe('animation presets', () => {
   it('applies them at either end and turns them into keyframes', async () => {
     const report = await uiTest('animations', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'animations')])
@@ -363,6 +402,9 @@ describe('groups', () => {
 describe('volume keyframes and the sound of fast clips', () => {
   it('keys the volume in Properties, drags a keyframe on the waveform and sets how sound follows speed', async () => {
     const report = await uiTest('sound', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'sound')])
+    expect(report.cursorOverLine).toBe('ns-resize')
+    // The pointer moves in whole pixels over a band 21 pixels high, so half the way down is near 50%, not exactly.
+    expect(Math.abs(Number(report.lineVolume) - 50)).toBeLessThanOrEqual(3)
     expect(projectIn(report, 'keyed').tracks[0]?.clips[0]?.keyframes?.volume).toEqual([
       { time: 0, value: 1, easing: 'linear' },
       { time: SECOND, value: 0.5, easing: 'linear' },
@@ -375,10 +417,51 @@ describe('volume keyframes and the sound of fast clips', () => {
     expect(second?.value).toBeGreaterThan(1.7)
 
     expect(projectIn(report, 'eased').tracks[0]?.clips[0]?.keyframes?.volume?.[0]).toMatchObject({ time: 0, easing: 'easeIn' })
+    const [kept] = projectIn(report, 'deleted').tracks[0]?.clips[0]?.keyframes?.volume ?? []
     expect(projectIn(report, 'deleted').tracks[0]?.clips[0]?.keyframes?.volume).toHaveLength(1)
+
+    // The added point takes the volume the line had there; a drag between the points lowers both by half the range.
+    const added = projectIn(report, 'pointAdded').tracks[0]?.clips[0]?.keyframes?.volume ?? []
+    expect(added.map((keyframe) => keyframe.time)).toEqual([SECOND / 2, kept?.time])
+    expect(added[0]?.value).toBeCloseTo(kept?.value ?? 0, 5)
+    const lowered = projectIn(report, 'lineDragged').tracks[0]?.clips[0]?.keyframes?.volume ?? []
+    expect(lowered[0]?.value).toBeCloseTo((kept?.value ?? 0) - 0.5, 1)
+    expect(lowered[1]?.value).toBeCloseTo(lowered[0]?.value ?? 0, 5)
 
     expect(report.offersFastSoundAtFirst).toBe(false)
     expect(projectIn(report, 'fast').tracks[0]?.clips[0]).toMatchObject({ speedPercent: 800, changesPitch: true, hasFastSound: true })
+  })
+})
+
+describe('layout tools', () => {
+  it('arranges, aligns and spaces the selected clips, and rescales them with the canvas', async () => {
+    const report = await uiTest('layout-tools', ['--project', projectPath('02-mosaic'), '--out', join(scratch, 'layout-tools')])
+    const transforms = (stage: string): Transform[] => projectIn(report, stage).tracks.map((track) => {
+      const [clip] = track.clips
+      if (clip === undefined || !('transform' in clip)) throw new Error(`Track ${track.id} has no visual clip`)
+      return clip.transform
+    })
+    const rounded = (value: number): number => Math.round(value * 100) / 100
+
+    // A 2 x 2 grid with 20 pixels around and between the cells: each cell is 290 x 150, and the 320 x 180 clips fit its height.
+    // 3 x 3 cells are 186.7 x 93.3, then 2 x 2 cells 290 x 150; the clips fit their height.
+    expect(report.widthWhileTried).toBe('165.9')
+    expect(report.widthWhileTriedNext).toBe('266.7')
+    expect(report.undoAfterTrying).toBe('Undo')
+    const grid = transforms('grid')
+    expect(grid.map((transform) => [transform.x, transform.y])).toEqual([[165, 95], [475, 95], [165, 265], [475, 265]])
+    expect(grid.map((transform) => rounded(transform.scaleX))).toEqual([0.83, 0.83, 0.83, 0.83])
+
+    expect(transforms('aligned').map((transform) => transform.y)).toEqual([95, 95, 95, 95])
+    // The outermost two stay; the others are spaced evenly between them.
+    const across = transforms('distributed').map((transform) => rounded(transform.x)).sort((a, b) => a - b)
+    expect(across).toEqual([165, 268.33, 371.67, 475])
+
+    // 640 x 360 to 1280 x 720 with the sides linked: everything doubles.
+    const doubled = projectIn(report, 'doubled')
+    expect(doubled.canvas).toMatchObject({ width: 1280, height: 720 })
+    expect(transforms('doubled').map((transform) => rounded(transform.scaleX))).toEqual([1.67, 1.67, 1.67, 1.67])
+    expect(transforms('doubled').map((transform) => rounded(transform.y))).toEqual([190, 190, 190, 190])
   })
 })
 
@@ -579,6 +662,44 @@ describe('missing media', () => {
     expect(report.missingAfterRefusal).toBe(3)
     expect(report.foundNotice).toBe('2 more missing files were found in the same folder.')
     expect(projectIn(report, 'relinked').media.map((reference) => reference.path)).toEqual(['h264.mp4', 'audio.wav', 'image.jpg'].map((name) => join(MEDIA_DIRECTORY, name)))
+  })
+})
+
+describe('canvas zoom and preview mode', () => {
+  it('shows the canvas at each zoom, pinches it, and previews it with only the canvas and the transport', async () => {
+    const report = await uiTest('preview', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'preview')])
+    expect(report.widths).toEqual({ '50': 320, '100': 640, '200': 1280 })
+    expect(report.renderingAt200).toBe('pixelated')
+    expect(Number(report.pinchedZoom)).toBe(122)
+
+    const everything = { left: true, right: true, timeline: true, overlay: true, zoomTool: true }
+    expect(report.shownInPreview).toEqual({ left: false, right: false, timeline: false, overlay: false, zoomTool: false })
+    expect(report.shownAfterEscape).toEqual(everything)
+    // The middle of the seek bar is the middle of the two-second project.
+    expect(Math.abs(framesOf(report.timecodeAfterSeek) - FRAMES_PER_SECOND)).toBeLessThanOrEqual(2)
+  })
+})
+
+describe('keyboard shortcuts', () => {
+  it('rebinds keys in Settings, refuses fixed ones, flags shared ones and restores the defaults', async () => {
+    const report = await uiTest('shortcuts', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'shortcuts')])
+    expect(report.splitHint).toContain('(S)')
+    expect(report.refusalText).toBe('⌘S belongs to Save.')
+    expect(report.isOpenAfterEscape).toBe(true)
+    expect(report.conflicts).toEqual({ group: 'Also Stop', stop: 'Also Group' })
+    expect(projectIn(report, 'split').tracks[0]?.clips.map((clip) => clip.duration)).toEqual([SECOND, SECOND])
+    expect(report.conflictsAfterDefaults).toBe(0)
+  })
+})
+
+describe('several windows', () => {
+  it('keeps each project to its window, shares the media, and runs one export at a time', async () => {
+    const report = await uiTest('windows', ['--project', projectPath('02-mosaic'), '--media', MEDIA_DIRECTORY, '--out', join(scratch, 'windows')])
+    expect(report.titles).toEqual({ first: '02-mosaic.json', other: '01-single-clip.json' })
+    expect(report.first).toEqual({ width: '640', isEdited: false })
+    expect(report.refusal).toBe('Another export is already running.')
+    expect(report.isFirstRunning).toBe(true)
+    expect(report.windows).toBe(2)
   })
 })
 

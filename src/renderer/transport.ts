@@ -180,7 +180,9 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
 }
 
 export function isTypingTarget(target: EventTarget | null): boolean {
-  if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return true
+  // A seek bar takes no typing: the keys stay with the editor while it has the focus.
+  if (target instanceof HTMLInputElement) return target.type !== 'range'
+  if (target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return true
   return target instanceof HTMLElement && target.isContentEditable
 }
 

@@ -20,8 +20,16 @@ Y, the width, height and scale, and the four crop sides are each keyed as one. T
 the library look alike, as tiles by default, with a still picture for each effect, transition and
 annotation; all of them are dragged onto the canvas or the timeline, several media files at once
 when picked with Cmd or Shift. Panels are shown and hidden from the View menu, Export sits at the
-right of the timeline toolbar, and projects and exports can run at 120 and 160 fps. The end-to-end
-run of T-47 with a new user on the 4 GB reference Mac is still to be done by hand.
+right of the timeline toolbar, and projects and exports can run at 120 and 160 fps. Also from
+group 4: a font the Mac does not have is named on opening and in the Text group (T-72); the
+Layout group in Properties aligns and spaces the selected clips and arranges them in a 2×2 or
+3×3 grid, one large and three small, or picture in picture (T-74); every clip with sound shows
+its volume line, which drags on a selected clip and takes a point on a double click (T-76); the
+canvas zooms to 50, 100 and 200 % or by pinching, and preview mode leaves only the canvas and
+the transport (T-77); each project has a window of its own (T-78); a new canvas size scales
+everything on it to fit (T-79); and the keys can be changed in Settings (T-81). Packaging a
+project (T-80) is dropped: media stays where it is. The end-to-end run of T-47 with a new user
+on the 4 GB reference Mac is still to be done by hand.
 
 To see the new features at once, open `test/projects/demo-zoom-effects.json` with File, Open.
 
@@ -38,7 +46,7 @@ FFprobe binaries into `vendor/ffmpeg` and checks their SHA-256.
 | `npm run lint` | Unused files, exports and dependencies (knip) and duplicated code (jscpd); any finding fails |
 | `npm run test:unit` | Unit tests (time, project format, resolver, mixer, FFmpeg jobs, probe, decoding, caches, editing commands) |
 | `npm run test:engine` | Builds the app and tests it for real: golden images, preview/export parity, export to every format, export speed and memory, the harness window, split and hit-test parity, and pixels worked out by hand for the camera zoom, every transition, blur, pixelate, highlight, spotlight, each effect, callouts, arrows, styled text and groups |
-| `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents, crash recovery, transport keys, fades, text, animated images, relink, the export dialog and how it holds the window, arranging by dragging (landing outline, group moves across tracks, crop fields), annotations, callouts and arrows, text styling, animation presets, groups (made, edited from the inside, taken apart), volume keyframes and the sound of fast clips, keyframes from Properties and the motion path, effects, transitions and zoom-and-pan (added, changed and removed by mouse, in Properties and from the lane's menu), the controls (drop-down lists, groups, media tiles, wide sidebars, timeline zoom-out), and the responsiveness budgets on a 4,096-clip project |
+| `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents in several windows, crash recovery, transport keys, fades, text, animated images, relink, the export dialog and how it holds the window, arranging by dragging (landing outline, group moves across tracks, crop fields), annotations, callouts and arrows, text styling, animation presets, groups (made, edited from the inside, taken apart), volume keyframes, the volume line and the sound of fast clips, keyframes from Properties and the motion path, effects, transitions and zoom-and-pan (added, changed and removed by mouse, in Properties and from the lane's menu), the controls (drop-down lists, groups, media tiles, wide sidebars, timeline zoom-out), the Layout group, missing fonts, canvas zoom and preview mode, changing keys in Settings, two windows sharing media and the one export at a time, and the responsiveness budgets on a 4,096-clip project |
 | `npm test` | All of the above |
 | `npm run test:acceptance` | Builds a ten-minute tutorial through the editor window and exports it at 1080p; takes several minutes and is not part of `npm test` |
 | `npm run dist` | Builds `release/Video Editor-<version>-arm64.dmg` |
@@ -73,7 +81,10 @@ npx electron . --selftest project.json --seconds 10 --report-memory
 ## Keys
 
 Shortcuts follow Camtasia for Mac. Those that are a single key work whenever no text field has
-the focus; `src/editor/shortcuts.ts` is the table.
+the focus; `src/editor/shortcuts.ts` is the table. Settings (Cmd+,) changes them, up to two keys
+for each action, and flags keys that two actions share; the keys of New, Open, Save, Close,
+Undo, the clipboard, Select All and Quit stay as every Mac app has them. The menus and tooltips
+show the keys in use.
 
 | Keys | What they do |
 | --- | --- |
@@ -86,9 +97,12 @@ the focus; `src/editor/shortcuts.ts` is the table.
 | Cmd+Shift+`=` `-` `0` | Timeline zoom in, out, fit |
 | Cmd+T, Cmd+Shift+T | Split the selected clips, or every clip under the playhead |
 | Delete, Cmd+Delete | Delete, ripple delete |
+| Cmd+D | Duplicate the selected clips |
 | Cmd+G, Cmd+U | Group the selected clips, ungroup the selected group |
-| Esc | Let go of the selection; with nothing selected, leave the open group |
+| Cmd+Shift+F | Preview mode: only the canvas and the transport |
+| Esc | Leave preview mode; let go of the selection; with nothing selected, leave the open group |
 | Cmd+E, Cmd+I | Export, import media |
+| In the Media list (Tab reaches it): arrows, Shift+arrows, Cmd+arrows, Space, Return | Pick the next file, add the run to it, only move, add or drop the file in focus, place the picked files at the playhead on a new top track |
 
 ## Project files
 

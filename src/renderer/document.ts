@@ -1,12 +1,16 @@
 import { exportJobFor, selectionRange, type ExportChoices } from '../editor/export.js'
+import { allClips } from '../editor/clips.js'
 import { mediaFileName, mediaUses, relinkedMedia, unlinkedMedia, withMedia } from '../editor/place.js'
+import { menuShortcutsOf, parseBindings, type Bindings } from '../editor/shortcuts.js'
+import { missingFonts } from '../editor/text.js'
 import type { MediaStates } from '../engine/resolve.js'
 import { describeError, logError } from '../shared/log.js'
-import type { DocumentInfo, DocumentState, HostCommand, JobEvent, MediaClient, NextDocument, Preparation } from '../shared/mediaProtocol.js'
+import type { DocumentInfo, DocumentState, HostCommand, JobEvent, MediaClient, MenuAction, Preparation } from '../shared/mediaProtocol.js'
 import { projectDuration, type Project } from '../shared/project.js'
 import { frameDuration } from '../shared/time.js'
 import { createActions, type Actions } from './actions.js'
 import type { EngineHost } from './engineHost.js'
+import { installedFontFamilies } from './fonts.js'
 import { createEditorStore, type EditorStore } from './store.js'
 import { createThumbnails, type Thumbnails } from './thumbnails.js'
 import { createTransport, isModalOpen, isTypingTarget, type Transport } from './transport.js'
@@ -32,15 +36,79 @@ export type Session = {
   relink(mediaId: string): Promise<void>
   exportVideo(choices: ExportChoices): Promise<void>
   cancelExport(): void
+  runMenuAction(action: MenuAction): void
+  // The keys of the actions, as chosen on this Mac.
+  shortcuts: Shortcuts
   // The View menu shows and hides the panels, which the window lays out.
   onPanelToggle(listener: (panel: Panel) => void): () => void
 }
 
 export type Panel = 'library' | 'properties' | 'timeline'
 
+type Shortcuts = {
+  get(): Bindings
+  set(bindings: Bindings): void
+  subscribe(listener: () => void): () => void
+}
+
+const SHORTCUTS_KEY = 'shortcuts'
+
+// The keys are kept per Mac, for every window: a change in one window reaches the others through the storage they share.
+function createShortcuts(): Shortcuts {
+  let bindings = parseBindings(localStorage.getItem(SHORTCUTS_KEY) ?? undefined)
+  const listeners = new Set<() => void>()
+
+  function tellMenu(): void {
+    window.host.setMenuShortcuts(menuShortcutsOf(bindings))
+  }
+
+  function changeTo(next: Bindings): void {
+    bindings = next
+    for (const listener of listeners) listener()
+    tellMenu()
+  }
+
+  window.addEventListener('storage', (event) => {
+    if (event.key === SHORTCUTS_KEY) changeTo(parseBindings(event.newValue ?? undefined))
+  })
+  tellMenu()
+
+  return {
+    get: () => bindings,
+    set(next) {
+      try {
+        localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(next))
+      } catch (error) {
+        logError('Could not remember the keys', error)
+      }
+      changeTo(next)
+    },
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  }
+}
+
 type SentProject = {
   project: Project
   mediaStates: MediaStates
+}
+
+// A font this Mac does not have is drawn as the system font, and its name stays in the file for a Mac that has it.
+async function missingFontsNotice(project: Project): Promise<string | undefined> {
+  let installed: string[]
+  try {
+    installed = await installedFontFamilies()
+  } catch (error) {
+    logError('Could not list the installed fonts to look for missing ones', error)
+    return undefined
+  }
+  const missing = missingFonts(allClips(project.tracks), installed)
+  if (missing.length === 0) return undefined
+  const names = missing.map((name) => `"${name}"`).join(', ')
+  if (missing.length === 1) return `The font ${names} is not installed on this Mac. Its words are shown in the system font until it is.`
+  return `The fonts ${names} are not installed on this Mac. Their words are shown in the system font until they are.`
 }
 
 export function createSession(engine: EngineHost, media: MediaClient, info: DocumentInfo): Session {
@@ -250,8 +318,8 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
     if (exportStatus === undefined && projectDuration(wholeProject) > 0) store.showExportDialog(true)
   }
 
-  // New, Open and Close all leave the current document, so they share one unsaved-changes check.
-  async function leaveFor(next: NextDocument): Promise<void> {
+  // A document with unsaved changes closes only after the user has said what happens to them.
+  async function close(): Promise<void> {
     store.cancel()
     const { wholeProject, savedProject } = store.getState()
     if (wholeProject !== savedProject) {
@@ -262,12 +330,7 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
     // An autosave still running would write the recovery file again after the main process removed it.
     clearInterval(autosaveTimer)
     await recoveryWork
-    window.host.replaceDocument(next)
-  }
-
-  async function chooseAndOpen(): Promise<void> {
-    const path = await window.host.openProjectDialog()
-    if (path !== undefined) await leaveFor({ kind: 'open', path })
+    window.host.closeDocument()
   }
 
   function undoOrRedo(action: 'undo' | 'redo'): void {
@@ -287,59 +350,40 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
     else actions.selectAll()
   }
 
+  // A menu command, chosen in the menu or with its keys.
+  function runMenuAction(action: MenuAction): void {
+    if (action === 'export') openExportDialog()
+    else if (action === 'close') void close()
+    else if (action === 'save') void save()
+    else if (action === 'save-as') void saveAs()
+    else if (action === 'undo' || action === 'redo') undoOrRedo(action)
+    else if (action === 'import') void chooseAndImport()
+    else if (action === 'split') actions.split()
+    else if (action === 'split-all') actions.splitAll()
+    else if (action === 'select-all') selectAll()
+    else if (action === 'deselect-all') store.select([])
+    else if (action === 'duplicate') actions.duplicate()
+    else if (action === 'delete') actions.deleteSelection(false)
+    else if (action === 'ripple-delete') actions.deleteSelection(true)
+    else if (action === 'group') actions.group()
+    else if (action === 'ungroup') actions.ungroup()
+    else if (action === 'toggle-library') togglePanel('library')
+    else if (action === 'toggle-properties') togglePanel('properties')
+    else if (action === 'toggle-timeline') togglePanel('timeline')
+    else if (action === 'preview-mode') store.setPreviewing(!store.getState().isPreviewing)
+    else if (action === 'settings') store.showSettings(true)
+  }
+
   window.host.onCommand((command: HostCommand) => {
     if (command.type === 'export-event') {
       onExportEvent(command.event)
       return
     }
+    if (command.type !== 'menu') return
     // Under an open dialog the project can still be saved and the window closed; every other command waits for the dialog to go.
-    const isForUnderADialog = command.type === 'menu' && (command.action === 'save' || command.action === 'save-as' || command.action === 'close')
+    const isForUnderADialog = command.action === 'save' || command.action === 'save-as' || command.action === 'close'
     if (isModalOpen() && !isForUnderADialog) return
-    if (command.type === 'open-project') {
-      void leaveFor({ kind: 'open', path: command.path })
-    } else if (command.type !== 'menu') {
-      return
-    } else if (command.action === 'export') {
-      openExportDialog()
-    } else if (command.action === 'new') {
-      void leaveFor({ kind: 'new' })
-    } else if (command.action === 'close') {
-      void leaveFor({ kind: 'close' })
-    } else if (command.action === 'open-project') {
-      void chooseAndOpen()
-    } else if (command.action === 'save') {
-      void save()
-    } else if (command.action === 'save-as') {
-      void saveAs()
-    } else if (command.action === 'undo' || command.action === 'redo') {
-      undoOrRedo(command.action)
-    } else if (command.action === 'import') {
-      void chooseAndImport()
-    } else if (command.action === 'split') {
-      actions.split()
-    } else if (command.action === 'split-all') {
-      actions.splitAll()
-    } else if (command.action === 'select-all') {
-      selectAll()
-    } else if (command.action === 'deselect-all') {
-      store.select([])
-    } else if (command.action === 'duplicate') {
-      actions.duplicate()
-    } else if (command.action === 'delete') {
-      actions.deleteSelection(false)
-    } else if (command.action === 'ripple-delete') {
-      actions.deleteSelection(true)
-    } else if (command.action === 'group') {
-      actions.group()
-    } else if (command.action === 'ungroup') {
-      actions.ungroup()
-    } else if (command.action === 'toggle-library') {
-      togglePanel('library')
-    } else if (command.action === 'toggle-properties') {
-      togglePanel('properties')
-    } else if (command.action === 'toggle-timeline') {
-      togglePanel('timeline')
-    }
+    runMenuAction(command.action)
   })
 
   function togglePanel(panel: Panel): void {
@@ -354,8 +398,12 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
       store.open(loaded, info.path, !isRecovered)
       recovered = loaded.project
       watchPreparation()
+      const notices: string[] = []
       const missingCount = unlinkedMedia(loaded.project, loaded.media).length
-      if (missingCount > 0) store.notify(`${missingCount} media ${missingCount === 1 ? 'file is' : 'files are'} missing. Use Relink in the Media tab to say where ${missingCount === 1 ? 'it is' : 'they are'}.`)
+      if (missingCount > 0) notices.push(`${missingCount} media ${missingCount === 1 ? 'file is' : 'files are'} missing. Use Relink in the Media tab to say where ${missingCount === 1 ? 'it is' : 'they are'}.`)
+      const fonts = await missingFontsNotice(loaded.project)
+      if (fonts !== undefined) notices.push(fonts)
+      if (notices.length > 0) store.notify(notices.join(' '))
     } catch (error) {
       // The path is not kept: Save must ask where to write instead of replacing a file that could not be read.
       store.notify(describeError(error))
@@ -380,6 +428,8 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
     exportVideo,
     hasSmallMemory: info.hasSmallMemory,
     cancelExport,
+    runMenuAction,
+    shortcuts: createShortcuts(),
     onPanelToggle(listener) {
       panelListeners.add(listener)
       return () => panelListeners.delete(listener)

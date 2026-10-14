@@ -474,6 +474,46 @@ legend.field-label {
   line-height: 1.4;
 }
 
+.dialog.settings {
+  width: 560px;
+}
+
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.shortcut-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.shortcut-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.shortcut-keys,
+.shortcut-key {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.shortcut-row .hint {
+  flex-basis: 100%;
+}
+
 .dialog-buttons {
   display: flex;
   justify-content: flex-end;

@@ -4,7 +4,7 @@ import { endOf, hasVolume, locateClip, makesSound, nextTrackName, type NewTrack 
 import { addEffect, takesEffects } from '../editor/effects.js'
 import { moveClips, trimClip } from '../editor/moveTrim.js'
 import { dropMedia, mediaFileName, placeableMedia } from '../editor/place.js'
-import { changeKeyframe, setFade, type Fade } from '../editor/properties.js'
+import { changeKeyframe, setFade, setKeyframesAt, setProperties, type Fade } from '../editor/properties.js'
 import { snapDelta, timelineTargets } from '../editor/snapping.js'
 import {
   RULER_HEIGHT,
@@ -24,6 +24,9 @@ import {
   transitionBandAt,
   transitionBands,
   volumeAtY,
+  volumeChange,
+  volumeLineAt,
+  volumeLineNear,
   volumePointAt,
   volumePoints,
   xToTime,
@@ -35,6 +38,7 @@ import {
   type Marquee,
   type TimelineView,
   type TransitionBand,
+  type VolumeLineSpot,
   type VolumePoint,
   type ZoomHit,
   type ZoomLimits,
@@ -107,7 +111,11 @@ type Gesture =
   | { kind: 'trim'; clipId: string; edge: 'start' | 'end'; edgeTime: number; targets: number[] }
   | { kind: 'fade'; clipId: string; clipIds: readonly string[]; fade: Fade; clipStart: number; clipEnd: number; endTime: number; grabOffset: number; targets: number[] }
   | { kind: 'volume-point'; clipId: string; index: number; clipStart: number; pointTime: number; grabOffset: number; band: Band; targets: number[] }
+  | { kind: 'volume-line'; clipId: string; indices: number[]; band: Band; from: Point }
   | { kind: 'marquee'; from: Point; kept: readonly string[] }
+
+// The gestures that change the project: each ends by keeping the change as one undo step, or by taking it back.
+const EDITING_GESTURES: ReadonlySet<Gesture['kind']> = new Set(['move', 'trim', 'fade', 'zoom', 'transition', 'volume-point', 'volume-line'])
 
 // The handles drawn over one clip: its fade handles and the grips of its transitions, and the one of them that is held.
 type ShownHandles = {
@@ -351,6 +359,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   function shownHandles(): ShownHandles {
     const none: ShownHandles = { handles: [], heldHandle: undefined, grips: [], heldGrip: undefined, heldPoint: undefined, heldLabel: '' }
     if (gesture?.kind === 'volume-point') return { ...none, ...heldVolumePoint(gesture) }
+    if (gesture?.kind === 'volume-line') return { ...none, ...heldVolumeLine(gesture) }
     const fading = gesture?.kind === 'fade' ? gesture : undefined
     const changing = gesture?.kind === 'transition' ? gesture : undefined
     const clipId = fading?.clipId ?? changing?.target.clipId ?? hoveredClipId
@@ -381,6 +390,48 @@ export function createTimelineController(elements: TimelineElements, session: Se
     const rowTop = trackTop(shown.trackIndex, project.tracks.length, view)
     const heldPoint = volumePoints(shown.clip, makesSound(shown.clip, mediaStates), view, rowTop)[dragging.index]
     return { heldPoint, heldLabel: `${Math.round(volume * PERCENT)}%` }
+  }
+
+  // Where the dragged stretch of the volume line is now, under the point it was grabbed at, with the volume it stands for there.
+  function heldVolumeLine(dragging: Extract<Gesture, { kind: 'volume-line' }>): Pick<ShownHandles, 'heldPoint' | 'heldLabel'> {
+    const { project, mediaStates } = store.getState()
+    const shown = locateClip(project, dragging.clipId)
+    if (shown === undefined) return { heldPoint: undefined, heldLabel: '' }
+    const rowTop = trackTop(shown.trackIndex, project.tracks.length, view)
+    const spot = volumeLineAt(shown.clip, makesSound(shown.clip, mediaStates), view, rowTop, dragging.from.x)
+    if (spot === undefined) return { heldPoint: undefined, heldLabel: '' }
+    return { heldPoint: { index: -1, x: dragging.from.x, y: spot.y }, heldLabel: `${Math.round(volumeAtY(spot.band, spot.y) * PERCENT)}%` }
+  }
+
+  // Only the line of a selected clip can be grabbed: it runs through the middle of the sound, where a clip is also grabbed to be moved.
+  function volumeLineOn(hit: ClipHit, point: Point): VolumeLineSpot | undefined {
+    const { project, mediaStates, selection } = store.getState()
+    if (!selection.includes(hit.clip.id)) return undefined
+    const rowTop = trackTop(hit.trackIndex, project.tracks.length, view)
+    return volumeLineNear(hit.clip, makesSound(hit.clip, mediaStates), view, rowTop, point)
+  }
+
+  // Dragging the line up or down changes the volume of the stretch that was grabbed: the keyframes at its ends, or the clip's volume while it has none.
+  function startVolumeLine(hit: ClipHit, spot: VolumeLineSpot, at: Point): Gesture {
+    store.begin('Change Volume')
+    return { kind: 'volume-line', clipId: hit.clip.id, indices: spot.indices, band: spot.band, from: at }
+  }
+
+  function updateVolumeLine(dragging: Extract<Gesture, { kind: 'volume-line' }>, point: Point): void {
+    const { clipId, indices, band, from } = dragging
+    const change = volumeChange(band, from.y, point.y)
+    // Each update starts from the project as it was when the drag began, so the values read here are those the drag started from.
+    store.update((project) => {
+      const clip = locateClip(project, clipId)?.clip
+      if (clip === undefined || !hasVolume(clip)) return project
+      if (indices.length === 0) return setProperties(project, [clipId], { volume: clip.volume + change }, clip.start)
+      let edited = project
+      for (const index of indices) {
+        const value = clip.keyframes?.volume?.[index]?.value
+        if (value !== undefined) edited = changeKeyframe(edited, clipId, 'volume', index, { value: value + change })
+      }
+      return edited
+    })
   }
 
   function volumePointOn(hit: ClipHit, point: Point): VolumePoint | undefined {
@@ -734,6 +785,12 @@ export function createTimelineController(elements: TimelineElements, session: Se
       invalidate('overlay')
       return
     }
+    const volumeSpot = volumeLineOn(hit, at)
+    if (volumeSpot !== undefined) {
+      gesture = startVolumeLine(hit, volumeSpot, at)
+      invalidate('overlay')
+      return
+    }
     const wasSelected = selection.includes(hit.clip.id)
     selectOnPress(hit, event)
     gesture = { kind: 'press', hit, at, wasSelected, hasModifier }
@@ -751,6 +808,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
     else if (hit !== undefined && point !== undefined && transitionGripOn(hit, point) !== undefined) cursor = 'ew-resize'
     else if (hit !== undefined && point !== undefined && volumePointOn(hit, point) !== undefined) cursor = 'grab'
     else if (hit !== undefined && point !== undefined && fadeHandleOn(hit, point) !== undefined) cursor = 'grab'
+    else if (hit !== undefined && point !== undefined && volumeLineOn(hit, point) !== undefined) cursor = 'ns-resize'
     else if (hit?.edge !== undefined) cursor = 'ew-resize'
     overlay.style.cursor = cursor
 
@@ -790,6 +848,8 @@ export function createTimelineController(elements: TimelineElements, session: Se
       updateFade(gesture, event, point)
     } else if (gesture.kind === 'volume-point') {
       updateVolumePoint(gesture, event, point)
+    } else if (gesture.kind === 'volume-line') {
+      updateVolumeLine(gesture, point)
     } else if (gesture.kind === 'marquee') {
       updateMarquee(gesture, point)
     }
@@ -802,7 +862,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
     guide = undefined
     marquee = undefined
     if (ended === undefined) return
-    if (ended.kind === 'move' || ended.kind === 'trim' || ended.kind === 'fade' || ended.kind === 'zoom' || ended.kind === 'transition' || ended.kind === 'volume-point') {
+    if (EDITING_GESTURES.has(ended.kind)) {
       if (finish === 'commit') store.commit()
       else store.cancel()
     }
@@ -847,11 +907,18 @@ export function createTimelineController(elements: TimelineElements, session: Se
     openMenu(at, volumePoint === undefined || hit === undefined ? undefined : { kind: 'volume', clipId: hit.clip.id, index: volumePoint.index })
   }
 
-  // A double click on a group goes into it.
+  // A double click on the volume line puts a keyframe there, on the nearest frame; one on a group goes into the group.
   function onDoubleClick(event: MouseEvent): void {
     const point = pointOf(event)
     const hit = hitClip(store.getState().project.tracks, inOrder, view, point.x, point.y)
-    if (hit === undefined || hit.track.locked || hit.clip.type !== 'group') return
+    if (hit === undefined || hit.track.locked) return
+    if (volumeLineOn(hit, point) !== undefined) {
+      const ticks = frameTicks()
+      const time = Math.round(xToTime(point.x, view) / ticks) * ticks
+      store.apply('Add Volume Keyframe', (project) => setKeyframesAt(project, [hit.clip.id], 'volume', time, true))
+      return
+    }
+    if (hit.clip.type !== 'group') return
     store.select([hit.clip.id])
     actions.openGroup()
   }

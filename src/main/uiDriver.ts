@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { Menu, type BrowserWindow } from 'electron'
+import { BrowserWindow, Menu } from 'electron'
 import type { MenuAction, UnsavedChoice } from '../shared/mediaProtocol.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
 import { PageError, pageOf, selector, type Page } from './page.js'
@@ -59,6 +59,8 @@ export type Driver = {
   until(script: string, what: string, timeoutMs?: number): Promise<void>
   untilUndoLabel(label: string): Promise<void>
   untilRedoLabel(label: string): Promise<void>
+  // Waits for a menu item to show these keys, as an Electron accelerator.
+  untilMenuKeys(action: MenuAction, accelerator: string): Promise<void>
   rect(testId: string): Promise<Rect>
   hover(point: Point): Promise<void>
   drag(from: Point, to: Point, modifiers?: readonly Modifier[]): Promise<void>
@@ -105,7 +107,7 @@ export function centerOf(rect: Rect): Point {
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
 }
 
-export function driverOf(window: BrowserWindow, options: UiTestOptions): Driver {
+function driverOf(window: BrowserWindow, options: UiTestOptions): Driver {
   const page = pageOf(window)
 
   // The page reloads when a document is replaced; a check that lands in the middle of that simply counts as "not yet".
@@ -236,10 +238,16 @@ export function driverOf(window: BrowserWindow, options: UiTestOptions): Driver 
     return item
   }
 
-  async function untilMenuLabel(action: 'undo' | 'redo', label: string): Promise<void> {
+  // Chosen with this window in front, as a person would choose it.
+  function clickMenu(action: MenuAction): void {
+    menuItem(action).click(undefined, window, window.webContents)
+  }
+
+  // Waits for the menu item of `action` to show `expected`, as read by `shown`: its label or its keys.
+  async function untilMenuShows(action: MenuAction, expected: string, shown: (item: Electron.MenuItem) => string): Promise<void> {
     const deadline = Date.now() + STEP_TIMEOUT_MS
-    while (menuItem(action).label !== label) {
-      if (Date.now() > deadline) throw new PageError(`Timed out waiting for the Edit menu to offer "${label}"; it offers "${menuItem(action).label}"`)
+    while (shown(menuItem(action)) !== expected) {
+      if (Date.now() > deadline) throw new PageError(`Timed out waiting for the menu to show "${expected}" for ${action}; it shows "${shown(menuItem(action))}"`)
       await sleep(POLL_INTERVAL_MS)
     }
   }
@@ -260,7 +268,7 @@ export function driverOf(window: BrowserWindow, options: UiTestOptions): Driver 
     const path = join(options.outputDirectory, name)
     await rm(path, { force: true })
     options.answers.saveProject = path
-    menuItem('save-as').click()
+    clickMenu('save-as')
     const deadline = Date.now() + STEP_TIMEOUT_MS
     while (!existsSync(path) || window.isDocumentEdited()) {
       if (Date.now() > deadline) throw new PageError(`Timed out waiting for ${name} to be saved`)
@@ -270,7 +278,8 @@ export function driverOf(window: BrowserWindow, options: UiTestOptions): Driver 
   }
 
   async function picture(name: string): Promise<void> {
-    if (options.outputDirectory === undefined) return
+    // A test may close the window it started with.
+    if (options.outputDirectory === undefined || window.isDestroyed()) return
     const captured = await window.webContents.capturePage()
     await mkdir(options.outputDirectory, { recursive: true })
     await writeFile(join(options.outputDirectory, `${name}.png`), captured.toPNG())
@@ -281,8 +290,9 @@ export function driverOf(window: BrowserWindow, options: UiTestOptions): Driver 
     window,
     options,
     until,
-    untilUndoLabel: (label) => untilMenuLabel('undo', label),
-    untilRedoLabel: (label) => untilMenuLabel('redo', label),
+    untilUndoLabel: (label) => untilMenuShows('undo', label, (item) => item.label),
+    untilRedoLabel: (label) => untilMenuShows('redo', label, (item) => item.label),
+    untilMenuKeys: (action, accelerator) => untilMenuShows(action, accelerator, (item) => item.accelerator ?? ''),
     rect,
     hover,
     drag,
@@ -297,12 +307,45 @@ export function driverOf(window: BrowserWindow, options: UiTestOptions): Driver 
     typeInto,
     typeKeys,
     value,
-    menu: (action) => menuItem(action).click(),
+    menu: clickMenu,
     menuLabel: (action) => menuItem(action).label,
     timelinePoint,
     savedProject,
     picture,
   }
+}
+
+// The test window is shown without taking focus from whoever runs the tests; the page must still behave as a focused one.
+export async function attachedDriver(window: BrowserWindow, options: UiTestOptions): Promise<Driver> {
+  window.webContents.debugger.attach()
+  await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
+  const driver = driverOf(window, options)
+  await driver.until(`${selector('editor')} !== null`, 'the editor to appear')
+  return driver
+}
+
+export function editorWindows(): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed() && window.webContents.getURL().includes('mode=editor'))
+}
+
+export async function untilWindowCount(count: number): Promise<void> {
+  const deadline = Date.now() + STEP_TIMEOUT_MS
+  while (editorWindows().length !== count) {
+    if (Date.now() > deadline) throw new PageError(`Timed out waiting for ${count} editor windows; there are ${editorWindows().length}`)
+    await sleep(POLL_INTERVAL_MS)
+  }
+}
+
+// Drives the editor window that opened after `known`, set up as the first one is.
+export async function driverOfNewWindow(driver: Driver, known: readonly BrowserWindow[]): Promise<Driver> {
+  const deadline = Date.now() + STEP_TIMEOUT_MS
+  let found = editorWindows().find((window) => !known.includes(window))
+  while (found === undefined) {
+    if (Date.now() > deadline) throw new PageError('Timed out waiting for a new editor window')
+    await sleep(POLL_INTERVAL_MS)
+    found = editorWindows().find((window) => !known.includes(window))
+  }
+  return attachedDriver(found, driver.options)
 }
 
 export async function fullQualityFrame(driver: Driver, sinceFrames: number): Promise<void> {

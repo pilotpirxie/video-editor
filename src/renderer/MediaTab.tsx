@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
 import { mediaFileName } from '../editor/place.js'
 import type { MediaInfo, MediaState, Preparation } from '../shared/mediaProtocol.js'
 import type { MediaRef } from '../shared/project.js'
@@ -37,13 +37,15 @@ type MediaItemProps = {
   state: MediaState | undefined
   preparation: Preparation | undefined
   isSelected: boolean
+  // The one file of the list that Tab reaches; the arrow keys move on from it.
+  isTabStop: boolean
   // What a drag that starts on this file takes along: the whole selection when the file is part of it.
   draggedIds: readonly string[]
   onPress(mediaId: string, event: PointerEvent<HTMLElement>): void
   onChoose(mediaId: string, event: MouseEvent<HTMLElement>): void
 }
 
-function MediaItem({ reference, state, preparation, isSelected, draggedIds, onPress, onChoose }: MediaItemProps): ReactElement {
+function MediaItem({ reference, state, preparation, isSelected, isTabStop, draggedIds, onPress, onChoose }: MediaItemProps): ReactElement {
   const session = useSession()
   const { thumbnails } = session
   const name = mediaFileName(reference)
@@ -57,7 +59,11 @@ function MediaItem({ reference, state, preparation, isSelected, draggedIds, onPr
   return (
     <li
       className={isSelected ? 'library-item selected' : 'library-item'}
+      role="option"
+      aria-selected={isSelected}
+      tabIndex={isTabStop ? 0 : -1}
       data-testid={`media-${name}`}
+      data-media-id={reference.id}
       data-selected={isSelected}
       // Rows and tiles cut a long name short.
       data-tooltip={name}
@@ -66,6 +72,8 @@ function MediaItem({ reference, state, preparation, isSelected, draggedIds, onPr
         if (event.button === 0) onPress(reference.id, event)
         drag.onPointerDown(event)
       }}
+      // A click leaves the keys with the editor, so Space still plays; Tab is what brings them into the list.
+      onMouseDown={(event) => event.preventDefault()}
       onClick={(event) => onChoose(reference.id, event)}
     >
       <div className="library-thumbnail">
@@ -98,6 +106,31 @@ function hasModifier(event: { metaKey: boolean; shiftKey: boolean }): boolean {
   return event.metaKey || event.shiftKey
 }
 
+// How many files a row of the list holds: one in the list view, as many as fit across in the grid.
+function columnsOf(list: HTMLElement): number {
+  const options = list.querySelectorAll<HTMLElement>('[role="option"]')
+  const firstTop = options[0]?.offsetTop
+  let columns = 0
+  for (const option of options) {
+    if (option.offsetTop !== firstTop) break
+    columns += 1
+  }
+  return Math.max(1, columns)
+}
+
+// Where a key moves the focus to in a list of `count` files, or undefined for a key that does not move it.
+function movedTo(key: string, index: number, count: number, columns: number): number | undefined {
+  let target: number
+  if (key === 'ArrowRight') target = index + 1
+  else if (key === 'ArrowLeft') target = index - 1
+  else if (key === 'ArrowDown') target = index + columns
+  else if (key === 'ArrowUp') target = index - columns
+  else if (key === 'Home') target = 0
+  else if (key === 'End') target = count - 1
+  else return undefined
+  return Math.min(count - 1, Math.max(0, target))
+}
+
 // The files from `from` to `to`, both included, in the order shown.
 function run(shownIds: readonly string[], from: string, to: string): string[] {
   const start = shownIds.indexOf(from)
@@ -117,6 +150,7 @@ export function MediaTab(): ReactElement {
   const [selectedIds, setSelectedIds] = useState<readonly string[]>([])
   // The file a Shift press measures its run from.
   const [anchorId, setAnchorId] = useState<string | undefined>(undefined)
+  const [focusedId, setFocusedId] = useState<string | undefined>(undefined)
   const [, setPictureCount] = useState(0)
 
   // Posters arrive after the row is first shown; each arrival draws the list again.
@@ -133,10 +167,16 @@ export function MediaTab(): ReactElement {
     const state = mediaStates[reference.id]
     if (selected.has(reference.id) && state !== undefined && 'info' in state) draggedSelection.push(reference.id)
   }
+  // Tab comes back to the file it left, or else to the first one picked, or else to the first one listed.
+  let tabStopId = focusedId !== undefined && shownIds.includes(focusedId) ? focusedId : shownIds.find((id) => selected.has(id))
+  tabStopId ??= shownIds[0]
 
   // A press decides what a drag from it takes: Shift picks the run from the last file pressed, Cmd adds or takes away one file,
   // and a plain press on a file that is not selected picks it alone. A plain press on a selected file keeps the selection, so all of it can be dragged.
   function press(mediaId: string, event: PointerEvent<HTMLElement>): void {
+    setFocusedId(mediaId)
+    // Once the keys are in the list, a click moves them to the file clicked.
+    if (event.currentTarget.parentElement?.contains(document.activeElement) === true) event.currentTarget.focus()
     if (event.shiftKey && anchorId !== undefined) {
       setSelectedIds(run(shownIds, anchorId, mediaId))
       return
@@ -154,6 +194,38 @@ export function MediaTab(): ReactElement {
     if (!hasModifier(event)) setSelectedIds([mediaId])
   }
 
+  // The keys of a list of files, as in the Finder: the arrows move and pick the file reached, with Shift they pick the run from the last file picked, and with Cmd they only move.
+  // Space adds the file in focus to the picked ones or takes it away; Return places the picked files at the playhead, as a drop on the canvas does.
+  function onListKeyDown(event: KeyboardEvent<HTMLUListElement>): void {
+    const option = event.target
+    const mediaId = option instanceof HTMLElement && option.getAttribute('role') === 'option' ? option.dataset.mediaId : undefined
+    // The keys of a button inside a file, such as Relink, stay its own.
+    if (mediaId === undefined) return
+    const index = shownIds.indexOf(mediaId)
+    const target = movedTo(event.key, index, shownIds.length, columnsOf(event.currentTarget))
+    if (event.key === 'Enter') {
+      session.actions.addMedia(selected.has(mediaId) ? draggedSelection : [mediaId])
+    } else if (event.key === ' ') {
+      setAnchorId(mediaId)
+      setSelectedIds(selected.has(mediaId) ? selectedIds.filter((id) => id !== mediaId) : [...selectedIds, mediaId])
+    } else if (target !== undefined) {
+      const targetId = shownIds[target] ?? mediaId
+      if (event.shiftKey) {
+        setSelectedIds(run(shownIds, anchorId ?? mediaId, targetId))
+      } else if (!event.metaKey) {
+        setAnchorId(targetId)
+        setSelectedIds([targetId])
+      }
+      setFocusedId(targetId)
+      event.currentTarget.querySelector<HTMLElement>(`[data-media-id="${CSS.escape(targetId)}"]`)?.focus()
+    } else {
+      return
+    }
+    // Handled here, the keys do not also play, step or reach the timeline.
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
   // A press on the empty part of the tab picks nothing.
   function pressOutside(event: PointerEvent<HTMLElement>): void {
     const isOnFile = event.target instanceof Element && event.target.closest('.library-item, .library-tools') !== null
@@ -169,7 +241,7 @@ export function MediaTab(): ReactElement {
         </button>
       </LibraryTools>
       {isEmpty && <p className="empty-state">Import video, audio or images, or drop files here.</p>}
-      <ul className={view === 'grid' ? 'library-list grid' : 'library-list'} aria-label="Media">
+      <ul className={view === 'grid' ? 'library-list grid' : 'library-list'} role="listbox" aria-multiselectable="true" aria-label="Media" onKeyDown={onListKeyDown}>
         {shown.map((reference) => (
           <MediaItem
             key={reference.id}
@@ -177,13 +249,14 @@ export function MediaTab(): ReactElement {
             state={mediaStates[reference.id]}
             preparation={preparation[reference.id]}
             isSelected={selected.has(reference.id)}
+            isTabStop={reference.id === tabStopId}
             draggedIds={selected.has(reference.id) ? draggedSelection : [reference.id]}
             onPress={press}
             onChoose={choose}
           />
         ))}
         {pending.map((path) => (
-          <li key={path} className="library-item pending" data-testid="media-pending">
+          <li key={path} className="library-item pending" role="option" aria-selected={false} aria-disabled="true" data-testid="media-pending">
             <div className="library-thumbnail" />
             <div className="library-text">
               <span className="library-name">{nameOf(path)}</span>

@@ -99,6 +99,18 @@
   text-align: center;
 }
 
+/* Preview mode: the canvas has the window to itself. The panels keep their sizes for when it ends. */
+.editor.previewing {
+  grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
+  grid-template-rows: minmax(0, 1fr) 0 0;
+}
+
+.editor.previewing > .sidebar,
+.editor.previewing > .splitter,
+.editor.previewing > .timeline-panel {
+  display: none;
+}
+
 .canvas-panel {
   grid-area: canvas;
   display: flex;
@@ -149,6 +161,17 @@
 
 .timecode.total {
   color: var(--text-secondary);
+}
+
+.canvas-zoom {
+  flex: none;
+  width: 88px;
+}
+
+.seek-bar {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--primary);
 }
 
 /* Beside very wide sidebars the canvas is narrow: the project length makes room so that no button is cut off. */

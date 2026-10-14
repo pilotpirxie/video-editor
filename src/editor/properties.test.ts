@@ -48,6 +48,41 @@ describe('canvas settings', () => {
     expect(setCanvasSize(sample(), { width: 10, height: 99_999 }).canvas).toMatchObject({ width: 160, height: 2160 })
   })
 
+  it('scales everything by the same amount when the canvas keeps its shape', () => {
+    const clip = videoClip('a', 0, 4 * SECOND, {
+      transform: { x: 480, y: 270, scaleX: 0.5, scaleY: 0.5, rotation: 30 },
+      keyframes: { x: [{ time: 0, value: 0, easing: 'linear' }], scaleY: [{ time: 0, value: 2, easing: 'hold' }], rotation: [{ time: 0, value: 45, easing: 'linear' }] },
+      effects: [{ type: 'border', width: 30, color: '#FFFFFF' }],
+    })
+    const project = { ...projectOf([track('t1', [clip])]), camera: [{ time: 0, duration: SECOND, easing: 'easeInOut' as const, x: 960, y: 0, scale: 2 }] }
+    const resized = setCanvasSize(project, { width: 1280, height: 720 })
+    expect(clipOf(resized, 'a')).toMatchObject({
+      transform: { x: 320, y: 180, rotation: 30 },
+      keyframes: { x: [{ value: 0 }], scaleY: [{ value: 4 / 3 }], rotation: [{ value: 45 }] },
+      effects: [{ width: 20 }],
+    })
+    const scaled = clipOf(resized, 'a')
+    expect(scaled.type === 'video' && scaled.transform.scaleX).toBeCloseTo(1 / 3)
+    expect(resized.camera).toEqual([{ time: 0, duration: SECOND, easing: 'easeInOut', x: 640, y: 0, scale: 2 }])
+    expect(reopened(resized)).toEqual(reopened(resized))
+  })
+
+  it('fits the whole picture into a canvas of another shape, centred', () => {
+    const blur: Clip = { id: 'blur', type: 'blur', start: 0, duration: SECOND, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, width: 200, height: 100, shape: 'rectangle', softEdge: 16, strength: 32 }
+    const resized = setCanvasSize(projectOf([track('t1', [blur])]), { width: 1080, height: 1920 })
+    const scale = 1080 / 1920
+    expect(clipOf(resized, 'blur')).toMatchObject({ transform: { x: 0, y: 960 - 540 * scale, scaleX: scale }, softEdge: 16 * scale, strength: 32 * scale })
+  })
+
+  it('leaves the members of a group to the group, so they land where the group takes them', () => {
+    const member = videoClip('member', 0, SECOND, { transform: { x: 100, y: 50, scaleX: 1, scaleY: 1, rotation: 0 }, effects: [{ type: 'roundedCorners', radius: 10 }] })
+    const project = projectOf([track('t1', [groupClip('group', 0, SECOND, [[member]], { transform: { x: 960, y: 540, scaleX: 1, scaleY: 1, rotation: 0 } })])])
+    const resized = setCanvasSize(project, { width: 960, height: 540 })
+    const group = clipOf(resized, 'group')
+    expect(group).toMatchObject({ transform: { x: 480, y: 270, scaleX: 0.5, scaleY: 0.5 } })
+    expect(group.type === 'group' && group.tracks[0]?.clips[0]).toEqual(member)
+  })
+
   it('sets the frame rate and reports no change when nothing changed', () => {
     const project = sample()
     expect(setFrameRate(project, { num: 25, den: 1 }).canvas.frameRate).toEqual({ num: 25, den: 1 })

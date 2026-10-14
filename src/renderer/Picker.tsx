@@ -148,6 +148,8 @@ type PickerProps = {
   choices: readonly Choice[]
   // Undefined means the selected clips do not agree on a value.
   value: string | undefined
+  // Shown instead of "Mixed" for a list that picks an action rather than a value.
+  placeholder?: string
   onPreview?(value: string): void
   onChoose(value: string): void
   // Closed without a choice: whatever was previewed is to be put back.
@@ -155,7 +157,7 @@ type PickerProps = {
 }
 
 // One value out of a list. It opens on the press, not on the release, and looks the same wherever it is used.
-export function Picker({ label, testId, choices, value, onPreview, onChoose, onClose }: PickerProps): ReactElement {
+export function Picker({ label, testId, choices, value, placeholder, onPreview, onChoose, onClose }: PickerProps): ReactElement {
   const buttonRef = useRef<HTMLButtonElement>(null)
   const [isOpen, setIsOpen] = useState(false)
   const shown = choices.find((choice) => choice.value === value)
@@ -189,7 +191,7 @@ export function Picker({ label, testId, choices, value, onPreview, onChoose, onC
         onPointerDown={onPointerDown}
         onKeyDown={onKeyDown}
       >
-        <span className="picker-value">{shown?.label ?? value ?? 'Mixed'}</span>
+        <span className="picker-value">{shown?.label ?? value ?? placeholder ?? 'Mixed'}</span>
         <Icon name="chevronDown" />
       </button>
       {isOpen && (

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { ANIMATION_NAMES, DEFAULT_ANIMATION, convertAnimations, setAnimation, takesAnimation } from '../editor/animations.js'
 import { CALLOUT_NAMES, setArrowStyle, setCalloutStyle } from '../editor/annotations.js'
+import { align, arrange, distribute, type AlignEdge, type ArrangePreset, type Arranged, type ArrangedItem, type DistributeAxis } from '../editor/arrange.js'
 import { deleteZoom, setZoom, type ZoomChanges } from '../editor/camera.js'
 import { freeTrackId, hasMedia, hasSource, isCroppable, isVisual, makesSound, nextTrackName } from '../editor/clips.js'
 import { cropFromValue } from '../editor/geometry.js'
@@ -22,11 +23,12 @@ import {
   sharedValue,
   type Fade,
   type KeyframeSet,
+  type PropertyValues,
 } from '../editor/properties.js'
 import { setShapeStyle, type ShapeStyle } from '../editor/shapes.js'
-import { setTextStyle, type TextStyle } from '../editor/text.js'
+import { missingFonts, setTextStyle, type TextStyle } from '../editor/text.js'
 import { DEFAULT_TRANSITION, TRANSITION_NAMES, setTransition, type TransitionEdge } from '../editor/transitions.js'
-import type { MediaStates } from '../engine/resolve.js'
+import { groupFrameAt, type MediaStates } from '../engine/resolve.js'
 import { arrowSize } from '../engine/annotations.js'
 import { measureText } from '../engine/text.js'
 import type { Size } from '../shared/exportPresets.js'
@@ -59,6 +61,7 @@ import {
 } from '../shared/project.js'
 import { FAST_SOUND_ABOVE_PERCENT, MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, PROJECT_FRAME_RATES, TICKS_PER_SECOND, frameDuration, type FrameRate } from '../shared/time.js'
 import { useEditorState, usePosition, useSession } from './context.js'
+import { shownClips, valuesInOpenTracks, type Shown } from './CanvasOverlay.js'
 import { installedFontFamilies } from './fonts.js'
 import { Icon, IconButton, type IconName } from './icons.js'
 import { NumberField } from './NumberField.js'
@@ -128,6 +131,31 @@ const ALIGNMENTS: readonly { align: TextAlign; icon: IconName; label: string }[]
   { align: 'left', icon: 'alignLeft', label: 'Align left' },
   { align: 'center', icon: 'alignCenter', label: 'Align centre' },
   { align: 'right', icon: 'alignRight', label: 'Align right' },
+]
+const ARRANGE_GAP_KEY = 'arrange-gap'
+const ARRANGE_FILL_KEY = 'arrange-fill'
+const DEFAULT_GAP = 0
+const GAPS = [0, 10, 20, 40, 80]
+const ALIGN_EDGES: readonly { edge: AlignEdge; icon: IconName; label: string }[] = [
+  { edge: 'left', icon: 'edgeLeft', label: 'Align left edges' },
+  { edge: 'center', icon: 'edgeCenter', label: 'Align centres across' },
+  { edge: 'right', icon: 'edgeRight', label: 'Align right edges' },
+  { edge: 'top', icon: 'edgeTop', label: 'Align top edges' },
+  { edge: 'middle', icon: 'edgeMiddle', label: 'Align middles' },
+  { edge: 'bottom', icon: 'edgeBottom', label: 'Align bottom edges' },
+]
+const DISTRIBUTE_AXES: readonly { axis: DistributeAxis; icon: IconName; label: string }[] = [
+  { axis: 'across', icon: 'spreadAcross', label: 'Space evenly across' },
+  { axis: 'down', icon: 'spreadDown', label: 'Space evenly down' },
+]
+const ARRANGE_PRESETS: readonly { value: ArrangePreset; label: string }[] = [
+  { value: 'grid2', label: '2 × 2 grid' },
+  { value: 'grid3', label: '3 × 3 grid' },
+  { value: 'onePlusThree', label: '1 large + 3 small' },
+  { value: 'pipTopLeft', label: 'Picture in picture, top left' },
+  { value: 'pipTopRight', label: 'Picture in picture, top right' },
+  { value: 'pipBottomLeft', label: 'Picture in picture, bottom left' },
+  { value: 'pipBottomRight', label: 'Picture in picture, bottom right' },
 ]
 const KEYFRAME_NAMES: Record<KeyframeSet, string> = { position: 'Position', size: 'Size', rotation: 'Rotation', opacity: 'Opacity', crop: 'Crop', volume: 'Volume' }
 
@@ -228,6 +256,24 @@ export function ColorField({ label, testId, command, value, edit }: ColorFieldPr
   )
 }
 
+function remember(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch (error) {
+    logError('Could not remember a setting of the layout tools', error, { key })
+  }
+}
+
+function storedGap(): number {
+  const stored = Number(localStorage.getItem(ARRANGE_GAP_KEY) ?? DEFAULT_GAP)
+  return Number.isFinite(stored) && stored >= 0 ? stored : DEFAULT_GAP
+}
+
+function cropValues(crop: Crop | undefined): PropertyValues {
+  if (crop === undefined) return {}
+  return { cropLeft: crop.left, cropTop: crop.top, cropRight: crop.right, cropBottom: crop.bottom }
+}
+
 // Fields that belong together, under a title that folds them away. What is folded stays folded the next time the editor opens.
 export function Group({ title, icon, actions, children }: GroupProps): ReactElement {
   const storageKey = `group-${title}`
@@ -260,32 +306,26 @@ export function Group({ title, icon, actions, children }: GroupProps): ReactElem
 function ProjectSettings(): ReactElement {
   const { store } = useSession()
   const canvas = useEditorState((state) => state.project.canvas)
+  // The picture is fitted into every new size, so a new shape typed one side at a time would shrink it twice; linked, both sides change in one step.
+  const [keepsAspect, setKeepsAspect] = useState(true)
 
   function onFrameRate(key: string): void {
     const chosen = PROJECT_FRAME_RATES.find((rate) => rateKey(rate) === key)
     if (chosen !== undefined) store.apply('Change Frame Rate', (project) => setFrameRate(project, chosen))
   }
 
+  function setSide(side: 'width' | 'height'): (value: number) => Edit {
+    return (value) => (project) => {
+      const { width, height } = project.canvas
+      if (side === 'width') return setCanvasSize(project, { width: value, height: keepsAspect ? (value * height) / width : height })
+      return setCanvasSize(project, { width: keepsAspect ? (value * width) / height : width, height: value })
+    }
+  }
+
   return (
-    <Group title="Project" icon="film">
-      <EditField
-        label="Width"
-        testId="canvas-width"
-        command="Change Canvas Size"
-        value={canvas.width}
-        min={MIN_CANVAS.width}
-        max={MAX_CANVAS.width}
-        edit={(width) => (project) => setCanvasSize(project, { width, height: project.canvas.height })}
-      />
-      <EditField
-        label="Height"
-        testId="canvas-height"
-        command="Change Canvas Size"
-        value={canvas.height}
-        min={MIN_CANVAS.height}
-        max={MAX_CANVAS.height}
-        edit={(height) => (project) => setCanvasSize(project, { width: project.canvas.width, height })}
-      />
+    <Group title="Project" icon="film" actions={<IconButton icon="link" label="Keep the aspect ratio" testId="canvas-aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />}>
+      <EditField label="Width" testId="canvas-width" command="Change Canvas Size" value={canvas.width} min={MIN_CANVAS.width} max={MAX_CANVAS.width} edit={setSide('width')} />
+      <EditField label="Height" testId="canvas-height" command="Change Canvas Size" value={canvas.height} min={MIN_CANVAS.height} max={MAX_CANVAS.height} edit={setSide('height')} />
       <div className="labelled">
         <span className="field-label">Frame rate</span>
         <Picker
@@ -488,6 +528,8 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
 
   // Before the list has arrived, and for a font this Mac does not have, the fonts in use are still offered.
   const families = [...new Set([...clips.map((clip) => clip.font.family), ...installed])].sort((a, b) => a.localeCompare(b))
+  // Until the list has arrived nothing is known to be missing.
+  const missing = installed.length === 0 ? [] : missingFonts(clips, installed)
   return (
     <>
       <label className="labelled">
@@ -512,12 +554,17 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
         <Picker
           label="Font"
           testId="text-font"
-          choices={families.map((name) => ({ value: name, label: name }))}
+          choices={families.map((name) => ({ value: name, label: missing.includes(name) ? `${name} (not installed)` : name }))}
           value={family}
           onPreview={tryFont}
           onChoose={chooseFont}
           onClose={putFontBack}
         />
+        {missing.length > 0 && (
+          <p className="hint missing-font" data-testid="text-font-missing">
+            <span className="badge warning">Missing</span> {missing.join(', ')} {missing.length === 1 ? 'is' : 'are'} not installed on this Mac and shown in the system font. The name is kept for Macs that have it.
+          </p>
+        )}
       </div>
       <EditField
         label="Size"
@@ -1016,6 +1063,128 @@ type SwitchFieldProps = {
   onSwitch(isOn: boolean): void
 }
 
+// Ready-made places for the selected clips, worked out from where the canvas shows them at the playhead, also inside an open group.
+// They are read when a button is pressed, so nothing is worked out while the playhead moves.
+function LayoutFields({ clips }: { clips: readonly VisualClip[] }): ReactElement {
+  const { store, transport } = useSession()
+  const [gap, setGap] = useState(storedGap)
+  const [isFill, setIsFill] = useState(() => localStorage.getItem(ARRANGE_FILL_KEY) === 'fill')
+  const gapAtStartRef = useRef(gap)
+  const isTryingRef = useRef(false)
+
+  function rememberGap(next: number): void {
+    setGap(next)
+    remember(ARRANGE_GAP_KEY, String(next))
+  }
+
+  function chooseFill(next: boolean): void {
+    setIsFill(next)
+    remember(ARRANGE_FILL_KEY, next ? 'fill' : 'fit')
+  }
+
+  function placing(place: (items: readonly ArrangedItem[], canvas: Size) => Map<string, Arranged>): Edit {
+    const state = store.getState()
+    const time = transport.position().time
+    const wholeTime = time + (state.scope?.offset ?? 0)
+    const openFrame = groupFrameAt(state.wholeProject, state.openGroups, wholeTime)
+    const shown = shownClips(state.wholeProject, state.mediaStates, wholeTime, { project: state.project, time, groups: state.openGroups, frame: openFrame })
+    // In the order the clips were selected, which is the order the cells are filled in.
+    const chosen: Shown[] = []
+    for (const clip of clips) {
+      const item = shown.find((candidate) => candidate.clipId === clip.id)
+      if (item !== undefined) chosen.push(item)
+    }
+    const items: ArrangedItem[] = []
+    for (const item of chosen) {
+      const arranged: ArrangedItem = { id: item.clipId, box: item.box, place: { x: item.transform.x, y: item.transform.y }, scaleX: item.transform.scaleX, scaleY: item.transform.scaleY }
+      if (item.kind === 'picture') arranged.natural = item.natural
+      items.push(arranged)
+    }
+    const placed = place(items, state.project.canvas)
+    return (project) => {
+      let edited = project
+      for (const item of chosen) {
+        const arranged = placed.get(item.clipId)
+        if (arranged === undefined) continue
+        const { crop, ...transform } = arranged
+        const values = { ...valuesInOpenTracks(state.openGroups, openFrame, item, transform), ...cropValues(crop) }
+        edited = setProperties(edited, [item.clipId], values, time)
+      }
+      return edited
+    }
+  }
+
+  // The layout under the pointer, or reached with the arrow keys, is shown on the canvas at once; only choosing it makes it an undo step.
+  function tryPreset(chosen: string): void {
+    const preset = ARRANGE_PRESETS.find((option) => option.value === chosen)?.value
+    if (preset === undefined) return
+    // Each layout is worked out from the clips as they were before any was tried, so a crop that fills a cell never adds to the last one tried.
+    if (isTryingRef.current) store.cancel()
+    store.begin('Arrange Clips')
+    store.update(placing((items, canvas) => arrange(items, preset, canvas, { gap, isFill })))
+    isTryingRef.current = true
+  }
+
+  function choosePreset(chosen: string): void {
+    tryPreset(chosen)
+    isTryingRef.current = false
+    store.commit()
+  }
+
+  function putBack(): void {
+    if (isTryingRef.current) store.cancel()
+    isTryingRef.current = false
+  }
+
+  return (
+    <>
+      <div className="labelled">
+        <span className="field-label">Align</span>
+        <div className="segmented wide" role="group" aria-label="Align">
+          {ALIGN_EDGES.map(({ edge, icon, label }) => (
+            <IconButton key={edge} icon={icon} label={label} testId={`align-${edge}`} onClick={() => store.apply('Align Clips', placing((items, canvas) => align(items, edge, canvas)))} />
+          ))}
+        </div>
+      </div>
+      <div className="labelled">
+        <span className="field-label">Distribute</span>
+        <div className="segmented wide" role="group" aria-label="Distribute">
+          {DISTRIBUTE_AXES.map(({ axis, icon, label }) => (
+            <IconButton key={axis} icon={icon} label={label} testId={`distribute-${axis}`} isDisabled={clips.length < 3} onClick={() => store.apply('Distribute Clips', placing((items) => distribute(items, axis)))} />
+          ))}
+        </div>
+      </div>
+      <NumberField
+        label="Gap"
+        testId="arrange-gap"
+        value={gap}
+        min={0}
+        max={MAX_POSITION}
+        presets={GAPS}
+        onBegin={() => (gapAtStartRef.current = gap)}
+        onChange={rememberGap}
+        onCommit={() => undefined}
+        onCancel={() => rememberGap(gapAtStartRef.current)}
+      />
+      <div className="labelled">
+        <span className="field-label">In each cell</span>
+        <div className="segmented wide" role="group" aria-label="In each cell">
+          <button type="button" className="button" data-testid="arrange-fit" aria-pressed={!isFill} onClick={() => chooseFill(false)}>
+            Fit
+          </button>
+          <button type="button" className="button" data-testid="arrange-fill" aria-pressed={isFill} onClick={() => chooseFill(true)}>
+            Fill
+          </button>
+        </div>
+      </div>
+      <div className="labelled">
+        <span className="field-label">Arrange</span>
+        <Picker label="Arrange" testId="arrange-preset" choices={ARRANGE_PRESETS} value={undefined} placeholder="Choose a layout" onPreview={tryPreset} onChoose={choosePreset} onClose={putBack} />
+      </div>
+    </>
+  )
+}
+
 function SwitchField({ label, testId, isOn, onSwitch }: SwitchFieldProps): ReactElement {
   return (
     <label className="check-field">
@@ -1112,6 +1281,9 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const highlights = clips.filter(isHighlight)
   const isPixelated = blurs.length > 0 && blurs.every((clip) => clip.isPixelated === true)
   const isSpotlight = highlights.length > 0 && highlights.every((clip) => clip.isSpotlight === true)
+  // A typewriter stays an animation: only the other presets have keyframes to become.
+  const animations = visual.flatMap((clip) => [clip.animationIn, clip.animationOut])
+  const canConvertAnimations = animations.some((animation) => animation !== undefined && animation.type !== 'typewriter')
 
   function styleShapes(label: string, style: ShapeStyle): void {
     store.apply(label, (project) => setShapeStyle(project, ids, style))
@@ -1333,6 +1505,11 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
           />
         </Group>
       )}
+      {visual.length > 0 && (
+        <Group title="Layout" icon="grid">
+          <LayoutFields clips={visual} />
+        </Group>
+      )}
       {croppable.length > 0 && (
         <Group title="Crop" icon="crop">
           {CROP_SIDES.map(({ side, property, label }) => (
@@ -1449,7 +1626,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
             type="button"
             className="button"
             data-testid="animation-convert"
-            disabled={!visual.some((clip) => [clip.animationIn, clip.animationOut].some((animation) => animation !== undefined && animation.type !== 'typewriter'))}
+            disabled={!canConvertAnimations}
             onClick={() => store.apply('Convert Animation to Keyframes', (project) => convertAnimations(project, ids))}
           >
             Convert to keyframes

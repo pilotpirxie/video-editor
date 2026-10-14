@@ -2,12 +2,12 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type Poin
 import { deleteZoom, setZoom } from '../editor/camera.js'
 import { locateClip } from '../editor/clips.js'
 import { changeKeyframe, removeKeyframe } from '../editor/properties.js'
-import { shortcutFor, shortcutHint } from '../editor/shortcuts.js'
+import { actionFor } from '../editor/shortcuts.js'
 import { TRACK_HEIGHT } from '../editor/timelineView.js'
 import { addTrack, deleteTrack, moveTrack, renameTrack, setTrackFlag, type TrackFlag } from '../editor/tracks.js'
 import { projectDuration, type Easing, type Track } from '../shared/project.js'
 import { frameDuration } from '../shared/time.js'
-import { useEditorState, useSession } from './context.js'
+import { useEditorState, useSession, useShortcutHint } from './context.js'
 import { Icon, IconButton, type IconName } from './icons.js'
 import { PopupMenu, type MenuItem } from './Menu.js'
 import { createTimelineController, type MenuTarget, type TimelineController } from './timelineController.js'
@@ -160,6 +160,10 @@ function GroupPath({ openGroups }: { openGroups: readonly string[] }): ReactElem
 export function Timeline(): ReactElement {
   const session = useSession()
   const { store, actions } = session
+  const zoomOutKeys = useShortcutHint('timeline-zoom-out')
+  const zoomFitKeys = useShortcutHint('timeline-zoom-fit')
+  const zoomInKeys = useShortcutHint('timeline-zoom-in')
+  const splitKeys = useShortcutHint('split')
   const tracks = useEditorState((state) => state.project.tracks)
   const isSnapping = useEditorState((state) => state.isSnapping)
   const hasSelection = useEditorState((state) => state.selection.length > 0)
@@ -191,7 +195,7 @@ export function Timeline(): ReactElement {
   useEffect(() => {
     function onKeyDown(event: globalThis.KeyboardEvent): void {
       if (!isKeyForTheEditor(event)) return
-      const shortcut = shortcutFor(event)
+      const shortcut = actionFor(session.shortcuts.get(), event)
       if (shortcut === 'timeline-zoom-in') controllerRef.current?.zoomBy(ZOOM_STEP)
       else if (shortcut === 'timeline-zoom-out') controllerRef.current?.zoomBy(1 / ZOOM_STEP)
       else if (shortcut === 'timeline-zoom-fit') controllerRef.current?.zoomToFit()
@@ -200,7 +204,7 @@ export function Timeline(): ReactElement {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [session])
 
   // Worked out only while the menu is open: it looks at every selected clip.
   const canSeparateAudio = menu !== undefined && actions.canSeparateAudio()
@@ -237,13 +241,13 @@ export function Timeline(): ReactElement {
     <div className="timeline">
       <div className="timeline-toolbar" role="toolbar" aria-label="Timeline tools">
         <IconButton icon="plus" label="Add track" testId="add-track" onClick={actions.addTrack} />
-        <IconButton icon="scissors" label="Split at playhead" testId="split" shortcut="⌘T" onClick={actions.split} />
+        <IconButton icon="scissors" label="Split at playhead" testId="split" shortcut={splitKeys} onClick={actions.split} />
         <IconButton icon="magnet" label="Snapping" testId="snapping" isPressed={isSnapping} onClick={() => store.setSnapping(!isSnapping)} />
         {openGroups.length > 0 && <GroupPath openGroups={openGroups} />}
         <span className="spacer" />
-        <IconButton icon="minus" label="Zoom out" testId="timeline-zoom-out" shortcut={shortcutHint('timeline-zoom-out')} onClick={() => controllerRef.current?.zoomBy(1 / ZOOM_STEP)} />
-        <IconButton icon="fit" label="Show the whole project" testId="timeline-zoom-fit" shortcut={shortcutHint('timeline-zoom-fit')} onClick={() => controllerRef.current?.zoomToFit()} />
-        <IconButton icon="plus" label="Zoom in" testId="timeline-zoom-in" shortcut={shortcutHint('timeline-zoom-in')} onClick={() => controllerRef.current?.zoomBy(ZOOM_STEP)} />
+        <IconButton icon="minus" label="Zoom out" testId="timeline-zoom-out" shortcut={zoomOutKeys} onClick={() => controllerRef.current?.zoomBy(1 / ZOOM_STEP)} />
+        <IconButton icon="fit" label="Show the whole project" testId="timeline-zoom-fit" shortcut={zoomFitKeys} onClick={() => controllerRef.current?.zoomToFit()} />
+        <IconButton icon="plus" label="Zoom in" testId="timeline-zoom-in" shortcut={zoomInKeys} onClick={() => controllerRef.current?.zoomBy(ZOOM_STEP)} />
         <button
           type="button"
           className="button primary"

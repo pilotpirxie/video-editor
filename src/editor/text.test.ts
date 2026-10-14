@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { SECOND, clipIds, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
-import { addText, setTextStyle } from './text.js'
+import { SECOND, clipIds, clipOf, groupClip, projectOf, reopened, textClip, track, videoClip } from '../../test/fixtures.js'
+import { allClips } from './clips.js'
+import { addText, missingFonts, setTextStyle } from './text.js'
 
 const NEW_TRACK = { id: 'titles', name: 'Track 2' }
 
@@ -120,5 +121,17 @@ describe('setTextStyle', () => {
     expect(clipOf(setTextStyle(boxed, ['title'], { boxWidth: 0 }), 'title')).toMatchObject({ boxWidth: 1 })
     expect(clipOf(reopened(setTextStyle(boxed, ['title'], { boxWidth: 'auto' })), 'title')).not.toHaveProperty('boxWidth')
     expect(setTextStyle(project, ['title'], { boxWidth: 'auto' })).toBe(project)
+  })
+})
+
+describe('missingFonts', () => {
+  it('names each font the words use that is not installed, once, also inside groups, whatever its case', () => {
+    const inGroup = textClip('inner', 0, SECOND, { font: { family: 'Brand Sans', size: 40 } })
+    const project = projectOf([
+      track('t1', [textClip('a', 0, SECOND, { font: { family: 'helvetica neue', size: 40 } }), textClip('b', SECOND, SECOND, { font: { family: 'Brand Sans', size: 40 } })]),
+      track('t2', [groupClip('g', 0, SECOND, [[inGroup]]), textClip('c', SECOND, SECOND, { font: { family: 'Abril', size: 40 } })]),
+    ])
+    expect(missingFonts(allClips(project.tracks), ['Helvetica Neue', 'Menlo'])).toEqual(['Abril', 'Brand Sans'])
+    expect(missingFonts(allClips(project.tracks), ['Helvetica Neue', 'Brand Sans', 'Abril'])).toEqual([])
   })
 })

@@ -224,7 +224,7 @@ A media clip can never run past the end of its source; trimming stops there. Gra
 **Save and open**
 
 - A project is one JSON file with stable, sorted keys, so diffs stay readable. Media is referenced in place (as in Camtasia), stored both as an absolute path and relative to the project file.
-- Save, Save As, Open, Open Recent. "Package project" copies all media into a folder next to the project.
+- Save, Save As, Open, Open Recent.
 - Saves are atomic: a crash mid-save never damages the previous file.
 - Autosave writes a recovery file every 10 s when something changed; after a crash, the next launch offers to restore it.
 - Missing media is badged on open; relinking one file also finds others in the same folder.
@@ -419,7 +419,7 @@ Six risks get a spike in the first two weeks, before the editor is built on top 
 - No screen or voice recording and no subtitles.
 - Free clip placement with gaps; any clip on any track; groups supported.
 - Speed range 0.25× to 100×; audio is muted by default above 4×.
-- Media is referenced in place on local drives; "Package project" copies it.
+- Media is referenced in place on local drives; there is no packaging.
 - HDR is tone-mapped to standard range; there is no HDR export.
 - System fonts only. A missing font is substituted, with a warning, and its name is kept for Macs that have it.
 - Dark theme only in v1; shortcuts are Camtasia-like and customisable.
@@ -509,7 +509,7 @@ Six risks get a spike in the first two weeks, before the editor is built on top 
 • T-77 Canvas zoom and full-screen preview — fit, 50, 100, 200% and pinch; full-screen preview with transport.
 • T-78 Multiple windows — one project per window, several open; the same media is safe in several projects.
 • T-79 Change canvas size — resizing the canvas rescales all clips proportionally; undoable.
-• T-80 Package project — copies all media next to the project with relative paths; opens on another Mac.
+• T-80 Package project — permanently skipped (2026-10-14): not needed; media stays referenced in place.
 • T-81 Custom shortcuts — Camtasia defaults, rebindable in Settings, conflicts flagged.
 5. Polish
 • T-82 Responsiveness audit — every §3 budget measured on the 4 GB M1 setup and every failure fixed; no UI task over 50 ms.

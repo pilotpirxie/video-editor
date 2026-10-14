@@ -75,9 +75,14 @@ async function drawAt(context: RenderContext, time: number, output: Size, qualit
 }
 
 function roundedTotals(clock: StageClock): Record<Stage, number> {
-  const rounded = { ...clock.totals() }
-  for (const stage of Object.keys(rounded) as Stage[]) rounded[stage] = Math.round(rounded[stage])
-  return rounded
+  const totals = clock.totals()
+  return {
+    fetch: Math.round(totals.fetch),
+    render: Math.round(totals.render),
+    readback: Math.round(totals.readback),
+    mix: Math.round(totals.mix),
+    write: Math.round(totals.write),
+  }
 }
 
 // Hands an encoder all that `write` produces; on any failure the unfinished file is removed and the error says where on the timeline it stopped.

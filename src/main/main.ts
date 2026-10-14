@@ -29,9 +29,10 @@ import type {
   MediaProcessCommand,
   MediaProcessReport,
   MenuAction,
-  NextDocument,
+  MenuShortcuts,
   UnsavedChoice,
 } from '../shared/mediaProtocol.js'
+import { DEFAULT_BINDINGS, MENU_SHORTCUT_ACTIONS, menuShortcutsOf } from '../editor/shortcuts.js'
 import { startMemoryMonitor, type MemoryMonitor } from './memory.js'
 import { isProjectFrameRate } from '../shared/time.js'
 import {
@@ -39,7 +40,7 @@ import {
   discardRecoveredWork,
   discardRecovery,
   exportSnapshotPath,
-  findRecovery,
+  findRecoveries,
   newRecoveryPath,
   rememberProjectPath,
   type FoundRecovery,
@@ -80,6 +81,8 @@ const MEDIA_EXTENSIONS = [
   'jpg', 'jpeg', 'png', 'webp', 'gif', 'apng',
 ]
 const UNSAVED_CHOICES: readonly UnsavedChoice[] = ['save', 'discard', 'cancel']
+// A new window opens this far below and to the right of the one in front, so both can be seen.
+const CASCADE_PIXELS = 22
 
 type WindowMode = 'editor' | 'harness' | 'headless'
 
@@ -92,9 +95,14 @@ type Editor = {
 
 type AppState = {
   mediaProcess: UtilityProcess | undefined
-  editor: Editor | undefined
+  // One project per window.
+  editors: Editor[]
+  // The window used last, which the menu belongs to and which a menu command goes to when no window has the focus.
+  activeEditor: Editor | undefined
   harnessWindow: BrowserWindow | undefined
   exportWindow: BrowserWindow | undefined
+  // The window whose export is running: its dialog follows the export, so the window stays while it runs.
+  exportRequester: BrowserWindow | undefined
   jobListeners: Map<number, (event: JobEvent) => void>
   exportPathOverride: string | undefined
   // The file the last finished export wrote, for "Show in Finder".
@@ -106,6 +114,9 @@ type AppState = {
   isQuitting: boolean
   memory: MemoryMonitor | undefined
   versions: string[] | undefined
+  // Test runs open every window muted and in the background.
+  isUnattended: boolean
+  menuShortcuts: MenuShortcuts
 }
 
 class UsageError extends Error {}
@@ -218,10 +229,10 @@ function isDocumentState(value: unknown): value is DocumentState {
   return isLabel(undoLabel) && isLabel(redoLabel)
 }
 
-function isNextDocument(value: unknown): value is NextDocument {
-  if (typeof value !== 'object' || value === null || !('kind' in value)) return false
-  if (value.kind === 'new' || value.kind === 'close') return true
-  return value.kind === 'open' && 'path' in value && typeof value.path === 'string'
+function isMenuShortcuts(value: unknown): value is MenuShortcuts {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const known = new Set<string>(MENU_SHORTCUT_ACTIONS)
+  return Object.entries(value).every(([action, accelerator]) => known.has(action) && typeof accelerator === 'string')
 }
 
 function isVersionReport(value: unknown): value is MediaProcessReport {
@@ -292,8 +303,9 @@ function restartMediaProcess(state: AppState, uptimeMs: number): void {
     return
   }
   state.mediaProcess = launchMediaProcess(state)
-  const editor = state.editor
-  if (editor !== undefined && !editor.window.isDestroyed()) editor.window.webContents.reload()
+  for (const editor of state.editors) {
+    if (!editor.window.isDestroyed()) editor.window.webContents.reload()
+  }
 }
 
 function send(window: BrowserWindow, command: HostCommand): void {
@@ -303,12 +315,15 @@ function send(window: BrowserWindow, command: HostCommand): void {
 type WindowOptions = {
   mode: WindowMode
   isUnattended: boolean
+  // Where the top left corner goes; left out, the system places the window.
+  position?: { x: number; y: number }
 }
 
 function createWindow(state: AppState, options: WindowOptions): BrowserWindow {
   const { mode } = options
   const isHeadless = mode === 'headless'
   const window = new BrowserWindow({
+    ...options.position,
     width: WINDOW_SIZE.width,
     height: WINDOW_SIZE.height,
     minWidth: MIN_WINDOW_SIZE.width,
@@ -430,8 +445,10 @@ function startExportFor(state: AppState, requester: BrowserWindow, job: ExportJo
     if (event.type !== 'progress') window.destroy()
   })
   state.exportWindow = window
+  state.exportRequester = requester
   window.on('closed', () => {
     state.exportWindow = undefined
+    state.exportRequester = undefined
     void discardExportSnapshot(job.projectPath, state.recoveryDirectory)
   })
 }
@@ -446,7 +463,8 @@ function showDocument(state: AppState, editor: Editor): void {
   window.setTitle(titleOf(document))
   window.setRepresentedFilename(document.path ?? '')
   window.setDocumentEdited(documentState.isDirty)
-  buildEditorMenu(state)
+  // The menu shows the Undo and Redo of the window in front.
+  if (state.activeEditor === editor) buildEditorMenu(state)
 }
 
 function documentFor(state: AppState, projectPath: string | undefined): DocumentInfo {
@@ -459,23 +477,56 @@ function documentFor(state: AppState, projectPath: string | undefined): Document
   return document
 }
 
-async function replaceDocument(state: AppState, editor: Editor, next: NextDocument): Promise<void> {
+// The page has dealt with the unsaved changes, so the window closes without asking again.
+async function closeDocument(editor: Editor): Promise<void> {
   await discardRecovery(editor.document.recoveryPath)
   if (editor.window.isDestroyed()) return
-  if (next.kind === 'close') {
-    editor.isCloseConfirmed = true
-    editor.window.close()
-    return
-  }
-  editor.document = documentFor(state, next.kind === 'open' ? next.path : undefined)
+  editor.isCloseConfirmed = true
+  editor.window.close()
+}
+
+// An untitled window without changes is taken over by the project opened next, as Mac apps do.
+async function openInPlace(state: AppState, editor: Editor, projectPath: string): Promise<void> {
+  await discardRecovery(editor.document.recoveryPath)
+  if (editor.window.isDestroyed()) return
+  editor.document = documentFor(state, projectPath)
   editor.documentState = CLEAN_DOCUMENT
   showDocument(state, editor)
   editor.window.webContents.reload()
 }
 
+function bringForward(state: AppState, editor: Editor): void {
+  state.activeEditor = editor
+  buildEditorMenu(state)
+  if (!state.isUnattended) editor.window.focus()
+}
+
+// A project that is open already comes to the front. Otherwise it takes over the window it was opened from when that is untitled and unchanged, or opens in a window of its own.
+async function openProject(state: AppState, projectPath: string, from: Editor | undefined): Promise<void> {
+  const path = resolve(projectPath)
+  const shown = state.editors.find((editor) => editor.document.path === path)
+  if (shown !== undefined) {
+    bringForward(state, shown)
+    return
+  }
+  const isUntouched = from !== undefined && from.document.path === undefined && !from.documentState.isDirty
+  if (isUntouched) await openInPlace(state, from, path)
+  else openEditor(state, documentFor(state, path))
+}
+
+async function chooseAndOpen(state: AppState, from: Editor | undefined): Promise<void> {
+  const answer = state.dialogAnswers.openProject
+  if (answer !== undefined) {
+    await openProject(state, answer, from)
+    return
+  }
+  const options = { properties: ['openFile' as const, 'multiSelections' as const], filters: PROJECT_FILTERS }
+  const chosen = from === undefined ? await dialog.showOpenDialog(options) : await dialog.showOpenDialog(from.window, options)
+  for (const path of chosen.filePaths) await openProject(state, path, from)
+}
+
 function editorOf(state: AppState, sender: Electron.WebContents): Editor | undefined {
-  const editor = state.editor
-  return editor !== undefined && editor.window.webContents === sender ? editor : undefined
+  return state.editors.find((editor) => editor.window.webContents === sender)
 }
 
 async function askUnsavedChanges(state: AppState, editor: Editor): Promise<UnsavedChoice> {
@@ -558,9 +609,16 @@ function registerDocumentIpc(state: AppState): void {
     if (editor !== undefined) void discardRecoveredWork(editor.document.recoveryPath)
   })
 
-  ipcMain.on('replace-document', (event, next: unknown) => {
+  ipcMain.on('close-document', (event) => {
     const editor = editorOf(state, event.sender)
-    if (editor !== undefined && isNextDocument(next)) void replaceDocument(state, editor, next)
+    if (editor !== undefined) void closeDocument(editor)
+  })
+
+  // Every window sends the keys it was given; they are kept per Mac, so all windows send the same.
+  ipcMain.on('menu-shortcuts', (event, shortcuts: unknown) => {
+    if (editorOf(state, event.sender) === undefined || !isMenuShortcuts(shortcuts)) return
+    state.menuShortcuts = shortcuts
+    buildEditorMenu(state)
   })
 }
 
@@ -625,13 +683,27 @@ function buildHarnessMenu(state: AppState): void {
 }
 
 function buildEditorMenu(state: AppState): void {
-  const documentState = state.editor?.documentState ?? CLEAN_DOCUMENT
+  const documentState = state.activeEditor?.documentState ?? CLEAN_DOCUMENT
+
+  // A command goes to the window that has the focus, or else to the one used last.
+  function editorFor(window: Electron.BaseWindow | undefined): Editor | undefined {
+    return state.editors.find((editor) => editor.window === window) ?? state.activeEditor
+  }
+
+  function sendToEditor(action: MenuAction, window: Electron.BaseWindow | undefined): void {
+    const target = editorFor(window)
+    if (target !== undefined) send(target.window, { type: 'menu', action })
+  }
 
   function item(action: MenuAction, label: string, accelerator?: string): MenuItemConstructorOptions {
-    const click = (): void => {
-      if (state.editor !== undefined) send(state.editor.window, { type: 'menu', action })
-    }
+    const click: MenuItemConstructorOptions['click'] = (_item, window) => sendToEditor(action, window)
     return accelerator === undefined ? { id: action, label, click } : { id: action, label, accelerator, click }
+  }
+
+  // The keys of these commands can be changed. The menu shows them, but the page answers to them, so a single key never fires while a text field has the focus.
+  function rebindable(action: MenuAction, label: string): MenuItemConstructorOptions {
+    const accelerator = state.menuShortcuts[action]
+    return accelerator === undefined ? item(action, label) : { ...item(action, label, accelerator), registerAccelerator: false }
   }
 
   function withLabel(verb: string, label: string | undefined): string {
@@ -639,19 +711,34 @@ function buildEditorMenu(state: AppState): void {
   }
 
   const template: MenuItemConstructorOptions[] = [
-    { role: 'appMenu' },
+    {
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        item('settings', 'Settings…', 'CmdOrCtrl+,'),
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
     {
       label: 'File',
       submenu: [
-        item('new', 'New Project', 'CmdOrCtrl+N'),
-        item('open-project', 'Open…', 'CmdOrCtrl+O'),
+        { id: 'new', label: 'New Project', accelerator: 'CmdOrCtrl+N', click: () => openEditor(state, documentFor(state, undefined)) },
+        { id: 'open-project', label: 'Open…', accelerator: 'CmdOrCtrl+O', click: (_item, window) => void chooseAndOpen(state, editorFor(window)) },
         { label: 'Open Recent', role: 'recentDocuments', submenu: [{ label: 'Clear Menu', role: 'clearRecentDocuments' }] },
         { type: 'separator' },
         item('save', 'Save', 'CmdOrCtrl+S'),
         item('save-as', 'Save As…', 'Shift+CmdOrCtrl+S'),
         { type: 'separator' },
-        item('import', 'Import Media…', 'CmdOrCtrl+I'),
-        item('export', 'Export…', 'CmdOrCtrl+E'),
+        rebindable('import', 'Import Media…'),
+        rebindable('export', 'Export…'),
         { type: 'separator' },
         { role: 'close' },
       ],
@@ -665,14 +752,14 @@ function buildEditorMenu(state: AppState): void {
         { role: 'cut' },
         { role: 'copy' },
         { role: 'paste' },
-        item('duplicate', 'Duplicate', 'CmdOrCtrl+D'),
-        item('delete', 'Delete'),
-        item('ripple-delete', 'Ripple Delete'),
+        rebindable('duplicate', 'Duplicate'),
+        rebindable('delete', 'Delete'),
+        rebindable('ripple-delete', 'Ripple Delete'),
         { type: 'separator' },
-        item('split', 'Split at Playhead', 'CmdOrCtrl+T'),
-        item('split-all', 'Split All Tracks', 'Shift+CmdOrCtrl+T'),
-        item('group', 'Group', 'CmdOrCtrl+G'),
-        item('ungroup', 'Ungroup', 'CmdOrCtrl+U'),
+        rebindable('split', 'Split at Playhead'),
+        rebindable('split-all', 'Split All Tracks'),
+        rebindable('group', 'Group'),
+        rebindable('ungroup', 'Ungroup'),
         { type: 'separator' },
         item('select-all', 'Select All', 'CmdOrCtrl+A'),
         item('deselect-all', 'Deselect All', 'Shift+CmdOrCtrl+A'),
@@ -684,6 +771,7 @@ function buildEditorMenu(state: AppState): void {
         item('toggle-library', 'Toggle Library'),
         item('toggle-properties', 'Toggle Properties'),
         item('toggle-timeline', 'Toggle Timeline'),
+        rebindable('preview-mode', 'Preview Mode'),
         { type: 'separator' },
         { role: 'reload' },
         { role: 'forceReload' },
@@ -713,12 +801,12 @@ function openHarness(state: AppState, projectPath: string | undefined, isUnatten
   return window
 }
 
-async function shouldRestore(state: AppState, found: FoundRecovery): Promise<boolean> {
+async function shouldRestore(state: AppState, found: readonly FoundRecovery[]): Promise<boolean> {
   if (state.dialogAnswers.restore !== undefined) return state.dialogAnswers.restore
-  const name = found.projectPath === undefined ? UNTITLED : basename(found.projectPath)
+  const names = found.map((each) => `"${each.projectPath === undefined ? UNTITLED : basename(each.projectPath)}"`).join(', ')
   const answer = await dialog.showMessageBox({
     type: 'question',
-    message: `The editor closed unexpectedly while "${name}" had unsaved changes.`,
+    message: found.length === 1 ? `The editor closed unexpectedly while ${names} had unsaved changes.` : `The editor closed unexpectedly while ${found.length} projects had unsaved changes: ${names}.`,
     detail: 'Restore brings back your work as it was at most 10 seconds before the editor closed.',
     buttons: ['Restore', 'Discard'],
     defaultId: 0,
@@ -727,29 +815,45 @@ async function shouldRestore(state: AppState, found: FoundRecovery): Promise<boo
   return answer.response === 0
 }
 
-async function firstDocument(state: AppState, projectPath: string | undefined): Promise<DocumentInfo> {
-  const found = await findRecovery(state.recoveryDirectory)
-  if (found === undefined) return documentFor(state, projectPath)
-  if (await shouldRestore(state, found)) {
-    return { path: found.projectPath, loadFrom: found.recoveryPath, recoveryPath: found.recoveryPath, exportSnapshotPath: exportSnapshotPath(found.recoveryPath), hasSmallMemory: totalmem() <= SMALL_MEMORY_BYTES }
-  }
-  await discardRecovery(found.recoveryPath)
-  return documentFor(state, projectPath)
+function recoveredDocument(found: FoundRecovery): DocumentInfo {
+  return { path: found.projectPath, loadFrom: found.recoveryPath, recoveryPath: found.recoveryPath, exportSnapshotPath: exportSnapshotPath(found.recoveryPath), hasSmallMemory: totalmem() <= SMALL_MEMORY_BYTES }
 }
 
-async function openEditor(state: AppState, projectPath: string | undefined, isUnattended: boolean): Promise<BrowserWindow> {
-  const document = await firstDocument(state, projectPath)
-  const window = createWindow(state, { mode: 'editor', isUnattended })
+// The documents the first windows show: the work of every window that had unsaved changes when the editor closed, or else the project asked for.
+async function firstDocuments(state: AppState, projectPath: string | undefined): Promise<DocumentInfo[]> {
+  const found = await findRecoveries(state.recoveryDirectory)
+  if (found.length > 0 && (await shouldRestore(state, found))) {
+    const restored = found.map(recoveredDocument)
+    const isRestored = restored.some((document) => document.path === projectPath)
+    return projectPath === undefined || isRestored ? restored : [...restored, documentFor(state, projectPath)]
+  }
+  for (const each of found) await discardRecovery(each.recoveryPath)
+  return [documentFor(state, projectPath)]
+}
+
+function openEditor(state: AppState, document: DocumentInfo): BrowserWindow {
+  const front = state.activeEditor?.window
+  let position: WindowOptions['position']
+  if (front !== undefined && !front.isDestroyed()) {
+    const [left = 0, top = 0] = front.getPosition()
+    position = { x: left + CASCADE_PIXELS, y: top + CASCADE_PIXELS }
+  }
+  const window = createWindow(state, { mode: 'editor', isUnattended: state.isUnattended, position })
   const editor: Editor = { window, document, documentState: CLEAN_DOCUMENT, isCloseConfirmed: false }
-  state.editor = editor
+  state.editors.push(editor)
+  state.activeEditor = editor
   // The window is named after its document, not after the page it shows.
   window.on('page-title-updated', (event) => event.preventDefault())
+  window.on('focus', () => {
+    state.activeEditor = editor
+    buildEditorMenu(state)
+  })
   showDocument(state, editor)
 
   // A document with unsaved changes closes only after the page has asked the user; a crashed page cannot ask.
   // While it exports, the window stays, as one with a sheet does: its dialog is the only place to follow the export or to stop it.
   window.on('close', (event) => {
-    const isExporting = state.exportWindow !== undefined
+    const isExporting = state.exportRequester === window
     const hasNothingToAsk = editor.isCloseConfirmed || !editor.documentState.isDirty
     const canCloseNow = window.webContents.isCrashed() || (!isExporting && hasNothingToAsk)
     if (canCloseNow) return
@@ -757,15 +861,26 @@ async function openEditor(state: AppState, projectPath: string | undefined, isUn
     // A close that is refused calls off the quit it may have been part of.
     state.isQuitting = false
     if (!isExporting) send(window, { type: 'menu', action: 'close' })
-    else if (!isUnattended) shell.beep()
+    else if (!state.isUnattended) shell.beep()
   })
   // For the same reason an export does not outlive the page that started it: a page that loads again has forgotten it.
-  window.webContents.on('did-start-loading', () => state.exportWindow?.destroy())
+  window.webContents.on('did-start-loading', () => {
+    if (state.exportRequester === window) state.exportWindow?.destroy()
+  })
   window.on('closed', () => {
-    state.editor = undefined
+    state.editors = state.editors.filter((other) => other !== editor)
+    if (state.activeEditor === editor) state.activeEditor = state.editors.at(-1)
     if (!editor.documentState.isDirty || editor.isCloseConfirmed) void discardRecovery(editor.document.recoveryPath)
+    if (state.activeEditor !== undefined) buildEditorMenu(state)
   })
   return window
+}
+
+async function openFirstEditors(state: AppState, projectPath: string | undefined): Promise<BrowserWindow> {
+  const [first, ...others] = await firstDocuments(state, projectPath)
+  const firstWindow = openEditor(state, first ?? documentFor(state, projectPath))
+  for (const document of others) openEditor(state, document)
+  return firstWindow
 }
 
 type UiTestPaths = {
@@ -778,7 +893,8 @@ async function runCliUiTest(state: AppState, scenario: string, paths: UiTestPath
   try {
     // A recovery file can only be there because the test left one on purpose, so it is restored without asking.
     state.dialogAnswers.restore = true
-    const window = await openEditor(state, paths.projectPath, true)
+    state.isUnattended = true
+    const window = await openFirstEditors(state, paths.projectPath)
     const { outputDirectory, mediaDirectory } = paths
     const report = await runUiTest(window, { scenario, outputDirectory, mediaDirectory, answers: state.dialogAnswers })
     await finish(state, report)
@@ -817,18 +933,19 @@ async function main(): Promise<void> {
   let fileToOpen: string | undefined
   app.on('open-file', (event, path) => {
     event.preventDefault()
-    fileToOpen = path
-    const editor = started?.editor
-    if (editor !== undefined) send(editor.window, { type: 'open-project', path })
+    if (started === undefined) fileToOpen = path
+    else void openProject(started, path, started.activeEditor)
   })
 
   await app.whenReady()
   serveRenderer()
   const state: AppState = {
     mediaProcess: undefined,
-    editor: undefined,
+    editors: [],
+    activeEditor: undefined,
     harnessWindow: undefined,
     exportWindow: undefined,
+    exportRequester: undefined,
     jobListeners: new Map(),
     exportPathOverride: undefined,
     lastExportPath: undefined,
@@ -838,6 +955,8 @@ async function main(): Promise<void> {
     isQuitting: false,
     memory: options.has('report-memory') ? startMemoryMonitor(process.pid) : undefined,
     versions: undefined,
+    isUnattended: false,
+    menuShortcuts: menuShortcutsOf(DEFAULT_BINDINGS),
   }
   started = state
   if (!isInteractive) exitWhenOutputCloses(state)
@@ -848,7 +967,7 @@ async function main(): Promise<void> {
     state.isQuitting = true
   })
   app.on('window-all-closed', () => app.quit())
-  app.on('second-instance', () => state.editor?.window.focus())
+  app.on('second-instance', () => state.activeEditor?.window.focus())
 
   if (cliJob !== undefined) {
     runCliJob(state, cliJob)
@@ -864,7 +983,7 @@ async function main(): Promise<void> {
     await runCliUiTest(state, uiTestScenario, { projectPath, outputDirectory: resolved(options.get('out')), mediaDirectory: resolved(options.get('media')) })
     return
   }
-  await openEditor(state, projectPath, false)
+  await openFirstEditors(state, projectPath)
 }
 
 async function run(): Promise<void> {
