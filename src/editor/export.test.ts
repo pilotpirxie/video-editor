@@ -6,25 +6,24 @@ const project = projectOf([track('t1', [videoClip('a', SECOND, 2 * SECOND), vide
 const PATHS = { projectPath: '/tmp/snapshot.json', outputPath: '/tmp/out.mp4' }
 
 describe('exportFrameRates', () => {
-  it('offers the project rate and every slower one, fastest first', () => {
-    expect(exportFrameRates('mp4', { num: 30, den: 1 })).toEqual([
+  it('offers every project rate, faster ones than the project included, fastest first', () => {
+    expect(exportFrameRates('mp4')).toEqual([
+      { num: 160, den: 1 },
+      { num: 120, den: 1 },
+      { num: 60, den: 1 },
+      { num: 50, den: 1 },
       { num: 30, den: 1 },
       { num: 30000, den: 1001 },
       { num: 25, den: 1 },
       { num: 24, den: 1 },
       { num: 24000, den: 1001 },
     ])
-    expect(exportFrameRates('webm', { num: 24000, den: 1001 })).toEqual([{ num: 24000, den: 1001 }])
-    expect(exportFrameRates('mp4', { num: 60, den: 1 })).toHaveLength(7)
+    expect(exportFrameRates('webm')).toEqual(exportFrameRates('mp4'))
   })
 
-  it('offers a GIF only the rates its frame times can hold, up to the project rate', () => {
-    expect(exportFrameRates('gif', { num: 30, den: 1 })).toEqual([
+  it('offers a GIF only the rates its frame times can hold', () => {
+    expect(exportFrameRates('gif')).toEqual([
       { num: 25, den: 1 },
-      { num: 20, den: 1 },
-      { num: 10, den: 1 },
-    ])
-    expect(exportFrameRates('gif', { num: 24, den: 1 })).toEqual([
       { num: 20, den: 1 },
       { num: 10, den: 1 },
     ])

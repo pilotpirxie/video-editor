@@ -313,10 +313,20 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
   })
 
   const onLibraryDrop = useEffectEvent((event: Event) => {
-    if (!isLibraryDrag(event) || event.detail.item.kind !== 'effect') return
+    if (!isLibraryDrag(event)) return
+    const svg = svgRef.current
+    const { item } = event.detail
+    // An annotation lands where it was dropped, at the playhead; inside an open group the place is worked out in the group's own space.
+    if (item.kind === 'annotation' && svg !== null) {
+      const point = pointOnCanvas(event.detail, svg, frame, pictureWidth)
+      const inside = intoGroup(openFrame, { x: point.x, y: point.y, scaleX: 1, scaleY: 1, rotation: 0 })
+      actions.addAnnotation(item.annotation, { x: Math.round(inside.x), y: Math.round(inside.y) })
+      return
+    }
+    if (item.kind !== 'effect') return
     const target = effectTargetAt(event.detail)
     if (target === undefined) return
-    const { effect } = event.detail.item
+    const { effect } = item
     // An effect dropped on one of several selected clips goes to all of them.
     const clipIds = selection.includes(target.clipId) ? selection : [target.clipId]
     store.apply('Add Effect', (current) => addEffect(current, clipIds, effect))

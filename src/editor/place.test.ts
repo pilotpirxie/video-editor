@@ -8,8 +8,9 @@ const CANVAS = projectOf([]).canvas
 const NEW_TRACK = { id: 'new-track', name: 'Track' }
 const VIDEO_REF: MediaRef = { id: 'video', path: '/footage/video.mp4', relativePath: '' }
 
-function drop(overrides: Partial<MediaDrop>): MediaDrop {
-  return { reference: VIDEO_REF, info: VIDEO_MEDIA, clipId: 'dropped', start: 0, trackIndex: 0, newTrack: NEW_TRACK, ...overrides }
+function drop(overrides: Partial<MediaDrop> & { info?: MediaInfo }): MediaDrop {
+  const { info = VIDEO_MEDIA, ...rest } = overrides
+  return { media: [{ reference: VIDEO_REF, info, clipId: 'dropped' }], start: 0, trackIndex: 0, newTrack: NEW_TRACK, ...rest }
 }
 
 describe('clipForMedia', () => {
@@ -130,6 +131,37 @@ describe('dropMedia', () => {
 
   it('does not list the same media twice', () => {
     expect(dropMedia(occupied, drop({ trackIndex: 1 })).media).toEqual(SAMPLE_MEDIA)
+  })
+
+  describe('several files at once', () => {
+    const SOUND_REF: MediaRef = { id: 'sound', path: '/footage/sound.wav', relativePath: '' }
+    const SOUND_INFO: MediaInfo = { kind: 'audio', duration: 3 * SECOND, containerStart: 0, audio: { channels: 2, sampleRate: 48_000, codec: 'aac', seeksExactly: true } }
+    const sound = { reference: SOUND_REF, info: SOUND_INFO, clipId: 'second' }
+    const video = { reference: VIDEO_REF, info: VIDEO_MEDIA, clipId: 'first' }
+
+    it('lays them end to end on one track, in the order given', () => {
+      const dropped = dropMedia(occupied, { media: [video, sound], start: 4 * SECOND, trackIndex: 0, newTrack: NEW_TRACK })
+      expect(clipIds(dropped)).toEqual([['a', 'first', 'second'], []])
+      expect(clipOf(dropped, 'first')).toMatchObject({ start: 4 * SECOND, duration: 10 * SECOND })
+      expect(clipOf(dropped, 'second')).toMatchObject({ start: 14 * SECOND, duration: 3 * SECOND })
+      expect(dropped.media.map((reference) => reference.id)).toContain('sound')
+      reopened(dropped)
+    })
+
+    it('moves them all to one new track when any of them would overlap', () => {
+      const dropped = dropMedia(occupied, { media: [sound, video], start: 2 * SECOND, trackIndex: 0, newTrack: NEW_TRACK })
+      expect(clipIds(dropped)).toEqual([['a'], ['second', 'first'], []])
+    })
+
+    it('takes the canvas of an empty project from the first picture, not from sound', () => {
+      const info: MediaInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, width: 1280, height: 720 } }
+      const dropped = dropMedia(projectOf([], []), { media: [sound, { ...video, info }], start: 0, trackIndex: 0, newTrack: NEW_TRACK })
+      expect(dropped.canvas).toMatchObject({ width: 1280, height: 720 })
+    })
+
+    it('changes nothing when nothing is dropped', () => {
+      expect(dropMedia(occupied, { media: [], start: 0, trackIndex: 0, newTrack: NEW_TRACK })).toBe(occupied)
+    })
   })
 })
 

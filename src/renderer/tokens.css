@@ -20,6 +20,16 @@
   --clip-annotation: #8a6a3a;
   --clip-blur: #5b6474;
   --preview-background: #000000;
+  /* The made-up pictures of the library: one landscape, a second picture for transitions, and the inks drawn over them. */
+  --illustration-sky: #5b80b8;
+  --illustration-sun: #f2c14e;
+  --illustration-hill: #4f8f5f;
+  --illustration-other: #7d5aa6;
+  --illustration-card: #e8e2f2;
+  --illustration-key: #2fd25a;
+  --illustration-person: #20242c;
+  --illustration-backdrop: #b9c2d0;
+  --illustration-marker: #ffe45c;
 
   --font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   --text-small: 11px;

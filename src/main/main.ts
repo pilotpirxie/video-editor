@@ -678,7 +678,24 @@ function buildEditorMenu(state: AppState): void {
         item('deselect-all', 'Deselect All', 'Shift+CmdOrCtrl+A'),
       ],
     },
-    { role: 'viewMenu' },
+    {
+      label: 'View',
+      submenu: [
+        item('toggle-library', 'Toggle Library'),
+        item('toggle-properties', 'Toggle Properties'),
+        item('toggle-timeline', 'Toggle Timeline'),
+        { type: 'separator' },
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
     { role: 'windowMenu' },
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))

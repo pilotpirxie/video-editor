@@ -1,17 +1,14 @@
-import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
 import { clampLayout, parseLayout, widestSidebar, type Layout } from '../editor/layout.js'
-import type { ShapeKind } from '../editor/shapes.js'
 import { shortcutFor, type ShortcutAction } from '../editor/shortcuts.js'
 import type { Size } from '../shared/exportPresets.js'
 import { logError } from '../shared/log.js'
-import { projectDuration } from '../shared/project.js'
 import { CanvasPanel } from './CanvasPanel.js'
 import { SessionContext, useEditorState, useSession } from './context.js'
 import { EffectProperties } from './EffectProperties.js'
 import { ExportDialog, ExportProgressDialog } from './ExportDialog.js'
-import type { Session } from './document.js'
-import { Icon, IconButton, type IconName } from './icons.js'
-import { EffectsTab, TransitionsTab } from './LibraryTabs.js'
+import type { Panel, Session } from './document.js'
+import { AnnotationsTab, EffectsTab, TransitionsTab } from './LibraryTabs.js'
 import { MediaTab } from './MediaTab.js'
 import { Properties } from './Properties.js'
 import { Timeline } from './Timeline.js'
@@ -22,6 +19,12 @@ const LAYOUT_KEY = 'layout'
 const KEYBOARD_RESIZE_STEP = 16
 const JUMP_FRAMES = 15
 const SIDEBAR_TABS = ['Media', 'Effects', 'Transitions', 'Annotations'] as const
+
+const PANEL_FLAGS: Record<Panel, 'isLeftCollapsed' | 'isRightCollapsed' | 'isTimelineCollapsed'> = {
+  library: 'isLeftCollapsed',
+  properties: 'isRightCollapsed',
+  timeline: 'isTimelineCollapsed',
+}
 
 type SidebarTab = (typeof SIDEBAR_TABS)[number]
 type SizeKey = 'leftWidth' | 'rightWidth' | 'timelineHeight'
@@ -107,50 +110,6 @@ function Splitter({ label, testId, sizeKey, size, isHidden, growth, onPreview, o
   )
 }
 
-const ARROWS: readonly { kind: 'arrow' | 'line'; icon: IconName; label: string }[] = [
-  { kind: 'arrow', icon: 'arrow', label: 'Arrow' },
-  { kind: 'line', icon: 'line', label: 'Line' },
-]
-
-const SHAPES: readonly { kind: ShapeKind; icon: IconName; label: string }[] = [
-  { kind: 'blur', icon: 'blur', label: 'Blur' },
-  { kind: 'pixelate', icon: 'grid', label: 'Pixelate' },
-  { kind: 'highlight', icon: 'marker', label: 'Highlight' },
-  { kind: 'spotlight', icon: 'spotlight', label: 'Spotlight' },
-]
-
-// Each is added at the playhead, on a layer of its own.
-function AnnotationsTab(): ReactElement {
-  const { actions } = useSession()
-  return (
-    <div className="annotations-tab">
-      <button type="button" className="button annotation-item" data-testid="add-text" onClick={actions.addText}>
-        <Icon name="text" />
-        Text
-      </button>
-      <button type="button" className="button annotation-item" data-testid="add-callout" onClick={actions.addCallout}>
-        <Icon name="callout" />
-        Callout
-      </button>
-      <p className="hint">Adds a title or a speech bubble at the playhead. Double-click it on the canvas to change the words; the shape of a callout is in Properties.</p>
-      {ARROWS.map(({ kind, icon, label }) => (
-        <button key={kind} type="button" className="button annotation-item" data-testid={`add-${kind}`} onClick={() => actions.addArrow(kind)}>
-          <Icon name={icon} />
-          {label}
-        </button>
-      ))}
-      <p className="hint">Drag its two ends on the canvas to point it.</p>
-      {SHAPES.map(({ kind, icon, label }) => (
-        <button key={kind} type="button" className="button annotation-item" data-testid={`add-${kind}`} onClick={() => actions.addShape(kind)}>
-          <Icon name={icon} />
-          {label}
-        </button>
-      ))}
-      <p className="hint">Each acts on everything beneath it, inside its shape. Move and size it on the canvas; its look is in Properties.</p>
-    </div>
-  )
-}
-
 function Sidebar(): ReactElement {
   const [tab, setTab] = useState<SidebarTab>('Media')
 
@@ -190,41 +149,21 @@ function Sidebar(): ReactElement {
   )
 }
 
-function TopBar({ layout, onToggle }: { layout: Layout; onToggle(key: 'isLeftCollapsed' | 'isRightCollapsed' | 'isTimelineCollapsed'): void }): ReactElement {
+// A message floats over the top of the canvas until it is dismissed.
+function Notice(): ReactElement {
   const { store } = useSession()
-  const undoLabel = useEditorState((state) => state.history.done.at(-1)?.label)
-  const redoLabel = useEditorState((state) => state.history.undone.at(-1)?.label)
   const notice = useEditorState((state) => state.notice)
-  const hasContent = useEditorState((state) => projectDuration(state.project) > 0)
-
   return (
-    <header className="top-bar">
-      <IconButton icon="panelLeft" label="Library panel" testId="toggle-left" isPressed={!layout.isLeftCollapsed} onClick={() => onToggle('isLeftCollapsed')} />
-      <IconButton icon="undo" label={undoLabel === undefined ? 'Undo' : `Undo ${undoLabel}`} testId="undo" isDisabled={undoLabel === undefined} onClick={store.undo} />
-      <IconButton icon="redo" label={redoLabel === undefined ? 'Redo' : `Redo ${redoLabel}`} testId="redo" isDisabled={redoLabel === undefined} onClick={store.redo} />
-      <div className="notice-area">
-        {notice !== undefined && (
-          <div className="notice" role="alert">
-            <span data-testid="notice">{notice}</span>
-            <button type="button" className="button" onClick={() => store.notify(undefined)}>
-              Dismiss
-            </button>
-          </div>
-        )}
-      </div>
-      <button
-        type="button"
-        className="button primary"
-        data-testid="export"
-        data-tooltip={hasContent ? 'Export (⌘E)' : 'Add something to the timeline first'}
-        disabled={!hasContent}
-        onClick={() => store.showExportDialog(true)}
-      >
-        Export…
-      </button>
-      <IconButton icon="panelBottom" label="Timeline" testId="toggle-timeline" isPressed={!layout.isTimelineCollapsed} onClick={() => onToggle('isTimelineCollapsed')} />
-      <IconButton icon="panelRight" label="Properties panel" testId="toggle-right" isPressed={!layout.isRightCollapsed} onClick={() => onToggle('isRightCollapsed')} />
-    </header>
+    <div className="notice-area">
+      {notice !== undefined && (
+        <div className="notice" role="alert">
+          <span data-testid="notice">{notice}</span>
+          <button type="button" className="button" onClick={() => store.notify(undefined)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -342,6 +281,12 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
   useEffect(() => (rootRef.current === null ? undefined : installTooltips(rootRef.current)), [])
   useEffect(() => listenForEditingKeys(session), [session])
 
+  const togglePanel = useEffectEvent((panel: Panel) => {
+    const flag = PANEL_FLAGS[panel]
+    remember({ ...layout, [flag]: !layout[flag] })
+  })
+  useEffect(() => session.onPanelToggle(togglePanel), [session])
+
   function remember(next: Layout): void {
     setStored(next)
     try {
@@ -381,7 +326,6 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
   return (
     <SessionContext value={session}>
       <div className="editor" ref={rootRef} style={style} data-testid="editor" onDragOver={(event) => event.preventDefault()} onDrop={onFilesDropped}>
-        <TopBar layout={layout} onToggle={(key) => remember({ ...layout, [key]: !layout[key] })} />
         <aside className="sidebar left" aria-label="Library" data-testid="left-sidebar" hidden={layout.isLeftCollapsed}>
           <Sidebar />
         </aside>
@@ -396,6 +340,7 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
         <section className="timeline-panel" aria-label="Timeline" data-testid="timeline-panel" hidden={layout.isTimelineCollapsed}>
           <Timeline />
         </section>
+        <Notice />
         <ExportDialogWhenOpen />
       </div>
     </SessionContext>

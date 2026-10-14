@@ -1,6 +1,6 @@
 import type { BlurClip, Clip, HighlightClip, Project, Shape, ShapeClip } from '../shared/project.js'
-import { editClips, placeOnTrack, type NewTrack } from './clips.js'
-import { centredStill } from './place.js'
+import { editClips, placeOnTrack } from './clips.js'
+import { centredStill, type NewStill } from './place.js'
 
 const OPAQUE_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
 const SMALLEST_STRENGTH = 0.1
@@ -15,11 +15,8 @@ const DIMMED_GREY = '#404040'
 
 export type ShapeKind = 'blur' | 'pixelate' | 'highlight' | 'spotlight'
 
-export type NewShape = {
+export type NewShape = NewStill & {
   kind: ShapeKind
-  clipId: string
-  start: number
-  newTrack: NewTrack
 }
 
 export type ShapeStyle = {
@@ -55,7 +52,7 @@ export function addShape(project: Project, added: NewShape): Project {
     const softEdge = Math.round(canvas.height * SOFT_EDGE_PER_HEIGHT)
     clip = { ...base, type: 'highlight', shape: 'ellipse', height: Math.round(canvas.height * WIDTH_SHARE), softEdge, color: DIMMED_GREY, isSpotlight: true }
   }
-  return placeOnTrack(project, { clips: [clip], trackIndex: project.tracks.length, newTrack: added.newTrack })
+  return placeOnTrack(project, { clips: [clip], trackIndex: added.trackIndex ?? project.tracks.length, newTrack: added.newTrack })
 }
 
 // A switch that is off is left out of the clip, as the file format wants it.

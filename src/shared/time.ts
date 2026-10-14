@@ -22,6 +22,8 @@ export const PROJECT_FRAME_RATES: readonly FrameRate[] = [
   { num: 30, den: 1 },
   { num: 50, den: 1 },
   { num: 60, den: 1 },
+  { num: 120, den: 1 },
+  { num: 160, den: 1 },
 ]
 
 export function isProjectFrameRate(rate: FrameRate): boolean {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { nextTrackName } from '../editor/clips.js'
-import { dropMedia } from '../editor/place.js'
+import { dropMedia, placeableMedia } from '../editor/place.js'
 import { shortcutHint } from '../editor/shortcuts.js'
 import { projectDuration } from '../shared/project.js'
 import { timecode } from '../shared/time.js'
@@ -48,23 +48,20 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
     return keepPreviewSized(preview, stage, canvas, zoom, engine)
   }, [preview, canvas, zoom, engine])
 
-  // Media dropped on the canvas starts at the playhead, on a new layer above everything else.
+  // Media dropped on the canvas starts at the playhead, on a new layer above everything else; several files follow one another there.
   useEffect(() => {
     const stage = stageRef.current
     if (stage === null) return
 
     function onMediaDrop(event: Event): void {
       if (!isLibraryDrag(event) || event.detail.item.kind !== 'media') return
-      const { mediaId } = event.detail.item
       const { project, mediaStates } = store.getState()
-      const reference = project.media.find((candidate) => candidate.id === mediaId)
-      const state = mediaStates[mediaId]
-      if (reference === undefined || state === undefined || 'error' in state) return
-      const clipId = crypto.randomUUID()
+      const media = placeableMedia(project, mediaStates, event.detail.item.mediaIds, () => crypto.randomUUID())
+      if (media.length === 0) return
       const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
       const start = transport.position().time
-      store.apply('Add Clip', (current) => dropMedia(current, { reference, info: state.info, clipId, start, trackIndex: current.tracks.length, newTrack }))
-      store.select([clipId])
+      store.apply(media.length === 1 ? 'Add Clip' : `Add ${media.length} Clips`, (current) => dropMedia(current, { media, start, trackIndex: current.tracks.length, newTrack }))
+      store.select(media.map((dropped) => dropped.clipId))
     }
 
     stage.addEventListener(LIBRARY_DROP_EVENT, onMediaDrop)

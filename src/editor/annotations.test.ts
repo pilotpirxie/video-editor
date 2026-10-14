@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SECOND, clipIds, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import type { Project } from '../shared/project.js'
-import { addArrow, addCallout, arrowBetween, arrowEnds, intoClip, outOfClip, setArrowStyle, setCalloutStyle } from './annotations.js'
+import { ANNOTATION_KINDS, addAnnotation, addArrow, addCallout, arrowBetween, arrowEnds, intoClip, outOfClip, setArrowStyle, setCalloutStyle } from './annotations.js'
 import { setTextStyle } from './text.js'
 
 const NEW_TRACK = { id: 'notes', name: 'Track 2' }
@@ -24,6 +24,21 @@ describe('adding annotations', () => {
   it('adds a line as an arrow without heads', () => {
     const project = addArrow(projectOf([]), { clipId: 'line', start: 0, newTrack: NEW_TRACK, kind: 'line' })
     expect(clipOf(project, 'line')).toMatchObject({ startHead: 'none', endHead: 'none' })
+  })
+
+  it('adds every kind where it was dropped: on the chosen track when it is free, with its middle at the chosen point', () => {
+    const project = projectOf([track('t1', [videoClip('a', 0, 2 * SECOND)]), track('t2', [])])
+    for (const kind of ANNOTATION_KINDS) {
+      const dropped = addAnnotation(project, kind, { clipId: 'note', start: 3 * SECOND, trackIndex: 0, newTrack: NEW_TRACK, centre: { x: 200, y: 100 } })
+      expect(clipIds(dropped)).toEqual([['a', 'note'], []])
+      expect(clipOf(dropped, 'note')).toMatchObject({ start: 3 * SECOND, transform: { x: 200, y: 100 } })
+      reopened(dropped)
+    }
+  })
+
+  it('goes on a new track above the chosen one when its place there is taken', () => {
+    const project = projectOf([track('t1', [videoClip('a', 0, 10 * SECOND)]), track('t2', [])])
+    expect(clipIds(addAnnotation(project, 'blur', { clipId: 'note', start: SECOND, trackIndex: 0, newTrack: NEW_TRACK }))).toEqual([['a'], ['note'], []])
   })
 })
 

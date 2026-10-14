@@ -8,7 +8,7 @@ handles, text clips, animated images, the properties panel, the transport with C
 keys, and the export dialog. From group 3 there are the camera zoom (T-48, T-49), transitions
 (T-50), blur and pixelate clips (T-51), highlight and spotlight clips (T-52) and effects
 (T-53), each with the controls to add and change it: the zoom tool and the camera lane, the
-Effects and Transitions tabs, and the buttons of the Annotations tab. Also from group 3 are
+Effects and Transitions tabs, and the Annotations tab. Also from group 3 are
 callouts, arrows and lines (T-54), text styling (T-55), animation presets (T-56), groups
 (T-57), sound that follows the speed of its clip (T-58) and volume keyframes (T-59), again
 with their controls: the Annotations tab, handles for an arrow's ends and a bubble's tail,
@@ -16,7 +16,11 @@ the text and animation fields in Properties, groups that open on a double click,
 points on the waveform. From group 4 there are keyframe buttons on every animatable field in
 Properties (T-65), the motion path of a keyframed clip on the canvas with dots that drag its
 position keyframes (T-68), and a right-click menu on the zooms of the camera lane (T-67). X and
-Y, the width, height and scale, and the four crop sides are each keyed as one. The end-to-end
+Y, the width, height and scale, and the four crop sides are each keyed as one. The four tabs of
+the library look alike, as tiles by default, with a still picture for each effect, transition and
+annotation; all of them are dragged onto the canvas or the timeline, several media files at once
+when picked with Cmd or Shift. Panels are shown and hidden from the View menu, Export sits at the
+right of the timeline toolbar, and projects and exports can run at 120 and 160 fps. The end-to-end
 run of T-47 with a new user on the 4 GB reference Mac is still to be done by hand.
 
 To see the new features at once, open `test/projects/demo-zoom-effects.json` with File, Open.

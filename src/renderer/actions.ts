@@ -1,16 +1,14 @@
-import { addArrow, addCallout, type NewAnnotation } from '../editor/annotations.js'
+import { ANNOTATION_NAMES, addAnnotation, type AnnotationKind } from '../editor/annotations.js'
 import { deleteZoom, setViewAt, zoomIndexAt } from '../editor/camera.js'
 import { copyClips, deleteClips, pasteClips, rippleDelete, spanEnd, type Clipboard } from '../editor/clipboard.js'
 import { allClips, isVisual, locateClip, nearestEdit, nextTrackName, unlockedClipIds, type NewTrack } from '../editor/clips.js'
 import { addEffect, takesEffects } from '../editor/effects.js'
 import { groupClips, ungroupClips } from '../editor/groups.js'
 import { clipsToSeparate, separateAudio } from '../editor/separate.js'
-import { addShape, type ShapeKind } from '../editor/shapes.js'
 import { clipsToSplit, splitClips } from '../editor/split.js'
-import { addText } from '../editor/text.js'
 import { addTrack } from '../editor/tracks.js'
 import { DEFAULT_TRANSITION, setTransition } from '../editor/transitions.js'
-import { projectDuration, type Clip, type EffectType, type Project, type TransitionType } from '../shared/project.js'
+import { projectDuration, type Clip, type EffectType, type TransitionType } from '../shared/project.js'
 import { frameAt, frameDuration } from '../shared/time.js'
 import type { EditorStore } from './store.js'
 import type { TimelineLimits, Transport } from './transport.js'
@@ -21,16 +19,14 @@ export type Actions = {
   selectAll(): void
   canSeparateAudio(): boolean
   separateAudio(): void
-  addText(): void
-  addShape(kind: ShapeKind): void
-  addCallout(): void
-  addArrow(kind: 'arrow' | 'line'): void
+  // Adds one at the playhead on a new layer above everything else, with its middle at `centre` (the middle of the canvas when left out).
+  addAnnotation(kind: AnnotationKind, centre?: { x: number; y: number }): void
   group(): void
   ungroup(): void
   // Goes into the selected group; Escape and the path above the timeline lead out again.
   openGroup(): void
   closeGroup(): void
-  // Both go to the selected clips, and say so in the top bar when no selected clip can take them.
+  // Both go to the selected clips, and say so in a message when no selected clip can take them.
   addEffect(type: EffectType): void
   addTransition(type: TransitionType): void
   zoomToFull(): void
@@ -102,14 +98,6 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     return true
   }
 
-  // Adds one new clip at the playhead, on a new layer above everything else, and selects it.
-  function addOnTop(label: string, add: (project: Project, added: NewAnnotation) => Project): string {
-    const added = { clipId: crypto.randomUUID(), start: playheadFrame(), newTrack: { id: crypto.randomUUID(), name: nextTrackName(store.getState().project) } }
-    store.apply(label, (current) => add(current, added))
-    store.select([added.clipId])
-    return added.clipId
-  }
-
   // The selected clips that pass a test, in the order they were selected.
   function selectedClipIds(isWanted: (clip: Clip) => boolean): string[] {
     const { project, selection } = store.getState()
@@ -158,15 +146,12 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       const newTracks: NewTrack[] = project.tracks.map((_track, index) => ({ id: crypto.randomUUID(), name: `Track ${project.tracks.length + index + 1}` }))
       store.apply('Separate Video and Audio', (current) => separateAudio(current, mediaStates, newIds, newTracks))
     },
-    // New words open for typing at once, so the usual next step needs no extra click.
-    addText: () => store.editText(addOnTop('Add Text', addText)),
-    addCallout: () => store.editText(addOnTop('Add Callout', addCallout)),
-    addArrow(kind) {
-      addOnTop(kind === 'arrow' ? 'Add Arrow' : 'Add Line', (project, added) => addArrow(project, { ...added, kind }))
-    },
-    addShape(kind) {
-      const label = `Add ${kind.charAt(0).toUpperCase()}${kind.slice(1)}`
-      addOnTop(label, (project, added) => addShape(project, { ...added, kind }))
+    addAnnotation(kind, centre) {
+      const added = { clipId: crypto.randomUUID(), start: playheadFrame(), newTrack: { id: crypto.randomUUID(), name: nextTrackName(store.getState().project) }, centre }
+      store.apply(`Add ${ANNOTATION_NAMES[kind]}`, (current) => addAnnotation(current, kind, added))
+      store.select([added.clipId])
+      // New words open for typing at once, so the usual next step needs no extra click.
+      if (kind === 'text' || kind === 'callout') store.editText(added.clipId)
     },
     group() {
       const { project } = store.getState()

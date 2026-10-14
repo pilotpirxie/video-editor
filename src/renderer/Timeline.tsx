@@ -5,7 +5,7 @@ import { changeKeyframe, removeKeyframe } from '../editor/properties.js'
 import { shortcutFor, shortcutHint } from '../editor/shortcuts.js'
 import { TRACK_HEIGHT } from '../editor/timelineView.js'
 import { addTrack, deleteTrack, moveTrack, renameTrack, setTrackFlag, type TrackFlag } from '../editor/tracks.js'
-import type { Easing, Track } from '../shared/project.js'
+import { projectDuration, type Easing, type Track } from '../shared/project.js'
 import { frameDuration } from '../shared/time.js'
 import { useEditorState, useSession } from './context.js'
 import { Icon, IconButton, type IconName } from './icons.js'
@@ -165,6 +165,7 @@ export function Timeline(): ReactElement {
   const hasSelection = useEditorState((state) => state.selection.length > 0)
   const openCount = useEditorState((state) => state.openCount)
   const openGroups = useEditorState((state) => state.openGroups)
+  const hasContent = useEditorState((state) => projectDuration(state.wholeProject) > 0)
   const hostRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
@@ -243,6 +244,16 @@ export function Timeline(): ReactElement {
         <IconButton icon="minus" label="Zoom out" testId="timeline-zoom-out" shortcut={shortcutHint('timeline-zoom-out')} onClick={() => controllerRef.current?.zoomBy(1 / ZOOM_STEP)} />
         <IconButton icon="fit" label="Show the whole project" testId="timeline-zoom-fit" shortcut={shortcutHint('timeline-zoom-fit')} onClick={() => controllerRef.current?.zoomToFit()} />
         <IconButton icon="plus" label="Zoom in" testId="timeline-zoom-in" shortcut={shortcutHint('timeline-zoom-in')} onClick={() => controllerRef.current?.zoomBy(ZOOM_STEP)} />
+        <button
+          type="button"
+          className="button primary"
+          data-testid="export"
+          data-tooltip={hasContent ? 'Export (⌘E)' : 'Add something to the timeline first'}
+          disabled={!hasContent}
+          onClick={() => store.showExportDialog(true)}
+        >
+          Export…
+        </button>
       </div>
       <div className="timeline-body">
         <div className="track-headers-viewport">

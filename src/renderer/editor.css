@@ -1,30 +1,23 @@
 .editor {
   display: grid;
   grid-template-columns: var(--leftWidth) auto minmax(0, 1fr) auto var(--rightWidth);
-  grid-template-rows: 36px minmax(0, 1fr) auto var(--timelineHeight);
+  grid-template-rows: minmax(0, 1fr) auto var(--timelineHeight);
   grid-template-areas:
-    'top top top top top'
     'left split-left canvas split-right right'
     'split-timeline split-timeline split-timeline split-timeline split-timeline'
     'timeline timeline timeline timeline timeline';
   height: 100%;
 }
 
-.top-bar {
-  grid-area: top;
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 0 var(--space-2);
-  border-bottom: 1px solid var(--divider);
-  background: var(--panel-background);
-}
-
+/* Floats over the top of the canvas; only the message itself takes the pointer. */
 .notice-area {
-  flex: 1;
-  display: flex;
-  justify-content: center;
-  min-width: 0;
+  grid-area: canvas;
+  align-self: start;
+  justify-self: center;
+  z-index: 5;
+  max-width: calc(100% - 2 * var(--space-2));
+  margin-top: var(--space-2);
+  pointer-events: none;
 }
 
 .notice {
@@ -32,9 +25,13 @@
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-  padding-left: var(--space-3);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border: 1px solid var(--divider);
   border-left: 3px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--panel-background);
   font-size: var(--text-body);
+  pointer-events: auto;
 }
 
 .notice span {
@@ -256,52 +253,87 @@
   height: 100%;
 }
 
-.media-tab {
+/* The four tabs of the library look alike: a row of tools, one line of help, then the items as rows or as tiles. */
+.library-tab {
   display: flex;
   flex-direction: column;
   min-height: 100%;
 }
 
-.media-tools {
+.library-tools {
   display: flex;
   gap: var(--space-1);
   padding: var(--space-2);
 }
 
-.media-tools .field {
+.library-tools .field {
   flex: 1;
   min-width: 0;
 }
 
-.media-tools .button {
+.library-tools .button {
   flex: none;
 }
 
-.media-list {
+.library-hint {
+  padding: 0 var(--space-2) var(--space-2);
+}
+
+.library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   margin: 0;
   padding: 0 var(--space-2) var(--space-2);
   list-style: none;
 }
 
-.media-item {
+.library-list > li {
   display: flex;
+  min-width: 0;
+}
+
+/* A row: a small picture with the name beside it. Items are dragged out, so they show they can be grabbed. */
+.library-item {
+  display: flex;
+  flex: 1;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
   padding: var(--space-1);
+  border: 0;
   border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
   cursor: grab;
 }
 
-.media-item:hover {
+.library-item:hover {
   background: var(--hover-surface);
 }
 
-.media-item.pending {
+.library-item:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 0;
+}
+
+/* Selected files get a green frame round the picture, which neither hover nor the focus ring looks like. */
+.library-item.selected {
+  background: var(--raised-surface);
+}
+
+.library-item.selected .library-thumbnail {
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+.library-item.pending {
   color: var(--text-secondary);
   cursor: default;
 }
 
-.media-thumbnail {
+.library-thumbnail {
   flex: none;
   display: flex;
   align-items: center;
@@ -314,13 +346,15 @@
   overflow: hidden;
 }
 
-.media-poster {
+.library-poster,
+.library-preview {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
 }
 
-.media-text {
+.library-text {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -328,14 +362,14 @@
   min-width: 0;
 }
 
-.media-name {
+.library-name {
   overflow: hidden;
   font-size: var(--text-label);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.media-details {
+.library-details {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
@@ -343,24 +377,160 @@
   font-size: var(--text-small);
 }
 
+.library-details:empty {
+  display: none;
+}
+
 /* As tiles: the picture above its name, as many across as the panel is wide. */
-.media-list.grid {
+.library-list.grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
   gap: var(--space-1);
 }
 
-.media-list.grid .media-item {
+.library-list.grid .library-item {
   flex-direction: column;
   align-items: stretch;
   gap: var(--space-1);
-  min-width: 0;
 }
 
-.media-list.grid .media-thumbnail {
+.library-list.grid .library-thumbnail {
   width: 100%;
   height: auto;
   aspect-ratio: 16 / 9;
+}
+
+/* A tile is narrow, so its name may take two lines: "Fade through black" and "Fade through white" must not both end in "Fade throug…". */
+.library-list.grid .library-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* The pictures of effects, transitions and annotations: made-up landscapes, coloured by the illustration tokens. */
+.ink-sky {
+  fill: var(--illustration-sky);
+}
+
+.ink-sun {
+  fill: var(--illustration-sun);
+}
+
+.ink-hill {
+  fill: var(--illustration-hill);
+}
+
+.ink-other {
+  fill: var(--illustration-other);
+}
+
+.ink-card {
+  fill: var(--illustration-card);
+}
+
+.ink-key {
+  fill: var(--illustration-key);
+}
+
+.ink-person {
+  fill: var(--illustration-person);
+}
+
+.ink-backdrop {
+  fill: var(--illustration-backdrop);
+}
+
+.ink-black {
+  fill: var(--preview-background);
+}
+
+.ink-white,
+.ink-bubble {
+  fill: var(--text-primary);
+}
+
+.ink-divider {
+  stroke: var(--text-primary);
+  stroke-width: 0.75;
+}
+
+.ink-chevron {
+  fill: none;
+  stroke: var(--text-primary);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ink-border {
+  fill: none;
+  stroke: var(--text-primary);
+  stroke-width: 2.5;
+}
+
+.ink-frame {
+  fill: none;
+  stroke: var(--text-primary);
+  stroke-width: 0.75;
+  stroke-dasharray: 2 1.5;
+}
+
+.ink-title {
+  fill: var(--text-primary);
+  stroke: var(--illustration-person);
+  stroke-width: 2;
+  paint-order: stroke;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.ink-words {
+  fill: var(--illustration-person);
+  opacity: 0.5;
+}
+
+.ink-arrow {
+  fill: none;
+  stroke: var(--danger);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.ink-arrow-head {
+  fill: var(--danger);
+}
+
+.ink-tint {
+  fill: var(--text-primary);
+  opacity: 0.15;
+}
+
+.ink-marker {
+  fill: var(--illustration-marker);
+  opacity: 0.6;
+}
+
+.ink-shade {
+  fill: var(--preview-background);
+  opacity: 0.6;
+}
+
+.look-grey {
+  filter: grayscale(1);
+}
+
+.look-vivid {
+  filter: saturate(1.8) brightness(1.1);
+}
+
+.look-soft {
+  filter: blur(1.2px);
+}
+
+.look-shadow {
+  filter: drop-shadow(1px 2px 1.5px var(--preview-background));
 }
 
 .drag-ghost {
@@ -445,43 +615,6 @@
   cursor: nesw-resize;
 }
 
-.annotations-tab {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-2);
-}
-
-.annotation-item,
-.library-entry {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: var(--space-2);
-}
-
-.library-tab {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-2);
-}
-
-.library-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-/* An entry is clicked or dragged out, so it is as wide as the panel and shows that it can be grabbed. */
-.library-entry {
-  width: 100%;
-  cursor: grab;
-}
-
 .panel-hint {
   padding: var(--space-2);
 }
@@ -534,4 +667,8 @@
 .group-path-here {
   padding: 0 var(--space-1);
   color: var(--text-primary);
+}
+
+.timeline-toolbar .button.primary {
+  margin-left: var(--space-2);
 }

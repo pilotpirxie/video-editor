@@ -42,7 +42,7 @@ async function testLayout(driver: Driver): Promise<UiTestReport> {
   await driver.drag(leftSplitter, { x: leftSplitter.x + 60, y: leftSplitter.y })
   const timelineSplitter = centerOf(await driver.rect('split-timeline'))
   await driver.drag(timelineSplitter, { x: timelineSplitter.x, y: timelineSplitter.y - 40 })
-  await driver.page.click('toggle-right')
+  driver.menu('toggle-properties')
   await driver.until(`${selector('right-sidebar')}.hidden === true`, 'the properties panel to collapse')
   return { before, after: await panelSizes(driver) }
 }
@@ -77,7 +77,7 @@ async function testEdit(driver: Driver): Promise<UiTestReport> {
   driver.options.answers.importMedia = names.map((name) => mediaFile(driver, name))
   const importStartedAt = Date.now()
   await driver.page.click('import')
-  await driver.until(`Boolean(${selector('media-h264.mp4')}?.querySelector('.media-poster'))`, 'the poster of the imported video')
+  await driver.until(`Boolean(${selector('media-h264.mp4')}?.querySelector('.library-poster'))`, 'the poster of the imported video')
   const posterMilliseconds = Date.now() - importStartedAt
   await driver.until(`${selector('media-image.jpg')} !== null && ${selector('notice')} !== null`, 'the import to finish')
   const importNotice = await driver.page.text('notice')

@@ -18,7 +18,6 @@ export const DEFAULT_LAYOUT: Layout = {
   isTimelineCollapsed: false,
 }
 
-const TOP_BAR_HEIGHT = 36
 const SPLITTER_SIZE = 5
 const MIN_SIDEBAR_WIDTH = 220
 const MIN_TIMELINE_HEIGHT = 140
@@ -50,7 +49,7 @@ export function clampLayout(layout: Layout, window: Size): Layout {
     rightWidth -= (cut * rightSpare) / spare
   }
 
-  const heightForTimeline = window.height - TOP_BAR_HEIGHT - SPLITTER_SIZE - MIN_CANVAS.height
+  const heightForTimeline = window.height - SPLITTER_SIZE - MIN_CANVAS.height
   const timelineHeight = clamp(layout.timelineHeight, MIN_TIMELINE_HEIGHT, heightForTimeline)
   return { ...layout, leftWidth: Math.floor(leftWidth), rightWidth: Math.floor(rightWidth), timelineHeight: Math.round(timelineHeight) }
 }

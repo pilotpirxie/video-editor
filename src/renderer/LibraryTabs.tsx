@@ -1,9 +1,12 @@
-import { useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode } from 'react'
+import { ANNOTATION_KINDS, ANNOTATION_NAMES } from '../editor/annotations.js'
 import { EFFECT_NAMES } from '../editor/effects.js'
 import { TRANSITION_NAMES } from '../editor/transitions.js'
+import { logError } from '../shared/log.js'
 import { EFFECT_TYPES, TRANSITION_TYPES } from '../shared/project.js'
 import { useSession } from './context.js'
-import { Icon, type IconName } from './icons.js'
+import { IconButton } from './icons.js'
+import { ANNOTATION_PREVIEWS, EFFECT_PREVIEWS, TRANSITION_PREVIEWS } from './libraryPreviews.js'
 import { LIBRARY_DRAG_EVENT, LIBRARY_DROP_EVENT, type LibraryDragDetail, type LibraryItem } from './timelineController.js'
 
 const DRAG_THRESHOLD = 4
@@ -100,44 +103,96 @@ export function useLibraryDrag(item: LibraryItem | undefined, label: string): Dr
   }
 }
 
+const VIEW_KEY = 'library-view'
+
+type LibraryView = 'list' | 'grid'
+
+// One choice for all four tabs, remembered on this Mac. Tiles unless rows were chosen.
+export function useLibraryView(): [LibraryView, (next: LibraryView) => void] {
+  const [view, setView] = useState<LibraryView>(() => (localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid'))
+
+  function show(next: LibraryView): void {
+    setView(next)
+    try {
+      localStorage.setItem(VIEW_KEY, next)
+    } catch (error) {
+      logError('Could not remember how the library is shown', error)
+    }
+  }
+
+  return [view, show]
+}
+
+type LibraryToolsProps = {
+  // What the tab holds, in the plural, as in "Search effects".
+  noun: string
+  query: string
+  onQuery(query: string): void
+  view: LibraryView
+  onView(view: LibraryView): void
+  children?: ReactNode
+}
+
+export function LibraryTools({ noun, query, onQuery, view, onView, children }: LibraryToolsProps): ReactElement {
+  return (
+    <div className="library-tools">
+      <input className="field" type="search" placeholder={`Search ${noun}`} aria-label={`Search ${noun}`} data-testid={`${noun}-search`} value={query} onChange={(event) => onQuery(event.target.value)} />
+      <div className="segmented" role="group" aria-label={`Show ${noun} as`}>
+        <IconButton icon="list" label="List" testId={`${noun}-view-list`} isPressed={view === 'list'} onClick={() => onView('list')} />
+        <IconButton icon="grid" label="Grid" testId={`${noun}-view-grid`} isPressed={view === 'grid'} onClick={() => onView('grid')} />
+      </div>
+      {children}
+    </div>
+  )
+}
+
 type Entry = {
   item: LibraryItem
   label: string
   testId: string
+  preview: ReactElement
+  // Adds the item where it goes without a drag: to the selected clips, or at the playhead.
   onChoose(): void
 }
 
-function EntryButton({ entry, icon }: { entry: Entry; icon: IconName }): ReactElement {
+function EntryTile({ entry }: { entry: Entry }): ReactElement {
   const drag = useLibraryDrag(entry.item, entry.label)
+
+  // A click with the pointer adds nothing: the item is dragged where it goes. Enter, Space and VoiceOver press the button without a pointer, which `detail` 0 tells apart.
+  function onClick(event: MouseEvent<HTMLButtonElement>): void {
+    if (event.detail === 0) entry.onChoose()
+  }
+
   return (
     <li>
-      <button type="button" className="button library-entry" data-testid={entry.testId} {...drag} onClick={entry.onChoose}>
-        <Icon name={icon} />
-        {entry.label}
+      <button type="button" className="library-item" data-testid={entry.testId} data-tooltip={entry.label} {...drag} onClick={onClick}>
+        <span className="library-thumbnail">{entry.preview}</span>
+        <span className="library-text">
+          <span className="library-name">{entry.label}</span>
+        </span>
       </button>
     </li>
   )
 }
 
 type EntryListProps = {
-  // What the entries are, in the plural, as in "Search effects".
   noun: string
   hint: string
-  icon: IconName
   entries: readonly Entry[]
 }
 
-function EntryList({ noun, hint, icon, entries }: EntryListProps): ReactElement {
+function EntryList({ noun, hint, entries }: EntryListProps): ReactElement {
   const [query, setQuery] = useState('')
+  const [view, setView] = useLibraryView()
   const wanted = query.trim().toLowerCase()
   const shown = entries.filter((entry) => entry.label.toLowerCase().includes(wanted))
   return (
     <div className="library-tab">
-      <input className="field" type="search" placeholder={`Search ${noun}`} aria-label={`Search ${noun}`} data-testid={`${noun}-search`} value={query} onChange={(event) => setQuery(event.target.value)} />
-      <p className="hint">{hint}</p>
-      <ul className="library-list" aria-label={noun}>
+      <LibraryTools noun={noun} query={query} onQuery={setQuery} view={view} onView={setView} />
+      <p className="hint library-hint">{hint}</p>
+      <ul className={view === 'grid' ? 'library-list grid' : 'library-list'} aria-label={noun}>
         {shown.map((entry) => (
-          <EntryButton key={entry.testId} entry={entry} icon={icon} />
+          <EntryTile key={entry.testId} entry={entry} />
         ))}
       </ul>
       {shown.length === 0 && <p className="empty-state">Nothing here is called that.</p>}
@@ -147,8 +202,14 @@ function EntryList({ noun, hint, icon, entries }: EntryListProps): ReactElement 
 
 export function EffectsTab(): ReactElement {
   const { actions } = useSession()
-  const entries = EFFECT_TYPES.map((effect) => ({ item: { kind: 'effect' as const, effect }, label: EFFECT_NAMES[effect], testId: `effect-${effect}`, onChoose: () => actions.addEffect(effect) }))
-  return <EntryList noun="effects" hint="Click one to add it to the selected clips, or drag it onto a clip." icon="wand" entries={entries} />
+  const entries = EFFECT_TYPES.map((effect) => ({
+    item: { kind: 'effect' as const, effect },
+    label: EFFECT_NAMES[effect],
+    testId: `effect-${effect}`,
+    preview: EFFECT_PREVIEWS[effect],
+    onChoose: () => actions.addEffect(effect),
+  }))
+  return <EntryList noun="effects" hint="Drag one onto a clip on the canvas or the timeline." entries={entries} />
 }
 
 export function TransitionsTab(): ReactElement {
@@ -157,7 +218,20 @@ export function TransitionsTab(): ReactElement {
     item: { kind: 'transition' as const, transition },
     label: TRANSITION_NAMES[transition],
     testId: `transition-${transition}`,
+    preview: TRANSITION_PREVIEWS[transition],
     onChoose: () => actions.addTransition(transition),
   }))
-  return <EntryList noun="transitions" hint="Drag one onto the start or the end of a clip, or onto a cut. A click adds it at the start of the selected clips." icon="transition" entries={entries} />
+  return <EntryList noun="transitions" hint="Drag one onto the start or the end of a clip, or onto the cut between two clips." entries={entries} />
+}
+
+export function AnnotationsTab(): ReactElement {
+  const { actions } = useSession()
+  const entries = ANNOTATION_KINDS.map((annotation) => ({
+    item: { kind: 'annotation' as const, annotation },
+    label: ANNOTATION_NAMES[annotation],
+    testId: `annotation-${annotation}`,
+    preview: ANNOTATION_PREVIEWS[annotation],
+    onChoose: () => actions.addAnnotation(annotation),
+  }))
+  return <EntryList noun="annotations" hint="Drag one onto the canvas, where it lands at the playhead, or onto the timeline." entries={entries} />
 }

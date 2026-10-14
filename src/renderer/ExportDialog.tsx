@@ -87,7 +87,7 @@ export function ExportDialog(): ReactElement {
   const isMovingPicture = hasMovingPicture(format)
   const isVideo = format === 'mp4' || format === 'webm'
   const size = format === 'png' ? canvas : exportSize(choices.preset, canvas)
-  const rates = exportFrameRates(format, canvas.frameRate)
+  const rates = exportFrameRates(format)
   const selected = selectionRange(project, selection)
   const range = choices.isSelectionOnly && selected !== undefined ? selected : { start: 0, end: projectDuration(project) }
   const missingCount = unlinkedMedia(project, mediaStates).length

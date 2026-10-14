@@ -20,7 +20,6 @@ const STANDARD_RATES: readonly FrameRate[] = [
   { num: 60000, den: 1001 },
   { num: 100, den: 1 },
   { num: 120000, den: 1001 },
-  { num: 120, den: 1 },
   { num: 240, den: 1 },
 ].sort((a, b) => framesPerSecond(a) - framesPerSecond(b))
 

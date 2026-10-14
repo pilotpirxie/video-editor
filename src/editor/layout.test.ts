@@ -55,7 +55,7 @@ describe('clampLayout', () => {
 
   it('keeps the timeline from covering the canvas', () => {
     const clamped = clampLayout({ ...DEFAULT_LAYOUT, timelineHeight: 2000 }, MIN_WINDOW)
-    expect(clamped.timelineHeight).toBe(720 - 36 - 5 - 220)
+    expect(clamped.timelineHeight).toBe(720 - 5 - 220)
   })
 })
 

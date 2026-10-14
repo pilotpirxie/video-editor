@@ -229,6 +229,9 @@ export type MenuAction =
   | 'ripple-delete'
   | 'group'
   | 'ungroup'
+  | 'toggle-library'
+  | 'toggle-properties'
+  | 'toggle-timeline'
 
 export type HostCommand =
   | { type: 'open-project'; path: string }

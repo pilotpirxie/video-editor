@@ -32,7 +32,11 @@ export type Session = {
   relink(mediaId: string): Promise<void>
   exportVideo(choices: ExportChoices): Promise<void>
   cancelExport(): void
+  // The View menu shows and hides the panels, which the window lays out.
+  onPanelToggle(listener: (panel: Panel) => void): () => void
 }
+
+export type Panel = 'library' | 'properties' | 'timeline'
 
 type SentProject = {
   project: Project
@@ -45,6 +49,7 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
   const actions = createActions(store, transport)
   const thumbnails = createThumbnails(media, () => transport.position().isPlaying)
   const preparationListeners = new Set<() => void>()
+  const panelListeners = new Set<(panel: Panel) => void>()
   let preparation: PreparationStates = {}
   let preparationTimer: number | undefined
   let sent: SentProject | undefined
@@ -328,8 +333,18 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
       actions.group()
     } else if (command.action === 'ungroup') {
       actions.ungroup()
+    } else if (command.action === 'toggle-library') {
+      togglePanel('library')
+    } else if (command.action === 'toggle-properties') {
+      togglePanel('properties')
+    } else if (command.action === 'toggle-timeline') {
+      togglePanel('timeline')
     }
   })
+
+  function togglePanel(panel: Panel): void {
+    for (const listener of panelListeners) listener(panel)
+  }
 
   async function open(): Promise<void> {
     if (info.loadFrom === undefined) return
@@ -365,5 +380,9 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
     exportVideo,
     hasSmallMemory: info.hasSmallMemory,
     cancelExport,
+    onPanelToggle(listener) {
+      panelListeners.add(listener)
+      return () => panelListeners.delete(listener)
+    },
   }
 }

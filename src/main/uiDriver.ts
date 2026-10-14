@@ -58,6 +58,7 @@ export type Driver = {
   options: UiTestOptions
   until(script: string, what: string, timeoutMs?: number): Promise<void>
   untilUndoLabel(label: string): Promise<void>
+  untilRedoLabel(label: string): Promise<void>
   rect(testId: string): Promise<Rect>
   hover(point: Point): Promise<void>
   drag(from: Point, to: Point, modifiers?: readonly Modifier[]): Promise<void>
@@ -235,10 +236,10 @@ export function driverOf(window: BrowserWindow, options: UiTestOptions): Driver 
     return item
   }
 
-  async function untilUndoLabel(label: string): Promise<void> {
+  async function untilMenuLabel(action: 'undo' | 'redo', label: string): Promise<void> {
     const deadline = Date.now() + STEP_TIMEOUT_MS
-    while (menuItem('undo').label !== label) {
-      if (Date.now() > deadline) throw new PageError(`Timed out waiting for the Edit menu to offer "${label}"; it offers "${menuItem('undo').label}"`)
+    while (menuItem(action).label !== label) {
+      if (Date.now() > deadline) throw new PageError(`Timed out waiting for the Edit menu to offer "${label}"; it offers "${menuItem(action).label}"`)
       await sleep(POLL_INTERVAL_MS)
     }
   }
@@ -280,7 +281,8 @@ export function driverOf(window: BrowserWindow, options: UiTestOptions): Driver 
     window,
     options,
     until,
-    untilUndoLabel,
+    untilUndoLabel: (label) => untilMenuLabel('undo', label),
+    untilRedoLabel: (label) => untilMenuLabel('redo', label),
     rect,
     hover,
     drag,

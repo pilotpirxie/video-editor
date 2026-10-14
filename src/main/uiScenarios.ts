@@ -64,7 +64,7 @@ async function watchDelays(driver: Driver, eventType: string, shown: Shown): Pro
 
 // Prepared media answers from its preview copy, which is what the "cached" budgets are about.
 async function untilPrepared(driver: Driver): Promise<void> {
-  await driver.until(`document.querySelector('.media-item') !== null && document.querySelector('.media-item .badge.warning') === null`, 'the media to be prepared')
+  await driver.until(`document.querySelector('.library-item[data-testid^="media-"]') !== null && document.querySelector('.library-item .badge.warning') === null`, 'the media to be prepared')
 }
 
 async function untilTimecode(driver: Driver, timecode: string): Promise<void> {
@@ -152,10 +152,10 @@ async function testBlocks(driver: Driver): Promise<UiTestReport> {
   await driver.picture('blocks-linked')
 
   driver.menu('undo')
-  await driver.until(`${selector('redo')}.getAttribute('aria-label') === 'Redo Change Fade'`, 'undo to take back one fade')
+  await driver.untilRedoLabel('Redo Change Fade')
   const afterUndo = await driver.savedProject('one-fade.json')
   driver.menu('redo')
-  await driver.until(`${selector('redo')}.getAttribute('aria-label') === 'Redo'`, 'redo to bring the fade back')
+  await driver.untilRedoLabel('Redo')
 
   await driver.rightClickAt(await at(second))
   await driver.until(`${selector('menu-separate-audio')} !== null`, 'the clip menu')
@@ -228,7 +228,7 @@ async function testText(driver: Driver): Promise<UiTestReport> {
   const corner = await canvasPoint(driver, canvasWidth, { x: 60, y: 60 })
 
   await driver.page.click('tab-annotations')
-  await driver.page.click('add-text')
+  await driver.page.click('annotation-text')
   await untilTextEditor(driver, true)
   const framesBeforeTyping = Number(await driver.page.evaluate(`${selector('timecode')}.dataset.frames`))
   const typingDelays = await watchDelays(driver, 'input', 'any frame')
@@ -348,7 +348,7 @@ async function testAnimated(driver: Driver): Promise<UiTestReport> {
 
 // Opens a project whose three media files have moved: it says so, refuses a file of the wrong kind, then finds all three from one answer.
 async function testRelink(driver: Driver): Promise<UiTestReport> {
-  const missingBadgeCount = `document.querySelectorAll('.media-item .badge.danger').length`
+  const missingBadgeCount = `document.querySelectorAll('.library-item .badge.danger').length`
   await driver.until(`${selector('notice')} !== null`, 'the notice about missing media')
   const openNotice = await driver.page.text('notice')
   const missingAtOpen = await driver.page.evaluate(missingBadgeCount)
@@ -618,7 +618,7 @@ async function testTutorial(driver: Driver): Promise<UiTestReport> {
   // A title over the first five seconds.
   await driver.press('Return', ['meta'])
   await driver.page.click('tab-annotations')
-  await driver.page.click('add-text')
+  await driver.page.click('annotation-text')
   await untilTextEditor(driver, true)
   await driver.window.webContents.insertText('How to export a video')
   await driver.press('Escape')
@@ -709,18 +709,21 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('media-image.jpg')} !== null`, 'the import to finish')
   await untilPrepared(driver)
 
-  // The switch sits on the line of the search field; as tiles, the media lies side by side.
+  // The switch sits on the line of the search field. Media starts as tiles side by side; as a list, one row lies under another.
   const search = await driver.rect('media-search')
   const gridSwitch = await driver.rect('media-view-grid')
   const isSwitchBesideSearch = Math.abs(centerOf(search).y - centerOf(gridSwitch).y) < 1 && gridSwitch.x > search.x + search.width
-  const firstInList = await driver.rect('media-h264.mp4')
-  const secondInList = await driver.rect('media-audio.wav')
-  await clickOn(driver, 'media-view-grid')
-  await driver.until(`${selector('media-h264.mp4')}.getBoundingClientRect().top === ${selector('media-audio.wav')}.getBoundingClientRect().top`, 'the media to be shown as tiles')
+  const isGridByDefault = await isPressed(driver, 'media-view-grid')
   const firstTile = await driver.rect('media-h264.mp4')
   const secondTile = await driver.rect('media-audio.wav')
   await sleep(PICTURES_SETTLE_MS)
   await driver.picture('media-grid')
+  await clickOn(driver, 'media-view-list')
+  await driver.until(`${selector('media-h264.mp4')}.getBoundingClientRect().top !== ${selector('media-audio.wav')}.getBoundingClientRect().top`, 'the media to be shown as a list')
+  const firstInList = await driver.rect('media-h264.mp4')
+  const secondInList = await driver.rect('media-audio.wav')
+  await clickOn(driver, 'media-view-grid')
+  await driver.until(`${selector('media-h264.mp4')}.getBoundingClientRect().top === ${selector('media-audio.wav')}.getBoundingClientRect().top`, 'the media to be shown as tiles again')
 
   // A tile is dragged to the timeline like a row.
   await dragMedia(driver, 'h264.mp4', await driver.timelinePoint(0, 0, 1))
@@ -755,7 +758,7 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
 
   // The longest list there is, every font on this Mac, opens as promptly as the short ones.
   await driver.page.click('tab-annotations')
-  await driver.page.click('add-text')
+  await driver.page.click('annotation-text')
   await untilTextEditor(driver, true)
   await driver.press('Escape')
   await untilTextEditor(driver, false)
@@ -804,7 +807,7 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   const rightAfter = await driver.rect('right-sidebar')
   const canvasWhenWide = await driver.page.evaluate(`document.querySelector('.canvas-panel').getBoundingClientRect().width`)
   const windowWidth = await driver.page.evaluate('window.innerWidth')
-  const tilesAcrossWhenWide = await driver.page.evaluate(`new Set([...document.querySelectorAll('.media-item')].map((item) => item.getBoundingClientRect().left)).size`)
+  const tilesAcrossWhenWide = await driver.page.evaluate(`new Set([...document.querySelectorAll('.library-item')].map((item) => item.getBoundingClientRect().left)).size`)
   await driver.picture('wide-sidebar')
   const rightSplitter = centerOf(await driver.rect('split-right'))
   await driver.drag(rightSplitter, { x: rightSplitter.x + 400, y: rightSplitter.y })
@@ -821,6 +824,8 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   await driver.page.click('timeline-zoom-fit')
   await driver.until(`JSON.parse(${selector('timeline')}.dataset.view).pixelsPerSecond > 1`, 'the timeline to fit the project again')
   const zoomAfterFit = await timelineZoom(driver)
+  // The list is chosen last, so the next launch shows whether the choice was kept.
+  await clickOn(driver, 'media-view-list')
 
   const listDelays = numbersIn(await driver.page.evaluate('window.listDelays'))
   const fontListDelays = listDelays.slice(listsBeforeFonts)
@@ -828,6 +833,7 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   return {
     windowWidth,
     isSwitchBesideSearch,
+    isGridByDefault,
     isListStacked: firstInList.x === secondInList.x && secondInList.y > firstInList.y,
     areTilesSideBySide: firstTile.y === secondTile.y && secondTile.x > firstTile.x,
     fieldInset,
@@ -857,7 +863,7 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   }
 }
 
-// The next launch on the same profile: what was folded is folded, and the media is still shown as tiles.
+// The next launch on the same profile: what was folded is folded, and the media is still shown as a list.
 async function testControlsKept(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('group-project')} !== null`, 'the project settings')
   return {
@@ -905,7 +911,7 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   await driver.page.click('import')
   await driver.until(names.map((name) => `${selector(`media-${name}`)} !== null`).join(' && '), 'the three files in the Media tab')
   await untilPrepared(driver)
-  const mediaDetails = await driver.page.evaluate(`[...document.querySelectorAll('.media-item .media-details')].map((details) => details.textContent)`)
+  const mediaDetails = await driver.page.evaluate(`[...document.querySelectorAll('.library-item .library-details')].map((details) => details.textContent)`)
 
   // Held over the empty timeline, the video shows where it would land while nothing has been added. The pointer is then moved about, to see that the outline keeps up.
   const video = centerOf(await driver.rect('media-h264.mp4'))
@@ -1006,6 +1012,21 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   await sleep(PICTURES_SETTLE_MS)
   await driver.picture('arrange-cropped')
 
+  // Picked with a click and a Cmd-click, two files are dragged as one: held over the empty top track they show one outline,
+  // and let go they lie one after the other there, in the order of the list, in one undo step.
+  await driver.clickAt(centerOf(await driver.rect('media-audio.wav')))
+  await driver.clickAt(centerOf(await driver.rect('media-image.jpg')), ['meta'])
+  const selectedFiles = await driver.page.evaluate(`[...document.querySelectorAll('.library-item.selected')].map((item) => item.dataset.testid)`)
+  const image = centerOf(await driver.rect('media-image.jpg'))
+  const onTheTopTrack = await driver.timelinePoint(0.5 * second, 2, 3)
+  driver.holdAt(image)
+  await driver.dragOn(image, onTheTopTrack)
+  const heldTogether = await untilLanding(driver)
+  await driver.picture('arrange-held-together')
+  await driver.releaseAt(onTheTopTrack)
+  await driver.untilUndoLabel('Undo Add 2 Clips')
+  const droppedTogether = await driver.savedProject('dropped-together.json')
+
   // A hint is as large as the text of the window, not smaller.
   await driver.hover(centerOf(await driver.rect('split')))
   await driver.until(`document.querySelector('.tooltip:not([hidden])') !== null`, 'the hint of the split button')
@@ -1030,6 +1051,9 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
     groupIcons,
     cropped,
     widthAfterCrop,
+    selectedFiles,
+    heldTogether,
+    droppedTogether,
     hintSize,
   }
 }
@@ -1061,7 +1085,7 @@ async function pressWithKeyboard(driver: Driver, testId: string): Promise<void> 
 async function testShapes(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await driver.page.click('tab-annotations')
-  await driver.page.click('add-blur')
+  await driver.page.click('annotation-blur')
   await driver.untilUndoLabel('Undo Add Blur')
   await driver.until(`${selector('blur-strength')} !== null`, 'the new blur to be selected')
   const added = await driver.savedProject('blur.json')
@@ -1082,7 +1106,7 @@ async function testShapes(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await driver.picture('shapes-pixelate')
 
-  await driver.page.click('add-highlight')
+  await driver.page.click('annotation-highlight')
   await driver.untilUndoLabel('Undo Add Highlight')
   await choose(driver, 'highlight-color', '#00ff00')
   await driver.untilUndoLabel('Undo Change Highlight Colour')
@@ -1092,9 +1116,9 @@ async function testShapes(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await driver.picture('shapes-spotlight')
 
-  await pressWithKeyboard(driver, 'add-pixelate')
+  await pressWithKeyboard(driver, 'annotation-pixelate')
   await driver.untilUndoLabel('Undo Add Pixelate')
-  await driver.page.click('add-spotlight')
+  await driver.page.click('annotation-spotlight')
   await driver.untilUndoLabel('Undo Add Spotlight')
   const all = await driver.savedProject('all.json')
 
@@ -1116,9 +1140,13 @@ async function testEffects(driver: Driver): Promise<UiTestReport> {
   await driver.page.click('effect-border')
   const noticeWithoutSelection = await driver.page.waitFor('notice', (text) => text !== '', POLL_INTERVAL_MS * STEPS_TO_TIME, 'a notice that nothing is selected')
 
-  // A click adds to every selected clip. With two selected, their settings are not offered together.
+  // A click with the pointer adds nothing. Pressed without one, as Return and VoiceOver do, the effect goes to every selected clip; with two selected, their settings are not offered together.
   await driver.clickAt(await driver.timelinePoint(second / 2, 0, 4))
   await driver.clickAt(await driver.timelinePoint(second / 2, 1, 4), ['shift'])
+  const undoBeforeClick = driver.menuLabel('undo')
+  await driver.clickAt(centerOf(await driver.rect('effect-border')))
+  await sleep(POLL_INTERVAL_MS)
+  const isUnchangedByClick = driver.menuLabel('undo') === undoBeforeClick
   await driver.page.click('effect-border')
   await driver.untilUndoLabel('Undo Add Effect')
   const hintForTwo = await driver.page.waitFor('effects-hint', (text) => text !== '', POLL_INTERVAL_MS * STEPS_TO_TIME, 'the hint to select one clip')
@@ -1170,7 +1198,7 @@ async function testEffects(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Remove Effect')
   await fullQualityFrame(driver, 0)
   await driver.picture('effects-applied')
-  return { noticeWithoutSelection, hintForTwo, bordered, heldOverTimeline, undoWhileHeld, dropped, changed, keyed, removed: await driver.savedProject('removed.json') }
+  return { noticeWithoutSelection, isUnchangedByClick, hintForTwo, bordered, heldOverTimeline, undoWhileHeld, dropped, changed, keyed, removed: await driver.savedProject('removed.json') }
 }
 
 // Drags transitions onto the cut between two clips and onto their free ends, changes one by its grip and in Properties, and removes one.
@@ -1193,6 +1221,10 @@ async function testTransitions(driver: Driver): Promise<UiTestReport> {
   await driver.releaseAt(beforeCut)
   await sleep(POLL_INTERVAL_MS)
   const isUnchangedAfterEscape = driver.menuLabel('undo') === undoBefore
+  // A click on a transition adds nothing: transitions are always dragged where they go.
+  await driver.clickAt(dissolve)
+  await sleep(POLL_INTERVAL_MS)
+  const isUnchangedByClick = driver.menuLabel('undo') === undoBefore
 
   await driver.drag(dissolve, beforeCut)
   await driver.untilUndoLabel('Undo Add Transition')
@@ -1230,6 +1262,7 @@ async function testTransitions(driver: Driver): Promise<UiTestReport> {
     heldOnCut,
     isUnchangedWhileHeld,
     isUnchangedAfterEscape,
+    isUnchangedByClick,
     onCut,
     gripSamples: gripToFrame.length,
     gripToFrameP95: percentile(gripToFrame, P95),
@@ -1360,7 +1393,7 @@ const NEAR_TOP_OF_SOUND = 6
 async function testAnnotations(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await driver.page.click('tab-annotations')
-  await driver.page.click('add-callout')
+  await driver.page.click('annotation-callout')
   await driver.untilUndoLabel('Undo Add Callout')
   // A new callout opens for typing, like a new title.
   await untilTextEditor(driver, true)
@@ -1387,7 +1420,7 @@ async function testAnnotations(driver: Driver): Promise<UiTestReport> {
   const banner = await driver.savedProject('banner.json')
 
   // A new arrow lies level in the middle. Its end is dragged to the top right corner, its start stays where it is.
-  await driver.page.click('add-arrow')
+  await driver.page.click('annotation-arrow')
   await driver.untilUndoLabel('Undo Add Arrow')
   await driver.until(`${selector('arrow-length')} !== null`, 'the new arrow to be selected')
   const arrowAdded = await driver.savedProject('arrow-added.json')
@@ -1401,15 +1434,29 @@ async function testAnnotations(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await driver.picture('annotations')
 
-  await driver.page.click('add-line')
+  // A line dragged onto the canvas lands where it is let go. A click on a tile adds nothing: annotations are dragged where they go.
+  await driver.drag(centerOf(await driver.rect('annotation-line')), await onCanvas(driver, 160, 90))
   await driver.untilUndoLabel('Undo Add Line')
-  return { added, shaped, banner, arrowAdded, pointed, withLine: await driver.savedProject('line.json') }
+  const withLine = await driver.savedProject('line.json')
+  await driver.clickAt(centerOf(await driver.rect('annotation-highlight')))
+  await sleep(POLL_INTERVAL_MS)
+  const undoAfterClick = driver.menuLabel('undo')
+
+  // A title dragged onto the video on the timeline shows where it would land, then lies at that moment on a new track just above the video.
+  const titleTile = centerOf(await driver.rect('annotation-text'))
+  const onTheVideo = await driver.timelinePoint(TICKS_PER_SECOND, 0, 4)
+  driver.holdAt(titleTile)
+  await driver.dragOn(titleTile, onTheVideo)
+  const titleHeld = await untilLanding(driver)
+  await driver.releaseAt(onTheVideo)
+  await driver.untilUndoLabel('Undo Add Text')
+  return { added, shaped, banner, arrowAdded, pointed, withLine, undoAfterClick, titleHeld, withTitle: await driver.savedProject('title.json') }
 }
 
 // Styles a title with everything the Text group of Properties offers.
 async function testTextStyle(driver: Driver): Promise<UiTestReport> {
   await driver.page.click('tab-annotations')
-  await driver.page.click('add-text')
+  await driver.page.click('annotation-text')
   await untilTextEditor(driver, true)
   await driver.typeKeys('Two words')
   await driver.press('Escape')

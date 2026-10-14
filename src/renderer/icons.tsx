@@ -1,11 +1,6 @@
 import type { ReactElement } from 'react'
 
 const PATHS = {
-  panelLeft: 'M2 3h12v10H2zM6 3v10',
-  panelRight: 'M2 3h12v10H2zM10 3v10',
-  panelBottom: 'M2 3h12v10H2zM2 9h12',
-  undo: 'M5 3L2 6l3 3M2 6h7.5a3.5 3.5 0 0 1 0 7H6',
-  redo: 'M11 3l3 3-3 3M14 6H6.5a3.5 3.5 0 0 0 0 7H10',
   play: 'M5 3l8 5-8 5z',
   pause: 'M5 3v10M11 3v10',
   stepBack: 'M4 3v10M13 3L6 8l7 5z',

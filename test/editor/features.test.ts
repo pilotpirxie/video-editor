@@ -102,7 +102,7 @@ describe('controls', () => {
     const report = await uiTest('controls', ['--media', MEDIA_DIRECTORY, '--out', join(scratch, 'controls')], profile)
     console.info(`controls: ${JSON.stringify(report)}`)
 
-    expect(report).toMatchObject({ isSwitchBesideSearch: true, isListStacked: true, areTilesSideBySide: true })
+    expect(report).toMatchObject({ isSwitchBesideSearch: true, isGridByDefault: true, isListStacked: true, areTilesSideBySide: true })
 
     // A field starts at the padding of its panel and ends at the padding, or at the room kept for the scroll bar.
     expect(report.isLabelAbove).toBe(true)
@@ -138,7 +138,7 @@ describe('controls', () => {
     expect(report.groupToggleP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
 
     const nextLaunch = await uiTest('controls-kept', [], profile)
-    expect(nextLaunch).toEqual({ isProjectOpen: false, isGridChosen: true, isListChosen: false })
+    expect(nextLaunch).toEqual({ isProjectOpen: false, isGridChosen: false, isListChosen: true })
   })
 })
 
@@ -179,6 +179,14 @@ describe('arranging by dragging', () => {
     expect(report.groupIcons).toEqual(['Transform 2', 'Crop 2', 'Timing 2', 'Opacity 2', 'Transitions 2', 'Animation 2', 'Volume 2'])
     expect(projectIn(report, 'cropped').tracks[0]?.clips[0]).toMatchObject({ crop: { left: 100, top: 0, right: 0, bottom: 0 }, transform: { x: 210, y: 90 } })
     expect(report.widthAfterCrop).toBe('220.0')
+
+    // A click and a Cmd-click picked two files; dragged together they showed one outline and landed one after the other on the empty top track.
+    expect(report.selectedFiles).toEqual(['media-audio.wav', 'media-image.jpg'])
+    expect(report.heldTogether).toEqual({ start: 0.5 * SECOND, trackIndex: 2, isNewTrack: false })
+    const together = projectIn(report, 'droppedTogether').tracks[2]?.clips ?? []
+    expect(together.map((clip) => clip.type)).toEqual(['audio', 'image'])
+    expect(together[0]?.start).toBe(0.5 * SECOND)
+    expect(together[1]?.start).toBe((together[0]?.start ?? 0) + (together[0]?.duration ?? 0))
     expect(report.hintSize).toBe('13px')
   })
 })
@@ -239,7 +247,18 @@ describe('callouts, arrows and lines', () => {
     expect(Math.abs(pointed.length - Math.hypot(360, 140))).toBeLessThanOrEqual(3)
     expect(Math.abs(pointed.transform.rotation + 21.25)).toBeLessThanOrEqual(1)
 
-    expect(projectIn(report, 'withLine').tracks[3]?.clips[0]).toMatchObject({ type: 'arrow', startHead: 'none', endHead: 'none' })
+    // The line was dropped on the canvas point 160, 90, at the playhead.
+    const line = projectIn(report, 'withLine').tracks[3]?.clips[0]
+    expect(line).toMatchObject({ type: 'arrow', start: 0, startHead: 'none', endHead: 'none' })
+    expect(line !== undefined && 'transform' in line && Math.abs(line.transform.x - 160)).toBeLessThanOrEqual(2)
+    expect(line !== undefined && 'transform' in line && Math.abs(line.transform.y - 90)).toBeLessThanOrEqual(2)
+    expect(report.undoAfterClick).toBe('Undo Add Line')
+
+    // The title held over the video promised a track of its own, and landed there at one second.
+    expect(report.titleHeld).toEqual({ start: SECOND, trackIndex: 1, isNewTrack: true })
+    const withTitle = projectIn(report, 'withTitle')
+    expect(withTitle.tracks).toHaveLength(5)
+    expect(withTitle.tracks[1]?.clips[0]).toMatchObject({ type: 'text', start: SECOND, duration: 5 * SECOND, transform: { x: 320, y: 180 } })
   })
 })
 
@@ -372,7 +391,8 @@ describe('effects', () => {
     })
 
     expect(report.noticeWithoutSelection).toBe('Select a video, an image or a text first, or drag the effect onto one.')
-    // A click put a border on both selected clips, sized for the 360 pixel high canvas.
+    // A click with the pointer added nothing; pressed without one, the border went on both selected clips, sized for the 360 pixel high canvas.
+    expect(report.isUnchangedByClick).toBe(true)
     const border = { type: 'border', width: 2, color: '#ffffff' }
     expect(effectsOf('bordered')).toEqual([[border], [border], [], []])
     expect(report.hintForTwo).toBe('Select one clip to change its effects.')
@@ -399,6 +419,7 @@ describe('transitions', () => {
     expect(report.heldOnCut).toMatchObject({ kind: 'transition', target: { clipId: 'second', edge: 'in' }, type: 'crossDissolve' })
     expect(report.isUnchangedWhileHeld).toBe(true)
     expect(report.isUnchangedAfterEscape).toBe(true)
+    expect(report.isUnchangedByClick).toBe(true)
     expect(clipsAt('onCut')[1]).toMatchObject({ id: 'second', transitionIn: { type: 'crossDissolve', duration: SECOND } })
 
     // The grip was pulled from half a second after the cut to 0.2 s after it: the transition is 0.4 s long, and the picture followed within the budget.

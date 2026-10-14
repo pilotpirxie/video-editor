@@ -1,8 +1,9 @@
+import { ANNOTATION_NAMES, addAnnotation, type AnnotationKind } from '../editor/annotations.js'
 import { moveZoom, setZoom } from '../editor/camera.js'
 import { endOf, hasVolume, locateClip, makesSound, nextTrackName, type NewTrack } from '../editor/clips.js'
 import { addEffect, takesEffects } from '../editor/effects.js'
 import { moveClips, trimClip } from '../editor/moveTrim.js'
-import { dropMedia, mediaFileName, type MediaDrop } from '../editor/place.js'
+import { dropMedia, mediaFileName, placeableMedia } from '../editor/place.js'
 import { changeKeyframe, setFade, type Fade } from '../editor/properties.js'
 import { snapDelta, timelineTargets } from '../editor/snapping.js'
 import {
@@ -56,9 +57,10 @@ const PERCENT = 100
 
 // What can be dragged out of the tabs of the library.
 export type LibraryItem =
-  | { kind: 'media'; mediaId: string }
+  | { kind: 'media'; mediaIds: readonly string[] }
   | { kind: 'effect'; effect: EffectType }
   | { kind: 'transition'; transition: TransitionType }
+  | { kind: 'annotation'; annotation: AnnotationKind }
 
 // What an item says while it is dragged out of the library: 'library-drag' on every move and 'library-drop' on release, both to whatever is under the pointer.
 export const LIBRARY_DRAG_EVENT = 'library-drag'
@@ -70,9 +72,17 @@ export type LibraryDragDetail = {
   clientY: number
 }
 
-// The clip and the track that stand in for the real ones while the landing of held media is worked out.
+// The clips and the track that stand in for the real ones while the landing of held media is worked out.
 const HELD_CLIP_ID = 'held-media'
 const HELD_TRACK: NewTrack = { id: 'held-media-track', name: '' }
+
+// What releasing held media or an annotation would add: the change itself, the clips it adds and the name of the undo step.
+type Placement = {
+  clipIds: string[]
+  guide: number | undefined
+  label: string
+  place(project: Project): Project
+}
 
 type Point = {
   x: number
@@ -248,7 +258,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   // What a transition or an effect held at a point of the window would go to. It is worked out on the project as it is and nothing is changed.
   function heldDropAt(detail: LibraryDragDetail): HeldDrop | undefined {
     const { item } = detail
-    if (item.kind === 'media') return undefined
+    if (item.kind === 'media' || item.kind === 'annotation') return undefined
     const { project, selection } = store.getState()
     const point = pointIn(detail)
     const trackCount = project.tracks.length
@@ -274,43 +284,51 @@ export function createTimelineController(elements: TimelineElements, session: Se
     return { kind: 'transition', target, type: item.transition, shown: { left: band.left, right: band.right, top: rowTop } }
   }
 
-  // The drop that releasing media at a point of the window makes: its start on whole frames, snapped, on the row under the pointer.
-  function mediaDropAt(detail: LibraryDragDetail, clipId: string, newTrack: NewTrack): { drop: MediaDrop; guide: number | undefined } | undefined {
-    if (detail.item.kind !== 'media') return undefined
-    const { mediaId } = detail.item
+  // What releasing held media or an annotation at a point of the window adds: from whole frames, snapped, on the row under the pointer.
+  // Several files land one after another. `newClipId` names the clips, so hovering can use stand-ins and only a drop makes real ones.
+  function placementAt(detail: LibraryDragDetail, newClipId: (index: number) => string, newTrack: NewTrack): Placement | undefined {
+    const { item } = detail
+    if (item.kind !== 'media' && item.kind !== 'annotation') return undefined
     const { project, mediaStates, isSnapping: snaps } = store.getState()
-    const reference = project.media.find((candidate) => candidate.id === mediaId)
-    const state = mediaStates[mediaId]
-    if (reference === undefined || state === undefined || 'error' in state) return undefined
-
     const point = pointIn(detail)
     let start = Math.max(0, wholeFrames(xToTime(point.x, view)))
-    let snapGuide: number | undefined
+    let guide: number | undefined
     if (snaps) {
       const snap = snapDelta([start], 0, timelineTargets(project, new Set(), transport.position().time), snapRange())
       start += snap.delta
-      snapGuide = snap.guide
+      guide = snap.guide
     }
     const trackIndex = Math.max(0, trackIndexAt(Math.max(point.y, TRACKS_TOP), project.tracks.length, view))
-    return { drop: { reference, info: state.info, clipId, start, trackIndex, newTrack }, guide: snapGuide }
+    if (item.kind === 'annotation') {
+      const added = { clipId: newClipId(0), start, trackIndex, newTrack }
+      return { clipIds: [added.clipId], guide, label: `Add ${ANNOTATION_NAMES[item.annotation]}`, place: (current) => addAnnotation(current, item.annotation, added) }
+    }
+    const media = placeableMedia(project, mediaStates, item.mediaIds, newClipId)
+    if (media.length === 0) return undefined
+    const drop = { media, start, trackIndex, newTrack }
+    const clipIds = media.map((dropped) => dropped.clipId)
+    return { clipIds, guide, label: media.length === 1 ? 'Add Clip' : `Add ${media.length} Clips`, place: (current) => dropMedia(current, drop) }
   }
 
-  // Where the held media would land. It is worked out on the project as it is at this moment and nothing is changed, so hovering is not an edit.
+  // Where the held media or annotation would land. It is worked out on the project as it is at this moment and nothing is changed, so hovering is not an edit.
   function landingOfHeld(): Landing | undefined {
-    const dropped = held === undefined ? undefined : mediaDropAt(held, HELD_CLIP_ID, HELD_TRACK)
-    if (dropped === undefined) return undefined
+    const placement = held === undefined ? undefined : placementAt(held, (index) => `${HELD_CLIP_ID}-${index}`, HELD_TRACK)
+    const firstId = placement?.clipIds[0]
+    const lastId = placement?.clipIds.at(-1)
+    if (placement === undefined || firstId === undefined || lastId === undefined) return undefined
     const { project } = store.getState()
-    const after = dropMedia(project, dropped.drop)
-    const landed = locateClip(after, HELD_CLIP_ID)
-    if (landed === undefined) return undefined
+    const after = placement.place(project)
+    const first = locateClip(after, firstId)
+    const last = locateClip(after, lastId)
+    if (first === undefined || last === undefined) return undefined
     return {
-      start: landed.clip.start,
-      end: endOf(landed.clip),
-      trackIndex: landed.trackIndex,
-      // A new track directly above a row appears where that row was, so the outline is drawn where the clip will be once the rows have moved.
-      top: trackTop(landed.trackIndex, after.tracks.length, view),
+      start: first.clip.start,
+      end: endOf(last.clip),
+      trackIndex: first.trackIndex,
+      // A new track directly above a row appears where that row was, so the outline is drawn where the clips will be once the rows have moved.
+      top: trackTop(first.trackIndex, after.tracks.length, view),
       isNewTrack: after.tracks.length > project.tracks.length,
-      guide: dropped.guide,
+      guide: placement.guide,
     }
   }
 
@@ -863,11 +881,10 @@ export function createTimelineController(elements: TimelineElements, session: Se
       store.select(drop.clipIds)
       return
     }
-    const clipId = crypto.randomUUID()
-    const dropped = mediaDropAt(event.detail, clipId, { id: crypto.randomUUID(), name: nextTrackName(store.getState().project) })
-    if (dropped === undefined) return
-    store.apply('Add Clip', (current) => dropMedia(current, dropped.drop))
-    store.select([clipId])
+    const placement = placementAt(event.detail, () => crypto.randomUUID(), { id: crypto.randomUUID(), name: nextTrackName(store.getState().project) })
+    if (placement === undefined) return
+    store.apply(placement.label, placement.place)
+    store.select(placement.clipIds)
   }
 
   function followPlayhead(): void {

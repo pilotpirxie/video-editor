@@ -46,11 +46,10 @@ function framesPerSecond(rate: FrameRate): number {
   return rate.num / rate.den
 }
 
-// The project's frame rate and every slower one a format can hold, fastest first.
-export function exportFrameRates(format: ExportFormat, projectRate: FrameRate): FrameRate[] {
+// Every frame rate a format can hold, fastest first. A rate above the project's still moves keyframes, the camera and transitions more smoothly.
+export function exportFrameRates(format: ExportFormat): FrameRate[] {
   const rates = format === 'gif' ? GIF_FRAME_RATES : PROJECT_FRAME_RATES
-  const allowed = rates.filter((rate) => framesPerSecond(rate) <= framesPerSecond(projectRate))
-  return allowed.sort((a, b) => framesPerSecond(b) - framesPerSecond(a))
+  return [...rates].sort((a, b) => framesPerSecond(b) - framesPerSecond(a))
 }
 
 function isSameRate(a: FrameRate, b: FrameRate): boolean {
@@ -59,7 +58,7 @@ function isSameRate(a: FrameRate, b: FrameRate): boolean {
 
 // Another format keeps the frame rate when it can hold it; otherwise it starts from its own default.
 export function withFormat(choices: ExportChoices, format: ExportFormat, projectRate: FrameRate): ExportChoices {
-  const canKeepRate = exportFrameRates(format, projectRate).some((rate) => isSameRate(rate, choices.frameRate))
+  const canKeepRate = exportFrameRates(format).some((rate) => isSameRate(rate, choices.frameRate))
   if (canKeepRate) return { ...choices, format }
   return { ...choices, format, frameRate: format === 'gif' ? DEFAULT_GIF_FRAME_RATE : projectRate }
 }

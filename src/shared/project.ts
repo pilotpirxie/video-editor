@@ -488,7 +488,7 @@ class Fields {
 function parseFrameRate(value: unknown, path: string): FrameRate {
   const fields = readFields(value, path, ['num', 'den'])
   const rate = { num: fields.integer('num', { min: 1 }), den: fields.integer('den', { min: 1 }) }
-  if (!isProjectFrameRate(rate)) fail(path, 'must be 24000/1001, 24, 25, 30000/1001, 30, 50 or 60 frames per second')
+  if (!isProjectFrameRate(rate)) fail(path, 'must be 24000/1001, 24, 25, 30000/1001, 30, 50, 60, 120 or 160 frames per second')
   return rate
 }
 

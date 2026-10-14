@@ -1,7 +1,8 @@
 import { hasTail, type ArrowHead, type CalloutClip, type CalloutShape, type Clip, type Project, type Transform } from '../shared/project.js'
-import { editClips, placeOnTrack, type NewTrack } from './clips.js'
-import { centredStill } from './place.js'
-import { DEFAULT_FAMILY, validColor } from './text.js'
+import { editClips, placeOnTrack } from './clips.js'
+import { centredStill, type NewStill } from './place.js'
+import { addShape, type ShapeKind } from './shapes.js'
+import { DEFAULT_FAMILY, addText, validColor } from './text.js'
 
 // New annotations are sized as parts of the canvas, so they are as easy to read and to grab on a small canvas as on a 4K one.
 const CALLOUT_WIDTH_SHARE = 0.3
@@ -36,10 +37,19 @@ export type Point = {
   y: number
 }
 
-export type NewAnnotation = {
-  clipId: string
-  start: number
-  newTrack: NewTrack
+export type AnnotationKind = 'text' | 'callout' | 'arrow' | 'line' | ShapeKind
+
+export const ANNOTATION_KINDS: readonly AnnotationKind[] = ['text', 'callout', 'arrow', 'line', 'blur', 'pixelate', 'highlight', 'spotlight']
+
+export const ANNOTATION_NAMES: Record<AnnotationKind, string> = {
+  text: 'Text',
+  callout: 'Callout',
+  arrow: 'Arrow',
+  line: 'Line',
+  blur: 'Blur',
+  pixelate: 'Pixelate',
+  highlight: 'Highlight',
+  spotlight: 'Spotlight',
 }
 
 export type CalloutStyle = {
@@ -66,7 +76,7 @@ function newTail(width: number, height: number): Point {
 }
 
 // A new callout is a speech bubble in the middle of the canvas, on a new layer above everything else.
-export function addCallout(project: Project, added: NewAnnotation): Project {
+export function addCallout(project: Project, added: NewStill): Project {
   const { canvas } = project
   const width = Math.round(canvas.width * CALLOUT_WIDTH_SHARE)
   const height = Math.round(canvas.height * CALLOUT_HEIGHT_SHARE)
@@ -85,11 +95,11 @@ export function addCallout(project: Project, added: NewAnnotation): Project {
     borderWidth: Math.max(1, Math.round(canvas.height * BORDER_PER_HEIGHT)),
     tail: newTail(width, height),
   }
-  return placeOnTrack(project, { clips: [clip], trackIndex: project.tracks.length, newTrack: added.newTrack })
+  return placeOnTrack(project, { clips: [clip], trackIndex: added.trackIndex ?? project.tracks.length, newTrack: added.newTrack })
 }
 
 // A new arrow lies level in the middle of the canvas and points to the right; a line is the same without a head.
-export function addArrow(project: Project, added: NewAnnotation & { kind: 'arrow' | 'line' }): Project {
+export function addArrow(project: Project, added: NewStill & { kind: 'arrow' | 'line' }): Project {
   const { canvas } = project
   const clip: Clip = {
     ...centredStill(project, added),
@@ -100,7 +110,19 @@ export function addArrow(project: Project, added: NewAnnotation & { kind: 'arrow
     startHead: 'none',
     endHead: added.kind === 'arrow' ? 'triangle' : 'none',
   }
-  return placeOnTrack(project, { clips: [clip], trackIndex: project.tracks.length, newTrack: added.newTrack })
+  return placeOnTrack(project, { clips: [clip], trackIndex: added.trackIndex ?? project.tracks.length, newTrack: added.newTrack })
+}
+
+export function addAnnotation(project: Project, kind: AnnotationKind, added: NewStill): Project {
+  if (kind === 'text') {
+    return addText(project, added)
+  } else if (kind === 'callout') {
+    return addCallout(project, added)
+  } else if (kind === 'arrow' || kind === 'line') {
+    return addArrow(project, { ...added, kind })
+  } else {
+    return addShape(project, { ...added, kind })
+  }
 }
 
 // A bubble always has a tail and no other shape has one, as the file format wants it.

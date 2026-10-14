@@ -1,6 +1,6 @@
 import type { Clip, Project, TextAlign, TextSettings } from '../shared/project.js'
-import { editClips, placeOnTrack, type NewTrack } from './clips.js'
-import { centredStill } from './place.js'
+import { editClips, placeOnTrack } from './clips.js'
+import { centredStill, type NewStill } from './place.js'
 
 const DEFAULT_TEXT = 'Text'
 export const DEFAULT_FAMILY = 'Helvetica Neue'
@@ -24,11 +24,6 @@ const SHADOW_PER_FONT_SIZE = 1 / 16
 const DEFAULT_LINE_COLOR = '#000000'
 const DEFAULT_SHADE = '#000000aa'
 
-export type NewText = {
-  clipId: string
-  start: number
-  newTrack: NewTrack
-}
 
 export type TextStyle = {
   text?: string
@@ -59,7 +54,7 @@ type Outline = NonNullable<TextSettings['outline']>
 type Shadow = NonNullable<TextSettings['shadow']>
 
 // A new text clip sits in the middle of the canvas, on a new layer above everything else.
-export function addText(project: Project, added: NewText): Project {
+export function addText(project: Project, added: NewStill): Project {
   const { canvas } = project
   const clip: Clip = {
     ...centredStill(project, added),
@@ -69,7 +64,7 @@ export function addText(project: Project, added: NewText): Project {
     color: DEFAULT_COLOR,
     align: 'center',
   }
-  return placeOnTrack(project, { clips: [clip], trackIndex: project.tracks.length, newTrack: added.newTrack })
+  return placeOnTrack(project, { clips: [clip], trackIndex: added.trackIndex ?? project.tracks.length, newTrack: added.newTrack })
 }
 
 export function validColor(wanted: string | undefined, current: string): string {

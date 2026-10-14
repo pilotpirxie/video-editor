@@ -6,7 +6,7 @@ const TWENTY_HOURS_SECONDS = 20 * 60 * 60
 describe('frame durations', () => {
   it('are whole ticks on the timeline grid for every project frame rate', () => {
     const durations = PROJECT_FRAME_RATES.map(frameDuration)
-    expect(durations).toEqual([1_001_000, 1_000_000, 960_000, 800_800, 800_000, 480_000, 400_000])
+    expect(durations).toEqual([1_001_000, 1_000_000, 960_000, 800_800, 800_000, 480_000, 400_000, 200_000, 150_000])
     for (const duration of durations) expect(isOnTimelineGrid(duration)).toBe(true)
   })
 
