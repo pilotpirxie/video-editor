@@ -1,6 +1,6 @@
 import type { Size } from '../shared/exportPresets.js'
 import { minimumHalvings } from '../shared/limits.js'
-import type { MediaState, VideoInfo } from '../shared/mediaProtocol.js'
+import type { MediaState, VideoInfo, WantedRange } from '../shared/mediaProtocol.js'
 import {
   ease,
   valueAt,
@@ -595,6 +595,52 @@ export function resolveFrame(project: Project, media: MediaStates, time: number,
     if (!track.hidden) layers.push(...trackLayers(track, drawing, NO_FRAME, time))
   }
   return layers
+}
+
+// A group around a clip, and how far the time of the track the group is on lies behind project time.
+export type Enclosing = {
+  group: GroupClip
+  shift: number
+}
+
+// A clip that plays somewhere in a window of project time.
+export type PlacedClip = {
+  clip: Exclude<Clip, GroupClip>
+  // Project time minus the time of the track the clip is on; 0 outside groups.
+  shift: number
+  // The part of the window in which the clip, and every group around it, plays.
+  from: number
+  to: number
+  groups: readonly Enclosing[]
+}
+
+// Walks into groups: a member plays only while its group is there.
+export function forEachPlacedClip(tracks: readonly Track[], window: { from: number; to: number }, isLeftOut: (track: Track) => boolean, visit: (placed: PlacedClip) => void, shift = 0, groups: readonly Enclosing[] = []): void {
+  for (const track of tracks) {
+    if (isLeftOut(track)) continue
+    for (const clip of track.clips) {
+      const from = Math.max(window.from, clip.start + shift)
+      const to = Math.min(window.to, clip.start + clip.duration + shift)
+      if (from >= to) continue
+      if (clip.type === 'group') {
+        forEachPlacedClip(clip.tracks, { from, to }, isLeftOut, visit, shift + clip.start - (clip.contentStart ?? 0), [...groups, { group: clip, shift }])
+      } else {
+        visit({ clip, shift, from, to, groups })
+      }
+    }
+  }
+}
+
+// The parts of video files the visible tracks show, and where in project time, so the media process prepares what is nearest the playhead first.
+export function pictureRanges(project: Project, media: MediaStates): WantedRange[] {
+  const found: WantedRange[] = []
+  forEachPlacedClip(project.tracks, { from: 0, to: Infinity }, (track) => track.hidden, ({ clip, shift, from, to }) => {
+    if (clip.type !== 'video') return
+    const state = media[clip.mediaId]
+    if (state === undefined || 'error' in state || state.info.kind !== 'video') return
+    found.push({ mediaId: clip.mediaId, use: 'picture', timelineStart: from, timelineEnd: to, sourceStart: sourceTime(clip, from - shift), speedPercent: clip.speedPercent, isLooping: clip.loop === true })
+  })
+  return found
 }
 
 // How the group reached by going into `groupIds` one after the other places its members at a moment of project time.

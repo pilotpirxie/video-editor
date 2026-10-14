@@ -29,7 +29,7 @@ const PICTURES_SETTLE_MS = 1500
 // A fade handle rests this far inside its corner of the clip; `timelinePoint` gives the middle of the row.
 const HANDLE_INSET = 7
 const HANDLE_FROM_ROW_MIDDLE = 19
-const DIALOG_TAB_STOPS = 12
+const DIALOG_TAB_STOPS = 14
 const CANCEL_SETTLE_MS = 1500
 const LONG_EXPORT_TIMEOUT_MS = 30 * 60 * 1000
 const MS_PER_SECOND = 1000
@@ -230,9 +230,12 @@ async function testText(driver: Driver): Promise<UiTestReport> {
   await driver.page.click('tab-annotations')
   await driver.page.click('add-text')
   await untilTextEditor(driver, true)
+  const framesBeforeTyping = Number(await driver.page.evaluate(`${selector('timecode')}.dataset.frames`))
   const typingDelays = await watchDelays(driver, 'input', 'any frame')
   await driver.typeKeys('Hello')
   await driver.until(`${selector('text-words')}?.value === 'Hello'`, 'the typed words in the properties panel')
+  // The properties panel can show the words before the canvas has drawn them; read too early, the delays are empty.
+  await fullQualityFrame(driver, framesBeforeTyping)
   const delays = await typingDelays.read()
   await driver.page.evaluate(`${selector('text-editor')}.select()`)
   await driver.picture('text-typing')
@@ -378,20 +381,32 @@ type ExportSetup = {
 }
 
 // Fills in the open export dialog and starts the export with the Return key.
-async function startExport(driver: Driver, setup: ExportSetup): Promise<string> {
+// Starts the export as the dialog stands, saving it under `fileName` in the output folder.
+async function submitExport(driver: Driver, fileName: string): Promise<string> {
   if (driver.options.outputDirectory === undefined) throw new PageError('This UI test needs --out <directory>')
   // A save dialog only ever gives a folder that exists.
   await mkdir(driver.options.outputDirectory, { recursive: true })
-  const path = join(driver.options.outputDirectory, setup.fileName)
+  const path = join(driver.options.outputDirectory, fileName)
   driver.options.answers.exportPath = path
-  await pick(driver, 'export-preset', setup.preset)
-  await driver.page.click(`export-quality-${setup.quality}`)
-  const hasAudio = (await driver.page.evaluate(`${selector('export-audio')}.checked`)) === true
-  if (hasAudio !== setup.hasAudio) await driver.page.click('export-audio')
   await driver.page.evaluate(`${selector('export-start')}.focus()`)
   await driver.press('Return')
   await driver.until(`${selector('export-dialog')} === null`, 'the export dialog to close')
   return path
+}
+
+async function startExport(driver: Driver, setup: ExportSetup): Promise<string> {
+  await pick(driver, 'export-format', 'mp4')
+  await pick(driver, 'export-preset', setup.preset)
+  await driver.page.click(`export-quality-${setup.quality}`)
+  const hasAudio = (await driver.page.evaluate(`${selector('export-audio')}.checked`)) === true
+  if (hasAudio !== setup.hasAudio) await driver.page.click('export-audio')
+  return submitExport(driver, setup.fileName)
+}
+
+const EXPORT_FIELDS = ['export-preset', 'export-frame-rate', 'export-quality-high', 'export-encoder', 'export-range-whole', 'export-audio']
+
+async function shownExportFields(driver: Driver): Promise<unknown> {
+  return driver.page.evaluate(`${JSON.stringify(EXPORT_FIELDS)}.filter((id) => document.querySelector('[data-testid="' + id + '"]') !== null)`)
 }
 
 // The dialog that held the window during the export says how it ended; it goes away with a real click on its button, as a person would close it.
@@ -504,6 +519,22 @@ async function testExport(driver: Driver): Promise<UiTestReport> {
   await driver.press('Escape')
   await driver.until(`${selector('export-progress-dialog')} === null`, 'Escape to close the result')
 
+  // Each format shows only the fields it uses. Sound alone and the picture under the playhead are exported from the same dialog.
+  await openExportDialog(driver)
+  const fieldsByFormat: Record<string, unknown> = {}
+  for (const format of ['webm', 'gif', 'wav', 'png', 'mp4']) {
+    await pick(driver, 'export-format', format)
+    fieldsByFormat[format] = await shownExportFields(driver)
+  }
+  await pick(driver, 'export-format', 'wav')
+  const sound = await submitExport(driver, 'sound.wav')
+  await untilExported(driver, 'sound.wav')
+  await openExportDialog(driver)
+  await pick(driver, 'export-format', 'png')
+  const stillSummary = await driver.page.text('export-summary')
+  const still = await submitExport(driver, 'still.png')
+  await untilExported(driver, 'still.png')
+
   // A window that loads again has forgotten its export, so the export ends with it instead of running on where nobody can stop it.
   await openExportDialog(driver)
   const reloaded = await startExport(driver, { fileName: 'reloaded.mp4', preset: '4k', quality: 'high', hasAudio: true })
@@ -531,6 +562,10 @@ async function testExport(driver: Driver): Promise<UiTestReport> {
     range,
     low,
     high,
+    fieldsByFormat,
+    sound,
+    still,
+    stillSummary,
     leftAfterReload,
   }
 }

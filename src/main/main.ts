@@ -14,8 +14,9 @@ import {
 } from 'electron'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { totalmem } from 'node:os'
 import { basename, extname, join, normalize, resolve } from 'node:path'
-import { EXPORT_PRESETS, isExportPreset, isExportQuality } from '../shared/exportPresets.js'
+import { EXPORT_FORMATS, EXPORT_PRESETS, isExportEncoder, isExportFormat, isExportPreset, isExportQuality, type ExportFormat } from '../shared/exportPresets.js'
 import { describeError, logError } from '../shared/log.js'
 import type {
   DocumentInfo,
@@ -65,7 +66,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.png': 'image/png',
 }
 
-const CLI_FLAGS = ['project', 'export', 'frames', 'out', 'preset', 'via', 'at', 'size', 'selftest', 'uitest', 'media', 'seconds', 'report-memory']
+const CLI_FLAGS = ['project', 'export', 'frames', 'out', 'preset', 'encoder', 'via', 'at', 'size', 'selftest', 'uitest', 'media', 'seconds', 'report-memory']
 const DEFAULT_SELFTEST_SECONDS = 2
 const BYTES_PER_MEGABYTE = 1024 * 1024
 const SIZE_PATTERN = /^(?<width>\d+)x(?<height>\d+)$/
@@ -109,6 +110,19 @@ type AppState = {
 
 class UsageError extends Error {}
 
+// On a Mac with this much memory or less, the media engine's speed and small memory use matter more than x264's smaller files.
+const SMALL_MEMORY_BYTES = 8 * 1024 ** 3
+
+const SAVED_FORMAT_NAMES: Record<ExportFormat, string> = {
+  mp4: 'MP4 video',
+  webm: 'WebM video',
+  gif: 'Animated GIF',
+  m4a: 'M4A sound',
+  mp3: 'MP3 sound',
+  wav: 'WAV sound',
+  png: 'PNG picture',
+}
+
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
 
 function cliOptions(argv: readonly string[]): Map<string, string> {
@@ -124,12 +138,25 @@ function cliOptions(argv: readonly string[]): Map<string, string> {
   return options
 }
 
+// The format is the extension of `--out`. A PNG is the frame `--at`.
 function exportJobFromCli(projectPath: string, options: Map<string, string>): ExportJob {
   const preset = options.get('preset') ?? '1080p'
   const outputPath = options.get('out')
   if (outputPath === undefined || outputPath === '') throw new UsageError('--export needs --out <file.mp4>')
   if (!isExportPreset(preset)) throw new UsageError(`--preset must be one of ${EXPORT_PRESETS.join(', ')}`)
-  return { kind: 'export', projectPath: resolve(projectPath), outputPath: resolve(outputPath), preset }
+  const format = extname(outputPath).slice(1).toLowerCase()
+  if (!isExportFormat(format)) throw new UsageError(`--out must end in one of .${EXPORT_FORMATS.join(', .')}`)
+  const job: ExportJob = { kind: 'export', projectPath: resolve(projectPath), outputPath: resolve(outputPath), preset, format }
+  const encoder = options.get('encoder')
+  if (encoder !== undefined) {
+    if (!isExportEncoder(encoder)) throw new UsageError('--encoder must be x264 or hardware')
+    job.encoder = encoder
+  }
+  if (format !== 'png') return job
+  const frame = Number(options.get('at') ?? '0')
+  if (!Number.isInteger(frame) || frame < 0) throw new UsageError('--at must be a frame number')
+  job.frame = frame
+  return job
 }
 
 function framesJobFromCli(projectPath: string, options: Map<string, string>): FramesJob {
@@ -171,6 +198,9 @@ function isExportJob(value: unknown): value is ExportJob {
   if ('frameRate' in value && value.frameRate !== undefined && !isFrameRateChoice(value.frameRate)) return false
   if ('quality' in value && value.quality !== undefined && !(typeof value.quality === 'string' && isExportQuality(value.quality))) return false
   if ('range' in value && value.range !== undefined && !isTimeRange(value.range)) return false
+  if ('format' in value && value.format !== undefined && !(typeof value.format === 'string' && isExportFormat(value.format))) return false
+  if ('encoder' in value && value.encoder !== undefined && !(typeof value.encoder === 'string' && isExportEncoder(value.encoder))) return false
+  if ('frame' in value && value.frame !== undefined && !(Number.isInteger(value.frame) && Number(value.frame) >= 0)) return false
   return !('hasAudio' in value) || value.hasAudio === undefined || typeof value.hasAudio === 'boolean'
 }
 
@@ -230,7 +260,8 @@ function startMediaProcess(onVersions: (versions: string[]) => void, onStopped: 
     type: 'setup',
     setup: {
       ffmpegDirectory: app.isPackaged ? join(process.resourcesPath, 'ffmpeg') : join(app.getAppPath(), 'vendor', 'ffmpeg'),
-      cacheDirectory: join(app.getPath('userData'), 'cache'),
+      // The second layout of the cache, in segments; the media process removes the first one.
+      cacheDirectory: join(app.getPath('userData'), 'cache', 'v2'),
     },
   }
   child.postMessage(setup)
@@ -345,6 +376,16 @@ function exit(state: AppState, code: number): void {
   app.exit(code)
 }
 
+// A command-line run whose reader is gone (a closed pipe, a test that gave up) cannot deliver its result; going on would throw at every line.
+function exitWhenOutputCloses(state: AppState): void {
+  for (const stream of [process.stdout, process.stderr]) {
+    stream.on('error', (error) => {
+      logError('The output of a command-line run closed', error)
+      exit(state, 1)
+    })
+  }
+}
+
 async function finish(state: AppState, result: Record<string, unknown>): Promise<void> {
   const report = { ...result }
   if (state.memory !== undefined) report.peakMemoryMegabytes = Math.round((await state.memory.stop()) / BYTES_PER_MEGABYTE)
@@ -410,7 +451,7 @@ function showDocument(state: AppState, editor: Editor): void {
 
 function documentFor(state: AppState, projectPath: string | undefined): DocumentInfo {
   const recoveryPath = newRecoveryPath(state.recoveryDirectory)
-  const document: DocumentInfo = { path: projectPath, loadFrom: projectPath, recoveryPath, exportSnapshotPath: exportSnapshotPath(recoveryPath) }
+  const document: DocumentInfo = { path: projectPath, loadFrom: projectPath, recoveryPath, exportSnapshotPath: exportSnapshotPath(recoveryPath), hasSmallMemory: totalmem() <= SMALL_MEMORY_BYTES }
   if (projectPath !== undefined) {
     if (state.remembersRecentDocuments) app.addRecentDocument(projectPath)
     void rememberProjectPath(document.recoveryPath, projectPath)
@@ -537,10 +578,10 @@ function registerIpc(state: AppState): void {
     if (state.exportPathOverride !== undefined) return state.exportPathOverride
     const owner = BrowserWindow.fromWebContents(event.sender)
     if (owner === null) return undefined
-    const chosen = await dialog.showSaveDialog(owner, {
-      defaultPath: typeof suggestedName === 'string' ? suggestedName : 'export.mp4',
-      filters: [{ name: 'MP4 video', extensions: ['mp4'] }],
-    })
+    const defaultPath = typeof suggestedName === 'string' ? suggestedName : 'export.mp4'
+    const extension = extname(defaultPath).slice(1)
+    const format: ExportFormat = isExportFormat(extension) ? extension : 'mp4'
+    const chosen = await dialog.showSaveDialog(owner, { defaultPath, filters: [{ name: SAVED_FORMAT_NAMES[format], extensions: [format] }] })
     if (chosen.canceled || chosen.filePath === '') return undefined
     return chosen.filePath
   })
@@ -673,7 +714,7 @@ async function firstDocument(state: AppState, projectPath: string | undefined): 
   const found = await findRecovery(state.recoveryDirectory)
   if (found === undefined) return documentFor(state, projectPath)
   if (await shouldRestore(state, found)) {
-    return { path: found.projectPath, loadFrom: found.recoveryPath, recoveryPath: found.recoveryPath, exportSnapshotPath: exportSnapshotPath(found.recoveryPath) }
+    return { path: found.projectPath, loadFrom: found.recoveryPath, recoveryPath: found.recoveryPath, exportSnapshotPath: exportSnapshotPath(found.recoveryPath), hasSmallMemory: totalmem() <= SMALL_MEMORY_BYTES }
   }
   await discardRecovery(found.recoveryPath)
   return documentFor(state, projectPath)
@@ -782,6 +823,7 @@ async function main(): Promise<void> {
     versions: undefined,
   }
   started = state
+  if (!isInteractive) exitWhenOutputCloses(state)
   state.mediaProcess = launchMediaProcess(state)
   registerIpc(state)
   registerDocumentIpc(state)

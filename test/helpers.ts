@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
-import { afterAll, expect } from 'vitest'
+import { afterAll, expect, onTestFinished } from 'vitest'
 import { allClips } from '../src/editor/clips.js'
 import { createFfmpegRunner, writeAll, type FfmpegRunner } from '../src/media/ffmpeg.js'
 import { parseProject, serializeProject, type CameraKeyframe, type Clip, type MediaRef, type Project, type Transform, type VideoClip } from '../src/shared/project.js'
@@ -155,7 +155,7 @@ export function blockColorError(a: Picture, b: Picture, blockSize: number): numb
   return totalError / blockCount
 }
 
-const ELECTRON_BINARY = join(ROOT, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron')
+export const ELECTRON_BINARY = join(ROOT, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron')
 const PROJECTS_DIRECTORY = join(ROOT, 'test', 'projects')
 const GOLDEN_DIRECTORY = join(ROOT, 'test', 'golden')
 const OUTPUT_DIRECTORY = join(ROOT, 'test', 'output')
@@ -184,6 +184,10 @@ export function runApp(args: readonly string[], timeoutMs = APP_TIMEOUT_MS, kept
   return new Promise((resolve, reject) => {
     const profile = keptProfile ?? mkdtempSync(join(tmpdir(), 'video-editor-test-'))
     const child = spawn(ELECTRON_BINARY, [ROOT, `--user-data-dir=${profile}`, ...args])
+    // A test that vitest times out leaves running what it started; the app would export on unseen and slow down the tests after it.
+    onTestFinished(() => {
+      child.kill('SIGKILL')
+    })
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', (text: Buffer) => (stdout += text.toString()))
@@ -446,6 +450,14 @@ function fieldsOf(line: string): Record<string, string> {
 }
 
 // What ffprobe says about an exported file; a stream that is not there gives an empty record.
+// The first sound of a file as interleaved 32-bit floats.
+export async function decodedAudio(path: string): Promise<Float32Array> {
+  const raw = await bundledFfmpeg().runOnce('ffmpeg', ['-i', path, '-map', '0:a:0', '-f', 'f32le', '-'], { timeoutMs: 60_000 })
+  const samples = new Float32Array(raw.length / 4)
+  for (let index = 0; index < samples.length; index++) samples[index] = raw.readFloatLE(index * 4)
+  return samples
+}
+
 export async function probeExport(path: string): Promise<ProbedExport> {
   const ffmpeg = bundledFfmpeg()
   const entries = 'stream=codec_type,codec_name,profile,pix_fmt,width,height,r_frame_rate,nb_frames,color_space,color_primaries,color_transfer,color_range,sample_rate,channels:format=duration'

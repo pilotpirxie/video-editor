@@ -11,6 +11,10 @@ const MAX_HALVINGS = 6
 const MAX_FRAME_REQUESTS = 4
 const RETRY_AFTER_MS = 1000
 
+function standInKeyOf(mediaId: string, frame: number): string {
+  return `keyframe:${mediaId}:${frame}`
+}
+
 // Small pictures and waveforms for the Media tab and the timeline. Every getter answers at once from memory; what is missing is fetched in the background and announced to subscribers.
 export type Thumbnails = {
   poster(mediaId: string, info: MediaInfo): ImageBitmap | undefined
@@ -63,6 +67,11 @@ export function createThumbnails(media: MediaClient, isPlaying: () => boolean): 
     for (const listener of listeners) listener()
   }
 
+  function halvingsFor(video: VideoInfo, height: number): number {
+    const wanted = Math.floor(Math.log2(video.height / height))
+    return Math.min(MAX_HALVINGS, Math.max(0, wanted, minimumHalvings(video.width, video.height)))
+  }
+
   function keep(key: string, bitmap: ImageBitmap): boolean {
     pictures.set(key, bitmap, bitmap.width * bitmap.height * BYTES_PER_PIXEL)
     return true
@@ -74,17 +83,30 @@ export function createThumbnails(media: MediaClient, isPlaying: () => boolean): 
       const bytes = await media.readImage(mediaId)
       return keep(key, await createImageBitmap(new Blob([bytes]), { resizeHeight: POSTER_HEIGHT, resizeQuality: 'medium' }))
     }
-    const wanted = Math.floor(Math.log2(info.video.height / POSTER_HEIGHT))
-    const halvings = Math.min(MAX_HALVINGS, Math.max(0, wanted, minimumHalvings(info.video.width, info.video.height)))
-    const frame = await media.fullFrame(mediaId, 0, halvings)
+    const frame = await media.fullFrame(mediaId, 0, halvingsFor(info.video, POSTER_HEIGHT))
     return keep(key, await createImageBitmap(new ImageData(new Uint8ClampedArray(frame.data), frame.width, frame.height)))
+  }
+
+  // Until the preview copy holds a frame, the keyframe before it stands in. The frame itself is asked for again later.
+  async function loadKeyframe(mediaId: string, video: VideoInfo, frame: number): Promise<void> {
+    const key = standInKeyOf(mediaId, frame)
+    if (pictures.get(key) !== undefined) return
+    const decoded = await media.keyframeThumbnail(mediaId, frame, halvingsFor(video, FRAME_HEIGHT))
+    const whole = await createImageBitmap(new ImageData(new Uint8ClampedArray(decoded.data), decoded.width, decoded.height))
+    const width = Math.round((whole.width * FRAME_HEIGHT) / whole.height)
+    keep(key, await createImageBitmap(whole, { resizeWidth: width, resizeHeight: FRAME_HEIGHT }))
+    whole.close()
+    for (const listener of listeners) listener()
   }
 
   async function loadVideoFrame(key: string, mediaId: string, video: VideoInfo, frame: number): Promise<boolean> {
     frameRequests += 1
     try {
       const jpeg = await media.previewFrame(mediaId, frame)
-      if (jpeg === undefined) return false
+      if (jpeg === undefined) {
+        await loadKeyframe(mediaId, video, frame)
+        return false
+      }
       // A preview frame of a source with transparency holds the picture above its alpha plane; only the picture is kept.
       const whole = await createImageBitmap(new Blob([jpeg], { type: 'image/jpeg' }))
       const pictureHeight = video.hasAlpha ? whole.height / 2 : whole.height
@@ -117,7 +139,7 @@ export function createThumbnails(media: MediaClient, isPlaying: () => boolean): 
       // Playback needs the media process for itself, and the timeline does not scroll by hand meanwhile.
       const mayFetch = known === undefined && !isPlaying() && frameRequests < MAX_FRAME_REQUESTS && canRequest(key)
       if (mayFetch) void fetchOnce(key, () => loadVideoFrame(key, mediaId, video, frame))
-      return known
+      return known ?? pictures.get(standInKeyOf(mediaId, frame))
     },
     waveform(mediaId) {
       const key = `waveform:${mediaId}`

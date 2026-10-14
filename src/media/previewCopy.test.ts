@@ -1,18 +1,23 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { ROOT, blockColorError, bundledFfmpeg, decodeJpeg, patternFrame, pixelAt, readBarcode } from '../../test/helpers.js'
-import { mediaPath } from '../../test/media/generate.js'
+import { ROOT, blockColorError, bundledFfmpeg, decodeJpeg, patternFrame, pixelAt, psnr, readBarcode, type Picture } from '../../test/helpers.js'
+import { GAP_END_FRAME, GAP_START_FRAME, LATE_JITTER_FRAME, mediaPath } from '../../test/media/generate.js'
+import { createDiskCache, type DiskCache } from './cache.js'
+import { writeAll } from './ffmpeg.js'
 import { decodeFrame, type VideoSource } from './frames.js'
-import { openPreviewCopy, previewSize, splitJpegFrames, type PreviewCopy } from './previewCopy.js'
+import { buildPreviewRun, createPreviewReader, isPreviewSegmentReady, previewLayout, previewSegmentFiles, previewSize, splitJpegFrames, type PreviewLayout, type SegmentInProgress } from './previewCopy.js'
 import { probeMedia } from './probe.js'
 
 const ffmpeg = bundledFfmpeg()
 const scratch = await mkdtemp(join(tmpdir(), 'preview-copy-'))
 const KANGAROO = join(ROOT, 'samples', 'kangaroo1920.mp4')
 const REQUIRED_SPEED = 8
+const WHOLE_FILE_SEGMENT_SECONDS = 1000
+const PLENTY_OF_ROOM = 1024 ** 3
+const never = new AbortController().signal
 
 afterAll(() => rm(scratch, { recursive: true, force: true }))
 
@@ -22,22 +27,45 @@ async function sourceAt(path: string): Promise<VideoSource> {
   return { path, containerStart: info.containerStart, video: info.video }
 }
 
-async function directoryFor(name: string): Promise<string> {
-  return mkdtemp(join(scratch, `${name}-`))
+type Built = {
+  source: VideoSource
+  directory: string
+  layout: PreviewLayout
+  cache: DiskCache
+  readFrame(frame: number): Promise<Buffer | undefined>
 }
 
-async function build(name: string): Promise<{ copy: PreviewCopy; source: VideoSource; directory: string }> {
-  const source = await sourceAt(mediaPath(name))
-  const directory = await directoryFor(name)
-  const copy = await openPreviewCopy(ffmpeg, source, directory, new AbortController().signal)
-  await copy.finished
-  return { copy, source, directory }
+async function prepared(path: string, segmentSeconds: number): Promise<Built> {
+  const source = await sourceAt(path)
+  const directory = await mkdtemp(join(scratch, 'media-'))
+  const cache = createDiskCache(directory, PLENTY_OF_ROOM)
+  const layout = previewLayout(source.video, segmentSeconds)
+  const reader = createPreviewReader(cache)
+  return { source, directory, layout, cache, readFrame: (frame) => reader.read(directory, layout, frame, undefined) }
 }
 
-async function frameOrFail(copy: PreviewCopy, frame: number): Promise<Buffer> {
-  const jpeg = await copy.readFrame(frame)
+async function buildSegments(built: Built, first: number, count: number, signal = never, onFrame: (inProgress: SegmentInProgress | undefined) => void = () => {}): Promise<void> {
+  const paths: string[] = []
+  for (let segment = first; segment < Math.min(built.layout.segmentCount, first + count); segment++) paths.push(previewSegmentFiles(built.directory, segment).index)
+  const claim = built.cache.claim(paths)
+  await buildPreviewRun({ ffmpeg, source: built.source, directory: built.directory, layout: built.layout, cache: built.cache, firstSegment: first, claim, signal, onFrame })
+}
+
+async function build(name: string, segmentSeconds = WHOLE_FILE_SEGMENT_SECONDS): Promise<Built> {
+  const built = await prepared(mediaPath(name), segmentSeconds)
+  await buildSegments(built, 0, built.layout.segmentCount)
+  return built
+}
+
+async function frameOrFail(built: Built, frame: number): Promise<Buffer> {
+  const jpeg = await built.readFrame(frame)
   if (jpeg === undefined) throw new Error(`Frame ${frame} is not prepared`)
   return jpeg
+}
+
+async function previewBarcode(built: Built, frame: number): Promise<number> {
+  const size = previewSize(built.source.video)
+  return readBarcode(await decodeJpeg(ffmpeg, await frameOrFail(built, frame), size.width, size.height))
 }
 
 describe('splitJpegFrames', () => {
@@ -74,59 +102,89 @@ describe('previewSize', () => {
   })
 })
 
-describe('openPreviewCopy', () => {
-  it('stores every frame as its own JPEG, in order', async () => {
-    const { copy } = await build('h264.mp4')
+describe('preview segments', () => {
+  it('stores every frame as its own JPEG, in order, across segments', async () => {
+    const built = await build('h264.mp4', 1)
+    expect(built.layout).toEqual({ framesPerSegment: 30, segmentCount: 2 })
     for (let frame = 0; frame < 60; frame++) {
-      const jpeg = await frameOrFail(copy, frame)
+      const jpeg = await frameOrFail(built, frame)
       expect(jpeg.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]))
       expect(jpeg.subarray(-2)).toEqual(Buffer.from([0xff, 0xd9]))
       expect(readBarcode(await decodeJpeg(ffmpeg, jpeg, 320, 180)), `frame ${frame}`).toBe(frame)
     }
-    expect(await copy.readFrame(60)).toBeUndefined()
-    await copy.close()
+    expect(await built.readFrame(60)).toBeUndefined()
   })
 
-  it.each(['long-gop.ts', 'delayed-video.mkv', 'fps-23976.mp4', 'vp9.webm'])('numbers frames like the full-quality decoder for %s', async (name) => {
-    const { copy, source } = await build(name)
-    for (const frame of [0, 1, 29, 30, 47]) {
-      const preview = await decodeJpeg(ffmpeg, await frameOrFail(copy, frame), 320, 180)
-      expect(readBarcode(preview), `frame ${frame}`).toBe(readBarcode(await decodeFrame(ffmpeg, source, frame, 0)))
+  it.each(['long-gop.ts', 'delayed-video.mkv', 'fps-23976.mp4', 'vp9.webm', 'fps-240.mp4', 'variable-rate-late.mp4'])('numbers frames like the full-quality decoder for %s, built as one run or segment by segment', async (name) => {
+    const source = await sourceAt(mediaPath(name))
+    const lastFrame = source.video.frameCount - 1
+    const frames = [0, 1, 29, 30, 47, Math.min(lastFrame, LATE_JITTER_FRAME + 1), lastFrame].filter((frame) => frame <= lastFrame)
+    const oneRun = await build(name, 1)
+    const separately = await prepared(mediaPath(name), 1)
+    for (let segment = separately.layout.segmentCount - 1; segment >= 0; segment--) await buildSegments(separately, segment, 1)
+    for (const frame of frames) {
+      const truth = readBarcode(await decodeFrame(ffmpeg, source, frame, 0))
+      expect(await previewBarcode(oneRun, frame), `frame ${frame}, one run`).toBe(truth)
+      expect(await previewBarcode(separately, frame), `frame ${frame}, segment by segment`).toBe(truth)
     }
-    await copy.close()
+  })
+
+  it('shows the last picture before a long gap, whichever segment it starts in', async () => {
+    const built = await prepared(mediaPath('variable-rate-gap.mp4'), 1)
+    for (let segment = built.layout.segmentCount - 1; segment >= 0; segment--) await buildSegments(built, segment, 1)
+    const lastBefore = GAP_START_FRAME - 1
+    for (const [frame, picture] of [[lastBefore, lastBefore], [GAP_START_FRAME, lastBefore], [500, lastBefore], [GAP_END_FRAME - 1, lastBefore], [GAP_END_FRAME, GAP_END_FRAME]]) {
+      expect(await previewBarcode(built, frame ?? 0), `frame ${frame}`).toBe(picture)
+    }
   })
 
   it('follows a file with a hole in its timestamps the same way the decoder does', async () => {
-    const { copy } = await build('mpeg4.avi')
+    const built = await build('mpeg4.avi')
     const pictures: number[] = []
     for (const frame of [0, 1, 2, 30]) {
-      pictures.push(readBarcode(await decodeJpeg(ffmpeg, await frameOrFail(copy, frame), 320, 180)))
+      pictures.push(readBarcode(await decodeJpeg(ffmpeg, await frameOrFail(built, frame), 320, 180)))
     }
     expect(pictures).toEqual([0, 0, 1, 29])
-    await copy.close()
   })
 
   it('scales 1080p to 960×540', async () => {
-    const { copy } = await build('1080p.mp4')
-    const picture = await decodeJpeg(ffmpeg, await frameOrFail(copy, 77), 960, 540)
+    const built = await build('1080p.mp4')
+    const picture = await decodeJpeg(ffmpeg, await frameOrFail(built, 77), 960, 540)
     expect(readBarcode(picture)).toBe(77)
-    await copy.close()
+  })
+
+  it.each([
+    ['rotated-180.mp4', 320, 180],
+    ['rotated-90.mp4', 180, 320],
+    ['8k.mp4', 960, 540],
+    ['anamorphic.mp4', 428, 180],
+  ])('shows %s turned and sized like the full-quality decoder', async (name, width, height) => {
+    const built = await build(name)
+    const preview = await decodeJpeg(ffmpeg, await frameOrFail(built, 2), width, height)
+    const full = await decodeFrame(ffmpeg, built.source, 2, 0)
+    expect(psnr(preview, await scaledTo(full, width, height))).toBeGreaterThan(28)
+  })
+
+  it.each(['hlg.mov', 'pq.mov'])('tone-maps %s like the full-quality decoder', async (name) => {
+    const built = await build(name)
+    const preview = await decodeJpeg(ffmpeg, await frameOrFail(built, 3), 320, 180)
+    const full = await decodeFrame(ffmpeg, built.source, 3, 0)
+    expect(blockColorError(preview, full, 20)).toBeLessThan(3)
   })
 
   it('reproduces the source colour when decoded as a JPEG', async () => {
-    const { copy } = await build('h264.mp4')
+    const built = await build('h264.mp4')
     const pattern = { width: 320, height: 180, rate: '30' }
-    const preview = await decodeJpeg(ffmpeg, await frameOrFail(copy, 12), 320, 180)
+    const preview = await decodeJpeg(ffmpeg, await frameOrFail(built, 12), 320, 180)
     const errorAgainstTruth = blockColorError(preview, await patternFrame(ffmpeg, pattern, 12, 'bt709', 'bt709'), 20)
     const errorAgainstWrongMatrix = blockColorError(preview, await patternFrame(ffmpeg, pattern, 12, 'bt709', 'bt601'), 20)
     expect(errorAgainstTruth).toBeLessThan(1.5)
     expect(errorAgainstWrongMatrix).toBeGreaterThan(4)
-    await copy.close()
   })
 
   it('keeps alpha by stacking premultiplied colour above the alpha plane', async () => {
-    const { copy } = await build('lossless-alpha.mov')
-    const stacked = await decodeJpeg(ffmpeg, await frameOrFail(copy, 0), 320, 360)
+    const built = await build('lossless-alpha.mov')
+    const stacked = await decodeJpeg(ffmpeg, await frameOrFail(built, 0), 320, 360)
     const colorTop = pixelAt(stacked, 60, 4)
     const colorMiddle = pixelAt(stacked, 60, 90)
     const colorBottom = pixelAt(stacked, 60, 175)
@@ -142,76 +200,57 @@ describe('openPreviewCopy', () => {
     expect(Math.abs(alphaMiddle.red - 127)).toBeLessThan(6)
     expect(alphaBottom.red).toBeLessThan(12)
     expect(Math.abs(alphaMiddle.red - alphaMiddle.green)).toBeLessThan(4)
-    await copy.close()
   })
 
-  it('serves frames while the build is still running', async () => {
-    const source = await sourceAt(mediaPath('4k-long-gop.mp4'))
-    const copy = await openPreviewCopy(ffmpeg, source, await directoryFor('partial'), new AbortController().signal)
-    expect(await copy.readFrame(299)).toBeUndefined()
-
+  it('serves frames of the segment being written', async () => {
+    const built = await prepared(mediaPath('4k-long-gop.mp4'), WHOLE_FILE_SEGMENT_SECONDS)
+    const reader = createPreviewReader(built.cache)
     let firstFrameSeenBeforeEnd = false
     let isFinished = false
-    async function markFinished(): Promise<void> {
-      await copy.finished
-      isFinished = true
-    }
-    const finished = markFinished()
-    while (!isFinished) {
-      if ((await copy.readFrame(0)) !== undefined) {
-        firstFrameSeenBeforeEnd = !isFinished
-        break
-      }
-      await new Promise((resolve) => setTimeout(resolve, 5))
-    }
-    await finished
+    const run = buildSegments(built, 0, 1, never, (inProgress) => {
+      if (inProgress === undefined || firstFrameSeenBeforeEnd || isFinished) return
+      void reader.read(built.directory, built.layout, 0, inProgress).then((jpeg) => {
+        if (jpeg !== undefined && !isFinished) firstFrameSeenBeforeEnd = true
+      })
+    })
+    await run
+    isFinished = true
     expect(firstFrameSeenBeforeEnd).toBe(true)
-    expect(await copy.readFrame(299)).toBeDefined()
-    await copy.close()
+    expect(await built.readFrame(299)).toBeDefined()
   })
 
-  it('reuses a finished copy instead of building it again', async () => {
-    const { copy, source, directory } = await build('h264.mkv')
-    await copy.close()
-    const builtAt = (await stat(join(directory, 'preview.mjpeg'))).mtimeMs
-
-    const startedAt = performance.now()
-    const reopened = await openPreviewCopy(ffmpeg, source, directory, new AbortController().signal)
-    await reopened.finished
-    expect(performance.now() - startedAt).toBeLessThan(50)
-    expect((await stat(join(directory, 'preview.mjpeg'))).mtimeMs).toBe(builtAt)
-    expect(readBarcode(await decodeJpeg(ffmpeg, await frameOrFail(reopened, 33), 320, 180))).toBe(33)
-    await reopened.close()
-  })
-
-  it('leaves no index behind when the build is cancelled, and rebuilds next time', async () => {
-    const source = await sourceAt(mediaPath('4k-long-gop.mp4'))
-    const directory = await directoryFor('cancelled')
+  it('leaves no index and no unfinished file behind when cancelled', async () => {
+    const built = await prepared(mediaPath('4k-long-gop.mp4'), WHOLE_FILE_SEGMENT_SECONDS)
     const controller = new AbortController()
-    const copy = await openPreviewCopy(ffmpeg, source, directory, controller.signal)
     setTimeout(() => controller.abort(), 100)
-    await expect(copy.finished).rejects.toThrow(/cancelled/)
-    await copy.close()
-    expect(existsSync(join(directory, 'preview.idx'))).toBe(false)
+    await expect(buildSegments(built, 0, 1, controller.signal)).rejects.toThrow(/cancelled/)
+    expect(isPreviewSegmentReady(built.directory, 0)).toBe(false)
+    expect((await readdir(built.directory)).filter((name) => name.endsWith('.tmp'))).toEqual([])
 
-    const rebuilt = await openPreviewCopy(ffmpeg, source, directory, new AbortController().signal)
-    await rebuilt.finished
-    expect(await rebuilt.readFrame(299)).toBeDefined()
-    await rebuilt.close()
+    await buildSegments(built, 0, 1)
+    expect(await built.readFrame(299)).toBeDefined()
   })
 
   it.skipIf(!existsSync(KANGAROO))('prepares 1080p H.264 at 8× real time or faster', async () => {
-    const info = await probeMedia(ffmpeg, KANGAROO)
-    if (info.kind !== 'video') throw new Error('The sample is not a video')
-    const source = { path: KANGAROO, containerStart: info.containerStart, video: info.video }
+    const built = await prepared(KANGAROO, 30)
     const startedAt = performance.now()
-    const copy = await openPreviewCopy(ffmpeg, source, await directoryFor('speed'), new AbortController().signal)
-    await copy.finished
+    for (let segment = 0; segment < built.layout.segmentCount; segment += 4) await buildSegments(built, segment, 4)
     const elapsedSeconds = (performance.now() - startedAt) / 1000
-    const sourceSeconds = (info.video.frameCount * info.video.frameDuration) / 24_000_000
+    const sourceSeconds = (built.source.video.frameCount * built.source.video.frameDuration) / 24_000_000
     const speed = sourceSeconds / elapsedSeconds
     console.info(`preview copy: ${sourceSeconds.toFixed(1)} s of 1080p in ${elapsedSeconds.toFixed(2)} s = ${speed.toFixed(1)}× real time`)
     expect(speed).toBeGreaterThanOrEqual(REQUIRED_SPEED)
-    await copy.close()
   })
 })
+
+async function scaledTo(picture: Picture, width: number, height: number): Promise<Picture> {
+  const job = ffmpeg.spawnJob('ffmpeg', ['-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${picture.width}x${picture.height}`, '-i', 'pipe:0', '-vf', `scale=${width}:${height}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'])
+  await writeAll(job.stdin, new Uint8Array(picture.data))
+  job.stdin.end()
+  const pixels = await job.readExact(width * height * 4, 60_000)
+  await job.done
+  if (pixels === undefined) throw new Error(`The picture did not scale to ${width}×${height}`)
+  const data = new ArrayBuffer(pixels.length)
+  new Uint8Array(data).set(pixels)
+  return { width, height, data }
+}

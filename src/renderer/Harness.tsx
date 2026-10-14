@@ -93,7 +93,8 @@ export function Harness(): ReactElement {
       if (command.type === 'open-project') {
         actions.openProject(command.path)
       } else if (command.type === 'export-event') {
-        setExportState(exportMessage(command.event))
+        // Progress already on its way when the export was cancelled must not bring it back.
+        setExportState((current) => (current.stage === 'running' ? exportMessage(command.event) : current))
       } else if (command.type === 'menu' && command.action === 'open-project') {
         void actions.chooseProject()
       } else if (command.type === 'menu' && command.action === 'export') {

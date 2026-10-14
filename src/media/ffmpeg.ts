@@ -29,6 +29,8 @@ type SpawnOptions = {
   signal?: AbortSignal
   extraInputPipes?: number
   isBackground?: boolean
+  // How much output is read before anyone asks for it, so FFmpeg works on while the last piece is used. Without it FFmpeg waits for each read.
+  readAheadBytes?: number
 }
 
 export type Job = {
@@ -59,6 +61,7 @@ type RunningProcess = {
   exitCode: Promise<number | undefined>
   stderrTail(): string
   stopReason(): string | undefined
+  hasExited(): boolean
   stop(reason: string): void
   lowerPriority(): void
 }
@@ -108,6 +111,10 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
     const pipes = openPipes(child, binary)
     let stderrText = ''
     let stopReason: string | undefined
+    let hasExited = false
+    child.on('exit', () => {
+      hasExited = true
+    })
 
     pipes.stderr.setEncoding('utf8')
     pipes.stderr.on('data', (text: string) => {
@@ -147,7 +154,7 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
       }
     }
 
-    return { binary, pipes, exitCode, stderrTail: () => stderrText.trim(), stopReason: () => stopReason, stop, lowerPriority }
+    return { binary, pipes, exitCode, stderrTail: () => stderrText.trim(), stopReason: () => stopReason, hasExited: () => hasExited, stop, lowerPriority }
   }
 
   async function runOnce(binary: Binary, args: readonly string[], options: RunOptions): Promise<Buffer> {
@@ -174,11 +181,15 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
     let hasEnded = false
     let wakeReader: (() => void) | undefined
 
+    const readAheadBytes = options.readAheadBytes ?? 0
+
     stdout.pause()
     stdout.on('data', (chunk: Buffer) => {
       buffered.push(chunk)
       bufferedBytes += chunk.length
       wakeReader?.()
+      // Past the read-ahead FFmpeg waits until some is used. Once it has exited its output is read to the end, so the pipe can close.
+      if (bufferedBytes >= readAheadBytes && !running.hasExited()) stdout.pause()
     })
     function markEnded(): void {
       hasEnded = true
@@ -200,7 +211,6 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
         wakeReader = (): void => {
           clearTimeout(timer)
           wakeReader = undefined
-          stdout.pause()
           resolve()
         }
         stdout.resume()
@@ -225,6 +235,7 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
         }
       }
       bufferedBytes -= byteCount
+      if (bufferedBytes < readAheadBytes) stdout.resume()
       return unit
     }
 
@@ -238,6 +249,7 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
       return undefined
     }
 
+    if (readAheadBytes > 0) stdout.resume()
     return {
       stdin: running.pipes.stdin,
       pipes: running.pipes.extraInputs,

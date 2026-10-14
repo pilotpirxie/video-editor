@@ -131,6 +131,22 @@ function solidCard(color: Color): (width: number, height: number) => Buffer {
   return (width, height) => paintedCard(width, height, () => color)
 }
 
+// A grey ramp from black to white across the top half, and red, green and blue thirds below: what an HDR test file holds, so its tone-mapped picture can be compared with this one.
+export function hdrCard(width: number, height: number): Buffer {
+  const bars = [
+    { red: 255, green: 0, blue: 0 },
+    { red: 0, green: 255, blue: 0 },
+    { red: 0, green: 0, blue: 255 },
+  ]
+  return paintedCard(width, height, (x, y) => {
+    if (y < height / 2) {
+      const level = Math.round((x * 255) / (width - 1))
+      return { red: level, green: level, blue: level }
+    }
+    return bars[Math.floor((x * bars.length) / width)] ?? BLACK
+  })
+}
+
 // Black on the left half, white on the right: one hard edge down the middle.
 function edgeCard(width: number, height: number): Buffer {
   return paintedCard(width, height, (x) => (x < width / 2 ? BLACK : WHITE))
@@ -146,10 +162,36 @@ function greenScreenCard(width: number, height: number): Buffer {
 
 const ALPHA_CLIP_FRAMES = 10
 
-function repeatedCard(): Buffer {
-  const card = alphaCard(320, 180)
+function repeatedCard(card: Buffer = alphaCard(320, 180)): Buffer {
   return Buffer.concat(Array<Buffer>(ALPHA_CLIP_FRAMES).fill(card))
 }
+
+// SDR white sits at 203 nits, where BT.2408 puts the reference white of HDR video.
+function hdrClip(name: string, transfer: 'arib-std-b67' | 'smpte2084'): Recipe {
+  const toHdr = `zscale=tin=bt709:pin=bt709:min=gbr:rin=full:t=${transfer}:p=bt2020:m=bt2020nc:r=tv:npl=203,format=yuv420p10le`
+  const x265 = `colorprim=bt2020:transfer=${transfer}:colormatrix=bt2020nc:log-level=error`
+  return {
+    name,
+    build: (tools) =>
+      tools.ffmpegWithInput(
+        ['-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', '320x180', '-framerate', '30', '-i', 'pipe:0', '-vf', toHdr, '-c:v', 'libx265', '-preset', 'ultrafast', '-x265-params', x265, '-tag:v', 'hvc1', mediaPath(name)],
+        repeatedCard(hdrCard(320, 180)),
+      ),
+  }
+}
+
+// Even frame times for ten seconds, then every other frame 13 ms late. The average rate stays 30 fps, so only the times late in the file tell.
+export const LATE_JITTER_FRAME = 300
+
+// Pictures until 9 s, none for 12 s, as a phone records a screen that does not change, then pictures again until 24 s, with a click at 23 s.
+export const GAP_START_FRAME = 270
+export const GAP_END_FRAME = 630
+export const GAP_CLICK_SECONDS = 23
+// Twenty hours of silence with a click at the same second of every minute, made by repeating one minute without re-encoding. MP4 keeps exact sample times; Matroska rounds them to the millisecond.
+export const LONG_CLICK_SECOND = 30
+export const LONG_MINUTES = 1200
+// Ten minutes of a five-second 1080p clip, made the same way, for an export at 50×.
+const TIMELAPSE_REPEATS = 120
 
 type Recipe = {
   name: string
@@ -261,9 +303,18 @@ const RATE_VARIANTS: readonly { name: string; rate: string }[] = [
   { name: 'fps-5994.mp4', rate: '60000/1001' },
   { name: 'fps-60.mp4', rate: '60' },
   { name: 'fps-120.mp4', rate: '120' },
+  { name: 'fps-240.mp4', rate: '240' },
 ]
 
 const RECIPES: readonly Recipe[] = [
+  {
+    name: 'audio-click-minute.mp4',
+    build: (tools) => tools.ffmpeg(['-f', 'lavfi', '-i', `aevalsrc='if(between(t,${LONG_CLICK_SECOND},${LONG_CLICK_SECOND}.001),0.5,0)':s=48000:d=60`, '-ac', '1', '-c:a', 'flac', mediaPath('audio-click-minute.mp4')]),
+  },
+  {
+    name: 'audio-twenty-hours.mp4',
+    build: (tools) => tools.ffmpeg(['-stream_loop', String(LONG_MINUTES - 1), '-i', mediaPath('audio-click-minute.mp4'), '-c', 'copy', mediaPath('audio-twenty-hours.mp4')]),
+  },
   { name: 'audio.wav', build: () => writeFile(mediaPath('audio.wav'), rampWav()) },
   { name: 'audio-44k-click.wav', build: () => writeFile(mediaPath('audio-44k-click.wav'), clickWav()) },
 
@@ -288,6 +339,7 @@ const RECIPES: readonly Recipe[] = [
   silentClip('h264-untagged-sd.mp4', H264, { filter: TO_BT601 }),
   silentClip('anamorphic.mp4', [...H264, ...BT709_TAGS], { filter: `${TO_BT709},setsar=4/3` }),
   { name: 'rotated-90.mp4', build: (tools) => tools.ffmpeg(['-display_rotation', '90', '-i', mediaPath('h264.mp4'), '-c', 'copy', mediaPath('rotated-90.mp4')]) },
+  { name: 'rotated-180.mp4', build: (tools) => tools.ffmpeg(['-display_rotation', '180', '-i', mediaPath('h264.mp4'), '-c', 'copy', mediaPath('rotated-180.mp4')]) },
   { name: 'rotated-270.mp4', build: (tools) => tools.ffmpeg(['-display_rotation', '270', '-i', mediaPath('h264.mp4'), '-c', 'copy', mediaPath('rotated-270.mp4')]) },
   ...RATE_VARIANTS.map((variant) =>
     silentClip(variant.name, [...H264, ...BT709_TAGS], { pattern: { width: 320, height: 180, rate: variant.rate }, frames: 48 }),
@@ -345,9 +397,59 @@ const RECIPES: readonly Recipe[] = [
       await rm(upright)
     },
   },
+  hdrClip('hlg.mov', 'arib-std-b67'),
+  hdrClip('pq.mov', 'smpte2084'),
+  {
+    name: 'variable-rate-late.mp4',
+    build: (tools) =>
+      tools.ffmpeg([
+        ...lavfi(SMALL),
+        '-frames:v',
+        '450',
+        '-vf',
+        `settb=1/3000,setpts='if(gte(N,${LATE_JITTER_FRAME}),PTS+mod(N,2)*40,PTS)',${TO_BT709}`,
+        '-fps_mode',
+        'vfr',
+        '-enc_time_base:v',
+        '1/3000',
+        ...H264,
+        ...BT709_TAGS,
+        mediaPath('variable-rate-late.mp4'),
+      ]),
+  },
+  {
+    name: 'variable-rate-gap.mp4',
+    build: (tools) =>
+      tools.ffmpeg([
+        ...lavfi(SMALL),
+        '-f',
+        'lavfi',
+        '-i',
+        `aevalsrc='0.9*between(t,${GAP_CLICK_SECONDS},${GAP_CLICK_SECONDS}.0005)':s=48000:d=24`,
+        '-t',
+        '24',
+        '-vf',
+        `select='not(between(n,${GAP_START_FRAME},${GAP_END_FRAME - 1}))',${TO_BT709}`,
+        '-fps_mode',
+        'vfr',
+        ...H264,
+        // Phones record screens without B-frames. With them, x264 gives the frame after the gap a decode time inside the gap, and seeking there lands after the gap.
+        '-bf',
+        '0',
+        ...BT709_TAGS,
+        ...AAC,
+        mediaPath('variable-rate-gap.mp4'),
+      ]),
+  },
   silentClip('8k.mp4', ['-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', ...BT709_TAGS], { pattern: { width: 7680, height: 4320, rate: '30' }, frames: 4 }),
   silentClip('4k-long-gop.mp4', ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '30', '-pix_fmt', 'yuv420p', '-g', '250', ...BT709_TAGS], { pattern: { width: 3840, height: 2160, rate: '30' }, frames: 300 }),
   silentClip('1080p.mp4', ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26', '-pix_fmt', 'yuv420p', '-g', '60', ...BT709_TAGS], { pattern: { width: 1920, height: 1080, rate: '30' }, frames: 150 }),
+  // Kept small: the ten minutes made from it are only decoded, never looked at closely.
+  silentClip('timelapse-part.mp4', ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '40', '-pix_fmt', 'yuv420p', '-g', '60', ...BT709_TAGS], { pattern: { width: 1920, height: 1080, rate: '30' }, frames: 150 }),
+  {
+    name: 'timelapse-1080p.mp4',
+    build: (tools) => tools.ffmpeg(['-stream_loop', String(TIMELAPSE_REPEATS - 1), '-i', mediaPath('timelapse-part.mp4'), '-c', 'copy', mediaPath('timelapse-1080p.mp4')]),
+  },
 
   alphaClip('prores4444-alpha.mov', ['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', ...BT709_TAGS]),
   alphaClip('vp9-alpha.webm', ['-c:v', 'libvpx-vp9', '-pix_fmt', 'yuva420p', '-b:v', '1M', '-deadline', 'realtime', '-cpu-used', '8']),

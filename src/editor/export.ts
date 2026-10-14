@@ -1,4 +1,20 @@
-import { EXPORT_PRESETS, isExportPreset, isExportQuality, shortSideOf, type ExportPreset, type ExportQuality, type Size } from '../shared/exportPresets.js'
+import {
+  DEFAULT_GIF_FRAME_RATE,
+  EXPORT_PRESETS,
+  GIF_FRAME_RATES,
+  hasMovingPicture,
+  hasSound,
+  isExportEncoder,
+  isExportFormat,
+  isExportPreset,
+  isExportQuality,
+  shortSideOf,
+  type ExportEncoder,
+  type ExportFormat,
+  type ExportPreset,
+  type ExportQuality,
+  type Size,
+} from '../shared/exportPresets.js'
 import type { ExportJob, TimeRange } from '../shared/mediaProtocol.js'
 import type { Project } from '../shared/project.js'
 import { PROJECT_FRAME_RATES, type FrameRate } from '../shared/time.js'
@@ -14,24 +30,38 @@ const STEADY_AFTER_FRACTION = 0.02
 
 // What the export dialog lets the user choose.
 export type ExportChoices = {
+  format: ExportFormat
   preset: ExportPreset
   frameRate: FrameRate
   quality: ExportQuality
+  encoder: ExportEncoder
   isSelectionOnly: boolean
   hasAudio: boolean
 }
 
 // The choices worth keeping for the next export. Frame rate and range belong to one project and one moment, so they start fresh each time.
-export type RememberedChoices = Partial<Pick<ExportChoices, 'preset' | 'quality' | 'hasAudio'>>
+export type RememberedChoices = Partial<Pick<ExportChoices, 'format' | 'preset' | 'quality' | 'encoder' | 'hasAudio'>>
 
 function framesPerSecond(rate: FrameRate): number {
   return rate.num / rate.den
 }
 
-// The project's frame rate and every slower one, fastest first.
-export function exportFrameRates(projectRate: FrameRate): FrameRate[] {
-  const allowed = PROJECT_FRAME_RATES.filter((rate) => framesPerSecond(rate) <= framesPerSecond(projectRate))
+// The project's frame rate and every slower one a format can hold, fastest first.
+export function exportFrameRates(format: ExportFormat, projectRate: FrameRate): FrameRate[] {
+  const rates = format === 'gif' ? GIF_FRAME_RATES : PROJECT_FRAME_RATES
+  const allowed = rates.filter((rate) => framesPerSecond(rate) <= framesPerSecond(projectRate))
   return allowed.sort((a, b) => framesPerSecond(b) - framesPerSecond(a))
+}
+
+function isSameRate(a: FrameRate, b: FrameRate): boolean {
+  return a.num === b.num && a.den === b.den
+}
+
+// Another format keeps the frame rate when it can hold it; otherwise it starts from its own default.
+export function withFormat(choices: ExportChoices, format: ExportFormat, projectRate: FrameRate): ExportChoices {
+  const canKeepRate = exportFrameRates(format, projectRate).some((rate) => isSameRate(rate, choices.frameRate))
+  if (canKeepRate) return { ...choices, format }
+  return { ...choices, format, frameRate: format === 'gif' ? DEFAULT_GIF_FRAME_RATE : projectRate }
 }
 
 // The largest size that keeps the shape of the canvas without enlarging it.
@@ -58,20 +88,27 @@ export function parseRememberedChoices(text: string | undefined): RememberedChoi
   }
   if (typeof stored !== 'object' || stored === null) return {}
   const remembered: RememberedChoices = {}
+  if ('format' in stored && typeof stored.format === 'string' && isExportFormat(stored.format)) remembered.format = stored.format
+  if ('encoder' in stored && typeof stored.encoder === 'string' && isExportEncoder(stored.encoder)) remembered.encoder = stored.encoder
   if ('preset' in stored && typeof stored.preset === 'string' && isExportPreset(stored.preset)) remembered.preset = stored.preset
   if ('quality' in stored && typeof stored.quality === 'string' && isExportQuality(stored.quality)) remembered.quality = stored.quality
   if ('hasAudio' in stored && typeof stored.hasAudio === 'boolean') remembered.hasAudio = stored.hasAudio
   return remembered
 }
 
-export function startingChoices(project: Project, remembered: RememberedChoices): ExportChoices {
-  return {
+// With nothing remembered, an MP4 by the Mac's media engine on a Mac with little memory, otherwise by x264.
+export function startingChoices(project: Project, remembered: RememberedChoices, hasSmallMemory: boolean): ExportChoices {
+  const projectRate = project.canvas.frameRate
+  const choices: ExportChoices = {
+    format: 'mp4',
     preset: remembered.preset ?? defaultPreset(project.canvas),
-    frameRate: project.canvas.frameRate,
+    frameRate: projectRate,
     quality: remembered.quality ?? 'high',
+    encoder: remembered.encoder ?? (hasSmallMemory ? 'hardware' : 'x264'),
     isSelectionOnly: false,
     hasAudio: remembered.hasAudio ?? true,
   }
+  return withFormat(choices, remembered.format ?? 'mp4', projectRate)
 }
 
 // From the start of the first selected clip to the end of the last one.
@@ -89,8 +126,21 @@ export function selectionRange(project: Project, selection: readonly string[]): 
   return end > start ? { start, end } : undefined
 }
 
-export function exportJobFor(choices: ExportChoices, range: TimeRange | undefined, paths: Pick<ExportJob, 'projectPath' | 'outputPath'>): ExportJob {
-  const job: ExportJob = { kind: 'export', ...paths, preset: choices.preset, frameRate: choices.frameRate, quality: choices.quality, hasAudio: choices.hasAudio }
+// Only what the format uses goes into the job. `frame` is the frame of a PNG.
+export function exportJobFor(choices: ExportChoices, range: TimeRange | undefined, paths: Pick<ExportJob, 'projectPath' | 'outputPath'>, frame: number): ExportJob {
+  const { format } = choices
+  const job: ExportJob = { kind: 'export', ...paths, format, preset: choices.preset }
+  if (format === 'png') {
+    job.frame = frame
+    return job
+  }
+  if (hasMovingPicture(format)) job.frameRate = choices.frameRate
+  if (format === 'mp4' || format === 'webm') {
+    job.quality = choices.quality
+    job.hasAudio = choices.hasAudio
+  }
+  if (format === 'mp4') job.encoder = choices.encoder
+  if (!hasMovingPicture(format) && hasSound(format)) job.hasAudio = true
   if (choices.isSelectionOnly && range !== undefined) job.range = range
   return job
 }

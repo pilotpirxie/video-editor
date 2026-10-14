@@ -2,10 +2,10 @@ import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ROOT, bundledFfmpeg, patternFrame, pixelAt, psnr, readBarcode, rotatedCounterClockwise } from '../../test/helpers.js'
-import { alphaCard, mediaPath } from '../../test/media/generate.js'
+import { GAP_END_FRAME, GAP_START_FRAME, LATE_JITTER_FRAME, alphaCard, hdrCard, mediaPath } from '../../test/media/generate.js'
 import type { RawFrame } from '../shared/mediaProtocol.js'
 import { FfmpegError } from './ffmpeg.js'
-import { decodeFrame, decodedSize, openFrameStream, type VideoSource } from './frames.js'
+import { decodeFrame, decodeKeyframe, decodedSize, openFrameStream, type VideoSource } from './frames.js'
 import { probeMedia } from './probe.js'
 
 const ffmpeg = bundledFfmpeg()
@@ -54,7 +54,7 @@ describe('decodeFrame returns exactly the requested frame', () => {
     await expectBarcodes(name, [0, 1, 2, 29, 30, 31, 58, 59])
   })
 
-  it.each(['fps-23976.mp4', 'fps-24.mp4', 'fps-25.mp4', 'fps-2997.mp4', 'fps-50.mp4', 'fps-5994.mp4', 'fps-60.mp4', 'fps-120.mp4'])('%s', async (name) => {
+  it.each(['fps-23976.mp4', 'fps-24.mp4', 'fps-25.mp4', 'fps-2997.mp4', 'fps-50.mp4', 'fps-5994.mp4', 'fps-60.mp4', 'fps-120.mp4', 'fps-240.mp4'])('%s', async (name) => {
     await expectBarcodes(name, [0, 1, 29, 30, 31, 47])
   })
 
@@ -79,6 +79,32 @@ describe('decodeFrame returns exactly the requested frame', () => {
     for (const { time, picture } of shownAt) {
       expect(readBarcode(await decodeFrame(ffmpeg, source, time, 0)), `time ${time}`).toBe(picture)
     }
+  })
+
+  it('maps frame times that turn uneven late in a file onto the even ones', async () => {
+    await expectBarcodes('variable-rate-late.mp4', [0, LATE_JITTER_FRAME - 1, LATE_JITTER_FRAME, LATE_JITTER_FRAME + 1, 400, 449])
+  })
+
+  it('shows the last picture before a long gap through the whole gap', async () => {
+    const source = await sourceOf('variable-rate-gap.mp4')
+    const lastBefore = GAP_START_FRAME - 1
+    const shownAt = [
+      { frame: 100, picture: 100 },
+      { frame: lastBefore, picture: lastBefore },
+      { frame: GAP_START_FRAME, picture: lastBefore },
+      { frame: 500, picture: lastBefore },
+      { frame: GAP_END_FRAME - 1, picture: lastBefore },
+      { frame: GAP_END_FRAME, picture: GAP_END_FRAME },
+      { frame: 719, picture: 719 },
+    ]
+    for (const { frame, picture } of shownAt) {
+      expect(readBarcode(await decodeFrame(ffmpeg, source, frame, 0)), `frame ${frame}`).toBe(picture)
+    }
+
+    const stream = openFrameStream(ffmpeg, source, 500, 0)
+    expect(readBarcode(await stream.frame(500))).toBe(lastBefore)
+    expect(readBarcode(await stream.frame(GAP_END_FRAME))).toBe(GAP_END_FRAME)
+    stream.close()
   })
 
   it('holds the last frame when asked for one past the end', async () => {
@@ -123,6 +149,10 @@ describe('decodeFrame applies colour, rotation, size and alpha', () => {
 
     const rotated270 = await frameOf('rotated-270.mp4', 5)
     expect(psnr(rotated270, threeQuarterTurn)).toBeGreaterThan(35)
+
+    const rotated180 = await frameOf('rotated-180.mp4', 5)
+    expect(rotated180).toMatchObject({ width: 320, height: 180 })
+    expect(psnr(rotated180, halfTurn)).toBeGreaterThan(35)
   })
 
   it('stretches non-square pixels to the display size', async () => {
@@ -182,6 +212,37 @@ describe('decodeFrame applies colour, rotation, size and alpha', () => {
     expect(readBarcode(await frameOf('fps-120.mp4', 40))).toBe(40)
     expect(await frameOf('variable-rate.mkv', 20)).toMatchObject({ width: 320, height: 180 })
   })
+
+  // The test files hold an SDR card placed at HDR reference white, so tone mapping should give that card back, a little darker at the top where highlights get their room.
+  it.each([
+    ['hlg.mov', 0],
+    ['pq.mov', 0],
+    ['hlg.mov', 1],
+  ])('tone-maps %s (halved %i times) back to the SDR picture', async (name, halvings) => {
+    const frame = await frameOf(name, 3, halvings)
+    const card = hdrCard(320, 180)
+    const scale = 2 ** halvings
+    let previous = -1
+    let errorSum = 0
+    const rampY = Math.round(45 / scale)
+    for (let x = 0; x < frame.width; x++) {
+      const decoded = pixelAt(frame, x, rampY).red
+      expect(decoded, `ramp at ${x}`).toBeGreaterThanOrEqual(previous)
+      previous = decoded
+      errorSum += Math.abs(decoded - (card[(45 * 320 + x * scale) * 4] ?? 0))
+    }
+    expect(errorSum / frame.width).toBeLessThan(3)
+
+    const barsY = Math.round(135 / scale)
+    const bars = [pixelAt(frame, Math.round(50 / scale), barsY), pixelAt(frame, Math.round(160 / scale), barsY), pixelAt(frame, Math.round(270 / scale), barsY)]
+    const channels = ['red', 'green', 'blue'] as const
+    for (const [index, bar] of bars.entries()) {
+      for (const [channelIndex, channel] of channels.entries()) {
+        if (channelIndex === index) expect(bar[channel], `bar ${index} ${channel}`).toBeGreaterThan(230)
+        else expect(bar[channel], `bar ${index} ${channel}`).toBeLessThan(32)
+      }
+    }
+  })
 })
 
 describe('openFrameStream', () => {
@@ -213,6 +274,34 @@ describe('openFrameStream', () => {
     expect(readBarcode(await stream.frame(59))).toBe(59)
     expect(readBarcode(await stream.frame(60))).toBe(59)
     expect(readBarcode(await stream.frame(75))).toBe(59)
+    stream.close()
+  })
+
+  it('hands over only every n-th frame of a fast clip, exactly', async () => {
+    const source = await sourceOf('long-gop.mp4')
+    const stream = openFrameStream(ffmpeg, source, 10, 0)
+    for (const index of [10, 30, 50, 70, 90, 95, 40, 41]) {
+      expect(readBarcode(await stream.frame(index)), `frame ${index}`).toBe(index)
+    }
+    for (const index of [130, 150]) {
+      const streamed = await stream.frame(index)
+      expect(sameBytes(streamed, await decodeFrame(ffmpeg, source, index, 0)), `frame ${index}`).toBe(true)
+    }
+    stream.close()
+  })
+
+  it('holds the last frame when a stepped stream passes the end of the file', async () => {
+    const source = await sourceOf('h264.mp4')
+    const stream = openFrameStream(ffmpeg, source, 0, 0)
+    for (const { frame, picture } of [
+      { frame: 0, picture: 0 },
+      { frame: 20, picture: 20 },
+      { frame: 40, picture: 40 },
+      { frame: 60, picture: 59 },
+      { frame: 75, picture: 59 },
+    ]) {
+      expect(readBarcode(await stream.frame(frame)), `frame ${frame}`).toBe(picture)
+    }
     stream.close()
   })
 
@@ -251,5 +340,21 @@ describe.skipIf(realRecordings.length === 0)('real recordings', () => {
       expect(picture.width).toBe(info.video.width)
       expect(picture.height).toBe(info.video.height)
     }
+  })
+})
+
+describe('decodeKeyframe', () => {
+  it('shows the keyframe at or before the frame asked for', async () => {
+    const source = await sourceOf('long-gop.mp4')
+    const pictures: number[] = []
+    for (const frame of [0, 47, 90, 150]) pictures.push(readBarcode(await decodeKeyframe(ffmpeg, source, frame, 0)))
+    expect(pictures).toEqual([0, 0, 90, 90])
+  })
+
+  it('turns, sizes and tone-maps like the full-quality decoder', async () => {
+    const rotated = await decodeKeyframe(ffmpeg, await sourceOf('rotated-90.mp4'), 0, 1)
+    expect({ width: rotated.width, height: rotated.height }).toEqual({ width: 90, height: 160 })
+    const hlg = await sourceOf('hlg.mov')
+    expect(psnr(await decodeKeyframe(ffmpeg, hlg, 0, 0), await decodeFrame(ffmpeg, hlg, 0, 0))).toBeGreaterThan(40)
   })
 })

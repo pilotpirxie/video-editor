@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import type { MediaInfo } from '../shared/mediaProtocol.js'
 import type { AudioClip, Clip, GroupClip, Project, Track, VideoClip } from '../shared/project.js'
-import { LIMITER_CEILING, LIMITER_WINDOW, cachedAudioReader, mix, type AudioReader } from './mixer.js'
+import { LIMITER_CEILING, LIMITER_WINDOW, cachedAudioReader, mix, soundRanges, type AudioReader } from './mixer.js'
 import type { MediaStates } from './resolve.js'
 
 const SECOND = 24_000_000
 const TICKS_PER_SAMPLE = 500
 const FRAME_2997 = 800_800
 
-const SOUND: MediaInfo = { kind: 'audio', duration: 60 * SECOND, containerStart: 0, audio: { channels: 2, sampleRate: 48_000, codec: 'pcm' } }
+const SOUND: MediaInfo = { kind: 'audio', duration: 60 * SECOND, containerStart: 0, audio: { channels: 2, sampleRate: 48_000, codec: 'pcm', seeksExactly: true } }
 const MEDIA: MediaStates = {
   voice: { info: SOUND },
   music: { info: SOUND },
   loud: { info: SOUND },
-  silentVideo: { info: { kind: 'video', duration: 60 * SECOND, containerStart: 0, video: { width: 16, height: 16, frameDuration: 800_000, frameCount: 1800, startOffset: 0, seekPreroll: 0, isVariableFrameRate: false, hasAlpha: false, colorMatrix: 'bt709', colorRange: 'tv', isHdr: false, codec: 'h264' } } },
+  silentVideo: { info: { kind: 'video', duration: 60 * SECOND, containerStart: 0, video: { width: 16, height: 16, frameDuration: 800_000, frameCount: 1800, startOffset: 0, seekPreroll: 0, isVariableFrameRate: false, hasAlpha: false, colorMatrix: 'bt709', colorRange: 'tv', transfer: 'sdr', codec: 'h264' } } },
   broken: { error: 'unreadable', isMissing: false },
 }
 
@@ -337,5 +337,26 @@ describe('cachedAudioReader', () => {
   it('passes on that a media file has no sound', async () => {
     const cached = cachedAudioReader(async () => undefined, 1024)
     expect(await cached('voice', 0, 10)).toBeUndefined()
+  })
+})
+
+describe('soundRanges', () => {
+  it('lists what the mix plays, with the stretch of a clip at another speed, and leaves out what is not heard', () => {
+    const muted: Track = { id: 'muted', name: '', hidden: false, locked: false, muted: true, clips: [audioClip({ id: 'quiet', mediaId: 'music' })] }
+    const heard = project(
+      [audioClip({ id: 'voice', start: SECOND, duration: 2 * SECOND, sourceStart: 3 * SECOND })],
+      [audioClip({ id: 'fast', mediaId: 'music', speedPercent: 200 }), audioClip({ id: 'timelapse', mediaId: 'music', start: 4 * SECOND, speedPercent: 1000 })],
+    )
+    heard.tracks.push(muted)
+    expect(soundRanges(heard, MEDIA)).toEqual([
+      { mediaId: 'voice', use: 'sound', timelineStart: SECOND, timelineEnd: 3 * SECOND, sourceStart: 3 * SECOND, speedPercent: 100, isLooping: false },
+      { mediaId: 'music', use: 'sound', timelineStart: 0, timelineEnd: 2 * SECOND, sourceStart: 0, speedPercent: 200, isLooping: false, stretch: { speedPercent: 200, keepsPitch: true } },
+    ])
+  })
+
+  it('counts a member of a group from where the group starts showing it', () => {
+    const inner = audioClip({ id: 'inner', start: 0, duration: 5 * SECOND })
+    const group: GroupClip = { id: 'group', type: 'group', start: 10 * SECOND, duration: 2 * SECOND, contentStart: SECOND, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, volume: 1, tracks: project([inner]).tracks }
+    expect(soundRanges(project([group]), MEDIA)).toEqual([{ mediaId: 'voice', use: 'sound', timelineStart: 10 * SECOND, timelineEnd: 12 * SECOND, sourceStart: SECOND, speedPercent: 100, isLooping: false }])
   })
 })

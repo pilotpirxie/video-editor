@@ -1,0 +1,207 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 360,
+    "width": 640
+  },
+  "media": [
+    {
+      "id": "hlg",
+      "path": "",
+      "relativePath": "../media/generated/hlg.mov"
+    },
+    {
+      "id": "fps240",
+      "path": "",
+      "relativePath": "../media/generated/fps-240.mp4"
+    },
+    {
+      "id": "eightk",
+      "path": "",
+      "relativePath": "../media/generated/8k.mp4"
+    },
+    {
+      "id": "rotated",
+      "path": "",
+      "relativePath": "../media/generated/rotated-180.mp4"
+    },
+    {
+      "id": "anamorphic",
+      "path": "",
+      "relativePath": "../media/generated/anamorphic.mp4"
+    },
+    {
+      "id": "gap",
+      "path": "",
+      "relativePath": "../media/generated/variable-rate-gap.mp4"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 8000000,
+          "id": "hlg",
+          "mediaId": "hlg",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.6,
+            "scaleY": 0.6,
+            "x": 107,
+            "y": 90
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "hlg",
+      "locked": false,
+      "muted": false,
+      "name": "hlg"
+    },
+    {
+      "clips": [
+        {
+          "duration": 4800000,
+          "id": "fps240",
+          "mediaId": "fps240",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.6,
+            "scaleY": 0.6,
+            "x": 320,
+            "y": 90
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "fps240",
+      "locked": false,
+      "muted": false,
+      "name": "fps240"
+    },
+    {
+      "clips": [
+        {
+          "duration": 3200000,
+          "id": "eightk",
+          "mediaId": "eightk",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.025,
+            "scaleY": 0.025,
+            "x": 533,
+            "y": 90
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "eightk",
+      "locked": false,
+      "muted": false,
+      "name": "eightk"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "rotated",
+          "mediaId": "rotated",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.6,
+            "scaleY": 0.6,
+            "x": 107,
+            "y": 270
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "rotated",
+      "locked": false,
+      "muted": false,
+      "name": "rotated"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "anamorphic",
+          "mediaId": "anamorphic",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.45,
+            "scaleY": 0.45,
+            "x": 320,
+            "y": 270
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "anamorphic",
+      "locked": false,
+      "muted": false,
+      "name": "anamorphic"
+    },
+    {
+      "clips": [
+        {
+          "duration": 302400000,
+          "id": "gap",
+          "mediaId": "gap",
+          "opacity": 1,
+          "sourceStart": 213600000,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.6,
+            "scaleY": 0.6,
+            "x": 533,
+            "y": 270
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "gap",
+      "locked": false,
+      "muted": false,
+      "name": "gap"
+    }
+  ],
+  "version": 1
+}

@@ -1,0 +1,47 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 1080,
+    "width": 1920
+  },
+  "media": [
+    {
+      "id": "source",
+      "path": "",
+      "relativePath": "../media/generated/timelapse-1080p.mp4"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 288000000,
+          "id": "timelapse",
+          "mediaId": "source",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 5000,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 960,
+            "y": 540
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "track",
+      "locked": false,
+      "muted": false,
+      "name": "Timelapse"
+    }
+  ],
+  "version": 1
+}

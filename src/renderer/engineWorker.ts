@@ -48,7 +48,7 @@ async function runJob(engine: Engine, job: HeadlessJob): Promise<void> {
     await engine.load(job.projectPath, false)
     const summary =
       job.kind === 'export'
-        ? await engine.exportMp4(job, (done, total) => post({ type: 'job', event: { type: 'progress', done, total } }))
+        ? await engine.exportMedia(job, (done, total) => post({ type: 'job', event: { type: 'progress', done, total } }))
         : await engine.renderFrames(job)
     post({ type: 'job', event: { type: 'done', summary } })
   } catch (error) {

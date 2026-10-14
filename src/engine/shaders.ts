@@ -214,3 +214,35 @@ void main() {
   }
   outColor = beneath * (cover * strength);
 }`
+
+// The frame as the bytes of a YUV 4:2:0 picture in BT.709 TV range, as video encoders take it: the luma plane, then the blue and the red
+// difference planes, each of their samples the average of 2 × 2 pixels. Every RGBA texel holds the next four bytes, row after row.
+export const YUV_SHADER = `#version 300 es
+precision highp float;
+precision highp int;
+uniform sampler2D uTexture;
+uniform ivec2 uPictureSize;
+uniform int uRowTexels;
+out vec4 outColor;
+const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+float byteAt(int index) {
+  int width = uPictureSize.x;
+  int lumaBytes = width * uPictureSize.y;
+  if (index < lumaBytes) return (16.0 + 219.0 * dot(texelFetch(uTexture, ivec2(index % width, index / width), 0).rgb, LUMA)) / 255.0;
+  int chromaWidth = width / 2;
+  int chromaBytes = chromaWidth * (uPictureSize.y / 2);
+  int chroma = index - lumaBytes;
+  bool isRed = chroma >= chromaBytes;
+  if (isRed) chroma -= chromaBytes;
+  if (chroma >= chromaBytes) return 0.0;
+  ivec2 at = ivec2(chroma % chromaWidth, chroma / chromaWidth) * 2;
+  vec3 rgb = (texelFetch(uTexture, at, 0).rgb + texelFetch(uTexture, at + ivec2(1, 0), 0).rgb + texelFetch(uTexture, at + ivec2(0, 1), 0).rgb + texelFetch(uTexture, at + ivec2(1, 1), 0).rgb) * 0.25;
+  float luma = dot(rgb, LUMA);
+  float difference = isRed ? (rgb.r - luma) / 1.5748 : (rgb.b - luma) / 1.8556;
+  return (128.0 + 224.0 * difference) / 255.0;
+}
+void main() {
+  ivec2 texel = ivec2(gl_FragCoord.xy);
+  int first = (texel.y * uRowTexels + texel.x) * 4;
+  outColor = vec4(byteAt(first), byteAt(first + 1), byteAt(first + 2), byteAt(first + 3));
+}`

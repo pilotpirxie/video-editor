@@ -3,16 +3,20 @@ import { AUDIO_CACHE_BYTES, AUDIO_QUEUE_SECONDS, READ_AHEAD_FRAMES } from '../sh
 import { describeError } from '../shared/log.js'
 import type { ExportJob, FramesJob, LoadedProject, MediaClient } from '../shared/mediaProtocol.js'
 import { projectDuration, type Canvas } from '../shared/project.js'
-import { SAMPLE_RATE, TICKS_PER_SAMPLE, frameAt, frameDuration } from '../shared/time.js'
+import { SAMPLE_RATE, TICKS_PER_SAMPLE, TICKS_PER_SECOND, frameAt, frameDuration } from '../shared/time.js'
 import { viewAt, wholeCanvas, type View } from './camera.js'
 import { createPlaybackClock, type PlaybackClock } from './clock.js'
 import { CompositorError, createCompositor, type DrawItem } from './compositor.js'
-import { exportMp4, renderFrames, type JobSummary, type ProgressListener, type RenderContext } from './exporter.js'
+import { exportMedia, renderFrames, type JobSummary, type ProgressListener, type RenderContext } from './exporter.js'
 import { createFrameProvider } from './frameProvider.js'
-import { cachedAudioReader, mix } from './mixer.js'
-import { resolveFrame, type Layer } from './resolve.js'
+import { cachedAudioReader, mix, soundRanges } from './mixer.js'
+import { pictureRanges, resolveFrame, type Layer } from './resolve.js'
 
 const AUDIO_BLOCK_SAMPLES = 2048
+// The media process prepares minutes around the playhead, so it is told again only when the playhead has moved this far.
+const WANT_AGAIN_AFTER_TICKS = 10 * TICKS_PER_SECOND
+// An edit sends the timeline again at most this often, so a drag does not send it on every frame.
+const WANT_INTERVAL_MS = 500
 
 function decodesNeeded(layers: readonly Layer[]): string {
   const decodes: string[] = []
@@ -26,6 +30,8 @@ export type EngineEvent =
   | { type: 'loaded'; duration: number; canvas: Canvas; problems: string[] }
   | { type: 'position'; time: number; isPlaying: boolean; droppedFrames: number; fullQualityMs: number | undefined }
   | { type: 'prepared' }
+  // The media process was told what the timeline needs now; how far that is prepared may have changed.
+  | { type: 'wanted' }
   | { type: 'error'; message: string }
 
 type OutputCommand = { type: 'start' } | { type: 'samples'; samples: Float32Array } | { type: 'stop' }
@@ -41,7 +47,7 @@ export type Engine = {
   seek(time: number): void
   play(outputLatencySeconds: number): void
   pause(): void
-  exportMp4(job: ExportJob, onProgress: ProgressListener): Promise<JobSummary>
+  exportMedia(job: ExportJob, onProgress: ProgressListener): Promise<JobSummary>
   renderFrames(job: FramesJob): Promise<JobSummary>
 }
 
@@ -83,6 +89,10 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
   let outputLatency = 0
   let droppedFrames = 0
   let isWholeCanvasShownWhenPaused = false
+  let wantedFor: LoadedProject | undefined
+  let wantedAt: number | undefined
+  let wantSentAt = -Infinity
+  let wantTimer: ReturnType<typeof setTimeout> | undefined
 
   function requireLoaded(): LoadedProject {
     if (loaded === undefined) throw new EngineError('No project is loaded')
@@ -106,6 +116,33 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
   // Text is drawn for the largest size the camera's move reaches, so a zoom does not draw it anew on every frame.
   function textScale(project: LoadedProject, view: View): number {
     return outputScale(project) * view.largestScale
+  }
+
+  async function sendWanted(): Promise<void> {
+    clearTimeout(wantTimer)
+    wantTimer = undefined
+    const project = loaded
+    if (project === undefined) return
+    wantedFor = project
+    wantedAt = time
+    wantSentAt = performance.now()
+    const ranges = [...pictureRanges(project.project, project.media), ...soundRanges(project.project, project.media)]
+    try {
+      await media.want({ playhead: time, ranges })
+    } catch (error) {
+      emit({ type: 'error', message: describeError(error) })
+      return
+    }
+    emit({ type: 'wanted' })
+  }
+
+  // After an edit, or once the playhead has moved far, the media process hears what the timeline needs now; at most once per interval.
+  function updateWanted(): void {
+    if (loaded === undefined || wantTimer !== undefined) return
+    const hasMovedFar = wantedAt === undefined || Math.abs(time - wantedAt) >= WANT_AGAIN_AFTER_TICKS
+    if (wantedFor === loaded && !hasMovedFar) return
+    const wait = Math.max(0, wantSentAt + WANT_INTERVAL_MS - performance.now())
+    wantTimer = setTimeout(() => void sendWanted(), wait)
   }
 
   function emitPosition(fullQualityMs: number | undefined): void {
@@ -197,6 +234,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
       time = frame * frameTicks
       draw(project, view, items)
       emitPosition(undefined)
+      updateWanted()
     }
     void prepareAhead(project, frame + 1, frameTicks)
     requestAnimationFrame(() => tick(project, playing))
@@ -260,6 +298,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     const wasPlaying = playback !== undefined
     stopPlayback()
     time = frameStartNear(project, target)
+    updateWanted()
     if (wasPlaying) {
       play(outputLatency)
     } else {
@@ -300,6 +339,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     stopPlayback()
     loaded = project
     time = frameStartNear(project, time)
+    updateWanted()
     void showPaused()
   }
 
@@ -319,6 +359,8 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     }
     emit({ type: 'loaded', duration: projectDuration(project.project), canvas: project.project.canvas, problems })
     if (!forPreview) return
+    // Sent before asking when it is prepared, so that answer counts what the timeline needs.
+    void sendWanted()
     void announcePrepared(project)
     await showPaused()
   }
@@ -346,7 +388,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     seek,
     play,
     pause,
-    exportMp4: (job, onProgress) => exportMp4(renderContext(), job, onProgress),
+    exportMedia: (job, onProgress) => exportMedia(renderContext(), job, onProgress),
     renderFrames: (job) => renderFrames(renderContext(), job),
   }
 }

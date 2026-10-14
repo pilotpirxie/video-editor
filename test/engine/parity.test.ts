@@ -28,6 +28,8 @@ const REFERENCE_PROJECTS: Case[] = [
   { project: '18-text-styles', frames: [0, 33, 59] },
   { project: '19-presets', frames: [0, 5, 14, 18, 29, 30, 45, 76, 80, 89] },
   { project: '20-groups', frames: [0, 7, 15, 31, 45, 59, 80, 89, 90, 95, 120, 149] },
+  // HLG, 240 fps, 8K, a turned phone, wide pixels and a phone recording with a 12 s gap; the gap ends at frame 363.
+  { project: '21-difficult-sources', frames: [0, 1, 2, 3, 5, 9, 30, 59, 300, 362, 363, 364, 377] },
 ]
 
 const REDUCED_SIZE: Case[] = [
@@ -43,6 +45,7 @@ const REDUCED_SIZE: Case[] = [
   { project: '18-text-styles', frames: [30], size: { width: 3840, height: 2160 } },
   { project: '19-presets', frames: [10, 82], size: { width: 640, height: 360 } },
   { project: '20-groups', frames: [20, 93], size: { width: 480, height: 270 } },
+  { project: '21-difficult-sources', frames: [1, 363], size: { width: 214, height: 120 } },
 ]
 
 async function expectSamePixels(testCase: Case): Promise<void> {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ArrowClip, CalloutClip, Clip, TextClip, Transform } from '../../src/shared/project.js'
 import { SECOND } from '../fixtures.js'
-import { at, BLUE, FIRST_SECOND, frameOfTracks, RED, WHITE, WHITE_GROUND, bundledFfmpeg, cropPicture, expectGolden, expectPixel, imageOf, litFraction, pictureAt, pixelAt, renderFrames, sameBytes, scratchDirectory, type Picture } from '../helpers.js'
+import { at, BLUE, FIRST_SECOND, frameOfTracks, RED, WHITE, WHITE_GROUND, bundledFfmpeg, cropPicture, expectGolden, expectPixel, imageOf, litFraction, pictureAt, pixelAt, projectOfTracks, renderFrames, renderProject, sameBytes, scratchDirectory, type Picture } from '../helpers.js'
 
 const ffmpeg = bundledFfmpeg()
 const scratch = scratchDirectory('annotations')
@@ -103,6 +103,16 @@ describe('callouts', () => {
     await expectGolden(ffmpeg, 'callouts-4K', large)
     // Drawn at the size of the output, not enlarged: the edge of a shape and of a letter is a step of one pixel.
     expect(steepestEdge(cropPicture(large, 100, 150, 900, 500))).toBeGreaterThan(150)
+  })
+
+  // The GPU canvas drew a callout stretched more one way than the other a little differently on every run, so a paused frame could differ from the export.
+  it('draws a stretched callout the same on every run', async () => {
+    const words = { text: 'Callout', font: { family: 'Helvetica Neue', size: 108 }, color: '#14171D', fill: '#FFFFFF', borderColor: '#14171D', borderWidth: 8 }
+    const stretched = calloutOf('stretched', { ...at(640, 300), scaleX: 2.36 }, { ...words, shape: 'speechBubble', width: 470, height: 432, tail: { x: -141, y: 389 } })
+    const project = projectOfTracks({ width: 1280, height: 720 }, [[stretched]])
+    const first = await renderProject(scratch, 'stretched-first', project, { via: 'paused', frames: [0] })
+    const second = await renderProject(scratch, 'stretched-second', project, { via: 'paused', frames: [0] })
+    expect(sameBytes(pictureAt(first, 0), pictureAt(second, 0))).toBe(true)
   })
 })
 

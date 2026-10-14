@@ -1,3 +1,5 @@
+import type { FrameRate } from './time.js'
+
 export type Size = {
   width: number
   height: number
@@ -48,6 +50,51 @@ export type ExportQuality = (typeof EXPORT_QUALITIES)[number]
 export function isExportQuality(name: string): name is ExportQuality {
   return EXPORT_QUALITIES.some((quality) => quality === name)
 }
+
+// Each format is also the extension of its file.
+export const EXPORT_FORMATS = ['mp4', 'webm', 'gif', 'm4a', 'mp3', 'wav', 'png'] as const
+
+export type ExportFormat = (typeof EXPORT_FORMATS)[number]
+
+export function isExportFormat(name: string): name is ExportFormat {
+  return EXPORT_FORMATS.some((format) => format === name)
+}
+
+const MOVING_PICTURE_FORMATS: readonly ExportFormat[] = ['mp4', 'webm', 'gif']
+const SOUND_FORMATS: readonly ExportFormat[] = ['mp4', 'webm', 'm4a', 'mp3', 'wav']
+
+export function hasMovingPicture(format: ExportFormat): boolean {
+  return MOVING_PICTURE_FORMATS.includes(format)
+}
+
+export function hasSound(format: ExportFormat): boolean {
+  return SOUND_FORMATS.includes(format)
+}
+
+// What the engine hands the encoder for each picture. Video codecs take YUV 4:2:0, made on the GPU so a third as many bytes cross between processes; a GIF and a PNG take the RGBA pixels.
+export type PixelLayout = 'yuv420p' | 'rgba'
+
+export function pixelLayoutOf(format: ExportFormat): PixelLayout {
+  return format === 'mp4' || format === 'webm' ? 'yuv420p' : 'rgba'
+}
+
+// How an MP4 is encoded: by x264, which makes the smallest files, or by the Mac's media engine, which is much faster and uses little memory.
+export const EXPORT_ENCODERS = ['x264', 'hardware'] as const
+
+export type ExportEncoder = (typeof EXPORT_ENCODERS)[number]
+
+export function isExportEncoder(name: string): name is ExportEncoder {
+  return EXPORT_ENCODERS.some((encoder) => encoder === name)
+}
+
+// A GIF stores how long each picture shows in hundredths of a second, so only these rates play at their true speed.
+export const GIF_FRAME_RATES: readonly FrameRate[] = [
+  { num: 10, den: 1 },
+  { num: 20, den: 1 },
+  { num: 25, den: 1 },
+]
+
+export const DEFAULT_GIF_FRAME_RATE: FrameRate = { num: 10, den: 1 }
 
 // Presets that keep the shape of the canvas are named after their short side.
 export function shortSideOf(preset: ExportPreset): number | undefined {

@@ -53,10 +53,10 @@ describe('probeMedia', () => {
         hasAlpha: false,
         colorMatrix: 'bt709',
         colorRange: 'tv',
-        isHdr: false,
+        transfer: 'sdr',
         codec: 'h264',
       },
-      audio: { channels: 2, sampleRate: 48_000, codec: 'aac' },
+      audio: { channels: 2, sampleRate: 48_000, codec: 'aac', seeksExactly: true },
     })
   })
 
@@ -69,6 +69,7 @@ describe('probeMedia', () => {
     ['fps-5994.mp4', 400_400],
     ['fps-60.mp4', 400_000],
     ['fps-120.mp4', 200_000],
+    ['fps-240.mp4', 100_000],
   ])('reads the frame rate of %s exactly', async (name, frameDuration) => {
     const info = await probeVideo(name)
     expect(info.video.frameDuration).toBe(frameDuration)
@@ -79,6 +80,7 @@ describe('probeMedia', () => {
   it('applies rotation and pixel aspect to the size', async () => {
     expect((await probeVideo('rotated-90.mp4')).video).toMatchObject({ width: 180, height: 320 })
     expect((await probeVideo('rotated-270.mp4')).video).toMatchObject({ width: 180, height: 320 })
+    expect((await probeVideo('rotated-180.mp4')).video).toMatchObject({ width: 320, height: 180 })
     expect((await probeVideo('anamorphic.mp4')).video).toMatchObject({ width: 427, height: 180 })
     expect((await probeVideo('8k.mp4')).video).toMatchObject({ width: 7680, height: 4320 })
   })
@@ -89,9 +91,29 @@ describe('probeMedia', () => {
   })
 
   it('detects HDR, variable frame rate and a late video stream', async () => {
-    expect((await probeVideo('hevc-hlg-portrait.mov')).video).toMatchObject({ isHdr: true, colorMatrix: 'bt2020', width: 180, height: 320 })
+    expect((await probeVideo('hevc-hlg-portrait.mov')).video).toMatchObject({ transfer: 'hlg', colorMatrix: 'bt2020', width: 180, height: 320 })
+    expect((await probeVideo('hlg.mov')).video.transfer).toBe('hlg')
+    expect((await probeVideo('pq.mov')).video.transfer).toBe('pq')
     expect((await probeVideo('variable-rate.mkv')).video.isVariableFrameRate).toBe(true)
+    expect((await probeVideo('variable-rate-gap.mp4')).video.isVariableFrameRate).toBe(true)
     expect((await probeVideo('delayed-video.mkv')).video.startOffset).toBe(SECOND / 10)
+  })
+
+  it('finds frame times that turn uneven only late in a recording', async () => {
+    const late = await probeVideo('variable-rate-late.mp4')
+    expect(late.video).toMatchObject({ isVariableFrameRate: true, frameDuration: 800_000 })
+  })
+
+  it('refuses Dolby Vision profile 5, which has no picture it can show', async () => {
+    const ffprobeSaysProfile5: typeof ffmpeg = {
+      ...ffmpeg,
+      async runOnce(binary, args, options) {
+        const json = JSON.parse((await ffmpeg.runOnce(binary, args, options)).toString('utf8'))
+        for (const stream of json.streams ?? []) stream.side_data_list = [{ side_data_type: 'DOVI configuration record', dv_profile: 5 }]
+        return Buffer.from(JSON.stringify(json))
+      },
+    }
+    await expect(probeMedia(ffprobeSaysProfile5, mediaPath('hevc.mp4'))).rejects.toThrow('"hevc.mp4" cannot be used: Dolby Vision profile 5 is not supported.')
   })
 
   it('detects alpha, including WebM alpha that needs libvpx', async () => {
@@ -102,11 +124,13 @@ describe('probeMedia', () => {
   })
 
   it('reads audio layouts', async () => {
-    expect(await probe('audio.wav')).toEqual({ kind: 'audio', duration: 2 * SECOND, containerStart: 0, audio: { channels: 2, sampleRate: 48_000, codec: 'pcm_s16le' } })
+    expect(await probe('audio.wav')).toEqual({ kind: 'audio', duration: 2 * SECOND, containerStart: 0, audio: { channels: 2, sampleRate: 48_000, codec: 'pcm_s16le', seeksExactly: true } })
     expect(await probe('audio-mono.wav')).toMatchObject({ audio: { channels: 1 } })
     expect(await probe('audio-surround.wav')).toMatchObject({ audio: { channels: 6 } })
     expect(await probe('audio-96k-24bit.flac')).toMatchObject({ audio: { sampleRate: 96_000, codec: 'flac' } })
     expect(await probe('audio-44k-click.wav')).toMatchObject({ audio: { sampleRate: 44_100, channels: 1 } })
+    expect(await probe('audio.mp3')).toMatchObject({ audio: { seeksExactly: false } })
+    expect(await probe('audio.m4a')).toMatchObject({ audio: { seeksExactly: true } })
   })
 
   it('reads still images', async () => {

@@ -1,4 +1,4 @@
-import type { ExportPreset, ExportQuality } from './exportPresets.js'
+import type { ExportEncoder, ExportFormat, ExportPreset, ExportQuality } from './exportPresets.js'
 import type { MediaRef, Project } from './project.js'
 import type { FrameRate } from './time.js'
 
@@ -14,7 +14,7 @@ export type VideoInfo = {
   alphaDecoder?: string
   colorMatrix: 'bt709' | 'bt601' | 'bt2020'
   colorRange: 'tv' | 'pc'
-  isHdr: boolean
+  transfer: 'sdr' | 'hlg' | 'pq'
   codec: string
 }
 
@@ -22,6 +22,8 @@ export type AudioInfo = {
   channels: number
   sampleRate: number
   codec: string
+  // MP3 and raw AAC files cannot be sought to an exact sample; their sound is decoded from the start.
+  seeksExactly: boolean
 }
 
 // An animated GIF, WebP or APNG is moving pictures like any video; `isAnimatedImage` only says it came from an image file, so it may loop and is shown as an image.
@@ -74,6 +76,23 @@ export type AudioStretch = {
   keepsPitch: boolean
 }
 
+// A part of a media file the timeline uses, and where it plays, so the media process prepares what is nearest the playhead first.
+export type WantedRange = {
+  mediaId: string
+  use: 'picture' | 'sound'
+  stretch?: AudioStretch
+  timelineStart: number
+  timelineEnd: number
+  sourceStart: number
+  speedPercent: number
+  isLooping: boolean
+}
+
+export type Wanted = {
+  playhead: number
+  ranges: WantedRange[]
+}
+
 export type RawFrame = {
   width: number
   height: number
@@ -82,6 +101,8 @@ export type RawFrame = {
 
 export type ExportTarget = {
   path: string
+  format: ExportFormat
+  encoder: ExportEncoder
   width: number
   height: number
   frameRate: FrameRate
@@ -100,6 +121,8 @@ export type MediaClient = {
   readImage(mediaId: string): Promise<ArrayBuffer>
   previewFrame(mediaId: string, frame: number): Promise<ArrayBuffer | undefined>
   fullFrame(mediaId: string, frame: number, halvings: number, signal?: AbortSignal): Promise<RawFrame>
+  // The keyframe at or before `frame`: a quick stand-in for a timeline thumbnail until the preview copy holds the frame.
+  keyframeThumbnail(mediaId: string, frame: number, halvings: number): Promise<RawFrame>
   openStream(mediaId: string, frame: number, halvings: number): Promise<number>
   streamFrame(streamId: number, frame: number): Promise<RawFrame>
   closeStream(streamId: number): Promise<void>
@@ -113,6 +136,8 @@ export type MediaClient = {
   addMedia(path: string): Promise<AddedMedia>
   relinkMedia(path: string, wanted: UnlinkedMedia, others: readonly UnlinkedMedia[]): Promise<RelinkedMedia[]>
   preparation(): Promise<Record<string, Preparation>>
+  // Tells the media process what the timeline uses and where the playhead is; it prepares in that order.
+  want(wanted: Wanted): Promise<void>
   waveform(mediaId: string): Promise<WaveformLevel[] | undefined>
   saveProject(path: string, project: Project): Promise<void>
 }
@@ -123,6 +148,7 @@ export type MediaRequest =
   | { method: 'readImage'; mediaId: string }
   | { method: 'previewFrame'; mediaId: string; frame: number }
   | { method: 'fullFrame'; mediaId: string; frame: number; halvings: number }
+  | { method: 'keyframeThumbnail'; mediaId: string; frame: number; halvings: number }
   | { method: 'openStream'; mediaId: string; frame: number; halvings: number }
   | { method: 'streamFrame'; streamId: number; frame: number }
   | { method: 'closeStream'; streamId: number }
@@ -135,6 +161,7 @@ export type MediaRequest =
   | { method: 'addMedia'; path: string }
   | { method: 'relinkMedia'; path: string; wanted: UnlinkedMedia; others: UnlinkedMedia[] }
   | { method: 'preparation' }
+  | { method: 'want'; wanted: Wanted }
   | { method: 'waveform'; mediaId: string }
   | { method: 'saveProject'; path: string; project: Project }
 
@@ -151,16 +178,20 @@ export type MediaProcessCommand = { type: 'setup'; setup: MediaProcessSetup } | 
 
 export type MediaProcessReport = { type: 'versions'; ffmpeg: string; ffprobe: string }
 
-// What is left out takes its default: the project's frame rate, high quality, the whole timeline, with sound.
+// What is left out takes its default: an MP4 by x264 at the project's frame rate (10 fps for a GIF), high quality, the whole timeline, with sound.
+// A PNG is the picture at `frame`, at the size of the project.
 export type ExportJob = {
   kind: 'export'
   projectPath: string
   outputPath: string
   preset: ExportPreset
+  format?: ExportFormat
+  encoder?: ExportEncoder
   frameRate?: FrameRate
   quality?: ExportQuality
   range?: TimeRange
   hasAudio?: boolean
+  frame?: number
 }
 
 export type FramesJob = {
@@ -212,6 +243,8 @@ export type DocumentInfo = {
   recoveryPath: string
   // Where the project is written for an export to read: the export works on that copy while editing goes on.
   exportSnapshotPath: string
+  // An MP4 is made by the Mac's media engine unless the user chose otherwise.
+  hasSmallMemory: boolean
 }
 
 export type DocumentState = {

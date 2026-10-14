@@ -1,6 +1,8 @@
 import type { MessagePortMain } from 'electron'
 import { describeError, logError } from '../shared/log.js'
 import type { MediaMessage, MediaProcessCommand, MediaProcessReport, MediaReply, MediaRequest } from '../shared/mediaProtocol.js'
+import { CACHE_LIMIT_BYTES } from '../shared/limits.js'
+import { createDiskCache, type DiskCache } from './cache.js'
 import { createFfmpegRunner, type Binary, type FfmpegRunner } from './ffmpeg.js'
 import { MediaError, MediaSession } from './mediaStore.js'
 
@@ -33,6 +35,8 @@ function perform(session: MediaSession, request: MediaRequest, signal: AbortSign
       return session.previewFrame(request.mediaId, request.frame)
     case 'fullFrame':
       return session.fullFrame(request.mediaId, request.frame, request.halvings, signal)
+    case 'keyframeThumbnail':
+      return session.keyframeThumbnail(request.mediaId, request.frame, request.halvings)
     case 'openStream':
       return session.openStream(request.mediaId, request.frame, request.halvings)
     case 'streamFrame':
@@ -57,6 +61,8 @@ function perform(session: MediaSession, request: MediaRequest, signal: AbortSign
       return session.relinkMedia(request.path, request.wanted, request.others)
     case 'preparation':
       return session.preparation()
+    case 'want':
+      return session.want(request.wanted)
     case 'waveform':
       return session.waveform(request.mediaId)
     case 'saveProject':
@@ -96,8 +102,8 @@ function listen(port: MessagePortMain, session: MediaSession, onClose: () => voi
 }
 
 // A window's engine worker and its UI thread each hold a port; both talk to the same session, so media the UI imports is known to the engine.
-function serve(ports: readonly MessagePortMain[], ffmpeg: FfmpegRunner, cacheDirectory: string): void {
-  const session = new MediaSession(ffmpeg, cacheDirectory)
+function serve(ports: readonly MessagePortMain[], ffmpeg: FfmpegRunner, cache: DiskCache): void {
+  const session = new MediaSession(ffmpeg, cache)
   let isShutDown = false
 
   async function shutDown(): Promise<void> {
@@ -133,7 +139,7 @@ async function reportVersions(ffmpeg: FfmpegRunner): Promise<void> {
 
 function start(): void {
   let ffmpeg: FfmpegRunner | undefined
-  let cacheDirectory: string | undefined
+  let cache: DiskCache | undefined
 
   process.parentPort.on('message', (event) => {
     const command: unknown = event.data
@@ -141,17 +147,17 @@ function start(): void {
 
     if (command.type === 'setup') {
       ffmpeg = createFfmpegRunner(command.setup.ffmpegDirectory)
-      cacheDirectory = command.setup.cacheDirectory
+      cache = createDiskCache(command.setup.cacheDirectory, CACHE_LIMIT_BYTES)
       process.on('exit', ffmpeg.killAll)
       void reportVersions(ffmpeg)
       return
     }
 
-    if (event.ports.length === 0 || ffmpeg === undefined || cacheDirectory === undefined) {
+    if (event.ports.length === 0 || ffmpeg === undefined || cache === undefined) {
       logError('A window connected before the media process was set up', new Error('missing setup or port'))
       return
     }
-    serve(event.ports, ffmpeg, cacheDirectory)
+    serve(event.ports, ffmpeg, cache)
   })
 }
 

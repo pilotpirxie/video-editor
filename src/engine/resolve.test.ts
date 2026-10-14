@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MediaInfo, VideoInfo } from '../shared/mediaProtocol.js'
 import { TRANSITION_TYPES, ease, valueAt, type CameraKeyframe, type Clip, type Easing, type Keyframe, type Project, type Track, type TransitionType, type VideoClip } from '../shared/project.js'
-import { fadeFactor, groupFrameAt, resolveFrame, sourceHalvings, transitionChange, type Layer, type MediaStates, type TransitionPart, type VideoLayer } from './resolve.js'
+import { fadeFactor, groupFrameAt, pictureRanges, resolveFrame, sourceHalvings, transitionChange, type Layer, type MediaStates, type TransitionPart, type VideoLayer } from './resolve.js'
 
 const SECOND = 24_000_000
 const FRAME_30 = 800_000
@@ -17,7 +17,7 @@ const VIDEO: VideoInfo = {
   hasAlpha: false,
   colorMatrix: 'bt709',
   colorRange: 'tv',
-  isHdr: false,
+  transfer: 'sdr',
   codec: 'h264',
 }
 
@@ -746,5 +746,19 @@ describe('groups', () => {
     expect(frame.x).toBeCloseTo(1000)
     expect(frame.y).toBeCloseTo(550)
     expect(frame).toMatchObject({ scale: 1, rotation: 90 })
+  })
+})
+
+describe('pictureRanges', () => {
+  it('lists the video the visible tracks show, members of groups from where the group shows them', () => {
+    const shown = videoClip({ id: 'shown', start: 2 * SECOND, duration: 4 * SECOND, sourceStart: SECOND, speedPercent: 200 })
+    const hidden = track([videoClip({ id: 'hidden', duration: SECOND })], { hidden: true })
+    const looping = videoClip({ id: 'looping', mediaId: 'sticker', loop: true })
+    const group: Clip = { id: 'group', type: 'group', start: 10 * SECOND, duration: 2 * SECOND, contentStart: SECOND, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, volume: 1, tracks: [track([looping])] }
+    const media: MediaStates = { ...MEDIA, sticker: { info: videoMedia({ codec: 'gif' }) } }
+    expect(pictureRanges(project([track([shown]), hidden, track([group])]), media)).toEqual([
+      { mediaId: 'footage', use: 'picture', timelineStart: 2 * SECOND, timelineEnd: 6 * SECOND, sourceStart: SECOND, speedPercent: 200, isLooping: false },
+      { mediaId: 'sticker', use: 'picture', timelineStart: 10 * SECOND, timelineEnd: 12 * SECOND, sourceStart: SECOND, speedPercent: 100, isLooping: true },
+    ])
   })
 })

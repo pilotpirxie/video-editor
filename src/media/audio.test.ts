@@ -1,11 +1,15 @@
-import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
+import { audioClip, projectOf, track } from '../../test/fixtures.js'
 import { bundledFfmpeg } from '../../test/helpers.js'
-import { CLICK_SAMPLE_44K, mediaPath } from '../../test/media/generate.js'
-import { AUDIO_FILE, WAVEFORM_BUCKET_SAMPLES, WAVEFORM_FILE, createPeakFolder, openPreparedAudio, openStretchedAudio, prepareAudio, readAudio, tempoFilter, waveformLevels } from './audio.js'
+import { CLICK_SAMPLE_44K, GAP_CLICK_SECONDS, LONG_CLICK_SECOND, LONG_MINUTES, mediaPath } from '../../test/media/generate.js'
+import type { AudioStretch } from '../shared/mediaProtocol.js'
+import { WAVEFORM_BUCKET_SAMPLES, WAVEFORM_FILE, audioSegmentPath, buildWaveform, createPeakFolder, tempoFilter, waveformLevels } from './audio.js'
+import { createDiskCache } from './cache.js'
+import { MediaSession } from './mediaStore.js'
+import { writeProjectFile } from './projectFile.js'
 import { probeMedia } from './probe.js'
 
 const ffmpeg = bundledFfmpeg()
@@ -13,6 +17,13 @@ const scratch = await mkdtemp(join(tmpdir(), 'audio-cache-'))
 const RAMP_SAMPLES = 96_000
 const RAMP_PERIOD = 65_536
 const QUARTER_SECOND = 12_000
+const TICKS_PER_SAMPLE = 500
+// One-second segments, so every two-second test file has a seam to cross.
+const SHORT_SEGMENT_SECONDS = 1
+const WHOLE_FILE_SEGMENT_SECONDS = 100
+const PLENTY_OF_ROOM = 1024 ** 3
+const CODEC_PADDING_SAMPLES = 4800
+let cacheCount = 0
 
 afterAll(() => rm(scratch, { recursive: true, force: true }))
 
@@ -21,24 +32,38 @@ function ramp(index: number): { left: number; right: number } {
   return { left: left / 32_768, right: (-left - 1) / 32_768 }
 }
 
-async function prepare(name: string): Promise<string> {
-  const info = await probeMedia(ffmpeg, mediaPath(name))
-  if (info.kind === 'image') throw new Error(`${name} is an image`)
-  const directory = await mkdtemp(join(scratch, 'media-'))
-  await prepareAudio(ffmpeg, { path: mediaPath(name), containerStart: info.containerStart }, directory, new AbortController().signal)
-  return directory
+type Opened = {
+  session: MediaSession
+  id: string
+  directory: string
+  totalSamples: number
 }
 
-async function allSamples(directory: string): Promise<Float32Array> {
-  const bytes = await readFile(join(directory, AUDIO_FILE))
-  return new Float32Array(bytes.buffer, bytes.byteOffset, bytes.length / 4)
+async function open(name: string, segmentSeconds = SHORT_SEGMENT_SECONDS): Promise<Opened> {
+  cacheCount += 1
+  const directory = join(scratch, `cache-${cacheCount}`)
+  const session = new MediaSession(ffmpeg, createDiskCache(directory, PLENTY_OF_ROOM), segmentSeconds)
+  const added = await session.addMedia(mediaPath(name))
+  if (added.info.kind === 'image') throw new Error(`${name} is an image`)
+  const [mediaFolder] = await readdir(directory)
+  return { session, id: added.id, directory: join(directory, mediaFolder ?? ''), totalSamples: Math.ceil(added.info.duration / TICKS_PER_SAMPLE) }
 }
 
-async function window(directory: string, firstSample: number, sampleCount: number): Promise<Float32Array> {
-  const audio = await openPreparedAudio(directory)
-  const samples = await readAudio(audio, firstSample, sampleCount)
-  await audio.close()
+async function window(opened: Opened, firstSample: number, sampleCount: number, stretch?: AudioStretch): Promise<Float32Array> {
+  const samples = await opened.session.audio(opened.id, firstSample, sampleCount, stretch)
+  if (samples === undefined) throw new Error('The media has no sound')
   return samples
+}
+
+async function allSamples(name: string, segmentSeconds = SHORT_SEGMENT_SECONDS): Promise<Float32Array> {
+  const opened = await open(name, segmentSeconds)
+  return window(opened, 0, opened.totalSamples)
+}
+
+function largestDifference(a: Float32Array, b: Float32Array): number {
+  let largest = 0
+  for (let index = 0; index < Math.min(a.length, b.length); index++) largest = Math.max(largest, Math.abs((a[index] ?? 0) - (b[index] ?? 0)))
+  return largest
 }
 
 function largestDrop(samples: Float32Array): number {
@@ -67,9 +92,9 @@ function loudestFrame(samples: Float32Array): number {
   return position
 }
 
-describe('prepareAudio', () => {
+describe('prepared sound', () => {
   it('stores 48 kHz stereo samples that match the source exactly', async () => {
-    const samples = await allSamples(await prepare('audio.wav'))
+    const samples = await allSamples('audio.wav')
     expect(samples.length).toBe(RAMP_SAMPLES * 2)
     for (let index = 0; index < RAMP_SAMPLES; index += 37) {
       expect(samples[index * 2]).toBe(ramp(index).left)
@@ -78,15 +103,25 @@ describe('prepareAudio', () => {
   })
 
   it.each(['audio.flac', 'audio-alac.m4a', 'audio.aiff'])('decodes lossless %s to the same samples', async (name) => {
-    const reference = await allSamples(await prepare('audio.wav'))
-    const decoded = await allSamples(await prepare(name))
+    const reference = await allSamples('audio.wav')
+    const decoded = await allSamples(name)
     expect(Buffer.from(decoded.buffer, decoded.byteOffset, decoded.byteLength).equals(Buffer.from(reference.buffer, reference.byteOffset, reference.byteLength))).toBe(true)
   })
 
   it.each(['audio.mp3', 'audio.m4a', 'audio.ogg', 'audio.opus'])('keeps lossy %s aligned to the sample', async (name) => {
-    const samples = await allSamples(await prepare(name))
+    const samples = await allSamples(name)
     expect(Math.abs(largestDrop(samples) - RAMP_PERIOD)).toBeLessThanOrEqual(2)
-    expect(Math.abs(samples.length / 2 - RAMP_SAMPLES)).toBeLessThan(4800)
+  })
+
+  // Segments made by separate decodes meet without a jump: read the second segment first, so the first is decoded on its own afterwards.
+  it.each(['audio.wav', 'audio.flac', 'audio-alac.m4a', 'audio.aiff', 'audio.mp3', 'audio.m4a', 'audio.ogg', 'audio.opus', 'audio-44k-click.wav', 'audio-96k-24bit.flac', 'h264.mp4', 'vp9.webm'])('joins separately decoded segments of %s as one decode', async (name) => {
+    const opened = await open(name)
+    await window(opened, 48_000, 1000)
+    // Lossy codecs pad their last packet; a decode that seeks may keep a little of that padding. Only the seams matter here.
+    const compared = opened.totalSamples - CODEC_PADDING_SAMPLES
+    const joined = await window(opened, 0, compared)
+    const whole = (await allSamples(name, WHOLE_FILE_SEGMENT_SECONDS)).subarray(0, compared * 2)
+    expect(largestDifference(joined, whole)).toBeLessThan(1e-3)
   })
 
   it.each([
@@ -99,33 +134,32 @@ describe('prepareAudio', () => {
   ])('keeps the sound of $name in sync with its picture', async ({ name, toleranceSamples }) => {
     const info = await probeMedia(ffmpeg, mediaPath(name))
     if (info.kind !== 'video') throw new Error(`${name} is not a video`)
-    const samples = await allSamples(await prepare(name))
+    const samples = await allSamples(name)
     const pictureStart = info.video.startOffset / 500
     expect(Math.abs(largestDrop(samples) - pictureStart - RAMP_PERIOD)).toBeLessThanOrEqual(toleranceSamples)
   })
 
   it('resamples 44.1 kHz without moving the sound', async () => {
-    const samples = await allSamples(await prepare('audio-44k-click.wav'))
+    const samples = await allSamples('audio-44k-click.wav')
     const expected = Math.round((CLICK_SAMPLE_44K * 48_000) / 44_100)
     expect(Math.abs(loudestFrame(samples) - expected)).toBeLessThanOrEqual(1)
-    expect(Math.abs(samples.length / 2 - 48_000)).toBeLessThanOrEqual(2)
   })
 
   it('converts mono, surround and high-resolution sources to stereo at 48 kHz', async () => {
-    const mono = await allSamples(await prepare('audio-mono.wav'))
+    const mono = await allSamples('audio-mono.wav')
     expect(mono.length).toBe(RAMP_SAMPLES * 2)
     expect(mono[2001]).toBe(mono[2000])
 
-    const surround = await allSamples(await prepare('audio-surround.wav'))
+    const surround = await allSamples('audio-surround.wav')
     expect(surround.length).toBe(RAMP_SAMPLES * 2)
     expect(Math.abs(surround[2000] ?? 0)).toBeGreaterThan(0.01)
 
-    const highResolution = await allSamples(await prepare('audio-96k-24bit.flac'))
-    expect(Math.abs(highResolution.length / 2 - RAMP_SAMPLES)).toBeLessThanOrEqual(2)
+    const highResolution = await allSamples('audio-96k-24bit.flac')
+    expect(Math.abs(largestDrop(highResolution) - RAMP_PERIOD)).toBeLessThanOrEqual(2)
   })
 
   it('pads audio that starts after the container start, so it stays in sync with the picture', async () => {
-    const samples = await allSamples(await prepare('delayed-audio.mkv'))
+    const samples = await allSamples('delayed-audio.mkv')
     for (let index = 0; index < QUARTER_SECOND; index += 113) expect(samples[index * 2]).toBe(0)
     for (let index = 0; index < 50_000; index += 997) {
       expect(samples[(index + QUARTER_SECOND) * 2]).toBe(ramp(index).left)
@@ -133,37 +167,41 @@ describe('prepareAudio', () => {
   })
 
   it('starts audio at sample 0 when the picture is the late stream', async () => {
-    const samples = await allSamples(await prepare('delayed-video.mkv'))
+    const samples = await allSamples('delayed-video.mkv')
     expect(samples[0]).toBe(ramp(0).left)
     expect(samples[40_000 * 2]).toBe(ramp(40_000).left)
   })
 
-  it('does nothing when the audio is already prepared', async () => {
-    const directory = await prepare('audio.wav')
-    const builtAt = (await stat(join(directory, AUDIO_FILE))).mtimeMs
+  it('reads prepared segments again without decoding', async () => {
+    const opened = await open('audio.wav')
+    await window(opened, 0, RAMP_SAMPLES)
+    const builtAt = (await stat(audioSegmentPath(opened.directory, 0))).mtimeMs
     const startedAt = performance.now()
-    await prepareAudio(ffmpeg, { path: mediaPath('audio.wav'), containerStart: 0 }, directory, new AbortController().signal)
+    await window(opened, 0, RAMP_SAMPLES)
     expect(performance.now() - startedAt).toBeLessThan(20)
-    expect((await stat(join(directory, AUDIO_FILE))).mtimeMs).toBe(builtAt)
+    expect((await stat(audioSegmentPath(opened.directory, 0))).mtimeMs).toBe(builtAt)
   })
 
-  it('leaves nothing behind when cancelled', async () => {
-    const directory = await mkdtemp(join(scratch, 'cancelled-'))
-    const rejected = prepareAudio(ffmpeg, { path: mediaPath('audio.wav'), containerStart: 0 }, directory, AbortSignal.abort())
-    await expect(rejected).rejects.toThrow(/cancelled/)
-    expect(existsSync(join(directory, AUDIO_FILE))).toBe(false)
-    expect(existsSync(join(directory, `${AUDIO_FILE}.tmp`))).toBe(false)
+  it('leaves no unfinished file behind when the session closes during a decode', async () => {
+    const opened = await open('variable-rate-gap.mp4')
+    const reading = opened.session.audio(opened.id, 0, opened.totalSamples)
+    await opened.session.dispose()
+    await Promise.allSettled([reading])
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect((await readdir(opened.directory)).filter((name) => name.endsWith('.tmp'))).toEqual([])
+  })
+
+  it('stays in step with the picture to the end of a phone recording with a long gap', async () => {
+    const opened = await open('variable-rate-gap.mp4', 30)
+    const clickAt = GAP_CLICK_SECONDS * 48_000
+    const around = await window(opened, clickAt - 4800, 9600)
+    expect(Math.abs(loudestFrame(around) - 4800)).toBeLessThanOrEqual(48)
   })
 })
 
 describe('sound at another speed', () => {
-  const never = new AbortController().signal
-
-  async function stretched(directory: string, speedPercent: number, keepsPitch: boolean): Promise<Float32Array> {
-    const audio = await openStretchedAudio(ffmpeg, directory, { speedPercent, keepsPitch }, never)
-    const samples = await readAudio(audio, 0, 200_000)
-    await audio.close()
-    return samples
+  async function stretched(opened: Opened, speedPercent: number, keepsPitch: boolean): Promise<Float32Array> {
+    return window(opened, 0, 200_000, { speedPercent, keepsPitch })
   }
 
   function lastSound(samples: Float32Array): number {
@@ -188,50 +226,51 @@ describe('sound at another speed', () => {
 
   // The tempo filter blends neighbouring pieces of sound, which spreads a click over some milliseconds; it must stay within a frame of where it belongs.
   it('puts a sound where it is heard at that speed, within one frame', async () => {
-    const directory = await prepare('audio-44k-click.wav')
+    const opened = await open('audio-44k-click.wav')
     const oneFrame = 1600
     for (const { speedPercent, keepsPitch } of [{ speedPercent: 200, keepsPitch: true }, { speedPercent: 150, keepsPitch: true }, { speedPercent: 50, keepsPitch: true }, { speedPercent: 200, keepsPitch: false }]) {
-      const samples = await stretched(directory, speedPercent, keepsPitch)
+      const samples = await stretched(opened, speedPercent, keepsPitch)
       const expected = (24_000 * 100) / speedPercent
       expect(Math.abs(loudestFrame(samples) - expected), `${speedPercent} % ${keepsPitch}`).toBeLessThanOrEqual(oneFrame)
     }
   })
 
   it('is as long as the sound divided by the speed', async () => {
-    const directory = await prepare('audio.wav')
+    const opened = await open('audio.wav')
     const tolerance = 4800
-    expect(Math.abs(lastSound(await stretched(directory, 200, true)) - RAMP_SAMPLES / 2)).toBeLessThanOrEqual(tolerance)
-    expect(Math.abs(lastSound(await stretched(directory, 400, false)) - RAMP_SAMPLES / 4)).toBeLessThanOrEqual(tolerance)
+    expect(Math.abs(lastSound(await stretched(opened, 200, true)) - RAMP_SAMPLES / 2)).toBeLessThanOrEqual(tolerance)
+    expect(Math.abs(lastSound(await stretched(opened, 400, false)) - RAMP_SAMPLES / 4)).toBeLessThanOrEqual(tolerance)
   })
 
   it('gives the same samples every time it is made', async () => {
-    const first = await stretched(await prepare('audio.wav'), 150, true)
-    const second = await stretched(await prepare('audio.wav'), 150, true)
+    const first = await stretched(await open('audio.wav'), 150, true)
+    const second = await stretched(await open('audio.wav'), 150, true)
     expect(Buffer.from(first.buffer).equals(Buffer.from(second.buffer))).toBe(true)
   })
 
-  it('keeps four copies per file and removes the one that was wanted longest ago', async () => {
-    const directory = await prepare('audio.wav')
-    for (const speedPercent of [110, 120, 130, 140]) {
-      await stretched(directory, speedPercent, true)
-      await new Promise((resolve) => setTimeout(resolve, 15))
+  // Each stretched segment is made by its own run of the tempo filter; where two meet, a sine must go on without a jump.
+  it('joins stretched segments without a jump', async () => {
+    const opened = await open('audio.wav')
+    for (const stretch of [{ speedPercent: 150, keepsPitch: true }, { speedPercent: 50, keepsPitch: true }, { speedPercent: 300, keepsPitch: false }]) {
+      const samples = await window(opened, 40_000, 16_000, stretch)
+      const seam = 48_000 - 40_000
+      let largestStepAtSeam = 0
+      let largestStepElsewhere = 0
+      for (let frame = 1; frame < samples.length / 2; frame++) {
+        const step = Math.abs((samples[frame * 2] ?? 0) - (samples[(frame - 1) * 2] ?? 0))
+        // The ramp itself falls once per period; such a fall is not a seam.
+        if (step > 1) continue
+        if (Math.abs(frame - seam) < 600) largestStepAtSeam = Math.max(largestStepAtSeam, step)
+        else largestStepElsewhere = Math.max(largestStepElsewhere, step)
+      }
+      expect(largestStepAtSeam, `${stretch.speedPercent} %`).toBeLessThanOrEqual(largestStepElsewhere * 4 + 0.01)
     }
-    await stretched(directory, 110, true)
-    await stretched(directory, 150, true)
-    const kept = (await readdir(directory)).filter((name) => name.startsWith('audio-')).sort()
-    expect(kept).toEqual(['audio-110k.f32', 'audio-130k.f32', 'audio-140k.f32', 'audio-150k.f32'])
-  })
-
-  it('leaves nothing behind when cancelled', async () => {
-    const directory = await prepare('audio.wav')
-    await expect(openStretchedAudio(ffmpeg, directory, { speedPercent: 300, keepsPitch: true }, AbortSignal.abort())).rejects.toThrow(/cancelled/)
-    expect((await readdir(directory)).filter((name) => name.startsWith('audio-'))).toEqual([])
   })
 })
 
-describe('readAudio', () => {
-  it('returns any window sample-accurately', async () => {
-    const directory = await prepare('audio.wav')
+describe('reading prepared sound', () => {
+  it('returns any window sample-accurately, across seams', async () => {
+    const opened = await open('audio.wav')
     for (const { first, count } of [
       { first: 0, count: 1 },
       { first: 1, count: 480 },
@@ -239,7 +278,7 @@ describe('readAudio', () => {
       { first: 47_999, count: 4801 },
       { first: 95_990, count: 10 },
     ]) {
-      const samples = await window(directory, first, count)
+      const samples = await window(opened, first, count)
       expect(samples.length).toBe(count * 2)
       for (let index = 0; index < count; index++) {
         expect(samples[index * 2]).toBe(ramp(first + index).left)
@@ -249,25 +288,27 @@ describe('readAudio', () => {
   })
 
   it('is silent before the start and after the end', async () => {
-    const directory = await prepare('audio.wav')
-    const early = await window(directory, -5, 8)
+    const opened = await open('audio.wav')
+    const early = await window(opened, -5, 8)
     expect([...early.subarray(0, 10)]).toEqual(Array(10).fill(0))
     expect(early[10]).toBe(ramp(0).left)
     expect(early[14]).toBe(ramp(2).left)
 
-    const late = await window(directory, RAMP_SAMPLES - 2, 6)
+    const late = await window(opened, RAMP_SAMPLES - 2, 6)
     expect(late[0]).toBe(ramp(RAMP_SAMPLES - 2).left)
     expect(late[2]).toBe(ramp(RAMP_SAMPLES - 1).left)
     expect([...late.subarray(4)]).toEqual(Array(8).fill(0))
 
-    expect([...(await window(directory, -100, 10))]).toEqual(Array(20).fill(0))
-    expect([...(await window(directory, RAMP_SAMPLES + 50, 10))]).toEqual(Array(20).fill(0))
+    expect([...(await window(opened, -100, 10))]).toEqual(Array(20).fill(0))
+    expect([...(await window(opened, RAMP_SAMPLES + 50, 10))]).toEqual(Array(20).fill(0))
   })
 })
 
 describe('waveform', () => {
   it('holds one lowest/highest pair per 480 samples', async () => {
-    const directory = await prepare('audio.wav')
+    const directory = await mkdtemp(join(scratch, 'waveform-'))
+    const cache = createDiskCache(directory, PLENTY_OF_ROOM)
+    await buildWaveform(ffmpeg, { path: mediaPath('audio.wav'), containerStart: 0 }, directory, cache, new AbortController().signal)
     const peaks = new Int8Array(await readFile(join(directory, WAVEFORM_FILE)))
     expect(peaks.length).toBe((RAMP_SAMPLES / WAVEFORM_BUCKET_SAMPLES) * 2)
 
@@ -324,4 +365,79 @@ describe('waveform', () => {
     folder.add(new Float32Array(WAVEFORM_BUCKET_SAMPLES * 2 * 1000))
     expect(folder.finish().length).toBe(2000)
   })
+})
+
+describe('a twenty-hour project', () => {
+  const SAMPLE_RATE = 48_000
+  const MINUTE_SAMPLES = 60 * SAMPLE_RATE
+  const SECOND_TICKS = SAMPLE_RATE * TICKS_PER_SAMPLE
+  // Room for what is needed around one playhead and a little more, so seeking far has to remove what was prepared before.
+  const LIMIT_BYTES = 200 * 1024 * 1024
+  const PREPARED_READ_MS = 150
+
+  async function bytesOnDisk(directory: string): Promise<number> {
+    let total = 0
+    for (const entry of await readdir(directory, { withFileTypes: true, recursive: true })) {
+      if (entry.isFile()) total += (await stat(join(entry.parentPath, entry.name))).size
+    }
+    return total
+  }
+
+  it('prepares around the playhead wherever it is, and stays within the cache limit', async () => {
+    const directory = join(scratch, 'long-project')
+    const cache = createDiskCache(join(directory, 'cache'), LIMIT_BYTES)
+    const session = new MediaSession(ffmpeg, cache)
+    const duration = LONG_MINUTES * 60 * SECOND_TICKS
+    const projectPath = join(directory, 'long.json')
+    const reference = { id: 'long', path: mediaPath('audio-twenty-hours.mp4'), relativePath: '' }
+    await writeProjectFile(projectPath, projectOf([track('sound', [audioClip('long', 0, duration, { mediaId: 'long' })])], [reference]))
+    await session.loadProject(projectPath, true)
+    const range = { mediaId: 'long', use: 'sound', timelineStart: 0, timelineEnd: duration, sourceStart: 0, speedPercent: 100, isLooping: false } as const
+
+    try {
+      for (const minute of [0, 600, LONG_MINUTES - 1]) {
+        await session.want({ playhead: minute * 60 * SECOND_TICKS, ranges: [range] })
+        await session.whenPrepared()
+        expect(cache.totalBytes(), `minute ${minute}`).toBeLessThanOrEqual(LIMIT_BYTES)
+        expect(await bytesOnDisk(cache.directory), `minute ${minute}`).toBeLessThanOrEqual(LIMIT_BYTES)
+
+        const startedAt = performance.now()
+        const firstSample = minute * MINUTE_SAMPLES + (LONG_CLICK_SECOND - 1) * SAMPLE_RATE
+        const samples = await session.audio('long', firstSample, 2 * SAMPLE_RATE)
+        expect(performance.now() - startedAt, `minute ${minute}`).toBeLessThan(PREPARED_READ_MS)
+        if (samples === undefined) throw new Error('The long file has no sound')
+        let click = -1
+        for (let index = 0; index < samples.length / 2 && click < 0; index++) {
+          if (Math.abs(samples[index * 2] ?? 0) > 0.1) click = index
+        }
+        expect(click, `minute ${minute}`).toBe(SAMPLE_RATE)
+      }
+      expect(cache.has(audioSegmentPath(join(cache.directory, (await readdir(cache.directory))[0] ?? ''), 0))).toBe(false)
+    } finally {
+      await session.dispose()
+    }
+  }, 120_000)
+})
+
+describe('a project that was never saved', () => {
+  it('prepares the sound and the pictures of a file imported into it', async () => {
+    const cache = createDiskCache(join(scratch, 'untitled-cache'), PLENTY_OF_ROOM)
+    const session = new MediaSession(ffmpeg, cache)
+    try {
+      const added = await session.addMedia(mediaPath('h264.mp4'))
+      if (added.info.kind === 'image') throw new Error('The test file was read as an image')
+      const end = added.info.duration
+      await session.want({
+        playhead: 0,
+        ranges: [
+          { mediaId: added.id, use: 'picture', timelineStart: 0, timelineEnd: end, sourceStart: 0, speedPercent: 100, isLooping: false },
+          { mediaId: added.id, use: 'sound', timelineStart: 0, timelineEnd: end, sourceStart: 0, speedPercent: 100, isLooping: false },
+        ],
+      })
+      await session.whenPrepared()
+      expect(await session.preparation()).toEqual({ [added.id]: { progress: 1, hasFailed: false } })
+    } finally {
+      await session.dispose()
+    }
+  }, 30_000)
 })

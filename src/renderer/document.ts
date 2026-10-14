@@ -4,6 +4,7 @@ import type { MediaStates } from '../engine/resolve.js'
 import { describeError, logError } from '../shared/log.js'
 import type { DocumentInfo, DocumentState, HostCommand, JobEvent, MediaClient, NextDocument, Preparation } from '../shared/mediaProtocol.js'
 import { projectDuration, type Project } from '../shared/project.js'
+import { frameDuration } from '../shared/time.js'
 import { createActions, type Actions } from './actions.js'
 import type { EngineHost } from './engineHost.js'
 import { createEditorStore, type EditorStore } from './store.js'
@@ -21,6 +22,8 @@ export type Session = {
   engine: EngineHost
   actions: Actions
   thumbnails: Thumbnails
+  // Decides which encoder an MP4 starts with.
+  hasSmallMemory: boolean
   preparation(): PreparationStates
   onPreparation(listener: () => void): () => void
   open(): Promise<void>
@@ -68,6 +71,10 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
   function watchPreparation(): void {
     if (preparationTimer === undefined) preparationTimer = window.setTimeout(() => void pollPreparation(), 0)
   }
+
+  engine.onEvent((event) => {
+    if (event.type === 'wanted') watchPreparation()
+  })
 
   async function importFiles(paths: readonly string[]): Promise<void> {
     const known = new Set(store.getState().project.media.map((reference) => reference.path))
@@ -200,7 +207,7 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
     transport.pause()
     const { documentPath, selection } = store.getState()
     const projectName = documentPath === undefined ? 'Untitled' : fileNameOf(documentPath).replace(/\.json$/, '')
-    const outputPath = await window.host.saveExportDialog(`${projectName}.mp4`)
+    const outputPath = await window.host.saveExportDialog(`${projectName}.${choices.format}`)
     if (outputPath === undefined) return
 
     const snapshot = store.committedProject()
@@ -210,7 +217,10 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
       store.notify(`The export could not start: ${describeError(error)}`)
       return
     }
-    const job = exportJobFor(choices, selectionRange(snapshot, selection), { projectPath: info.exportSnapshotPath, outputPath })
+    // A PNG shows the frame under the playhead, which inside an open group is counted from the group's start.
+    const playheadTime = transport.position().time + (store.getState().scope?.offset ?? 0)
+    const frame = Math.round(playheadTime / frameDuration(snapshot.canvas.frameRate))
+    const job = exportJobFor(choices, selectionRange(snapshot, selection), { projectPath: info.exportSnapshotPath, outputPath }, frame)
     store.setExportStatus({ phase: 'running', fileName: fileNameOf(outputPath), done: 0, total: 1, startedAt: performance.now() })
     window.host.startExport(job)
   }
@@ -353,6 +363,7 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
     chooseAndImport,
     relink,
     exportVideo,
+    hasSmallMemory: info.hasSmallMemory,
     cancelExport,
   }
 }

@@ -103,7 +103,7 @@ export const VIDEO_INFO: VideoInfo = {
   hasAlpha: false,
   colorMatrix: 'bt709',
   colorRange: 'tv',
-  isHdr: false,
+  transfer: 'sdr',
   codec: 'h264',
 }
 
@@ -120,8 +120,8 @@ export const STICKER_MEDIA: Extract<MediaInfo, { kind: 'video' }> = {
 
 export const MEDIA_STATES: MediaStates = {
   video: { info: VIDEO_MEDIA },
-  talk: { info: { ...VIDEO_MEDIA, audio: { channels: 2, sampleRate: 48_000, codec: 'aac' } } },
+  talk: { info: { ...VIDEO_MEDIA, audio: { channels: 2, sampleRate: 48_000, codec: 'aac', seeksExactly: true } } },
   sticker: { info: STICKER_MEDIA },
-  music: { info: { kind: 'audio', duration: 60 * SECOND, containerStart: 0, audio: { channels: 2, sampleRate: 48_000, codec: 'mp3' } } },
+  music: { info: { kind: 'audio', duration: 60 * SECOND, containerStart: 0, audio: { channels: 2, sampleRate: 48_000, codec: 'mp3', seeksExactly: false } } },
   logo: { info: { kind: 'image', width: 400, height: 200, hasAlpha: true } },
 }

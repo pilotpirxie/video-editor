@@ -1,6 +1,6 @@
 import { MAX_SOURCE_DIMENSION, TEXTURE_CACHE_BYTES } from '../shared/limits.js'
 import { logError } from '../shared/log.js'
-import type { MediaClient } from '../shared/mediaProtocol.js'
+import type { MediaClient, RawFrame } from '../shared/mediaProtocol.js'
 import { createByteLru } from './byteLru.js'
 import type { Compositor, DrawItem, GpuTexture } from './compositor.js'
 import { rasterizeArrow, rasterizeCallout } from './annotations.js'
@@ -22,14 +22,18 @@ type Picture = {
 }
 
 type OpenStream = {
-  id: number
+  id: Promise<number>
   shown: GpuTexture | undefined
+  // The next frame, asked for while the last one was drawn.
+  ahead: { frame: number; raw: Promise<RawFrame> } | undefined
 }
 
 export type FrameProvider = {
   itemsFor(layers: readonly Layer[], quality: FrameQuality, outputScale: number, signal?: AbortSignal): Promise<DrawItem[]>
   itemsNow(layers: readonly Layer[], outputScale: number): { items: DrawItem[]; lateLayers: number }
   prepare(layers: readonly Layer[], outputScale: number): Promise<void>
+  // Asks the streams for the frames of the next export frame now, so they are decoded while this one is drawn and written.
+  prefetchStreams(layers: readonly Layer[]): void
   collect(): void
   closeStreams(): Promise<void>
   clear(): void
@@ -149,13 +153,19 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     return cached(videoKey(layer, 'full'), () => loadFull(layer, signal))
   }
 
+  function streamOf(layer: VideoLayer): OpenStream {
+    const known = streams.get(layer.clipId)
+    if (known !== undefined) return known
+    const opened: OpenStream = { id: media.openStream(layer.mediaId, layer.frame, layer.halvings), shown: undefined, ahead: undefined }
+    streams.set(layer.clipId, opened)
+    return opened
+  }
+
   async function nextStreamFrame(layer: VideoLayer): Promise<Picture> {
-    let stream = streams.get(layer.clipId)
-    if (stream === undefined) {
-      stream = { id: await media.openStream(layer.mediaId, layer.frame, layer.halvings), shown: undefined }
-      streams.set(layer.clipId, stream)
-    }
-    const frame = await media.streamFrame(stream.id, layer.frame)
+    const stream = streamOf(layer)
+    const ahead = stream.ahead
+    stream.ahead = undefined
+    const frame = ahead?.frame === layer.frame ? await ahead.raw : await media.streamFrame(await stream.id, layer.frame)
     if (stream.shown !== undefined) retired.push(stream.shown)
     stream.shown = compositor.uploadPixels(frame)
     return { texture: stream.shown, naturalWidth: layer.video.width, naturalHeight: layer.video.height, hasAlphaBelow: false }
@@ -175,13 +185,24 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     return videoKey(layer, 'preview')
   }
 
+  function prefetchStreams(layers: readonly Layer[]): void {
+    for (const layer of layers) {
+      if (layer.kind !== 'video') continue
+      const stream = streamOf(layer)
+      const raw = stream.id.then((id) => media.streamFrame(id, layer.frame))
+      // A frame asked for ahead that is never drawn is not needed; one that is drawn reports its failure there.
+      raw.catch(() => {})
+      stream.ahead = { frame: layer.frame, raw }
+    }
+  }
+
   async function closeEndedStreams(layers: readonly Layer[]): Promise<void> {
     const active = new Set(layers.map((layer) => layer.clipId))
     for (const [clipId, stream] of streams) {
       if (active.has(clipId)) continue
       streams.delete(clipId)
       if (stream.shown !== undefined) retired.push(stream.shown)
-      await media.closeStream(stream.id)
+      await media.closeStream(await stream.id)
     }
   }
 
@@ -259,5 +280,5 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     collect()
   }
 
-  return { itemsFor, itemsNow, prepare, collect, closeStreams, clear }
+  return { itemsFor, itemsNow, prepare, prefetchStreams, collect, closeStreams, clear }
 }

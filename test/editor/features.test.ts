@@ -529,7 +529,7 @@ describe('export dialog', () => {
     expect(report.canChooseSelection).toBe(false)
 
     // Tab reaches every control and stays inside the dialog.
-    const controls = ['export-frame-rate', 'export-quality-low', 'export-quality-medium', 'export-quality-high', 'export-range-whole', 'export-audio', 'export-cancel-dialog', 'export-start', 'export-preset']
+    const controls = ['export-preset', 'export-frame-rate', 'export-quality-low', 'export-quality-medium', 'export-quality-high', 'export-encoder', 'export-range-whole', 'export-audio', 'export-cancel-dialog', 'export-start', 'export-format']
     expect(report.tabStops).toEqual([...controls, ...controls.slice(0, 3)])
     expect(report.isDialogOpenAfterListEscape).toBe(true)
 
@@ -556,6 +556,21 @@ describe('export dialog', () => {
     expect(report.hadUnfinishedFile).toBe(true)
     expect(report.leftBehind).toEqual([])
     expect(report.leftAfterReload).toEqual([])
+
+    // Each format shows only the fields it uses; a WAV and a PNG come out of the same dialog.
+    expect(report.fieldsByFormat).toEqual({
+      webm: ['export-preset', 'export-frame-rate', 'export-quality-high', 'export-range-whole', 'export-audio'],
+      gif: ['export-preset', 'export-frame-rate', 'export-range-whole'],
+      wav: ['export-range-whole'],
+      png: [],
+      mp4: ['export-preset', 'export-frame-rate', 'export-quality-high', 'export-encoder', 'export-range-whole', 'export-audio'],
+    })
+    const sound = await probeExport(String(report.sound))
+    expect(sound.video).toEqual({})
+    expect(sound.audio).toMatchObject({ codec_name: 'pcm_s16le', sample_rate: '48000', channels: '2' })
+    expect(Math.abs(sound.duration - 3)).toBeLessThan(0.01)
+    expect(report.stillSummary).toMatch(/^PNG, 640 × 360, the frame at /)
+    expect((await probeExport(String(report.still))).video).toMatchObject({ codec_name: 'png', width: '640', height: '360' })
 
     const low = await probeExport(String(report.low))
     const high = await probeExport(String(report.high))

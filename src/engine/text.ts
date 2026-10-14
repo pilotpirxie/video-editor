@@ -19,8 +19,9 @@ class TextError extends Error {
   }
 }
 
+// The GPU canvas smooths the edges of a stretched drawing a little differently on every run; the CPU canvas gives the same pixels every time, which preview and export parity needs.
 function contextOf(canvas: OffscreenCanvas): OffscreenCanvasRenderingContext2D {
-  const context = canvas.getContext('2d')
+  const context = canvas.getContext('2d', { willReadFrequently: true })
   if (context === null) throw new TextError('This environment cannot draw text')
   return context
 }

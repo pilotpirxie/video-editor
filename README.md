@@ -30,7 +30,7 @@ FFprobe binaries into `vendor/ffmpeg` and checks their SHA-256.
 | `npm run typecheck` | Strict TypeScript check of everything |
 | `npm run lint` | Unused files, exports and dependencies (knip) and duplicated code (jscpd); any finding fails |
 | `npm run test:unit` | Unit tests (time, project format, resolver, mixer, FFmpeg jobs, probe, decoding, caches, editing commands) |
-| `npm run test:engine` | Builds the app and tests it for real: golden images, preview/export parity, MP4 export, the harness window, split and hit-test parity, and pixels worked out by hand for the camera zoom, every transition, blur, pixelate, highlight, spotlight, each effect, callouts, arrows, styled text and groups |
+| `npm run test:engine` | Builds the app and tests it for real: golden images, preview/export parity, export to every format, export speed and memory, the harness window, split and hit-test parity, and pixels worked out by hand for the camera zoom, every transition, blur, pixelate, highlight, spotlight, each effect, callouts, arrows, styled text and groups |
 | `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents, crash recovery, transport keys, fades, text, animated images, relink, the export dialog and how it holds the window, arranging by dragging (landing outline, group moves across tracks, crop fields), annotations, callouts and arrows, text styling, animation presets, groups (made, edited from the inside, taken apart), volume keyframes and the sound of fast clips, effects, transitions and zoom-and-pan (added, changed and removed by mouse and in Properties), the controls (drop-down lists, groups, media tiles, wide sidebars, timeline zoom-out), and the responsiveness budgets on a 4,096-clip project |
 | `npm test` | All of the above |
 | `npm run test:acceptance` | Builds a ten-minute tutorial through the editor window and exports it at 1080p; takes several minutes and is not part of `npm test` |
@@ -43,12 +43,16 @@ FFprobe binaries into `vendor/ffmpeg` and checks their SHA-256.
 ```
 npx electron . --project test/projects/demo-four-layers.json
 npx electron . --export project.json --out video.mp4 --preset 1080p
+npx electron . --export project.json --out frame.png --at 120
 npx electron . --frames project.json --at 0,30,60 --via paused --out frames/
 npx electron . --selftest project.json --seconds 10 --report-memory
 ```
 
-- `--export` renders the whole timeline to H.264/AAC. Presets: `120p`, `240p`, `360p`, `480p`,
-  `720p`, `1080p`, `1440p`, `4k`, `youtube-1080p`, `vertical-1080x1920`, `square-1080`.
+- `--export` renders the whole timeline in the format the extension of `--out` names: `.mp4`
+  (H.264/AAC), `.webm` (VP9/Opus), `.gif`, `.m4a`, `.mp3` or `.wav` (sound alone), or `.png`
+  (the frame `--at <number>`, at the size of the project). Presets: `120p`, `240p`, `360p`,
+  `480p`, `720p`, `1080p`, `1440p`, `4k`, `youtube-1080p`, `vertical-1080x1920`, `square-1080`.
+  `--encoder hardware` encodes an MP4 with the Mac's media engine instead of x264.
 - `--frames` writes single frames as raw RGBA. `--via paused` reads the originals by seeking,
   as the paused preview does; `--via export` reads them in order, as an export does.
 - `--selftest` opens the dev harness, plays, pauses, scrubs and zooms through its own buttons
@@ -116,10 +120,16 @@ keyframes. All of these keys are optional, and the format version is still 1.
 | `src/media` | The media process: probing, decoding, preview copies, saving project files |
 | `src/main` | Electron main process: windows, menu, dialogs, recovery, test drivers |
 
+Preview copies, sound and waveforms are kept in `cache/v2` in the app's data folder. Preview
+copies and sound are cut into 30-second segments, built outward from the playhead; all windows
+share one 10 GB limit, and the segments used longest ago are removed first. Everything there
+can be deleted and is made again when needed.
+
 ## Test media
 
 `npm test` generates its own media into `test/media/generated` (every supported container and
-codec, alpha, 8K, 120 fps, variable frame rate, broken files). Real recordings dropped into
+codec, alpha, 8K, 120 and 240 fps, variable frame rate, HLG and PQ, twenty hours of sound, ten
+minutes of 1080p for a 50× export, broken files). Real recordings dropped into
 `samples/` are used by the demo project and the benchmarks, which are skipped without them.
 Recordings that cannot be synthesised (OBS captures, iPhone HDR clips) are probed and decoded
 by the tests when they are placed in `test/media/real`.

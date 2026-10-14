@@ -1,8 +1,8 @@
-import type { AudioStretch } from '../shared/mediaProtocol.js'
+import type { AudioStretch, WantedRange } from '../shared/mediaProtocol.js'
 import { valueAt, type AudioClip, type Clip, type GroupClip, type Project, type Track, type VideoClip } from '../shared/project.js'
-import { FAST_SOUND_ABOVE_PERCENT, NORMAL_SPEED_PERCENT, SAMPLE_RATE, TICKS_PER_SAMPLE } from '../shared/time.js'
+import { FAST_SOUND_ABOVE_PERCENT, NORMAL_SPEED_PERCENT, SAMPLE_RATE, TICKS_PER_SAMPLE, sourceTime } from '../shared/time.js'
 import { createByteLru } from './byteLru.js'
-import { fadeFactor, type MediaStates } from './resolve.js'
+import { fadeFactor, forEachPlacedClip, type MediaStates, type PlacedClip } from './resolve.js'
 
 export const LIMITER_CEILING = 0.98
 export const LIMITER_WINDOW = 240
@@ -18,22 +18,8 @@ export type AudioReader = (mediaId: string, firstSample: number, sampleCount: nu
 
 type SoundClip = VideoClip | AudioClip
 
-// A group around a sound, and how far the time of the track it is on lies behind project time.
-type Enclosing = {
-  group: GroupClip
-  shift: number
-}
-
 // A clip that is heard in the range being mixed.
-type Sounding = {
-  clip: SoundClip
-  // Project time minus the time of the track the clip is on; 0 outside groups.
-  shift: number
-  // The part of the range in which the clip, and every group around it, plays.
-  from: number
-  to: number
-  groups: readonly Enclosing[]
-}
+type Sounding = PlacedClip & { clip: SoundClip }
 
 type Contribution = {
   offset: number
@@ -49,22 +35,32 @@ function hasSound(clip: Clip, media: MediaStates): clip is SoundClip {
   return state.info.audio !== undefined
 }
 
-// Walks into groups: the sound of their members is mixed like any other, inside the time the group is there.
-function collectSounds(tracks: readonly Track[], media: MediaStates, shift: number, window: { from: number; to: number }, groups: readonly Enclosing[], found: Sounding[]): void {
-  for (const track of tracks) {
-    if (track.muted) continue
-    for (const clip of track.clips) {
-      const from = Math.max(window.from, clip.start + shift)
-      const to = Math.min(window.to, clip.start + clip.duration + shift)
-      if (from >= to) continue
-      if (clip.type === 'group') {
-        const innerShift = shift + clip.start - (clip.contentStart ?? 0)
-        collectSounds(clip.tracks, media, innerShift, { from, to }, [...groups, { group: clip, shift }], found)
-      } else if (hasSound(clip, media)) {
-        found.push({ clip, shift, from, to, groups })
-      }
-    }
+// The sound of members of groups is mixed like any other, inside the time the group is there.
+function collectSounds(tracks: readonly Track[], media: MediaStates, window: { from: number; to: number }, found: Sounding[]): void {
+  forEachPlacedClip(tracks, window, (track) => track.muted, (placed) => {
+    const { clip } = placed
+    if (hasSound(clip, media)) found.push({ ...placed, clip })
+  })
+}
+
+function stretchOf(clip: SoundClip): AudioStretch | undefined {
+  if (clip.speedPercent === NORMAL_SPEED_PERCENT) return undefined
+  return { speedPercent: clip.speedPercent, keepsPitch: clip.changesPitch !== true }
+}
+
+// The parts of files the mix plays, and where in project time, so the media process prepares what is nearest the playhead first.
+export function soundRanges(project: Project, media: MediaStates): WantedRange[] {
+  const found: Sounding[] = []
+  collectSounds(project.tracks, media, { from: 0, to: Infinity }, found)
+  const ranges: WantedRange[] = []
+  for (const sounding of found) {
+    const { clip, shift, from, to } = sounding
+    const range: WantedRange = { mediaId: clip.mediaId, use: 'sound', timelineStart: from, timelineEnd: to, sourceStart: sourceTime(clip, from - shift), speedPercent: clip.speedPercent, isLooping: false }
+    const stretch = stretchOf(clip)
+    if (stretch !== undefined) range.stretch = stretch
+    ranges.push(range)
   }
+  return ranges
 }
 
 // How loud a clip or a group is at a moment of its own time: its volume, which keyframes may move, shaped by its fades.
@@ -83,7 +79,7 @@ async function contributionOf(sounding: Sounding, rangeFirst: number, readAudio:
   // At another speed the samples come from the sound as it is at that speed. Counted from the start of the file, the place in it
   // does not depend on where the clip begins, so both halves of a split read the same samples.
   const speed = clip.speedPercent
-  const stretch = speed === NORMAL_SPEED_PERCENT ? undefined : { speedPercent: speed, keepsPitch: clip.changesPitch !== true }
+  const stretch = stretchOf(clip)
   const localTime = first * TICKS_PER_SAMPLE - shift - clip.start
   const sourceFirst = Math.floor((clip.sourceStart * NORMAL_SPEED_PERCENT + localTime * speed) / (speed * TICKS_PER_SAMPLE))
   const source = await readAudio(clip.mediaId, sourceFirst, end - first, stretch)
@@ -164,7 +160,7 @@ export async function mix(project: Project, media: MediaStates, firstSample: num
 
   const sounds: Sounding[] = []
   const range = { from: rangeFirst * TICKS_PER_SAMPLE, to: (rangeFirst + rangeCount) * TICKS_PER_SAMPLE }
-  collectSounds(project.tracks, media, 0, range, [], sounds)
+  collectSounds(project.tracks, media, range, sounds)
   for (const sounding of sounds) {
     const contribution = await contributionOf(sounding, rangeFirst, readAudio)
     if (contribution === undefined) continue

@@ -130,6 +130,7 @@ export function createMediaClient(port: MessagePort): MediaClient {
       return answer
     },
     fullFrame: (mediaId, frame, halvings, signal) => callForFrame({ method: 'fullFrame', mediaId, frame, halvings }, signal),
+    keyframeThumbnail: (mediaId, frame, halvings) => callForFrame({ method: 'keyframeThumbnail', mediaId, frame, halvings }),
     openStream: (mediaId, frame, halvings) => callForNumber({ method: 'openStream', mediaId, frame, halvings }),
     streamFrame: (streamId, frame) => callForFrame({ method: 'streamFrame', streamId, frame }),
     closeStream: (streamId) => callForNothing({ method: 'closeStream', streamId }),
@@ -169,5 +170,6 @@ export function createMediaClient(port: MessagePort): MediaClient {
       return answer
     },
     saveProject: (path, project) => callForNothing({ method: 'saveProject', path, project }),
+    want: (wanted) => callForNothing({ method: 'want', wanted }),
   }
 }

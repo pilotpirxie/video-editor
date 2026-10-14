@@ -16,12 +16,20 @@ export const FRAME_DECODE_PIXEL_BUDGET = ULTRA_HD_PIXELS
 
 export const MAX_OPEN_STREAMS = 8
 
+// Preview copies, sound, waveforms and media facts of all projects together stay under this.
+export const CACHE_LIMIT_BYTES = 10 * 1024 * MEBIBYTE
+
+// Preview copies and sound are made and removed in pieces of this length of their source.
+export const CACHE_SEGMENT_SECONDS = 30
+
 export function frameDecoderThreads(pixelCount: number): number {
   if (pixelCount <= ULTRA_HD_PIXELS) return 4
   return 2
 }
 
-export function streamDecoderThreads(_pixelCount: number): number {
+// A stream that hands over every n-th frame decodes n frames for each, so it gets the threads of a single-frame decode.
+export function streamDecoderThreads(pixelCount: number, step: number): number {
+  if (step > 1) return frameDecoderThreads(pixelCount)
   return 2
 }
 

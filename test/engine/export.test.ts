@@ -1,10 +1,11 @@
-import { existsSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 import { EXPORT_PRESETS, exportSize, fitCanvas, type ExportPreset } from '../../src/shared/exportPresets.js'
 import { temporaryPathFor } from '../../src/media/encoder.js'
 import { serializeProject, type Project } from '../../src/shared/project.js'
-import { bundledFfmpeg, cropPicture, probeExport, projectPath, readBarcode, runApp, scratchDirectory, type Picture } from '../helpers.js'
+import { ELECTRON_BINARY, ROOT, bundledFfmpeg, cropPicture, decodedAudio, probeExport, projectPath, readBarcode, runApp, scratchDirectory, type Picture } from '../helpers.js'
 import { CLICK_SAMPLE_44K, mediaPath } from '../media/generate.js'
 
 const ffmpeg = bundledFfmpeg()
@@ -15,6 +16,7 @@ const SAMPLE_RATE = 48_000
 const SECOND = 24_000_000
 const SAMPLES_PER_VIDEO_FRAME = SAMPLE_RATE / 30
 const CLICK_SECONDS = CLICK_SAMPLE_44K / 44_100
+const STOP_TIMEOUT_MS = 30_000
 
 // One second of silence with a click in its middle, first at twice its speed with the pitch following, then from the third second at half its speed with the pitch kept.
 const CLICK_AT_TWO_SPEEDS: Project = {
@@ -60,13 +62,6 @@ async function decodedFrames(path: string, preset: ExportPreset): Promise<Pictur
     frames.push(cropPicture(whole, Math.round(fit.offsetX), Math.round(fit.offsetY), Math.round(CANVAS.width * fit.scale), Math.round(CANVAS.height * fit.scale)))
   }
   return frames
-}
-
-async function decodedAudio(path: string): Promise<Float32Array> {
-  const raw = await ffmpeg.runOnce('ffmpeg', ['-i', path, '-map', '0:a:0', '-f', 'f32le', '-'], { timeoutMs: 60_000 })
-  const samples = new Float32Array(raw.length / 4)
-  for (let index = 0; index < samples.length; index++) samples[index] = raw.readFloatLE(index * 4)
-  return samples
 }
 
 function loudness(samples: Float32Array, firstFrame: number, endFrame: number): number {
@@ -155,4 +150,22 @@ describe('MP4 export', () => {
     expect(result.exitCode).toBe(2)
     expect(result.stderr).toMatch(/--preset must be one of 120p, 240p/)
   })
+
+  // A closed output used to raise an error dialog at every progress line, which kept the app open.
+  it('stops with an error when nobody reads its output any more', async () => {
+    const profile = mkdtempSync(join(scratch, 'profile-'))
+    const args = [ROOT, `--user-data-dir=${profile}`, '--export', projectPath('22-timelapse'), '--out', join(scratch, 'unread.mp4'), '--preset', '240p']
+    const child = spawn(ELECTRON_BINARY, args)
+    onTestFinished(() => {
+      child.kill('SIGKILL')
+    })
+    let stderr = ''
+    child.stderr.on('data', (text: Buffer) => (stderr += text.toString()))
+    child.stdout.on('data', (text: Buffer) => {
+      if (text.toString().includes('progress ')) child.stdout.destroy()
+    })
+    const exitCode = await new Promise<number | null>((resolve) => child.on('close', resolve))
+    expect(exitCode).toBe(1)
+    expect(stderr).toMatch(/The output of a command-line run closed/)
+  }, STOP_TIMEOUT_MS)
 })

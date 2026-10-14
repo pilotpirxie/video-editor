@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, type Stats } from 'node:fs'
-import { mkdir, readFile, stat, writeFile, type FileHandle } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { FRAME_DECODE_PIXEL_BUDGET, MAX_OPEN_STREAMS } from '../shared/limits.js'
+import { CACHE_SEGMENT_SECONDS, FRAME_DECODE_PIXEL_BUDGET, MAX_OPEN_STREAMS } from '../shared/limits.js'
 import { describeError, logError } from '../shared/log.js'
 import type {
   AddedMedia,
@@ -18,20 +18,31 @@ import type {
   RawFrame,
   RelinkedMedia,
   UnlinkedMedia,
+  Wanted,
   WaveformLevel,
 } from '../shared/mediaProtocol.js'
 import { parseProject, type MediaRef, type Project } from '../shared/project.js'
-import { isAudioPrepared, openPreparedAudio, openStretchedAudio, prepareAudio, readAudio, readWaveform, stretchKey } from './audio.js'
+import { WAVEFORM_FILE, audioSegmentPath, buildAudioRun, buildStretchedSegment, buildWaveform, readSegmentedAudio, readWaveform, stretchedLayout, tempoFilter, type AudioLayout } from './audio.js'
+import type { DiskCache } from './cache.js'
 import { startEncoder, type Encoder } from './encoder.js'
 import type { FfmpegRunner } from './ffmpeg.js'
-import { decodeFrame, openFrameStream, toArrayBuffer, type FrameStream, type VideoSource } from './frames.js'
-import { isPreviewComplete, openPreviewCopy, type PreviewCopy } from './previewCopy.js'
+import { decodeFrame, decodeKeyframe, openFrameStream, toArrayBuffer, type FrameStream, type VideoSource } from './frames.js'
+import { audioLayoutOf, planPreparation, previewLayoutOf, type PreparationJob } from './preparation.js'
+import { buildPreviewRun, createPreviewReader, previewSegmentFiles, type PreviewReader, type SegmentInProgress } from './previewCopy.js'
 import { ProbeError, probeMedia } from './probe.js'
 import { withSavedPaths, writeProjectFile } from './projectFile.js'
 
 const CACHE_KEY_LENGTH = 32
+// After opening or seeking, the paused frame is asked for within this time; preparation waits so it does not start first.
 const PREPARATION_GRACE_MS = 250
 const INFO_FILE = 'info.json'
+// A run decodes a few segments at most, so a new playhead position is taken up within seconds.
+const PREVIEW_RUN_SEGMENTS = 4
+const AUDIO_RUN_SEGMENTS = 4
+// A media file whose preparation fails again after one retry is marked as broken; its clips show "media error" and the session goes on.
+const ALLOWED_FAILURES = 1
+// Beyond this share of the cache's limit only what is needed now is prepared.
+const LATER_PREPARATION_SHARE = 0.8
 const MEDIA_KINDS = ['video', 'audio', 'image']
 
 export class MediaError extends Error {
@@ -45,11 +56,10 @@ type MediaEntry = {
   path: string
   info: MediaInfo
   directory: string
-  preview: PreviewCopy | undefined
-  audio: Promise<FileHandle> | undefined
-  // The sound at other speeds, by speed and pitch setting.
-  stretched: Map<string, Promise<FileHandle>>
+  failures: number
   hasFailed: boolean
+  // Segments past the end of the sound track, which read as silence.
+  soundless: Set<string>
 }
 
 type OpenProject = {
@@ -57,20 +67,10 @@ type OpenProject = {
   // Directory of the project file the media list came from; undefined for a project that was never saved.
   directory: string | undefined
   lifetime: AbortController
-  prepared: Promise<void>
 }
 
 function emptyProject(): OpenProject {
-  return { media: new Map(), directory: undefined, lifetime: new AbortController(), prepared: Promise.resolve() }
-}
-
-function preparationOf(entry: MediaEntry): Preparation {
-  const { info, hasFailed } = entry
-  if (info.kind === 'image') return { progress: 1, hasFailed }
-  if (info.kind === 'audio') return { progress: isAudioPrepared(entry.directory) ? 1 : 0, hasFailed }
-  if (isPreviewComplete(entry.directory)) return { progress: 1, hasFailed }
-  const builtFrames = entry.preview?.frameCount() ?? 0
-  return { progress: Math.min(1, builtFrames / info.video.frameCount), hasFailed }
+  return { media: new Map(), directory: undefined, lifetime: new AbortController() }
 }
 
 function cacheKey(text: string): string {
@@ -137,12 +137,25 @@ export class MediaSession implements MediaClient {
   private readonly streams = new Map<number, FrameStream>()
   private readonly exports = new Map<number, Encoder>()
   private readonly frameDecodes = createWeightLimiter(FRAME_DECODE_PIXEL_BUDGET)
+  private readonly previews: PreviewReader
   private nextId = 1
+  private wanted: Wanted | undefined
+  // What to prepare, most urgent first; made again whenever the timeline, the playhead or the media change.
+  private plan: PreparationJob[] = []
+  private inProgress: SegmentInProgress | undefined
+  private wake: (() => void) | undefined
+  // The project the preparation loop works for; the loop ends with that project's lifetime.
+  private preparing: OpenProject | undefined
+  private preparedWaiters: (() => void)[] = []
+  private isWaveformRunning = false
 
   constructor(
     private readonly ffmpeg: FfmpegRunner,
-    private readonly cacheDirectory: string,
-  ) {}
+    private readonly cache: DiskCache,
+    private readonly segmentSeconds = CACHE_SEGMENT_SECONDS,
+  ) {
+    this.previews = createPreviewReader(cache)
+  }
 
   async loadProject(path: string, forPreview: boolean): Promise<LoadedProject> {
     let text: string
@@ -174,13 +187,22 @@ export class MediaSession implements MediaClient {
     }
 
     const lifetime = new AbortController()
-    const prepared = forPreview ? this.prepareInBackground([...media.values()], lifetime.signal) : Promise.resolve()
-    this.project = { media, directory: dirname(path), lifetime, prepared }
+    this.project = { media, directory: dirname(path), lifetime }
+    this.wanted = undefined
+    this.replan()
+    if (forPreview) this.startPreparing(this.project)
     return { project: parsed.project, media: states }
   }
 
-  async whenPrepared(): Promise<void> {
-    await this.project.prepared
+  // Resolves once everything the timeline needs now is prepared, or has failed.
+  whenPrepared(): Promise<void> {
+    if (this.isNearPrepared()) return Promise.resolve()
+    return new Promise((resolve) => this.preparedWaiters.push(resolve))
+  }
+
+  async want(wanted: Wanted): Promise<void> {
+    this.wanted = wanted
+    this.replan()
   }
 
   async addMedia(path: string): Promise<AddedMedia> {
@@ -219,15 +241,31 @@ export class MediaSession implements MediaClient {
     return relinked
   }
 
+  // How much of what the timeline needs now is prepared, per media file. The segment being written counts by its frames.
   async preparation(): Promise<Record<string, Preparation>> {
+    const counts = new Map<string, { ready: number; total: number }>()
+    for (const job of this.plan) {
+      if (!countsAsPrepared(job)) continue
+      const count = counts.get(job.mediaId) ?? { ready: 0, total: 0 }
+      count.total += 1
+      count.ready += this.readinessOf(job)
+      counts.set(job.mediaId, count)
+    }
     const states: Record<string, Preparation> = {}
-    for (const [id, entry] of this.project.media) states[id] = preparationOf(entry)
+    for (const [id, entry] of this.project.media) {
+      const count = counts.get(id)
+      const progress = count === undefined || count.total === 0 ? 1 : count.ready / count.total
+      states[id] = { progress, hasFailed: entry.hasFailed }
+    }
     return states
   }
 
   async waveform(mediaId: string): Promise<WaveformLevel[] | undefined> {
     const entry = this.entryOf(mediaId)
-    if (!isAudioPrepared(entry.directory)) return undefined
+    const path = join(entry.directory, WAVEFORM_FILE)
+    await this.cache.ready
+    if (!this.cache.has(path)) return undefined
+    this.cache.used(path)
     return readWaveform(entry.directory)
   }
 
@@ -247,7 +285,10 @@ export class MediaSession implements MediaClient {
   }
 
   async previewFrame(mediaId: string, frame: number): Promise<ArrayBuffer | undefined> {
-    const jpeg = await this.entryOf(mediaId).preview?.readFrame(frame)
+    const entry = this.entryOf(mediaId)
+    const layout = previewLayoutOf(entry.info, this.segmentSeconds)
+    if (layout === undefined) return undefined
+    const jpeg = await this.previews.read(entry.directory, layout, frame, this.inProgress)
     return jpeg === undefined ? undefined : toArrayBuffer(jpeg)
   }
 
@@ -255,6 +296,11 @@ export class MediaSession implements MediaClient {
     const source = this.videoSourceOf(mediaId)
     const pixelCount = source.video.width * source.video.height
     return this.frameDecodes.run(pixelCount, () => decodeFrame(this.ffmpeg, source, frame, halvings, signal))
+  }
+
+  // Outside the limit on full-quality decodes: a thumbnail must not hold back the paused frame.
+  keyframeThumbnail(mediaId: string, frame: number, halvings: number): Promise<RawFrame> {
+    return decodeKeyframe(this.ffmpeg, this.videoSourceOf(mediaId), frame, halvings)
   }
 
   async openStream(mediaId: string, frame: number, halvings: number): Promise<number> {
@@ -277,13 +323,17 @@ export class MediaSession implements MediaClient {
     this.streams.delete(streamId)
   }
 
+  // Segments that are not prepared yet are made at once, and the answer waits for them.
   async audio(mediaId: string, firstSample: number, sampleCount: number, stretch?: AudioStretch): Promise<Float32Array | undefined> {
     const entry = this.entryOf(mediaId)
-    if (entry.info.kind === 'image' || entry.info.audio === undefined) return undefined
+    const layout = audioLayoutOf(entry.info, this.segmentSeconds)
+    if (layout === undefined) return undefined
+    // The request comes from the window; a speed that cannot be played is refused before it becomes part of a file name.
+    if (stretch !== undefined) tempoFilter(stretch)
+    await this.cache.ready
     const { signal } = this.project.lifetime
-    const prepared = await this.preparedAudio(entry, signal)
-    if (stretch === undefined) return readAudio(prepared, firstSample, sampleCount)
-    return readAudio(await this.stretchedAudio(entry, stretch, signal), firstSample, sampleCount)
+    const segmentLayout = stretch === undefined ? layout : stretchedLayout(layout, stretch)
+    return readSegmentedAudio(entry.directory, segmentLayout, firstSample, sampleCount, (segment) => this.ensureSound(entry, layout, segment, stretch, signal), stretch)
   }
 
   async exportStart(target: ExportTarget): Promise<number> {
@@ -326,16 +376,25 @@ export class MediaSession implements MediaClient {
     const project = this.project
     this.project = emptyProject()
     project.lifetime.abort()
-    for (const entry of project.media.values()) {
-      await entry.preview?.close()
-      if (entry.audio !== undefined) await closeWhenOpened(entry.audio)
-      for (const stretched of entry.stretched.values()) await closeWhenOpened(stretched)
-    }
+    this.inProgress = undefined
+    this.wanted = undefined
+    this.plan = []
+    this.cache.protect(this, new Set())
+    this.settleWaiters()
   }
 
+  // A project that was never loaded, such as a new one, starts preparing with its first file.
   private register(project: OpenProject, id: string, entry: MediaEntry): void {
     project.media.set(id, entry)
-    project.prepared = this.prepareAfter(project.prepared, entry, project.lifetime.signal)
+    if (project !== this.project) return
+    this.replan()
+    this.startPreparing(project)
+  }
+
+  private startPreparing(project: OpenProject): void {
+    if (this.preparing === project) return
+    this.preparing = project
+    void this.prepareInBackground(project.lifetime.signal)
   }
 
   // The cache belongs to the media file, not to a project: an untitled project, Save As and a recovery file all reuse the same preview copy.
@@ -346,10 +405,10 @@ export class MediaSession implements MediaClient {
     } catch (error) {
       throw new MediaError(`"${basename(path)}" was not found.`, { cause: error })
     }
-    const directory = join(this.cacheDirectory, cacheKey(`${path}\n${file.size}\n${file.mtimeMs}`))
+    const directory = join(this.cache.directory, cacheKey(`${path}\n${file.size}\n${file.mtimeMs}`))
     await mkdir(directory, { recursive: true })
     const info = await this.infoOf(path, directory)
-    return { path, info, directory, preview: undefined, audio: undefined, stretched: new Map(), hasFailed: false }
+    return { path, info, directory, failures: 0, hasFailed: false, soundless: new Set() }
   }
 
   private async infoOf(path: string, directory: string): Promise<MediaInfo> {
@@ -366,12 +425,8 @@ export class MediaSession implements MediaClient {
     }
     const info = await probeMedia(this.ffmpeg, path)
     await writeFile(infoPath, JSON.stringify(info))
+    await this.cache.added(infoPath)
     return info
-  }
-
-  private async prepareAfter(earlier: Promise<void>, entry: MediaEntry, signal: AbortSignal): Promise<void> {
-    await earlier
-    await this.prepareInBackground([entry], signal)
   }
 
   private async saveAfter(earlier: Promise<void>, path: string, project: Project): Promise<void> {
@@ -379,55 +434,220 @@ export class MediaSession implements MediaClient {
     await writeProjectFile(path, project)
   }
 
-  private async prepareInBackground(entries: readonly MediaEntry[], signal: AbortSignal): Promise<void> {
-    for (const entry of entries) {
-      if (signal.aborted) return
-      if (entry.info.kind === 'image' || entry.info.audio === undefined) continue
-      try {
-        await this.preparedAudio(entry, signal)
-      } catch (error) {
-        if (signal.aborted) return
-        entry.hasFailed = true
-        logError('Could not prepare audio', error, { path: entry.path })
-      }
+  private replan(): void {
+    const media = [...this.project.media.entries()].map(([id, entry]) => ({ id, info: entry.info }))
+    this.plan = planPreparation(this.wanted, media, this.segmentSeconds)
+    const needed = new Set<string>()
+    for (const job of this.plan) {
+      const path = this.jobPath(job)
+      if (job.isNear && path !== undefined) needed.add(path)
     }
+    for (const entry of this.project.media.values()) needed.add(join(entry.directory, INFO_FILE))
+    this.cache.protect(this, needed)
+    this.wake?.()
+    this.settleWaiters()
+  }
 
-    const videos = entries.filter((entry) => entry.info.kind === 'video')
-    videos.sort((a, b) => Number(isPreviewComplete(b.directory)) - Number(isPreviewComplete(a.directory)))
-    for (const entry of videos) {
-      await sleep(PREPARATION_GRACE_MS)
+  private jobPath(job: PreparationJob): string | undefined {
+    const entry = this.project.media.get(job.mediaId)
+    if (entry === undefined) return undefined
+    if (job.kind === 'waveform') return join(entry.directory, WAVEFORM_FILE)
+    if (job.kind === 'picture') return previewSegmentFiles(entry.directory, job.segment).index
+    return audioSegmentPath(entry.directory, job.segment, job.stretch)
+  }
+
+  private readinessOf(job: PreparationJob): number {
+    const entry = this.project.media.get(job.mediaId)
+    const path = this.jobPath(job)
+    if (entry === undefined || path === undefined || entry.hasFailed || this.cache.has(path) || entry.soundless.has(path)) return 1
+    const inProgress = this.inProgress
+    const layout = previewLayoutOf(entry.info, this.segmentSeconds)
+    const isBeingWritten = job.kind === 'picture' && inProgress?.directory === entry.directory && inProgress.segment === job.segment
+    if (!isBeingWritten || layout === undefined) return 0
+    return inProgress.locations.length / layout.framesPerSegment
+  }
+
+  private isNearPrepared(): boolean {
+    for (const job of this.plan) {
+      if (countsAsPrepared(job) && this.readinessOf(job) < 1) return false
+    }
+    return true
+  }
+
+  private settleWaiters(): void {
+    if (this.preparedWaiters.length === 0) return
+    const isClosed = this.project.media.size === 0
+    if (!isClosed && !this.isNearPrepared()) return
+    const waiters = this.preparedWaiters
+    this.preparedWaiters = []
+    for (const resolveWaiter of waiters) resolveWaiter()
+  }
+
+  private nextJob(): PreparationJob | undefined {
+    const isFull = this.cache.totalBytes() >= this.cache.limitBytes() * LATER_PREPARATION_SHARE
+    for (const job of this.plan) {
+      // The plan holds what is needed now first; past it, a full cache stops preparation.
+      if (!job.isNear && isFull) return undefined
+      if (job.kind === 'waveform' && this.isWaveformRunning) continue
+      const entry = this.project.media.get(job.mediaId)
+      const path = this.jobPath(job)
+      if (entry === undefined || entry.hasFailed || path === undefined) continue
+      if (this.cache.has(path) || this.cache.pending(path) !== undefined || entry.soundless.has(path)) continue
+      return job
+    }
+    return undefined
+  }
+
+  private untilWoken(signal: AbortSignal): Promise<void> {
+    return new Promise((resolveWake) => {
+      this.wake = resolveWake
+      signal.addEventListener('abort', () => resolveWake(), { once: true })
+    })
+  }
+
+  // One segment job at a time, most urgent first, with a waveform beside it; paused-frame decodes go before both.
+  private async prepareInBackground(signal: AbortSignal): Promise<void> {
+    await this.cache.ready
+    let wasIdle = true
+    while (!signal.aborted) {
+      this.settleWaiters()
+      const job = this.nextJob()
+      if (job === undefined) {
+        await this.untilWoken(signal)
+        wasIdle = true
+        continue
+      }
+      // The plan may change meanwhile, so the job is chosen again after the wait.
+      if (wasIdle) {
+        await sleep(PREPARATION_GRACE_MS)
+        wasIdle = false
+        continue
+      }
       await this.frameDecodes.whenIdle()
       if (signal.aborted) return
-      try {
-        entry.preview = await openPreviewCopy(this.ffmpeg, videoSource(entry), entry.directory, signal)
-        await entry.preview.finished
-      } catch (error) {
-        if (signal.aborted) return
-        entry.hasFailed = true
-        logError('Could not prepare the preview copy', error, { path: entry.path })
+      if (job.kind === 'waveform') {
+        void this.runWaveform(job, signal)
+        continue
       }
+      await this.runJob(job, signal)
     }
   }
 
-  private preparedAudio(entry: MediaEntry, signal: AbortSignal): Promise<FileHandle> {
-    entry.audio ??= openAudio(this.ffmpeg, entry, signal)
-    return entry.audio
-  }
-
-  // A copy that could not be made is asked for again the next time it is needed.
-  private async stretchedAudio(entry: MediaEntry, stretch: AudioStretch, signal: AbortSignal): Promise<FileHandle> {
-    const key = stretchKey(stretch)
-    let opening = entry.stretched.get(key)
-    if (opening === undefined) {
-      opening = openStretchedAudio(this.ffmpeg, entry.directory, stretch, signal)
-      entry.stretched.set(key, opening)
-    }
+  // Waveforms are made one at a time beside the segments: one covers a whole file, and a long one must not hold back what the playhead needs.
+  private async runWaveform(job: PreparationJob, signal: AbortSignal): Promise<void> {
+    this.isWaveformRunning = true
     try {
-      return await opening
-    } catch (error) {
-      entry.stretched.delete(key)
-      throw error
+      await this.runJob(job, signal)
+    } finally {
+      this.isWaveformRunning = false
+      this.wake?.()
     }
+  }
+
+  private async runJob(job: PreparationJob, signal: AbortSignal): Promise<void> {
+    const entry = this.project.media.get(job.mediaId)
+    if (entry === undefined) return
+    try {
+      if (job.kind === 'waveform') {
+        await this.buildWaveformOf(entry, signal)
+      } else if (job.kind === 'picture') {
+        await this.buildPreviewSegments(entry, job.segment, signal)
+      } else {
+        const layout = audioLayoutOf(entry.info, this.segmentSeconds)
+        if (layout !== undefined) await this.ensureSound(entry, layout, job.segment, job.stretch, signal)
+      }
+    } catch (error) {
+      if (signal.aborted) return
+      entry.failures += 1
+      entry.hasFailed = entry.failures > ALLOWED_FAILURES
+      logError('Could not prepare media', error, { path: entry.path, job: job.kind })
+    }
+  }
+
+  private async buildWaveformOf(entry: MediaEntry, signal: AbortSignal): Promise<void> {
+    const path = join(entry.directory, WAVEFORM_FILE)
+    const claim = this.cache.claim([path])
+    if (claim.paths.length === 0) return
+    try {
+      await buildWaveform(this.ffmpeg, audioSource(entry), entry.directory, this.cache, signal)
+      claim.written(path)
+    } finally {
+      claim.giveUp(new MediaError('The waveform was not made'))
+    }
+  }
+
+  private async buildPreviewSegments(entry: MediaEntry, firstSegment: number, signal: AbortSignal): Promise<void> {
+    const layout = previewLayoutOf(entry.info, this.segmentSeconds)
+    if (layout === undefined) return
+    const paths: string[] = []
+    const end = Math.min(layout.segmentCount, firstSegment + PREVIEW_RUN_SEGMENTS)
+    for (let segment = firstSegment; segment < end; segment++) {
+      const index = previewSegmentFiles(entry.directory, segment).index
+      if (this.cache.has(index) || this.cache.pending(index) !== undefined) break
+      paths.push(index)
+    }
+    const claim = this.cache.claim(paths)
+    await buildPreviewRun({
+      ffmpeg: this.ffmpeg,
+      source: videoSource(entry),
+      directory: entry.directory,
+      layout,
+      cache: this.cache,
+      firstSegment,
+      claim,
+      signal,
+      onFrame: (inProgress) => {
+        this.inProgress = inProgress
+      },
+    })
+  }
+
+  // Makes one segment of sound, or waits for the build already making it. A segment past the end of the sound stays missing and reads as silence.
+  private async ensureSound(entry: MediaEntry, layout: AudioLayout, segment: number, stretch: AudioStretch | undefined, signal: AbortSignal): Promise<void> {
+    const path = audioSegmentPath(entry.directory, segment, stretch)
+    if (entry.soundless.has(path)) return
+    if (this.cache.has(path)) {
+      this.cache.used(path)
+      return
+    }
+    const pending = this.cache.pending(path)
+    if (pending !== undefined) {
+      // A build that gave up is the business of whoever started it; this one tries again below.
+      await Promise.allSettled([pending])
+      if (this.cache.has(path)) return
+    }
+    if (stretch === undefined) {
+      await this.buildBaseSound(entry, layout, segment, signal)
+      return
+    }
+    await buildStretchedSegment({
+      ffmpeg: this.ffmpeg,
+      directory: entry.directory,
+      layout: stretchedLayout(layout, stretch),
+      cache: this.cache,
+      stretch,
+      segment,
+      claim: this.cache.claim([path]),
+      readBase: (firstSample, sampleCount) => readSegmentedAudio(entry.directory, layout, firstSample, sampleCount, (baseSegment) => this.ensureSound(entry, layout, baseSegment, undefined, signal)),
+      signal,
+    })
+  }
+
+  // A run from the segment on; a file that cannot seek exactly is decoded from its start, writing the missing segments on the way.
+  private async buildBaseSound(entry: MediaEntry, layout: AudioLayout, segment: number, signal: AbortSignal): Promise<void> {
+    const firstSegment = layout.seeksExactly ? segment : 0
+    const lastSegment = Math.min(layout.segmentCount - 1, segment + AUDIO_RUN_SEGMENTS - 1)
+    const paths: string[] = []
+    for (let candidate = firstSegment; candidate <= lastSegment; candidate++) {
+      const path = audioSegmentPath(entry.directory, candidate)
+      const isMissing = !this.cache.has(path) && this.cache.pending(path) === undefined
+      if (isMissing) paths.push(path)
+      else if (layout.seeksExactly && candidate > segment) break
+    }
+    const claim = this.cache.claim(paths)
+    const last = layout.seeksExactly ? segment + paths.length - 1 : lastSegment
+    const soundless = await buildAudioRun({ ffmpeg: this.ffmpeg, source: audioSource(entry), directory: entry.directory, layout, cache: this.cache, firstSegment, lastSegment: last, claim, signal })
+    for (const path of soundless) entry.soundless.add(path)
   }
 
   private suspendIdleStreams(): void {
@@ -475,23 +695,22 @@ function offers(info: MediaInfo, use: MediaUse): boolean {
   return info.kind === 'audio' || (info.kind === 'video' && info.audio !== undefined)
 }
 
+// A waveform is needed now, so it is kept and made even in a full cache, but it covers its whole file: a twenty-hour one takes minutes and is not needed to play what is around the playhead.
+function countsAsPrepared(job: PreparationJob): boolean {
+  return job.isNear && job.kind !== 'waveform'
+}
+
 function videoSource(entry: MediaEntry): VideoSource {
   if (entry.info.kind !== 'video') throw new MediaError(`"${basename(entry.path)}" is not a video`)
   return { path: entry.path, containerStart: entry.info.containerStart, video: entry.info.video }
 }
 
-async function openAudio(ffmpeg: FfmpegRunner, entry: MediaEntry, signal: AbortSignal): Promise<FileHandle> {
+function audioSource(entry: MediaEntry): { path: string; containerStart: number } {
   const containerStart = entry.info.kind === 'image' ? 0 : entry.info.containerStart
-  await prepareAudio(ffmpeg, { path: entry.path, containerStart }, entry.directory, signal)
-  return openPreparedAudio(entry.directory)
+  return { path: entry.path, containerStart }
 }
 
 // A failed save must not block the saves queued after it; its own caller still sees the failure.
 async function settled(work: Promise<void>): Promise<void> {
   await Promise.allSettled([work])
-}
-
-async function closeWhenOpened(audio: Promise<FileHandle>): Promise<void> {
-  const [opened] = await Promise.allSettled([audio])
-  if (opened.status === 'fulfilled') await opened.value.close()
 }

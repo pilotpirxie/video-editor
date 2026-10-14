@@ -1,4 +1,4 @@
-import { fitCanvas, type Size } from '../shared/exportPresets.js'
+import { fitCanvas, type PixelLayout, type Size } from '../shared/exportPresets.js'
 import type { RawFrame } from '../shared/mediaProtocol.js'
 import type { Crop, Effect, Transform } from '../shared/project.js'
 import { outputMapping, type OutputMapping, type View } from './camera.js'
@@ -22,11 +22,14 @@ import {
   SOURCE_PICTURE,
   SOURCE_TARGET,
   VERTEX_SHADER,
+  YUV_SHADER,
 } from './shaders.js'
 
 const LOD_BIAS = -0.5
 const EDGE_MARGIN = 1
 const BYTES_PER_PIXEL = 4
+// How often a copy out of the GPU is asked whether it is done.
+const READBACK_POLL_MS = 1
 const MIP_CHAIN_FACTOR = 4 / 3
 const FLOATS_PER_VERTEX = 4
 const COMPONENTS = 4
@@ -77,6 +80,8 @@ export type Compositor = {
   render(canvas: Size, output: Size, view: View, items: readonly DrawItem[]): void
   present(): void
   readPixels(): ArrayBuffer
+  // Starts copying the frame just rendered out of the GPU and answers a way to wait for the pixels. Two copies can be under way at once.
+  startReadback(layout: PixelLayout): () => Promise<ArrayBuffer>
 }
 
 // How a draw is combined with what its target already holds.
@@ -258,6 +263,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
   const layerProgram = linkProgram(gl, LAYER_SHADER)
   const blurProgram = linkProgram(gl, BLUR_SHADER)
   const shapeProgram = linkProgram(gl, SHAPE_SHADER)
+  const yuvProgram = linkProgram(gl, YUV_SHADER)
 
   const vertexArray = gl.createVertexArray()
   const vertexBuffer = gl.createBuffer()
@@ -285,15 +291,16 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
   let held: Target | undefined
   let spare: Target | undefined
   let pair: Target | undefined
+  let yuv: Target | undefined
 
   let output: Size = { width: 0, height: 0 }
   let mapping: OutputMapping = { scale: 1, offsetX: 0, offsetY: 0 }
   let used: Program | undefined
 
-  function sized(target: Target): Target {
-    if (target.width === output.width && target.height === output.height) return target
+  function sized(target: Target, width = output.width, height = output.height): Target {
+    if (target.width === width && target.height === height) return target
     gl.bindTexture(gl.TEXTURE_2D, target.texture)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, output.width, output.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
     const filter = target === frame ? gl.NEAREST : gl.LINEAR
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter)
@@ -303,10 +310,10 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target.texture, 0)
     // An effect that is silently left out could show what a blur was meant to hide, so a refusal stops the frame.
     if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
-      throw new CompositorError(`The GPU cannot render at ${output.width}×${output.height}`)
+      throw new CompositorError(`The GPU cannot render at ${width}×${height}`)
     }
-    target.width = output.width
-    target.height = output.height
+    target.width = width
+    target.height = height
     return target
   }
 
@@ -691,5 +698,63 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     return readBack.buffer
   }
 
-  return { uploadPixels, uploadImage, release, render, present, readPixels }
+  const readbackBuffers = [gl.createBuffer(), gl.createBuffer()]
+  const readbackSizes = [0, 0]
+  let nextReadback = 0
+
+  // Draws the frame as the bytes of a YUV 4:2:0 picture into a target with whole rows of RGBA texels.
+  function drawYuv(): { target: Target; byteLength: number } {
+    const byteLength = (frame.width * frame.height * 3) / 2
+    const rowTexels = frame.width
+    const rows = Math.ceil(byteLength / (rowTexels * BYTES_PER_PIXEL))
+    yuv ??= createTarget()
+    const target = sized(yuv, rowTexels, rows)
+    use(yuvProgram)
+    drawInto(target, 'replace')
+    gl.viewport(0, 0, rowTexels, rows)
+    gl.bindTexture(gl.TEXTURE_2D, frame.texture)
+    gl.uniform1i(at('uTexture'), 0)
+    gl.uniform2i(at('uPictureSize'), frame.width, frame.height)
+    gl.uniform1i(at('uRowTexels'), rowTexels)
+    gl.uniform2f(at('uOutputSize'), rowTexels, rows)
+    gl.bindVertexArray(vertexArray)
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer)
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, quadVertices({ centerX: rowTexels / 2, centerY: rows / 2, halfWidth: rowTexels / 2, halfHeight: rows / 2, cosine: 1, sine: 0 }, 0))
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+    gl.viewport(0, 0, output.width, output.height)
+    return { target, byteLength }
+  }
+
+  function startReadback(layout: PixelLayout): () => Promise<ArrayBuffer> {
+    const source = layout === 'yuv420p' ? drawYuv() : { target: frame, byteLength: frame.width * frame.height * BYTES_PER_PIXEL }
+    const { target, byteLength } = source
+    const bufferBytes = target.width * target.height * BYTES_PER_PIXEL
+    const slot = nextReadback
+    nextReadback = 1 - nextReadback
+    const buffer = readbackBuffers[slot] ?? null
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer)
+    if (readbackSizes[slot] !== bufferBytes) {
+      gl.bufferData(gl.PIXEL_PACK_BUFFER, bufferBytes, gl.STREAM_READ)
+      readbackSizes[slot] = bufferBytes
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer)
+    gl.readPixels(0, 0, target.width, target.height, gl.RGBA, gl.UNSIGNED_BYTE, 0)
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null)
+    const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0)
+    gl.flush()
+
+    return async () => {
+      while (fence !== null && gl.clientWaitSync(fence, 0, 0) === gl.TIMEOUT_EXPIRED) {
+        await new Promise((resolve) => setTimeout(resolve, READBACK_POLL_MS))
+      }
+      gl.deleteSync(fence)
+      if (readBack.length !== byteLength) readBack = new Uint8Array(byteLength)
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer)
+      gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, readBack)
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null)
+      return readBack.buffer
+    }
+  }
+
+  return { uploadPixels, uploadImage, release, render, present, readPixels, startReadback }
 }
