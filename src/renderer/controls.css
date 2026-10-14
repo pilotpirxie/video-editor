@@ -503,3 +503,15 @@ legend.field-label {
   background: var(--primary);
 }
 
+
+/* A field with the keyframe buttons of its value at the end of its line. */
+.field-row {
+  display: flex;
+  align-items: center;
+}
+
+.field-row > .field-box {
+  flex: 1;
+  min-width: 0;
+  margin-right: var(--space-1);
+}

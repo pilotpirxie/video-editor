@@ -447,6 +447,48 @@ describe('zoom and pan', () => {
     const clip = projectIn(report, 'moved').tracks[0]?.clips[0]
     const expected = 320 + (Number(report.pulled) * Number(report.canvasPerPixel)) / (zoomsAt('moved')[0]?.scale ?? 1)
     expect(clip?.type === 'video' && near(clip.transform.x, expected, 1.5)).toBe(true)
+
+    // A right click on the zoom on the lane set its easing, and then deleted it.
+    expect(zoomsAt('menuEased')[0]).toMatchObject({ time: 0.8 * SECOND, easing: 'hold' })
+    expect(zoomsAt('menuDeleted')).toEqual([])
+  })
+})
+
+describe('keyframes and the motion path', () => {
+  it('keys sets of fields in Properties, keys a moved clip, drags a dot of its path and walks between keyframes', async () => {
+    const report = await uiTest('keyframes', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'keyframes')])
+    type Keyed = { time: number; value: number; easing: string }
+    const keyframesAt = (stage: string): Partial<Record<string, Keyed[]>> => projectIn(report, stage).tracks[0]?.clips[0]?.keyframes ?? {}
+    const near = (value: number | undefined, expected: number): boolean => value !== undefined && Math.abs(value - expected) <= 2
+
+    // The button on Y keyed X with it, at the playhead, holding the place the clip had.
+    expect(keyframesAt('keyed')).toEqual({ x: [{ time: 0, value: 320, easing: 'linear' }], y: [{ time: 0, value: 180, easing: 'linear' }] })
+    expect(report.isXPressed).toBe(true)
+
+    // A second later the drag from the first dot moved the clip, which keyed that second.
+    const moved = keyframesAt('moved')
+    expect(moved.x?.map((keyframe) => keyframe.time)).toEqual([0, SECOND])
+    expect(moved.y?.map((keyframe) => keyframe.time)).toEqual([0, SECOND])
+    expect(near(moved.x?.[1]?.value, 420) && near(moved.y?.[1]?.value, 230)).toBe(true)
+    expect(projectIn(report, 'moved').tracks[0]?.clips[0]).toMatchObject({ transform: { x: 320, y: 180 } })
+
+    // The dragged dot moved the first keyframe only.
+    const dotMoved = keyframesAt('dotMoved')
+    expect(near(dotMoved.x?.[0]?.value, 200) && near(dotMoved.y?.[0]?.value, 120)).toBe(true)
+    expect(dotMoved.x?.[1]).toEqual(moved.x?.[1])
+    expect(dotMoved.y?.[1]).toEqual(moved.y?.[1])
+
+    // The size button on Scale keyed both scales and lit the Width and Height buttons.
+    expect(report.sizePressed).toEqual([true, true])
+    expect(keyframesAt('sized')).toMatchObject({ scaleX: [{ time: SECOND, value: 2 }], scaleY: [{ time: SECOND, value: 2 }] })
+
+    // A typed X at 1.5 s keyed the place there, Y holding its value; the button took both away again.
+    const typed = keyframesAt('typed')
+    expect(typed.x?.[2]).toEqual({ time: 1.5 * SECOND, value: 500, easing: 'linear' })
+    expect(typed.y?.[2]).toEqual({ time: 1.5 * SECOND, value: moved.y?.[1]?.value, easing: 'linear' })
+    const removed = keyframesAt('removed')
+    expect(removed.x?.map((keyframe) => keyframe.time)).toEqual([0, SECOND])
+    expect(removed.y?.map((keyframe) => keyframe.time)).toEqual([0, SECOND])
   })
 })
 

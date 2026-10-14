@@ -1,7 +1,25 @@
 import { describe, expect, it } from 'vitest'
 import { ALL_MEDIA, FRAME, MEDIA_STATES, SECOND, audioClip, clipOf, groupClip, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import type { Clip, Project } from '../shared/project.js'
-import { changeKeyframe, hasKeyframeAt, propertyAt, removeKeyframe, setCanvasSize, setDuration, setFade, setFrameRate, setLoop, setProperties, setSoundSwitches, setSourceStart, setSpeed, sharedValue, toggleKeyframe } from './properties.js'
+import {
+  changeKeyframe,
+  hasKeyframesAt,
+  motionPath,
+  nearestKeyframe,
+  propertyAt,
+  removeKeyframe,
+  setCanvasSize,
+  setDuration,
+  setFade,
+  setFrameRate,
+  setKeyframesAt,
+  setLoop,
+  setProperties,
+  setSoundSwitches,
+  setSourceStart,
+  setSpeed,
+  sharedValue,
+} from './properties.js'
 
 const TEXT: Clip = {
   id: 'title',
@@ -63,23 +81,60 @@ describe('setProperties', () => {
     expect(clipOf(setProperties(sample(), ['title'], { cropLeft: 40 }, 0), 'title')).not.toHaveProperty('crop')
   })
 
-  it('updates or adds a keyframe at the playhead when the property is animated', () => {
+  it('updates or adds a keyframe at the playhead when the property is animated, keying its partner with it', () => {
     const animated = projectOf([
       track('t1', [videoClip('a', 2 * SECOND, 4 * SECOND, { keyframes: { x: [{ time: 0, value: 0, easing: 'easeIn' }, { time: 4 * SECOND, value: 400, easing: 'linear' }] } })]),
     ])
     const added = setProperties(animated, ['a'], { x: 250, y: 5 }, 3 * SECOND)
     expect(clipOf(added, 'a')).toMatchObject({
-      transform: { x: 960, y: 5 },
-      keyframes: { x: [{ time: 0, value: 0, easing: 'easeIn' }, { time: SECOND, value: 250, easing: 'linear' }, { time: 4 * SECOND, value: 400, easing: 'linear' }] },
+      transform: { x: 960, y: 540 },
+      keyframes: {
+        x: [{ time: 0, value: 0, easing: 'easeIn' }, { time: SECOND, value: 250, easing: 'linear' }, { time: 4 * SECOND, value: 400, easing: 'linear' }],
+        y: [{ time: SECOND, value: 5, easing: 'linear' }],
+      },
     })
     expect(propertyAt(clipOf(added, 'a'), 'x', 3 * SECOND)).toBe(250)
 
+    // The partner takes the easing of the keyframe it is put beside.
     const updated = setProperties(added, ['a'], { x: 0.5 }, 2 * SECOND)
     expect(clipOf(updated, 'a').keyframes?.x?.[0]).toEqual({ time: 0, value: 0.5, easing: 'easeIn' })
+    expect(clipOf(updated, 'a').keyframes?.y?.[0]).toEqual({ time: 0, value: 5, easing: 'easeIn' })
 
     const outside = setProperties(animated, ['a'], { x: 77 }, 60 * SECOND)
     expect(clipOf(outside, 'a').keyframes?.x?.at(-1)).toEqual({ time: 4 * SECOND, value: 77, easing: 'linear' })
     reopened(outside)
+  })
+
+  it('keys every set a change touches once one of them is animated, and changes resting values otherwise', () => {
+    const sized = { scaleX: [{ time: 0, value: 1, easing: 'easeOut' as const }], scaleY: [{ time: 0, value: 1, easing: 'easeOut' as const }] }
+    const animated = projectOf([track('t1', [videoClip('a', 0, 4 * SECOND, { keyframes: sized })])])
+    // A corner drag changes the size and the place together.
+    const dragged = setProperties(animated, ['a'], { x: 100, y: 200, scaleX: 2, scaleY: 2 }, SECOND)
+    expect(clipOf(dragged, 'a')).toMatchObject({
+      transform: { x: 960, y: 540, scaleX: 1 },
+      keyframes: {
+        x: [{ time: SECOND, value: 100, easing: 'linear' }],
+        y: [{ time: SECOND, value: 200, easing: 'linear' }],
+        scaleX: [{ time: 0, value: 1, easing: 'easeOut' }, { time: SECOND, value: 2, easing: 'linear' }],
+      },
+    })
+    reopened(dragged)
+
+    const turned = setProperties(dragged, ['a'], { rotation: 45 }, 2 * SECOND)
+    expect(clipOf(turned, 'a')).toMatchObject({ transform: { rotation: 45 } })
+    expect(clipOf(turned, 'a').keyframes).not.toHaveProperty('rotation')
+  })
+
+  it('changes a keyframe that lies inside the frame of the playhead instead of adding one beside it', () => {
+    const between = SECOND + 300
+    const project = projectOf([track('t1', [audioClip('music', 0, 4 * SECOND, { keyframes: { volume: [{ time: 0, value: 1, easing: 'linear' }, { time: between, value: 0.5, easing: 'linear' }] } })])])
+    const quieter = setProperties(project, ['music'], { volume: 0.2 }, SECOND)
+    expect(clipOf(quieter, 'music').keyframes?.volume).toEqual([
+      { time: 0, value: 1, easing: 'linear' },
+      { time: between, value: 0.2, easing: 'linear' },
+    ])
+    expect(hasKeyframesAt(clipOf(quieter, 'music'), 'volume', SECOND, FRAME)).toBe(true)
+    expect(clipOf(setKeyframesAt(quieter, ['music'], 'volume', SECOND, false), 'music').keyframes?.volume).toHaveLength(1)
   })
 
   it('returns the same project when the values are already set', () => {
@@ -154,30 +209,42 @@ describe('sharedValue', () => {
 })
 
 describe('keyframes by hand', () => {
-  it('puts a keyframe at the playhead that holds the value the property has there', () => {
-    const keyed = toggleKeyframe(sample(), ['music', 'a'], 'volume', SECOND + 49)
+  it('puts keyframes for a whole set at the playhead that hold the values there', () => {
+    const keyed = setKeyframesAt(sample(), ['music', 'a'], 'volume', SECOND + 49, true)
     expect(clipOf(keyed, 'music').keyframes).toEqual({ volume: [{ time: SECOND, value: 1, easing: 'linear' }] })
-    expect(hasKeyframeAt(clipOf(keyed, 'music'), 'volume', SECOND)).toBe(true)
-    expect(hasKeyframeAt(clipOf(keyed, 'music'), 'volume', 2 * SECOND)).toBe(false)
+    expect(hasKeyframesAt(clipOf(keyed, 'music'), 'volume', SECOND, FRAME)).toBe(true)
+    expect(hasKeyframesAt(clipOf(keyed, 'music'), 'volume', 2 * SECOND, FRAME)).toBe(false)
     expect(reopened(keyed)).toEqual(keyed)
+
+    const placed = setKeyframesAt(sample(), ['a', 'title'], 'position', SECOND, true)
+    expect(clipOf(placed, 'a').keyframes).toEqual({ x: [{ time: SECOND, value: 960, easing: 'linear' }], y: [{ time: SECOND, value: 540, easing: 'linear' }] })
+    expect(clipOf(placed, 'title').keyframes).toEqual({ x: [{ time: SECOND, value: 100, easing: 'linear' }], y: [{ time: SECOND, value: 100, easing: 'linear' }] })
+    expect(hasKeyframesAt(clipOf(placed, 'a'), 'position', SECOND, FRAME)).toBe(true)
+    expect(setKeyframesAt(placed, ['a', 'title'], 'position', SECOND, true)).toBe(placed)
   })
 
-  it('takes the keyframe at the playhead away again, and leaves the value the last one had', () => {
-    const keyed = setProperties(toggleKeyframe(sample(), ['music'], 'volume', SECOND), ['music'], { volume: 0.4 }, SECOND)
-    const plain = toggleKeyframe(keyed, ['music'], 'volume', SECOND)
+  it('takes the keyframes at the playhead away again, and leaves the values the last ones had', () => {
+    const keyed = setProperties(setKeyframesAt(sample(), ['music'], 'volume', SECOND, true), ['music'], { volume: 0.4 }, SECOND)
+    const plain = setKeyframesAt(keyed, ['music'], 'volume', SECOND, false)
     expect(clipOf(plain, 'music')).toMatchObject({ volume: 0.4 })
     expect(clipOf(reopened(plain), 'music')).not.toHaveProperty('keyframes')
+
+    const moved = setProperties(setKeyframesAt(sample(), ['a'], 'position', 0, true), ['a'], { x: 10, y: 20 }, 0)
+    const unplaced = setKeyframesAt(moved, ['a'], 'position', 0, false)
+    expect(clipOf(unplaced, 'a')).toMatchObject({ transform: { x: 10, y: 20 } })
+    expect(clipOf(reopened(unplaced), 'a')).not.toHaveProperty('keyframes')
   })
 
   it('does nothing for a property the clip does not have', () => {
     const project = sample()
-    expect(toggleKeyframe(project, ['title'], 'volume', 0)).toBe(project)
-    expect(toggleKeyframe(project, ['music'], 'opacity', 0)).toBe(project)
+    expect(setKeyframesAt(project, ['title'], 'volume', 0, true)).toBe(project)
+    expect(setKeyframesAt(project, ['music'], 'opacity', 0, true)).toBe(project)
+    expect(setKeyframesAt(project, ['title'], 'crop', 0, true)).toBe(project)
   })
 
   it('moves a keyframe in time and value, never past its neighbours or out of range', () => {
     let keyed = sample()
-    for (const seconds of [0, 1, 2]) keyed = toggleKeyframe(keyed, ['music'], 'volume', seconds * SECOND)
+    for (const seconds of [0, 1, 2]) keyed = setKeyframesAt(keyed, ['music'], 'volume', seconds * SECOND, true)
     const moved = changeKeyframe(keyed, 'music', 'volume', 1, { time: 1.5 * SECOND + 30, value: 5, easing: 'easeOut' })
     expect(clipOf(moved, 'music').keyframes?.volume?.[1]).toEqual({ time: 1.5 * SECOND, value: 2, easing: 'easeOut' })
     expect(clipOf(changeKeyframe(keyed, 'music', 'volume', 1, { time: 9 * SECOND }), 'music').keyframes?.volume?.[1]?.time).toBe(2 * SECOND - 100)
@@ -186,7 +253,7 @@ describe('keyframes by hand', () => {
   })
 
   it('leaves the project alone when a keyframe does not change or is not there', () => {
-    const keyed = toggleKeyframe(sample(), ['music'], 'volume', SECOND)
+    const keyed = setKeyframesAt(sample(), ['music'], 'volume', SECOND, true)
     expect(changeKeyframe(keyed, 'music', 'volume', 0, { time: SECOND, value: 1 })).toBe(keyed)
     expect(changeKeyframe(keyed, 'music', 'volume', 3, { value: 0 })).toBe(keyed)
     expect(removeKeyframe(keyed, 'music', 'volume', 3)).toBe(keyed)
@@ -194,7 +261,7 @@ describe('keyframes by hand', () => {
 
   it('removes one keyframe, and with the last one the list', () => {
     let keyed = sample()
-    for (const seconds of [0, 1]) keyed = toggleKeyframe(keyed, ['music'], 'volume', seconds * SECOND)
+    for (const seconds of [0, 1]) keyed = setKeyframesAt(keyed, ['music'], 'volume', seconds * SECOND, true)
     keyed = changeKeyframe(keyed, 'music', 'volume', 1, { value: 0.3 })
     const one = removeKeyframe(keyed, 'music', 'volume', 0)
     expect(clipOf(one, 'music').keyframes?.volume).toEqual([{ time: SECOND, value: 0.3, easing: 'linear' }])
@@ -204,12 +271,77 @@ describe('keyframes by hand', () => {
   })
 })
 
+describe('nearestKeyframe', () => {
+  const keyed = projectOf([
+    track('t1', [
+      videoClip('a', 0, 4 * SECOND, {
+        keyframes: {
+          x: [
+            { time: -SECOND, value: 0, easing: 'linear' },
+            { time: 0, value: 0, easing: 'linear' },
+            { time: SECOND + 300, value: 1, easing: 'linear' },
+            { time: 4 * SECOND, value: 2, easing: 'linear' },
+          ],
+        },
+      }),
+      videoClip('b', 6 * SECOND, 2 * SECOND, { keyframes: { y: [{ time: SECOND, value: 1, easing: 'linear' }] } }),
+    ]),
+  ])
+  const clips = keyed.tracks[0]?.clips ?? []
+
+  it('goes to the start of the next or previous frame that holds a keyframe of the set', () => {
+    expect(nearestKeyframe(clips, 'position', 0, 1, FRAME)).toBe(SECOND)
+    expect(nearestKeyframe(clips, 'position', SECOND, -1, FRAME)).toBe(0)
+    expect(nearestKeyframe(clips, 'position', 7 * SECOND, -1, FRAME)).toBe(119 * FRAME)
+    expect(nearestKeyframe(clips, 'size', 0, 1, FRAME)).toBeUndefined()
+  })
+
+  it('reaches a keyframe at the end of a clip on its last frame, and never stays where it is', () => {
+    expect(nearestKeyframe(clips, 'position', SECOND, 1, FRAME)).toBe(119 * FRAME)
+    expect(nearestKeyframe(clips, 'position', 119 * FRAME, 1, FRAME)).toBe(7 * SECOND)
+    expect(nearestKeyframe(clips, 'position', 7 * SECOND, 1, FRAME)).toBeUndefined()
+    // The keyframe before the clip starts is not one the playhead can stand on.
+    expect(nearestKeyframe(clips, 'position', 0, -1, FRAME)).toBeUndefined()
+  })
+})
+
+describe('motionPath', () => {
+  it('follows the place of the clip between its position keyframes, with a dot on each one inside the clip', () => {
+    const moving = videoClip('a', SECOND, 4 * SECOND, {
+      keyframes: {
+        x: [{ time: 0, value: 0, easing: 'linear' }, { time: 2 * SECOND, value: 200, easing: 'linear' }, { time: 6 * SECOND, value: 600, easing: 'linear' }],
+        y: [{ time: 0, value: 0, easing: 'linear' }, { time: 2 * SECOND, value: 100, easing: 'linear' }, { time: 6 * SECOND, value: 300, easing: 'linear' }],
+      },
+    })
+    const path = motionPath(moving)
+    expect(path?.dots).toEqual([
+      { time: 0, point: { x: 0, y: 0 } },
+      { time: 2 * SECOND, point: { x: 200, y: 100 } },
+    ])
+    // Two stretches of sixteen steps and the end, which the keyframe after the clip decides.
+    expect(path?.line).toHaveLength(33)
+    expect(path?.line.at(-1)).toEqual({ x: 400, y: 200 })
+    expect(path?.line.every((point) => Math.abs(point.y - point.x / 2) < 1e-9)).toBe(true)
+  })
+
+  it('uses the resting value of an axis without keyframes, and is not there without position keyframes', () => {
+    const sliding = videoClip('a', 0, 2 * SECOND, { keyframes: { x: [{ time: 0, value: -1920, easing: 'easeOut' }, { time: SECOND, value: 960, easing: 'linear' }] } })
+    const path = motionPath(sliding)
+    expect(path?.dots.map((dot) => dot.point)).toEqual([
+      { x: -1920, y: 540 },
+      { x: 960, y: 540 },
+    ])
+    expect(motionPath(videoClip('b', 0, SECOND, { keyframes: { opacity: [{ time: 0, value: 1, easing: 'linear' }] } }))).toBeUndefined()
+    expect(motionPath(audioClip('music', 0, SECOND))).toBeUndefined()
+  })
+})
+
 describe('groups and sound', () => {
   const grouped = projectOf([track('t1', [groupClip('group', 0, 4 * SECOND, [[videoClip('m', 0, 4 * SECOND)]]), audioClip('music', 5 * SECOND, SECOND)])])
 
   it('scales a group by one number, whichever of the two is set', () => {
     expect(clipOf(setProperties(grouped, ['group'], { scaleY: 3 }, 0), 'group')).toMatchObject({ transform: { scaleX: 3, scaleY: 3 } })
-    const keyed = toggleKeyframe(grouped, ['group'], 'scaleX', 0)
+    const keyed = setKeyframesAt(grouped, ['group'], 'size', 0, true)
     expect(reopened(keyed)).toEqual(keyed)
     const scaled = setProperties(keyed, ['group'], { scaleX: 2 }, SECOND)
     expect(clipOf(scaled, 'group').keyframes?.scaleY).toEqual(clipOf(scaled, 'group').keyframes?.scaleX)

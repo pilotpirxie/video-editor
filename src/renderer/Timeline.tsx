@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
+import { deleteZoom, setZoom } from '../editor/camera.js'
 import { locateClip } from '../editor/clips.js'
 import { changeKeyframe, removeKeyframe } from '../editor/properties.js'
 import { shortcutFor, shortcutHint } from '../editor/shortcuts.js'
 import { TRACK_HEIGHT } from '../editor/timelineView.js'
 import { addTrack, deleteTrack, moveTrack, renameTrack, setTrackFlag, type TrackFlag } from '../editor/tracks.js'
 import type { Easing, Track } from '../shared/project.js'
+import { frameDuration } from '../shared/time.js'
 import { useEditorState, useSession } from './context.js'
 import { Icon, IconButton, type IconName } from './icons.js'
 import { PopupMenu, type MenuItem } from './Menu.js'
-import { createTimelineController, type KeyframeRef, type TimelineController } from './timelineController.js'
+import { createTimelineController, type MenuTarget, type TimelineController } from './timelineController.js'
 import { isKeyForTheEditor } from './transport.js'
 
 const ZOOM_STEP = 1.5
@@ -18,10 +20,10 @@ type Point = {
   y: number
 }
 
-// The menu of the timeline, and the volume keyframe it was opened on, if any.
+// The menu of the timeline, and the volume keyframe or zoom it was opened on, if any.
 type OpenMenu = {
   at: Point
-  keyframe: KeyframeRef | undefined
+  target: MenuTarget | undefined
 }
 
 const EASINGS: readonly { easing: Easing; label: string }[] = [
@@ -31,6 +33,10 @@ const EASINGS: readonly { easing: Easing; label: string }[] = [
   { easing: 'easeInOut', label: 'Ease In and Out' },
   { easing: 'hold', label: 'Hold' },
 ]
+
+function easingItems(choose: (easing: Easing) => void): MenuItem[] {
+  return EASINGS.map(({ easing, label }) => ({ label, testId: `menu-easing-${easing}`, onSelect: () => choose(easing) }))
+}
 
 const FLAGS: readonly { flag: TrackFlag; icon: IconName; on: string; off: string }[] = [
   { flag: 'locked', icon: 'lock', on: 'Unlock Track', off: 'Lock Track' },
@@ -173,7 +179,7 @@ export function Timeline(): ReactElement {
     const overlay = overlayRef.current
     const headers = headersRef.current
     if (host === null || content === null || overlay === null || headers === null) return
-    const controller = createTimelineController({ host, content, overlay, headers }, session, (at, keyframe) => setMenu({ at, keyframe }))
+    const controller = createTimelineController({ host, content, overlay, headers }, session, (at, target) => setMenu({ at, target }))
     controllerRef.current = controller
     return () => controller.dispose()
   }, [session])
@@ -210,18 +216,21 @@ export function Timeline(): ReactElement {
   ]
 
   // The menu of a volume keyframe: how the volume gets from it to the next one, and a way to take it out.
-  const { keyframe } = menu ?? {}
-  const keyframeMenu: MenuItem[] =
-    keyframe === undefined
-      ? []
-      : [
-          ...EASINGS.map(({ easing, label }) => ({
-            label,
-            testId: `menu-easing-${easing}`,
-            onSelect: () => store.apply('Change Keyframe Easing', (project) => changeKeyframe(project, keyframe.clipId, 'volume', keyframe.index, { easing })),
-          })),
-          { label: 'Delete Keyframe', testId: 'menu-keyframe-delete', onSelect: () => store.apply('Delete Volume Keyframe', (project) => removeKeyframe(project, keyframe.clipId, 'volume', keyframe.index)) },
-        ]
+  // The menu of a zoom: how the camera moves to it, and a way to take it out.
+  const { target } = menu ?? {}
+  let targetMenu: MenuItem[] = []
+  if (target?.kind === 'volume') {
+    targetMenu = [
+      ...easingItems((easing) => store.apply('Change Keyframe Easing', (project) => changeKeyframe(project, target.clipId, 'volume', target.index, { easing }))),
+      { label: 'Delete Keyframe', testId: 'menu-keyframe-delete', onSelect: () => store.apply('Delete Volume Keyframe', (project) => removeKeyframe(project, target.clipId, 'volume', target.index)) },
+    ]
+  } else if (target?.kind === 'zoom') {
+    targetMenu = [
+      ...easingItems((easing) => store.apply('Change Zoom Easing', (project) => setZoom(project, target.index, { easing }, frameDuration(project.canvas.frameRate)))),
+      { label: 'Delete Zoom', testId: 'menu-zoom-delete', onSelect: () => store.apply('Delete Zoom', (project) => deleteZoom(project, target.index)) },
+    ]
+  }
+  const menuLabel = target?.kind === 'zoom' ? 'Zoom' : 'Volume keyframe'
 
   return (
     <div className="timeline">
@@ -250,7 +259,7 @@ export function Timeline(): ReactElement {
           <canvas ref={overlayRef} aria-label="Timeline" />
         </div>
       </div>
-      {menu !== undefined && <PopupMenu label={keyframe === undefined ? 'Clip' : 'Volume keyframe'} items={keyframe === undefined ? clipMenu : keyframeMenu} at={menu.at} onClose={closeMenu} />}
+      {menu !== undefined && <PopupMenu label={target === undefined ? 'Clip' : menuLabel} items={target === undefined ? clipMenu : targetMenu} at={menu.at} onClose={closeMenu} />}
     </div>
   )
 }

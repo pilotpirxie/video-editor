@@ -727,11 +727,12 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Add Clip')
   await driver.until(`${selector('clip-x')} !== null`, 'the properties of the new clip')
 
-  // Every field is as wide as its panel and sits under its own label.
+  // Every field, with the keyframe buttons at the end of its line, is as wide as its panel and sits under its own label.
   const sidebar = await driver.rect('right-sidebar')
   const field = await driver.rect('clip-x')
+  const lineEnd = await driver.rect('clip-x-next-keyframe')
   const labelBottom = await driver.page.evaluate(`document.querySelector('label[for="' + ${selector('clip-x')}.id + '"]').getBoundingClientRect().bottom`)
-  const fieldInset = { left: field.x - sidebar.x, right: sidebar.x + sidebar.width - field.x - field.width }
+  const fieldInset = { left: field.x - sidebar.x, right: sidebar.x + sidebar.width - lineEnd.x - lineEnd.width }
   const isLabelAbove = typeof labelBottom === 'number' && labelBottom <= field.y
   await driver.picture('properties')
 
@@ -1322,7 +1323,19 @@ async function testZoom(driver: Driver): Promise<UiTestReport> {
   await driver.drag(middle, { x: middle.x + pulled, y: middle.y })
   await driver.untilUndoLabel('Undo Move Clip')
   await driver.picture('zoom-handles')
+  const movedClip = await driver.savedProject('moved.json')
+
+  // A right click on a zoom offers how the camera moves to it, and a way to delete it.
+  await driver.rightClickAt(await lanePoint(driver, 0.8 * second))
+  await driver.page.click('menu-easing-hold')
+  await driver.untilUndoLabel('Undo Change Zoom Easing')
+  const menuEased = await driver.savedProject('menu-eased.json')
+  await driver.rightClickAt(await lanePoint(driver, 0.8 * second))
+  await driver.page.click('menu-zoom-delete')
+  await driver.untilUndoLabel('Undo Delete Zoom')
   return {
+    menuEased,
+    menuDeleted: await driver.savedProject('menu-deleted.json'),
     frameSamples: frameToFrame.length,
     frameToFrameP95: percentile(frameToFrame, P95),
     drawn,
@@ -1334,7 +1347,7 @@ async function testZoom(driver: Driver): Promise<UiTestReport> {
     afterDelete,
     canvasPerPixel: CANVAS_WIDTH / preview.width,
     pulled,
-    moved: await driver.savedProject('moved.json'),
+    moved: movedClip,
   }
 }
 
@@ -1526,10 +1539,10 @@ async function testSound(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await untilPrepared(driver)
   await driver.clickAt(await driver.timelinePoint(second / 2, 0, 1))
-  await driver.until(`${selector('volume-keyframe')} !== null`, 'the clip to be selected')
+  await driver.until(`${selector('clip-volume-keyframe')} !== null`, 'the clip to be selected')
 
   // A keyframe at the start holds the volume there; with one on the clip, a new volume further on makes the next.
-  await clickOn(driver, 'volume-keyframe')
+  await clickOn(driver, 'clip-volume-keyframe')
   await driver.untilUndoLabel('Undo Add Volume Keyframe')
   await seekOnRuler(driver, second, '00:00:01:00')
   await driver.typeInto('clip-volume', '50')
@@ -1569,6 +1582,53 @@ async function testSound(driver: Driver): Promise<UiTestReport> {
   return { keyed, cursorOverPoint, dragged, eased, deleted, offersFastSoundAtFirst, fast: await driver.savedProject('fast.json') }
 }
 
+// Keys a clip's place in Properties, moves it a second later so its motion path shows, drags a dot of the path, walks between the keyframes and keys its size.
+async function testKeyframes(driver: Driver): Promise<UiTestReport> {
+  const second = TICKS_PER_SECOND
+  await fullQualityFrame(driver, 0)
+  await driver.clickAt(await driver.timelinePoint(second / 2, 0, 1))
+  await driver.until(`${selector('clip-x-keyframe')} !== null`, 'the clip to be selected')
+
+  // X and Y are one set: the button on either keys both, and both light up.
+  await clickOn(driver, 'clip-y-keyframe')
+  await driver.untilUndoLabel('Undo Add Position Keyframe')
+  const keyed = await driver.savedProject('keyed.json')
+  const isXPressed = await isPressed(driver, 'clip-x-keyframe')
+
+  // A second later the clip still stands on the first dot; a drag from there moves the clip, which keys that moment.
+  await seekOnRuler(driver, second, '00:00:01:00')
+  await driver.drag(await onCanvas(driver, 320, 180), await onCanvas(driver, 420, 230))
+  await driver.untilUndoLabel('Undo Move Clip')
+  await driver.until(`${selector('motion-path')}?.dataset.dots === '2'`, 'a motion path with two dots')
+  const moved = await driver.savedProject('moved.json')
+
+  // The first dot is dragged on its own; the keyframe at the playhead stays where it is.
+  await driver.drag(centerOf(await driver.rect('path-point-0')), await onCanvas(driver, 200, 120))
+  await driver.untilUndoLabel('Undo Move Position Keyframe')
+  const dotMoved = await driver.savedProject('dot-moved.json')
+  await driver.picture('motion-path')
+
+  await clickOn(driver, 'clip-x-previous-keyframe')
+  await untilTimecode(driver, '00:00:00:00')
+  await clickOn(driver, 'clip-y-next-keyframe')
+  await untilTimecode(driver, '00:00:01:00')
+
+  // Width, height and scale are one set as well.
+  await clickOn(driver, 'clip-scale-keyframe')
+  await driver.untilUndoLabel('Undo Add Size Keyframe')
+  const sizePressed = [await isPressed(driver, 'clip-width-keyframe'), await isPressed(driver, 'clip-height-keyframe')]
+  const sized = await driver.savedProject('sized.json')
+
+  // With the place animated, a typed X keys the place at the playhead, Y with it; the button then takes both away again.
+  await seekOnRuler(driver, 1.5 * second, '00:00:01:15')
+  await driver.typeInto('clip-x', '500')
+  await driver.untilUndoLabel('Undo Move Clip')
+  const typed = await driver.savedProject('typed.json')
+  await clickOn(driver, 'clip-x-keyframe')
+  await driver.untilUndoLabel('Undo Remove Position Keyframe')
+  return { keyed, isXPressed, moved, dotMoved, sizePressed, sized, typed, removed: await driver.savedProject('removed.json') }
+}
+
 export const FEATURE_SCENARIOS: Record<string, Scenario> = {
   annotations: testAnnotations,
   'text-style': testTextStyle,
@@ -1579,6 +1639,7 @@ export const FEATURE_SCENARIOS: Record<string, Scenario> = {
   effects: testEffects,
   transitions: testTransitions,
   zoom: testZoom,
+  keyframes: testKeyframes,
   arrange: testArrange,
   controls: testControls,
   'controls-kept': testControlsKept,

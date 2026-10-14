@@ -1,8 +1,9 @@
 import type { MediaStates } from '../engine/resolve.js'
 import type { Size } from '../shared/exportPresets.js'
 import { MAX_CANVAS, MIN_CANVAS, valueAt, type AnimatableProperty, type Clip, type Crop, type Easing, type Keyframe, type Keyframes, type Project, type Transform } from '../shared/project.js'
-import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, TIMELINE_GRID, type FrameRate } from '../shared/time.js'
+import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, TIMELINE_GRID, frameAt, frameDuration, type FrameRate } from '../shared/time.js'
 import { editClips, hasSource, hasVolume, isCroppable, isVisual, locateClip, withFadesWithin } from './clips.js'
+import type { Point } from './geometry.js'
 import { neighbours, sourceDuration, timelineSpan, trimClip } from './moveTrim.js'
 
 function clampWhole(value: number, min: number, max: number): number {
@@ -24,7 +25,6 @@ export function setFrameRate(project: Project, frameRate: FrameRate): Project {
 
 const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 }
 const MAX_VOLUME = 2
-const ANIMATABLE: readonly AnimatableProperty[] = ['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity', 'cropLeft', 'cropTop', 'cropRight', 'cropBottom', 'volume']
 
 export type PropertyValues = Partial<Record<AnimatableProperty, number>>
 export type Fade = 'fadeIn' | 'fadeOut' | 'volumeFadeIn' | 'volumeFadeOut'
@@ -78,20 +78,99 @@ function withBaseValue(clip: Clip, property: AnimatableProperty, value: number):
   return { ...clip, crop: cropsNothing ? undefined : crop }
 }
 
-function withKeyframeAt(keyframes: readonly Keyframe[], time: number, value: number): Keyframe[] {
-  const existing = keyframes.find((keyframe) => keyframe.time === time)
-  if (existing !== undefined) return keyframes.map((keyframe) => (keyframe === existing ? { ...keyframe, value } : keyframe))
-  return [...keyframes, { time, value, easing: 'linear' as const }].sort((a, b) => a.time - b.time)
+// Properties that a drag on the canvas changes together are keyed together, so they pass through the same moments and a moving clip travels in straight lines.
+const KEYFRAME_SETS = {
+  position: ['x', 'y'],
+  size: ['scaleX', 'scaleY'],
+  rotation: ['rotation'],
+  opacity: ['opacity'],
+  crop: ['cropLeft', 'cropTop', 'cropRight', 'cropBottom'],
+  volume: ['volume'],
+} as const satisfies Record<string, readonly AnimatableProperty[]>
+
+export type KeyframeSet = keyof typeof KEYFRAME_SETS
+
+const ALL_SETS: readonly KeyframeSet[] = ['position', 'size', 'rotation', 'opacity', 'crop', 'volume']
+const PATH_STEPS = 16
+
+// The properties of a set that this kind of clip has.
+function propertiesOf(clip: Clip, set: KeyframeSet): AnimatableProperty[] {
+  const owned: AnimatableProperty[] = []
+  for (const property of KEYFRAME_SETS[set]) {
+    if (baseValue(clip, property) !== undefined) owned.push(property)
+  }
+  return owned
 }
 
-// A property that is already animated gets a keyframe at the given time, so the change is seen at once; setting only its resting value would be hidden behind the animation.
-function withProperty(clip: Clip, property: AnimatableProperty, value: number, time: number): Clip {
-  const current = propertyAt(clip, property, time)
-  const next = limited(property, value)
-  if (current === undefined || current === next) return clip
-  const keyframes = clip.keyframes?.[property]
-  if (keyframes === undefined) return withBaseValue(clip, property, next)
-  return { ...clip, keyframes: { ...clip.keyframes, [property]: withKeyframeAt(keyframes, localGridTime(clip, time), next) } }
+function isAnimated(clip: Clip, properties: readonly AnimatableProperty[]): boolean {
+  return properties.some((property) => clip.keyframes?.[property] !== undefined)
+}
+
+// The moment of a clip that a change at `time` keys: a keyframe already inside the frame that starts there, or else the playhead's own moment.
+// The playhead stops on frame starts, while a keyframe dragged on the timeline may lie between two.
+function keyTimeAt(clip: Clip, properties: readonly AnimatableProperty[], time: number, frameTicks: number): number {
+  const local = localGridTime(clip, time)
+  for (const property of properties) {
+    const inFrame = clip.keyframes?.[property]?.find((keyframe) => keyframe.time >= local && keyframe.time < local + frameTicks)
+    if (inFrame !== undefined) return inFrame.time
+  }
+  return local
+}
+
+// A new keyframe moves on as its partners at that moment do, so x and y, or the two scales of a group, keep one curve.
+function easingAt(clip: Clip, properties: readonly AnimatableProperty[], local: number): Easing {
+  for (const property of properties) {
+    const partner = clip.keyframes?.[property]?.find((keyframe) => keyframe.time === local)
+    if (partner !== undefined) return partner.easing
+  }
+  return 'linear'
+}
+
+function withKeyframeAt(keyframes: readonly Keyframe[], time: number, value: number, easing: Easing): Keyframe[] {
+  const existing = keyframes.find((keyframe) => keyframe.time === time)
+  if (existing !== undefined) return keyframes.map((keyframe) => (keyframe === existing ? { ...keyframe, value } : keyframe))
+  return [...keyframes, { time, value, easing }].sort((a, b) => a.time - b.time)
+}
+
+// Keys every property of a set at one moment of the clip: those given a value take it, the others hold the value they have there.
+function withSetKeyed(clip: Clip, properties: readonly AnimatableProperty[], values: PropertyValues, local: number): Clip {
+  const easing = easingAt(clip, properties, local)
+  let keyed = clip
+  for (const property of properties) {
+    const wanted = values[property]
+    const value = wanted === undefined ? propertyAt(clip, property, clip.start + local) : limited(property, wanted)
+    const list = keyed.keyframes?.[property] ?? []
+    const existing = list.find((keyframe) => keyframe.time === local)
+    if (value === undefined || existing?.value === value) continue
+    keyed = withKeyframeList(keyed, property, withKeyframeAt(list, local, value, easing))
+  }
+  return keyed
+}
+
+function withBaseValues(clip: Clip, properties: readonly AnimatableProperty[], values: PropertyValues, time: number): Clip {
+  let edited = clip
+  for (const property of properties) {
+    const wanted = values[property]
+    if (wanted === undefined) continue
+    const next = limited(property, wanted)
+    if (next !== propertyAt(clip, property, time)) edited = withBaseValue(edited, property, next)
+  }
+  return edited
+}
+
+// The properties of each set in which a change really changes a value.
+function changedSets(clip: Clip, values: PropertyValues, time: number): AnimatableProperty[][] {
+  const changed: AnimatableProperty[][] = []
+  for (const set of ALL_SETS) {
+    const properties = propertiesOf(clip, set)
+    let isChanged = false
+    for (const property of properties) {
+      const wanted = values[property]
+      if (wanted !== undefined && limited(property, wanted) !== propertyAt(clip, property, time)) isChanged = true
+    }
+    if (isChanged) changed.push(properties)
+  }
+  return changed
 }
 
 // The moment of a clip that a project time falls on, on the time grid and inside the clip.
@@ -106,13 +185,17 @@ function evenlyScaled(values: PropertyValues): PropertyValues {
   return scale === undefined ? values : { ...values, scaleX: scale, scaleY: scale }
 }
 
+// With anything the change touches animated, every set it changes is keyed at the playhead; otherwise the resting values change.
+// A corner drag changes size and position, a crop drag crop and position: keying only one of them would make the picture jump at its other keyframes.
 export function setProperties(project: Project, clipIds: readonly string[], values: PropertyValues, time: number): Project {
+  const frameTicks = frameDuration(project.canvas.frameRate)
   return editClips(project, new Set(clipIds), (clip) => {
     const wanted = clip.type === 'group' ? evenlyScaled(values) : values
+    const changed = changedSets(clip, wanted, time)
+    const isKeyed = changed.some((properties) => isAnimated(clip, properties))
     let edited = clip
-    for (const property of ANIMATABLE) {
-      const value = wanted[property]
-      if (value !== undefined) edited = withProperty(edited, property, value, time)
+    for (const properties of changed) {
+      edited = isKeyed ? withSetKeyed(edited, properties, wanted, keyTimeAt(edited, properties, time, frameTicks)) : withBaseValues(edited, properties, wanted, time)
     }
     return edited
   })
@@ -124,17 +207,6 @@ function withKeyframeList(clip: Clip, property: AnimatableProperty, list: readon
   return { ...clip, keyframes: isLeft ? keyframes : undefined }
 }
 
-// Puts a keyframe at the given time, holding the value the property has there, or takes away the one that is there.
-function withKeyframeToggled(clip: Clip, property: AnimatableProperty, time: number): Clip {
-  const current = propertyAt(clip, property, time)
-  if (current === undefined) return clip
-  const local = localGridTime(clip, time)
-  const list = clip.keyframes?.[property] ?? []
-  const existing = list.find((keyframe) => keyframe.time === local)
-  if (existing === undefined) return withKeyframeList(clip, property, withKeyframeAt(list, local, current))
-  return withoutKeyframe(clip, property, list, existing)
-}
-
 // When the last keyframe goes, the property keeps the value that keyframe had, so nothing jumps.
 function withoutKeyframe(clip: Clip, property: AnimatableProperty, list: readonly Keyframe[], removed: Keyframe): Clip {
   const remaining = list.filter((keyframe) => keyframe !== removed)
@@ -142,19 +214,87 @@ function withoutKeyframe(clip: Clip, property: AnimatableProperty, list: readonl
   return withKeyframeList(settled, property, remaining)
 }
 
-export function toggleKeyframe(project: Project, clipIds: readonly string[], property: AnimatableProperty, time: number): Project {
+function withoutKeyframesAt(clip: Clip, properties: readonly AnimatableProperty[], local: number): Clip {
+  let edited = clip
+  for (const property of properties) {
+    const list = edited.keyframes?.[property]
+    const removed = list?.find((keyframe) => keyframe.time === local)
+    if (list !== undefined && removed !== undefined) edited = withoutKeyframe(edited, property, list, removed)
+  }
+  return edited
+}
+
+// Keys a whole set at the playhead, holding the values it has there, or takes the set's keyframes in the playhead's frame away.
+export function setKeyframesAt(project: Project, clipIds: readonly string[], set: KeyframeSet, time: number, isKeyed: boolean): Project {
+  const frameTicks = frameDuration(project.canvas.frameRate)
   return editClips(project, new Set(clipIds), (clip) => {
-    const isGroupScale = clip.type === 'group' && (property === 'scaleX' || property === 'scaleY')
-    if (!isGroupScale) return withKeyframeToggled(clip, property, time)
-    // The two scales of a group are one number, so they are keyed together.
-    return withKeyframeToggled(withKeyframeToggled(clip, 'scaleX', time), 'scaleY', time)
+    const properties = propertiesOf(clip, set)
+    if (properties.length === 0) return clip
+    const local = keyTimeAt(clip, properties, time, frameTicks)
+    return isKeyed ? withSetKeyed(clip, properties, {}, local) : withoutKeyframesAt(clip, properties, local)
   })
 }
 
-// Whether the property of a clip has a keyframe at the given time.
-export function hasKeyframeAt(clip: Clip, property: AnimatableProperty, time: number): boolean {
-  const local = localGridTime(clip, time)
-  return clip.keyframes?.[property]?.some((keyframe) => keyframe.time === local) === true
+// Whether every property of the set that the clip has is keyed in the frame of the playhead.
+export function hasKeyframesAt(clip: Clip, set: KeyframeSet, time: number, frameTicks: number): boolean {
+  const properties = propertiesOf(clip, set)
+  const local = keyTimeAt(clip, properties, time, frameTicks)
+  return properties.length > 0 && properties.every((property) => clip.keyframes?.[property]?.some((keyframe) => keyframe.time === local) === true)
+}
+
+// The start of the nearest frame before or after the playhead's that holds a keyframe of the set on one of the clips.
+// A keyframe is reached on a frame where its clip is drawn, so one at the very end of a clip is reached on its last frame.
+export function nearestKeyframe(clips: readonly Clip[], set: KeyframeSet, time: number, direction: 1 | -1, frameTicks: number): number | undefined {
+  const current = frameAt(time, frameTicks)
+  let nearest: number | undefined
+  for (const clip of clips) {
+    const firstFrame = Math.ceil(clip.start / frameTicks)
+    const lastFrame = Math.ceil((clip.start + clip.duration) / frameTicks) - 1
+    for (const property of KEYFRAME_SETS[set]) {
+      for (const keyframe of clip.keyframes?.[property] ?? []) {
+        if (keyframe.time < 0 || keyframe.time > clip.duration) continue
+        const frame = Math.min(lastFrame, Math.max(firstFrame, frameAt(clip.start + keyframe.time, frameTicks)))
+        const isOnThatSide = direction === 1 ? frame > current : frame < current
+        const isCloser = nearest === undefined || Math.abs(frame - current) < Math.abs(nearest - current)
+        if (isOnThatSide && isCloser) nearest = frame
+      }
+    }
+  }
+  return nearest === undefined ? undefined : nearest * frameTicks
+}
+
+export type MotionPath = {
+  // Where the place of the clip goes over its length, in the units of its track.
+  line: Point[]
+  // One dot for each moment inside the clip that has a position keyframe, measured from the clip's start.
+  dots: { time: number; point: Point }[]
+}
+
+// The way the clip's place travels, sampled finely enough that eased moves, and x and y keyed at different moments, are drawn as they play.
+export function motionPath(clip: Clip): MotionPath | undefined {
+  if (clip.type === 'audio') return undefined
+  const keyframes = [...(clip.keyframes?.x ?? []), ...(clip.keyframes?.y ?? [])]
+  if (keyframes.length === 0) return undefined
+  const placeAt = (local: number): Point => ({
+    x: propertyAt(clip, 'x', clip.start + local) ?? clip.transform.x,
+    y: propertyAt(clip, 'y', clip.start + local) ?? clip.transform.y,
+  })
+
+  const keyTimes = new Set<number>()
+  for (const keyframe of keyframes) {
+    if (keyframe.time >= 0 && keyframe.time <= clip.duration) keyTimes.add(keyframe.time)
+  }
+  const times = [...new Set([0, ...keyTimes, clip.duration])].sort((a, b) => a - b)
+  const line: Point[] = []
+  for (let index = 1; index < times.length; index += 1) {
+    const from = times[index - 1] ?? 0
+    const to = times[index] ?? 0
+    for (let step = 0; step < PATH_STEPS; step += 1) line.push(placeAt(from + ((to - from) * step) / PATH_STEPS))
+  }
+  line.push(placeAt(clip.duration))
+
+  const dots = [...keyTimes].sort((a, b) => a - b).map((time) => ({ time, point: placeAt(time) }))
+  return { line, dots }
 }
 
 export type KeyframeChange = {

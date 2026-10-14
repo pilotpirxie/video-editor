@@ -19,7 +19,7 @@ import {
   type SizeTargets,
 } from '../editor/geometry.js'
 import { intoGroup } from '../editor/groups.js'
-import { propertyAt, setProperties, type PropertyValues } from '../editor/properties.js'
+import { motionPath, propertyAt, setProperties, type PropertyValues } from '../editor/properties.js'
 import { positionTargets, snapPosition, type Bounds } from '../editor/snapping.js'
 import { arrowSize } from '../engine/annotations.js'
 import { viewAt } from '../engine/camera.js'
@@ -35,6 +35,7 @@ import { LIBRARY_DRAG_EVENT, LIBRARY_DROP_EVENT, isLibraryDrag, type LibraryDrag
 const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 }
 const SNAP_RANGE_PIXELS = 8
 const HANDLE_PIXELS = 10
+const PATH_DOT_PIXELS = 8
 const ROTATE_HANDLE_OFFSET_PIXELS = 26
 const ROTATE_HANDLE_MAX_REACH = 0.35
 const MIN_BOX_PIXELS = 6
@@ -70,6 +71,8 @@ type Gesture =
   | { kind: 'rotate'; item: Shown; from: Point }
   | { kind: 'arrow'; item: Shown; moves: 'start' | 'end'; fixed: Point }
   | { kind: 'tail'; item: Shown }
+  // A dot of the motion path: the position keyframe at `time` of the open tracks, which was at `start` on the canvas.
+  | { kind: 'path'; item: Shown; time: number; from: Point; start: Point }
 
 type Guides = {
   x: number | undefined
@@ -268,6 +271,21 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
   const [only] = selected.length === 1 ? selected : []
   const editing = editingTextId === undefined ? undefined : locateClip(project, editingTextId)?.clip
   const editedText = editing?.type === 'text' || editing?.type === 'callout' ? editing : undefined
+  const onlyClip = only === undefined || editingTextId !== undefined ? undefined : locateClip(project, only.clipId)?.clip
+  const path = onlyClip === undefined ? undefined : motionPath(onlyClip)
+  // The path is that of the clip's place; a closed group's box lies off its place, so the path is drawn moved by as much.
+  const pathOffset = only === undefined ? NO_PIVOT : { x: only.box.centerX - only.transform.x, y: only.box.centerY - only.transform.y }
+
+  // Where a place in the open tracks is on the canvas.
+  function placeOnCanvas(place: Point): Point {
+    const placed = onCanvas(openFrame, { x: place.x, y: place.y, scaleX: 1, scaleY: 1, rotation: 0 })
+    return { x: placed.x, y: placed.y }
+  }
+
+  function shownOnPath(place: Point): Point {
+    const at = placeOnCanvas(place)
+    return { x: at.x + pathOffset.x, y: at.y + pathOffset.y }
+  }
 
   function pointOf(event: MouseEvent<SVGSVGElement>): Point {
     return pointOnCanvas(event, event.currentTarget, frame, pictureWidth)
@@ -336,6 +354,15 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
     if (only !== undefined && grabbed === 'tail') {
       store.begin('Move Callout Tail')
       gestureRef.current = { kind: 'tail', item: only }
+      return
+    }
+    const dot = grabbed === 'path-point' && event.target instanceof SVGElement ? path?.dots[Number(event.target.dataset.dot)] : undefined
+    // A dot under the middle of the clip is a press on the clip: moving the clip is what keys the moment of the playhead, and for a keyframe at the playhead the two are the same.
+    const dotAt = dot === undefined ? undefined : shownOnPath(dot.point)
+    const isUnderClip = only !== undefined && dotAt !== undefined && Math.hypot(dotAt.x - only.box.centerX, dotAt.y - only.box.centerY) < PATH_DOT_PIXELS * canvasPerPixel
+    if (only !== undefined && onlyClip !== undefined && dot !== undefined && !isUnderClip) {
+      store.begin('Move Position Keyframe')
+      gestureRef.current = { kind: 'path', item: only, time: onlyClip.start + dot.time, from: point, start: placeOnCanvas(dot.point) }
       return
     }
     if (only !== undefined && grabbed === 'rotate') {
@@ -424,6 +451,13 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
       return
     }
 
+    if (gesture.kind === 'path') {
+      const { item, time: keyTime } = gesture
+      const placed = { x: gesture.start.x + point.x - gesture.from.x, y: gesture.start.y + point.y - gesture.from.y }
+      store.update((current) => setProperties(current, [item.clipId], valuesFor(item, placed), keyTime))
+      return
+    }
+
     const { item } = gesture
     const middle = { x: item.box.centerX, y: item.box.centerY }
     if (gesture.kind === 'arrow') {
@@ -462,6 +496,8 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
   const minBox = MIN_BOX_PIXELS * canvasPerPixel
   const margin = MARGIN_PIXELS * canvasPerPixel
   const dropTarget = shown.find((item) => item.clipId === dropTargetId)
+  const shownLine = path?.line.map(shownOnPath)
+  const shownDots = path?.dots.map((dot) => shownOnPath(dot.point)) ?? []
 
   return (
     <svg
@@ -484,6 +520,23 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
       {dropTarget !== undefined && (
         <g transform={`translate(${dropTarget.box.centerX} ${dropTarget.box.centerY}) rotate(${dropTarget.box.rotation})`}>
           <rect className="selection-box" x={-dropTarget.box.width / 2} y={-dropTarget.box.height / 2} width={dropTarget.box.width} height={dropTarget.box.height} />
+        </g>
+      )}
+      {shownLine !== undefined && (
+        <g data-testid="motion-path" data-dots={shownDots.length}>
+          <polyline className="motion-path" points={shownLine.map((at) => `${at.x},${at.y}`).join(' ')} />
+          {shownDots.map((at, index) => (
+            <circle
+              key={index}
+              className="canvas-handle path-point"
+              data-handle="path-point"
+              data-dot={index}
+              data-testid={`path-point-${index}`}
+              cx={at.x}
+              cy={at.y}
+              r={(PATH_DOT_PIXELS * canvasPerPixel) / 2}
+            />
+          ))}
         </g>
       )}
       {selected.map((item) => {

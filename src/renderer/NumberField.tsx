@@ -16,6 +16,8 @@ type NumberFieldProps = {
   presets?: readonly number[]
   testId: string
   isDisabled?: boolean
+  // The keyframe buttons of an animatable value, at the end of the field's line.
+  keyframes?: ReactElement
   onBegin(): void
   onChange(value: number): void
   onCommit(): void
@@ -130,6 +132,56 @@ export function NumberField(props: NumberFieldProps): ReactElement {
     if (scrub?.hasMoved === true) finish()
   }
 
+  const box = (
+    <div className="field-box">
+      <input
+        ref={inputRef}
+        id={inputId}
+        className="field"
+        type="text"
+        inputMode="decimal"
+        role={presets === undefined ? undefined : 'combobox'}
+        aria-haspopup={presets === undefined ? undefined : 'listbox'}
+        aria-expanded={presets === undefined ? undefined : isListOpen}
+        data-testid={testId}
+        disabled={props.isDisabled}
+        placeholder={value === undefined ? 'Mixed' : undefined}
+        value={draft ?? value?.toFixed(decimals) ?? ''}
+        onChange={(event: ChangeEvent<HTMLInputElement>) => setDraftText(event.target.value)}
+        onKeyDown={onKeyDown}
+        onBlur={applyDraft}
+      />
+      {presets !== undefined && (
+        <button
+          type="button"
+          className="field-arrow"
+          tabIndex={-1}
+          aria-label={`${label}: ready-made values`}
+          data-testid={`${testId}-presets`}
+          disabled={props.isDisabled}
+          onPointerDown={(event) => {
+            // The list takes the focus as it opens; a press while it is open has already closed it.
+            event.preventDefault()
+            if (!isListOpen) setIsListOpen(true)
+          }}
+        >
+          <Icon name="chevronDown" />
+        </button>
+      )}
+      {presets !== undefined && isListOpen && (
+        <OptionList
+          label={label}
+          testId={testId}
+          choices={presets.map((preset) => ({ value: String(preset), label: String(preset) }))}
+          chosen={value === undefined ? undefined : String(Number(value.toFixed(decimals)))}
+          onPreview={previewPreset}
+          onChoose={choosePreset}
+          onClose={closePresets}
+        />
+      )}
+    </div>
+  )
+
   return (
     <div className="labelled">
       <label
@@ -143,53 +195,14 @@ export function NumberField(props: NumberFieldProps): ReactElement {
       >
         {label}
       </label>
-      <div className="field-box">
-        <input
-          ref={inputRef}
-          id={inputId}
-          className="field"
-          type="text"
-          inputMode="decimal"
-          role={presets === undefined ? undefined : 'combobox'}
-          aria-haspopup={presets === undefined ? undefined : 'listbox'}
-          aria-expanded={presets === undefined ? undefined : isListOpen}
-          data-testid={testId}
-          disabled={props.isDisabled}
-          placeholder={value === undefined ? 'Mixed' : undefined}
-          value={draft ?? value?.toFixed(decimals) ?? ''}
-          onChange={(event: ChangeEvent<HTMLInputElement>) => setDraftText(event.target.value)}
-          onKeyDown={onKeyDown}
-          onBlur={applyDraft}
-        />
-        {presets !== undefined && (
-          <button
-            type="button"
-            className="field-arrow"
-            tabIndex={-1}
-            aria-label={`${label}: ready-made values`}
-            data-testid={`${testId}-presets`}
-            disabled={props.isDisabled}
-            onPointerDown={(event) => {
-              // The list takes the focus as it opens; a press while it is open has already closed it.
-              event.preventDefault()
-              if (!isListOpen) setIsListOpen(true)
-            }}
-          >
-            <Icon name="chevronDown" />
-          </button>
-        )}
-        {presets !== undefined && isListOpen && (
-          <OptionList
-            label={label}
-            testId={testId}
-            choices={presets.map((preset) => ({ value: String(preset), label: String(preset) }))}
-            chosen={value === undefined ? undefined : String(Number(value.toFixed(decimals)))}
-            onPreview={previewPreset}
-            onChoose={choosePreset}
-            onClose={closePresets}
-          />
-        )}
-      </div>
+      {props.keyframes === undefined ? (
+        box
+      ) : (
+        <div className="field-row">
+          {box}
+          {props.keyframes}
+        </div>
+      )}
     </div>
   )
 }

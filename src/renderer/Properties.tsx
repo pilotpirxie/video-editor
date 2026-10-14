@@ -6,20 +6,22 @@ import { freeTrackId, hasMedia, hasSource, isCroppable, isVisual, makesSound, ne
 import { cropFromValue } from '../editor/geometry.js'
 import { moveClips } from '../editor/moveTrim.js'
 import {
-  hasKeyframeAt,
+  hasKeyframesAt,
+  nearestKeyframe,
   propertyAt,
   setCanvasSize,
   setDuration,
   setFade,
   setFrameRate,
+  setKeyframesAt,
   setLoop,
   setProperties,
   setSoundSwitches,
   setSourceStart,
   setSpeed,
   sharedValue,
-  toggleKeyframe,
   type Fade,
+  type KeyframeSet,
 } from '../editor/properties.js'
 import { setShapeStyle, type ShapeStyle } from '../editor/shapes.js'
 import { setTextStyle, type TextStyle } from '../editor/text.js'
@@ -127,6 +129,7 @@ const ALIGNMENTS: readonly { align: TextAlign; icon: IconName; label: string }[]
   { align: 'center', icon: 'alignCenter', label: 'Align centre' },
   { align: 'right', icon: 'alignRight', label: 'Align right' },
 ]
+const KEYFRAME_NAMES: Record<KeyframeSet, string> = { position: 'Position', size: 'Size', rotation: 'Rotation', opacity: 'Opacity', crop: 'Crop', volume: 'Volume' }
 
 type EditFieldProps = {
   label: string
@@ -138,11 +141,12 @@ type EditFieldProps = {
   step?: number
   decimals?: number
   presets?: readonly number[]
+  keyframes?: ReactElement
   edit(value: number): Edit
 }
 
 // A number field whose scrub, arrow keys, typed values and ready-made values all run as one undoable command.
-export function EditField({ label, testId, command, value, min, max, step, decimals, presets, edit }: EditFieldProps): ReactElement {
+export function EditField({ label, testId, command, value, min, max, step, decimals, presets, keyframes, edit }: EditFieldProps): ReactElement {
   const { store } = useSession()
   return (
     <NumberField
@@ -154,6 +158,7 @@ export function EditField({ label, testId, command, value, min, max, step, decim
       step={step}
       decimals={decimals}
       presets={presets}
+      keyframes={keyframes}
       onBegin={() => store.begin(command)}
       onChange={(next) => store.update(edit(next))}
       onCommit={store.commit}
@@ -1033,6 +1038,53 @@ function OpenGroupNote(): ReactElement {
   )
 }
 
+type KeyframeButtonsProps = {
+  // The selected clips that have the field.
+  clips: readonly Clip[]
+  set: KeyframeSet
+  testId: string
+}
+
+// The keyframe of a field's set at the playhead, and the way to the keyframes before and after it.
+// Only the clips the playhead is over are keyed: anywhere else the keyframe would land on the clip's edge.
+function KeyframeButtons({ clips, set, testId }: KeyframeButtonsProps): ReactElement {
+  const { store, transport } = useSession()
+  const time = usePosition((position) => position.time)
+  const frameTicks = useEditorState((state) => frameDuration(state.project.canvas.frameRate))
+  const name = KEYFRAME_NAMES[set]
+  const lowerName = name.toLowerCase()
+  const underPlayhead = clips.filter((clip) => time >= clip.start && time < clip.start + clip.duration)
+  const ids = underPlayhead.map((clip) => clip.id)
+  const isKeyed = underPlayhead.length > 0 && underPlayhead.every((clip) => hasKeyframesAt(clip, set, time, frameTicks))
+  const previous = nearestKeyframe(clips, set, time, -1, frameTicks)
+  const next = nearestKeyframe(clips, set, time, 1, frameTicks)
+
+  let label = `Add a ${lowerName} keyframe at the playhead`
+  if (isKeyed) label = `Remove the ${lowerName} keyframe at the playhead`
+  else if (underPlayhead.length === 0) label = `Move the playhead over the clip to key its ${lowerName}`
+
+  function jumpTo(target: number | undefined): void {
+    if (target === undefined) return
+    transport.pause()
+    transport.seek(target)
+  }
+
+  return (
+    <>
+      <IconButton icon="chevronLeft" label={`Previous ${lowerName} keyframe`} testId={`${testId}-previous-keyframe`} isDisabled={previous === undefined} onClick={() => jumpTo(previous)} />
+      <IconButton
+        icon="keyframe"
+        label={label}
+        testId={`${testId}-keyframe`}
+        isPressed={isKeyed}
+        isDisabled={underPlayhead.length === 0}
+        onClick={() => store.apply(isKeyed ? `Remove ${name} Keyframe` : `Add ${name} Keyframe`, (project) => setKeyframesAt(project, ids, set, time, !isKeyed))}
+      />
+      <IconButton icon="chevronRight" label={`Next ${lowerName} keyframe`} testId={`${testId}-next-keyframe`} isDisabled={next === undefined} onClick={() => jumpTo(next)} />
+    </>
+  )
+}
+
 function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const mediaStates = useEditorState((state) => state.mediaStates)
   const canvas = useEditorState((state) => state.project.canvas)
@@ -1054,9 +1106,6 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const soundingIds = sounding.map((clip) => clip.id)
   const stretched = sounding.filter(hasSource)
   const fast = stretched.filter((clip) => clip.speedPercent > FAST_SOUND_ABOVE_PERCENT)
-  // With some of the clips keyed at the playhead and some not, the button first keys the rest.
-  const unkeyedIds = sounding.filter((clip) => !hasKeyframeAt(clip, 'volume', time)).map((clip) => clip.id)
-  const isVolumeKeyed = sounding.length > 0 && unkeyedIds.length === 0
   // A group is as large as its members make it, so it has a scale but no width or height to type.
   const hasSize = visual.some((clip) => clip.type !== 'group')
   const blurs = clips.filter(isBlur)
@@ -1210,10 +1259,54 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
       )}
       {visual.length > 0 && (
         <Group title="Transform" icon="move" actions={<IconButton icon="link" label="Keep the aspect ratio" testId="aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />}>
-          <EditField label="X" testId="clip-x" command="Move Clip" value={shared('x')} min={-MAX_POSITION} max={MAX_POSITION} decimals={1} edit={set('x')} />
-          <EditField label="Y" testId="clip-y" command="Move Clip" value={shared('y')} min={-MAX_POSITION} max={MAX_POSITION} decimals={1} edit={set('y')} />
-          {hasSize && <EditField label="Width" testId="clip-width" command="Resize Clip" value={sizeOf('width')} min={0} max={MAX_POSITION} decimals={1} edit={setSide('width')} />}
-          {hasSize && <EditField label="Height" testId="clip-height" command="Resize Clip" value={sizeOf('height')} min={0} max={MAX_POSITION} decimals={1} edit={setSide('height')} />}
+          <EditField
+            label="X"
+            testId="clip-x"
+            command="Move Clip"
+            value={shared('x')}
+            min={-MAX_POSITION}
+            max={MAX_POSITION}
+            decimals={1}
+            keyframes={<KeyframeButtons clips={visual} set="position" testId="clip-x" />}
+            edit={set('x')}
+          />
+          <EditField
+            label="Y"
+            testId="clip-y"
+            command="Move Clip"
+            value={shared('y')}
+            min={-MAX_POSITION}
+            max={MAX_POSITION}
+            decimals={1}
+            keyframes={<KeyframeButtons clips={visual} set="position" testId="clip-y" />}
+            edit={set('y')}
+          />
+          {hasSize && (
+            <EditField
+              label="Width"
+              testId="clip-width"
+              command="Resize Clip"
+              value={sizeOf('width')}
+              min={0}
+              max={MAX_POSITION}
+              decimals={1}
+              keyframes={<KeyframeButtons clips={visual} set="size" testId="clip-width" />}
+              edit={setSide('width')}
+            />
+          )}
+          {hasSize && (
+            <EditField
+              label="Height"
+              testId="clip-height"
+              command="Resize Clip"
+              value={sizeOf('height')}
+              min={0}
+              max={MAX_POSITION}
+              decimals={1}
+              keyframes={<KeyframeButtons clips={visual} set="size" testId="clip-height" />}
+              edit={setSide('height')}
+            />
+          )}
           <EditField
             label="Scale %"
             testId="clip-scale"
@@ -1223,6 +1316,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
             max={MAX_SCALE_PERCENT}
             decimals={1}
             presets={SCALES}
+            keyframes={<KeyframeButtons clips={visual} set="size" testId="clip-scale" />}
             edit={(percent) => (project) => setProperties(project, ids, { scaleX: percent / PERCENT, scaleY: percent / PERCENT }, time)}
           />
           <EditField
@@ -1234,6 +1328,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
             max={MAX_ROTATION}
             decimals={1}
             presets={ROTATIONS}
+            keyframes={<KeyframeButtons clips={visual} set="rotation" testId="clip-rotation" />}
             edit={set('rotation')}
           />
         </Group>
@@ -1250,6 +1345,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
               min={0}
               max={MAX_POSITION}
               decimals={1}
+              keyframes={<KeyframeButtons clips={croppable} set="crop" testId={`clip-crop-${side}`} />}
               edit={setCrop(side, property)}
             />
           ))}
@@ -1331,6 +1427,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
             min={0}
             max={PERCENT}
             presets={OPACITIES}
+            keyframes={<KeyframeButtons clips={visual} set="opacity" testId="clip-opacity" />}
             edit={(percent) => set('opacity')(percent / PERCENT)}
           />
           {fadeField('Fade in s', 'fadeIn', visual.map((clip) => clip.fadeIn))}
@@ -1360,19 +1457,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
         </Group>
       )}
       {sounding.length > 0 && (
-        <Group
-          title="Volume"
-          icon="speaker"
-          actions={
-            <IconButton
-              icon="keyframe"
-              label={isVolumeKeyed ? 'Remove the volume keyframe at the playhead' : 'Add a volume keyframe at the playhead'}
-              testId="volume-keyframe"
-              isPressed={isVolumeKeyed}
-              onClick={() => store.apply(isVolumeKeyed ? 'Remove Volume Keyframe' : 'Add Volume Keyframe', (project) => toggleKeyframe(project, unkeyedIds.length > 0 ? unkeyedIds : soundingIds, 'volume', time))}
-            />
-          }
-        >
+        <Group title="Volume" icon="speaker">
           <EditField
             label="Volume %"
             testId="clip-volume"
@@ -1381,6 +1466,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
             min={0}
             max={2 * PERCENT}
             presets={VOLUMES}
+            keyframes={<KeyframeButtons clips={sounding} set="volume" testId="clip-volume" />}
             edit={(percent) => (project) => setProperties(project, soundingIds, { volume: percent / PERCENT }, time)}
           />
           {fadeField('Fade in s', 'volumeFadeIn', sounding.map((clip) => clip.volumeFadeIn))}

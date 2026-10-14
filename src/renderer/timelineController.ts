@@ -79,11 +79,8 @@ type Point = {
   y: number
 }
 
-// One volume keyframe of a clip, by its place among them.
-export type KeyframeRef = {
-  clipId: string
-  index: number
-}
+// What a right click opened a menu on: a volume keyframe of a clip or a zoom of the camera, each by its place among the others.
+export type MenuTarget = { kind: 'volume'; clipId: string; index: number } | { kind: 'zoom'; index: number }
 
 // What something held over the timeline would change, and where that is shown.
 type HeldDrop =
@@ -143,8 +140,8 @@ export function isLibraryDrag(event: Event): event is CustomEvent<LibraryDragDet
 }
 
 // Draws the timeline and turns pointer input into commands. React only supplies the elements; nothing here re-renders components while dragging, scrolling or playing.
-// `openMenu` is told which volume keyframe was pressed, when the press was on one.
-export function createTimelineController(elements: TimelineElements, session: Session, openMenu: (at: Point, keyframe: KeyframeRef | undefined) => void): TimelineController {
+// `openMenu` is told which volume keyframe or zoom was pressed, when the press was on one.
+export function createTimelineController(elements: TimelineElements, session: Session, openMenu: (at: Point, target: MenuTarget | undefined) => void): TimelineController {
   const { host, content, overlay, headers } = elements
   const { store, transport, thumbnails, actions } = session
   const contentContext = contextOf(content)
@@ -815,12 +812,21 @@ export function createTimelineController(elements: TimelineElements, session: Se
   function onContextMenu(event: MouseEvent): void {
     event.preventDefault()
     const point = pointOf(event)
+    const at = { x: event.clientX, y: event.clientY }
     const { project, selection } = store.getState()
+    // On the camera lane only a zoom has a menu.
+    if (point.y >= RULER_HEIGHT && point.y < TRACKS_TOP) {
+      const zoomHit = hitZoom(project.camera ?? [], view, point.x)
+      if (zoomHit === undefined) return
+      store.selectZoom(zoomHit.index)
+      openMenu(at, { kind: 'zoom', index: zoomHit.index })
+      return
+    }
     const hit = hitClip(project.tracks, inOrder, view, point.x, point.y)
     const isOpen = hit !== undefined && !hit.track.locked
     if (isOpen && !selection.includes(hit.clip.id)) store.select([hit.clip.id])
     const volumePoint = isOpen ? volumePointOn(hit, point) : undefined
-    openMenu({ x: event.clientX, y: event.clientY }, volumePoint === undefined || hit === undefined ? undefined : { clipId: hit.clip.id, index: volumePoint.index })
+    openMenu(at, volumePoint === undefined || hit === undefined ? undefined : { kind: 'volume', clipId: hit.clip.id, index: volumePoint.index })
   }
 
   // A double click on a group goes into it.

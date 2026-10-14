@@ -13,8 +13,11 @@ callouts, arrows and lines (T-54), text styling (T-55), animation presets (T-56)
 (T-57), sound that follows the speed of its clip (T-58) and volume keyframes (T-59), again
 with their controls: the Annotations tab, handles for an arrow's ends and a bubble's tail,
 the text and animation fields in Properties, groups that open on a double click, and volume
-points on the waveform. The end-to-end run of T-47 with a new user on the 4 GB reference Mac
-is still to be done by hand.
+points on the waveform. From group 4 there are keyframe buttons on every animatable field in
+Properties (T-65), the motion path of a keyframed clip on the canvas with dots that drag its
+position keyframes (T-68), and a right-click menu on the zooms of the camera lane (T-67). X and
+Y, the width, height and scale, and the four crop sides are each keyed as one. The end-to-end
+run of T-47 with a new user on the 4 GB reference Mac is still to be done by hand.
 
 To see the new features at once, open `test/projects/demo-zoom-effects.json` with File, Open.
 
@@ -31,7 +34,7 @@ FFprobe binaries into `vendor/ffmpeg` and checks their SHA-256.
 | `npm run lint` | Unused files, exports and dependencies (knip) and duplicated code (jscpd); any finding fails |
 | `npm run test:unit` | Unit tests (time, project format, resolver, mixer, FFmpeg jobs, probe, decoding, caches, editing commands) |
 | `npm run test:engine` | Builds the app and tests it for real: golden images, preview/export parity, export to every format, export speed and memory, the harness window, split and hit-test parity, and pixels worked out by hand for the camera zoom, every transition, blur, pixelate, highlight, spotlight, each effect, callouts, arrows, styled text and groups |
-| `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents, crash recovery, transport keys, fades, text, animated images, relink, the export dialog and how it holds the window, arranging by dragging (landing outline, group moves across tracks, crop fields), annotations, callouts and arrows, text styling, animation presets, groups (made, edited from the inside, taken apart), volume keyframes and the sound of fast clips, effects, transitions and zoom-and-pan (added, changed and removed by mouse and in Properties), the controls (drop-down lists, groups, media tiles, wide sidebars, timeline zoom-out), and the responsiveness budgets on a 4,096-clip project |
+| `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents, crash recovery, transport keys, fades, text, animated images, relink, the export dialog and how it holds the window, arranging by dragging (landing outline, group moves across tracks, crop fields), annotations, callouts and arrows, text styling, animation presets, groups (made, edited from the inside, taken apart), volume keyframes and the sound of fast clips, keyframes from Properties and the motion path, effects, transitions and zoom-and-pan (added, changed and removed by mouse, in Properties and from the lane's menu), the controls (drop-down lists, groups, media tiles, wide sidebars, timeline zoom-out), and the responsiveness budgets on a 4,096-clip project |
 | `npm test` | All of the above |
 | `npm run test:acceptance` | Builds a ten-minute tutorial through the editor window and exports it at 1080p; takes several minutes and is not part of `npm test` |
 | `npm run dist` | Builds `release/Video Editor-<version>-arm64.dmg` |
