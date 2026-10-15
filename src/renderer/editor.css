@@ -152,9 +152,8 @@
   overflow: auto;
 }
 
-/* Said over the middle of the canvas and of the tracks (below the ruler and the camera lane) while they are empty. Drops pass through to what is beneath. */
-.canvas-hint,
-.timeline-hint {
+/* Said over the middle of the canvas while it is empty. Drops pass through to what is beneath. */
+.canvas-hint {
   position: absolute;
   inset: 0;
   display: flex;
@@ -195,6 +194,11 @@
   border-top: 1px solid var(--divider);
   background: var(--panel-background);
   container-type: inline-size;
+}
+
+.timecodes {
+  flex: none;
+  white-space: nowrap;
 }
 
 .timecode.total {
@@ -282,6 +286,7 @@
   padding: 0 var(--space-1) 0 var(--space-2);
   border-bottom: 1px solid var(--divider);
   background: var(--raised-surface);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%);
 }
 
 .track-grip {
@@ -312,6 +317,34 @@
   inset: 0;
   width: 100%;
   height: 100%;
+}
+
+/* Scrolls the tracks sideways for a mouse without a sideways wheel. It starts under the canvases: the track headers are 190px wide with a 1px edge.
+   Styling it keeps it shown, as macOS otherwise hides scroll bars until something scrolls. */
+.timeline-scrollbar {
+  flex: none;
+  margin-left: 191px;
+  overflow-x: scroll;
+  overflow-y: hidden;
+}
+
+.timeline-scrollbar > div {
+  height: 1px;
+}
+
+.timeline-scrollbar::-webkit-scrollbar {
+  height: 10px;
+  background: var(--window-background);
+}
+
+.timeline-scrollbar::-webkit-scrollbar-thumb {
+  border: 2px solid var(--window-background);
+  border-radius: 5px;
+  background: var(--hover-surface);
+}
+
+.timeline-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--divider);
 }
 
 /* The four tabs of the library look alike: a row of tools, one line of help, then the items as rows or as tiles. */
@@ -387,6 +420,7 @@
 /* Selected files get a green frame round the picture, which neither hover nor the focus ring looks like. */
 .library-item.selected {
   background: var(--raised-surface);
+  box-shadow: var(--raised-edge);
 }
 
 .library-item.selected .library-thumbnail {
@@ -399,6 +433,7 @@
 }
 
 .library-thumbnail {
+  position: relative;
   flex: none;
   display: flex;
   align-items: center;
@@ -407,8 +442,21 @@
   height: 32px;
   border-radius: var(--space-1);
   background: var(--raised-surface);
+  box-shadow: var(--sunken-edge);
   color: var(--text-secondary);
   overflow: hidden;
+}
+
+/* The share already prepared sits on the picture itself, which is dimmed until the file is ready. */
+.library-thumbnail.preparing > :not(.thumbnail-progress) {
+  opacity: 0.45;
+}
+
+.thumbnail-progress {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 
 .library-poster,
@@ -604,6 +652,14 @@
 
 .look-soft {
   filter: blur(1.2px);
+}
+
+.look-graded {
+  filter: sepia(0.35) saturate(1.3) contrast(1.1) hue-rotate(-10deg);
+}
+
+.look-fill {
+  filter: blur(1.5px) brightness(0.7);
 }
 
 .look-shadow {

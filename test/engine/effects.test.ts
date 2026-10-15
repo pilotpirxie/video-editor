@@ -226,8 +226,88 @@ describe('effects', () => {
   })
 
   it('matches the golden image of all effects', async () => {
-    const pictures = await renderFrames('16-effects', { via: 'paused', frames: [0, 30] })
+    const pictures = await renderFrames('16-effects', { via: 'paused', frames: [0, 30, 60, 90] })
     await expectGolden(ffmpeg, 'effects-720p', pictureAt(pictures, 0))
     await expectGolden(ffmpeg, 'effects-colour-720p', pictureAt(pictures, 1))
+    await expectGolden(ffmpeg, 'effects-graded-720p', pictureAt(pictures, 2))
+    await expectGolden(ffmpeg, 'effects-blur-fill-720p', pictureAt(pictures, 3))
+  })
+})
+
+describe('looks, sharpening and blur fills', () => {
+  const NO_LOOK: Effect = {
+    type: 'look',
+    strength: 1,
+    exposure: 0,
+    contrast: 0,
+    highlights: 0,
+    shadows: 0,
+    temperature: 0,
+    tint: 0,
+    saturation: 0,
+    fade: 0,
+    shadowColor: '#1F6F8B',
+    shadowAmount: 0,
+    highlightColor: '#F2A35E',
+    highlightAmount: 0,
+  }
+  const PORTRAIT = { width: 360, height: 640 }
+  const FILL: Effect = { type: 'blurFill', strength: 40, darken: 0.3 }
+  // Red darkened by the fill: 255 × 0.7.
+  const DARK_RED = { red: 179, green: 0, blue: 0 }
+  // The green-screen card, 320 wide and drawn at full size around 320, has its magenta subject from 100 to 220 of its width.
+  const SUBJECT_LEFT = 260
+
+  function screenTile(effects: Effect[]): Clip[][] {
+    return [[WHITE_GROUND], [imageOf('image-green-screen.png', 'tile', FIRST_SECOND, at(320, 180), effects.length === 0 ? {} : { effects })]]
+  }
+
+  async function portraitFrame(name: string, tracks: readonly Clip[][]): Promise<Picture> {
+    return pictureAt(await renderProject(scratch, name, projectOfTracks(PORTRAIT, tracks), { via: 'paused', frames: [0] }), 0)
+  }
+
+  it('leaves the picture untouched by a look that changes nothing and by sharpening of no amount', async () => {
+    const plain = await frameOf('ungraded', screenTile([]))
+    expect(sameBytes(plain, await frameOf('no-look', screenTile([NO_LOOK])))).toBe(true)
+    expect(sameBytes(plain, await frameOf('look-of-no-strength', screenTile([{ ...NO_LOOK, exposure: 1, contrast: 0.5, fade: 1, strength: 0 }])))).toBe(true)
+    expect(sameBytes(plain, await frameOf('no-sharpening', screenTile([{ type: 'sharpen', amount: 0, radius: 2 }])))).toBe(true)
+  })
+
+  it('darkens by the exposure and warms by the temperature', async () => {
+    const white = imageOf('image-white.png', 'white', FIRST_SECOND, at(320, 180), { effects: [{ ...NO_LOOK, exposure: -1, temperature: 1 }] })
+    const picture = await frameOf('warm-look', [[white]])
+    // Half as bright, with red raised and blue lowered by 15% around the same brightness.
+    expectPixel(picture, 320, 180, { red: 144, green: 125, blue: 106 })
+  })
+
+  it('sharpens an edge and leaves flat colour as it is', async () => {
+    const plain = await frameOf('unsharpened', screenTile([]))
+    const sharp = await frameOf('sharpened', screenTile([{ type: 'sharpen', amount: 2, radius: 2 }]))
+    const edge = { x: SUBJECT_LEFT - 1, y: 180 }
+    expect(pixelAt(sharp, edge.x, edge.y).green).toBeGreaterThan(pixelAt(plain, edge.x, edge.y).green + 10)
+    expectPixel(sharp, 320, 180, pixelAt(plain, 320, 180), 0)
+    expectPixel(sharp, 180, 180, pixelAt(plain, 180, 180), 0)
+  })
+
+  it('fills the canvas around a clip with its picture, blurred and darkened', async () => {
+    const red = imageOf('image-red.png', 'red', FIRST_SECOND, at(180, 320, 1.125), { effects: [FILL] })
+    const picture = await portraitFrame('blur-fill', [[red]])
+    expectPixel(picture, 180, 320, RED, 0)
+    for (const [x, y] of [
+      [180, 20],
+      [2, 2],
+      [357, 637],
+    ] as const) {
+      expectPixel(picture, x, y, DARK_RED, 2)
+    }
+  })
+
+  it('fades a clip and its fill as one picture', async () => {
+    const ground = imageOf('image-white.png', 'ground', FIRST_SECOND, at(180, 320, 4))
+    const red = imageOf('image-red.png', 'red', FIRST_SECOND, at(180, 320, 1.125), { opacity: 0.5, effects: [FILL] })
+    const picture = await portraitFrame('blur-fill-faded', [[ground], [red]])
+    // Half of red over white: the fill beneath the clip does not show through it.
+    expectPixel(picture, 180, 320, { red: 255, green: 128, blue: 128 })
+    expectPixel(picture, 180, 20, { red: 217, green: 128, blue: 128 }, 2)
   })
 })

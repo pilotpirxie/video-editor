@@ -30,7 +30,7 @@ import {
   type UiTestReport,
   untilWindowCount,
 } from './uiDriver.js'
-import { FEATURE_SCENARIOS, framesShown, seekDelays, splitFirstTrackAtOneSecond, untilPrepared } from './uiScenarios.js'
+import { FEATURE_SCENARIOS, framesShown, pick, seekDelays, splitFirstTrackAtOneSecond, untilPrepared } from './uiScenarios.js'
 
 const AUTOSAVE_TIMEOUT_MS = 20_000
 const MS_PER_SECOND = 1000
@@ -175,8 +175,8 @@ async function testCanvas(driver: Driver): Promise<UiTestReport> {
 
   await driver.typeInto('clip-opacity', '50')
   await driver.untilUndoLabel('Undo Change Opacity')
-  await driver.typeInto('clip-fadeIn', '0.5')
-  await driver.untilUndoLabel('Undo Change Fade')
+  await pick(driver, 'clip-in', 'fade')
+  await driver.untilUndoLabel('Undo Change Clip In')
   const final = await driver.savedProject('canvas-final.json')
 
   await driver.clickAt(await at(630, 350), ['shift'])
@@ -533,10 +533,18 @@ const SCENARIOS: Record<string, Scenario> = {
   ...FEATURE_SCENARIOS,
 }
 
+// Properties starts with only Transform and Timing unfolded. The scenarios work in the other groups as someone would who unfolded them once;
+// `controls` looks at the folding itself. Set before anything is selected, so the groups are read as they first show.
+const GROUPS_TO_UNFOLD = ['Crop', 'Group', 'Callout', 'Arrow', 'Text', 'Blur', 'Highlight', 'Opacity', 'In and out', 'Volume']
+const SCENARIOS_WITH_GROUPS_AS_AT_FIRST = new Set(['controls', 'controls-kept'])
+
 export async function runUiTest(window: BrowserWindow, options: UiTestOptions): Promise<UiTestReport> {
   const scenario = SCENARIOS[options.scenario]
   if (scenario === undefined) throw new PageError(`There is no UI test "${options.scenario}"; use one of ${Object.keys(SCENARIOS).join(', ')}`)
   const driver = await attachedDriver(window, options)
+  if (!SCENARIOS_WITH_GROUPS_AS_AT_FIRST.has(options.scenario)) {
+    await driver.page.evaluate(`for (const title of ${JSON.stringify(GROUPS_TO_UNFOLD)}) sessionStorage.setItem('group-' + title, 'open')`)
+  }
   try {
     return await scenario(driver)
   } finally {

@@ -1,6 +1,6 @@
 // The programs the compositor draws with. Positions are output pixels with the first row at the top; `vLocal` is the place inside the box being drawn, measured from its centre.
 
-// How many effects one draw can apply. A clip has each kind at most once, two of the eleven kinds are not applied here, and a group adds its own effects to those of its members.
+// How many effects one draw can apply. A clip has each kind at most once, four of the fourteen kinds are not applied here, and a group adds its own effects to those of its members.
 export const MAX_OPS = 12
 // Samples on each side of the centre of a blur.
 export const BLUR_TAPS = 7
@@ -14,6 +14,7 @@ export const OP_SEPIA = 6
 export const OP_INVERT = 7
 export const OP_TINT = 8
 export const OP_VIGNETTE = 9
+export const OP_LOOK = 10
 
 export const SOURCE_PICTURE = 0
 export const SOURCE_ALPHA_BELOW = 1
@@ -64,6 +65,7 @@ uniform int uOpCount;
 uniform int uOpKind[MAX_OPS];
 uniform vec4 uOpA[MAX_OPS];
 uniform vec4 uOpB[MAX_OPS];
+uniform vec4 uOpC[MAX_OPS];
 uniform float uRadius;
 uniform vec2 uTint;
 in vec2 vLocal;
@@ -110,6 +112,7 @@ void main() {
     int kind = uOpKind[index];
     vec4 a = uOpA[index];
     vec4 b = uOpB[index];
+    vec4 c = uOpC[index];
     if (kind == ${OP_COLOR_ADJUST}) {
       vec3 adjusted = (straight(color) - 0.5) * (1.0 + a.y) + 0.5 + a.x;
       adjusted = clamp(mix(vec3(dot(adjusted, LUMA)), adjusted, 1.0 + a.z), 0.0, 1.0);
@@ -148,6 +151,15 @@ void main() {
       // 0 in the middle of the box, 1 in its corners.
       float away = length(vLocal / uHalfSize) * 0.70710678;
       color.rgb *= 1.0 - a.x * smoothstep(a.y, a.y + VIGNETTE_FALLOFF, away);
+    } else if (kind == ${OP_LOOK}) {
+      // a: gain and contrast, b: lift and saturation, c: how much the shadows and the highlights are brightened.
+      vec3 graded = straight(color) * a.rgb;
+      float light = dot(graded, LUMA);
+      graded *= 1.0 + c.x * (1.0 - smoothstep(0.0, 0.5, light)) + c.y * smoothstep(0.5, 1.0, light);
+      graded = (graded - 0.5) * (1.0 + a.w) + 0.5;
+      graded = mix(vec3(dot(graded, LUMA)), graded, 1.0 + b.w);
+      graded = b.rgb + graded * (1.0 - b.rgb);
+      color.rgb = clamp(graded, 0.0, 1.0) * color.a;
     }
   }
 
@@ -166,6 +178,7 @@ uniform vec2 uShift;
 uniform float uLevel;
 uniform float uWeights[TAPS + 1];
 uniform vec4 uShadow;
+uniform float uGain;
 in vec2 vLocal;
 out vec4 outColor;
 void main() {
@@ -176,7 +189,36 @@ void main() {
     sum += (textureLod(uTexture, at + away, uLevel) + textureLod(uTexture, at - away, uLevel)) * uWeights[tap];
   }
   // A shadow is the blurred shape of the picture, filled with one colour.
-  outColor = uShadow.a > 0.0 ? vec4(uShadow.rgb, 1.0) * (sum.a * uShadow.a) : sum;
+  outColor = uShadow.a > 0.0 ? vec4(uShadow.rgb, 1.0) * (sum.a * uShadow.a) : vec4(sum.rgb * uGain, sum.a);
+}`
+
+// An unsharp mask: each pixel is pushed away from the mean of the pixels around it. Both are taken as straight colour, so the transparent pixels around a clip do not brighten its edge.
+export const SHARPEN_SHADER = `#version 300 es
+precision highp float;
+uniform sampler2D uTexture;
+uniform vec2 uTexel;
+uniform float uSpacing;
+uniform float uLevel;
+uniform float uAmount;
+in vec2 vLocal;
+out vec4 outColor;
+vec4 near(vec2 at, float x, float y) {
+  return textureLod(uTexture, at + vec2(x, y) * uSpacing * uTexel, uLevel);
+}
+void main() {
+  vec4 middle = texelFetch(uTexture, ivec2(gl_FragCoord.xy), 0);
+  if (middle.a <= 0.0) {
+    outColor = middle;
+    return;
+  }
+  vec2 at = gl_FragCoord.xy * uTexel;
+  // A 3 × 3 bell: the middle counts 4, each side 2 and each corner 1.
+  vec4 around = near(at, 0.0, 0.0) * 4.0;
+  around += (near(at, 1.0, 0.0) + near(at, -1.0, 0.0) + near(at, 0.0, 1.0) + near(at, 0.0, -1.0)) * 2.0;
+  around += near(at, 1.0, 1.0) + near(at, -1.0, 1.0) + near(at, 1.0, -1.0) + near(at, -1.0, -1.0);
+  vec3 plain = middle.rgb / middle.a;
+  vec3 mean = around.rgb / around.a;
+  outColor = vec4(clamp(plain + uAmount * (plain - mean), 0.0, 1.0) * middle.a, middle.a);
 }`
 
 export const SHAPE_SHADER = `#version 300 es

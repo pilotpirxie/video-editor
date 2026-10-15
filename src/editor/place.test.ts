@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { MEDIA_STATES, SAMPLE_MEDIA, SECOND, STICKER_MEDIA, VIDEO_INFO, VIDEO_MEDIA, audioClip, clipIds, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
+import { MEDIA_STATES, SAMPLE_MEDIA, SECOND, STICKER_MEDIA, VIDEO_INFO, VIDEO_MEDIA, audioClip, clipIds, clipOf, groupClip, projectOf, reopened, textClip, track, videoClip } from '../../test/fixtures.js'
 import type { MediaInfo } from '../shared/mediaProtocol.js'
 import type { MediaRef } from '../shared/project.js'
-import { canvasForFirstClip, clipForMedia, dropMedia, mediaFileName, mediaUses, relinkedMedia, unlinkedMedia, type MediaDrop } from './place.js'
+import { canvasForFirstClip, clipForMedia, dropMedia, mediaFileName, mediaUses, relinkedMedia, unlinkedMedia, withoutMedia, type MediaDrop } from './place.js'
 
 const CANVAS = projectOf([]).canvas
 const NEW_TRACK = { id: 'new-track', name: 'Track' }
@@ -207,3 +207,18 @@ describe('media that moved', () => {
   })
 })
 
+describe('withoutMedia', () => {
+  it('takes the files out with every clip that uses them, inside groups and on locked tracks too', () => {
+    const project = projectOf([
+      track('t1', [videoClip('v', 0, SECOND), audioClip('m', SECOND, SECOND)], { locked: true }),
+      track('t2', [groupClip('kept', 0, SECOND, [[videoClip('inner', 0, SECOND)], [textClip('words', 0, SECOND)]]), groupClip('emptied', SECOND, SECOND, [[videoClip('alone', 0, SECOND)]])]),
+    ])
+    const removed = withoutMedia(project, ['video'])
+    expect(removed.media.map((reference) => reference.id)).toEqual(['music', 'logo'])
+    expect(clipIds(removed)).toEqual([['m'], ['kept']])
+    const kept = clipOf(removed, 'kept')
+    expect(kept.type === 'group' ? kept.tracks.map((member) => member.clips.map((clip) => clip.id)) : []).toEqual([[], ['words']])
+    expect(withoutMedia(project, ['unknown'])).toBe(project)
+    reopened(removed)
+  })
+})

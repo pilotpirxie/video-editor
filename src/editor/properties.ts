@@ -2,7 +2,7 @@ import { scaledEffect, type MediaStates } from '../engine/resolve.js'
 import type { Size } from '../shared/exportPresets.js'
 import { MAX_CANVAS, MIN_CANVAS, valueAt, type AnimatableProperty, type Clip, type Crop, type Easing, type Keyframe, type Keyframes, type Project, type Transform } from '../shared/project.js'
 import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, TIMELINE_GRID, frameAt, frameDuration, type FrameRate } from '../shared/time.js'
-import { editClips, hasSource, hasVolume, isCroppable, isVisual, locateClip, withFadesWithin } from './clips.js'
+import { editClips, hasSource, hasVolume, isCroppable, isVisual, locateClip, withFadesWithin, withOnlyAtEnd } from './clips.js'
 import type { Point } from './geometry.js'
 import { neighbours, sourceDuration, timelineSpan, trimClip } from './moveTrim.js'
 
@@ -454,7 +454,9 @@ export function setLoop(project: Project, clipIds: readonly string[], isLooping:
 function withFade(clip: Clip, fade: Fade, length: number | undefined): Clip {
   const isVolumeFade = fade === 'volumeFadeIn' || fade === 'volumeFadeOut'
   if (isVolumeFade) return hasVolume(clip) ? { ...clip, [fade]: length } : clip
-  return isVisual(clip) ? { ...clip, [fade]: length } : clip
+  if (!isVisual(clip)) return clip
+  const faded = { ...clip, [fade]: length }
+  return length === undefined ? faded : withOnlyAtEnd(faded, fade === 'fadeIn' ? 'in' : 'out', 'fade')
 }
 
 export function setFade(project: Project, clipIds: readonly string[], fade: Fade, length: number): Project {

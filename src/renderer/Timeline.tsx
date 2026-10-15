@@ -3,7 +3,7 @@ import { deleteZoom, setZoom } from '../editor/camera.js'
 import { hasSource, locateClip } from '../editor/clips.js'
 import { changeKeyframe, removeKeyframe, setSpeed, sharedValue } from '../editor/properties.js'
 import { actionFor } from '../editor/shortcuts.js'
-import { CAMERA_LANE_HEIGHT, RULER_HEIGHT, TRACK_HEIGHT } from '../editor/timelineView.js'
+import { TRACK_HEIGHT } from '../editor/timelineView.js'
 import { addTrack, deleteTrack, moveTrack, renameTrack, setTrackFlag, type TrackFlag } from '../editor/tracks.js'
 import { projectDuration, type Easing, type Project, type Track } from '../shared/project.js'
 import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, frameDuration } from '../shared/time.js'
@@ -38,10 +38,11 @@ function easingItems(choose: (easing: Easing) => void): MenuItem[] {
   return EASINGS.map(({ easing, label }) => ({ label, testId: `menu-easing-${easing}`, onSelect: () => choose(easing) }))
 }
 
-const FLAGS: readonly { flag: TrackFlag; icon: IconName; on: string; off: string }[] = [
-  { flag: 'locked', icon: 'lock', on: 'Unlock Track', off: 'Lock Track' },
-  { flag: 'hidden', icon: 'eye', on: 'Show Track', off: 'Hide Track' },
-  { flag: 'muted', icon: 'speaker', on: 'Unmute Track', off: 'Mute Track' },
+// `onIcon` is shown while the flag is set; a muted track shows a struck-out speaker in red.
+const FLAGS: readonly { flag: TrackFlag; icon: IconName; onIcon: IconName; isDanger: boolean; on: string; off: string }[] = [
+  { flag: 'locked', icon: 'lock', onIcon: 'lock', isDanger: false, on: 'Unlock Track', off: 'Lock Track' },
+  { flag: 'hidden', icon: 'eye', onIcon: 'eye', isDanger: false, on: 'Show Track', off: 'Hide Track' },
+  { flag: 'muted', icon: 'speaker', onIcon: 'speakerMuted', isDanger: true, on: 'Unmute Track', off: 'Mute Track' },
 ]
 
 function TrackHeader({ track, index }: { track: Track; index: number }): ReactElement {
@@ -112,13 +113,14 @@ function TrackHeader({ track, index }: { track: Track; index: number }): ReactEl
           />
         )}
       </div>
-      {FLAGS.map(({ flag, icon, on, off }) => (
+      {FLAGS.map(({ flag, icon, onIcon, isDanger, on, off }) => (
         <IconButton
           key={flag}
-          icon={icon}
+          icon={track[flag] ? onIcon : icon}
           label={track[flag] ? on : off}
           testId={`track-${flag}-${index}`}
           isPressed={track[flag]}
+          isDanger={isDanger}
           onClick={() => store.apply(track[flag] ? on : off, (project) => setTrackFlag(project, track.id, flag, !track[flag]))}
         />
       ))}
@@ -258,13 +260,14 @@ export function Timeline(): ReactElement {
   const openCount = useEditorState((state) => state.openCount)
   const openGroups = useEditorState((state) => state.openGroups)
   const hasContent = useEditorState((state) => projectDuration(state.wholeProject) > 0)
-  const isOpening = useEditorState((state) => state.openingName !== undefined)
   let exportTooltip = 'Add something to the timeline first'
   if (hasContent) exportTooltip = exportKeys === undefined ? 'Export' : `Export (${exportKeys})`
   const hostRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const headersRef = useRef<HTMLDivElement>(null)
+  const scrollbarRef = useRef<HTMLDivElement>(null)
+  const scrollSpanRef = useRef<HTMLDivElement>(null)
   const controllerRef = useRef<TimelineController | undefined>(undefined)
   const [menu, setMenu] = useState<OpenMenu | undefined>(undefined)
   const closeMenu = useCallback(() => setMenu(undefined), [])
@@ -275,8 +278,10 @@ export function Timeline(): ReactElement {
     const content = contentRef.current
     const overlay = overlayRef.current
     const headers = headersRef.current
-    if (host === null || content === null || overlay === null || headers === null) return
-    const controller = createTimelineController({ host, content, overlay, headers }, session, (at, target) => setMenu({ at, target }))
+    const scrollbar = scrollbarRef.current
+    const scrollSpan = scrollSpanRef.current
+    if (host === null || content === null || overlay === null || headers === null || scrollbar === null || scrollSpan === null) return
+    const controller = createTimelineController({ host, content, overlay, headers, scrollbar, scrollSpan }, session, (at, target) => setMenu({ at, target }))
     controllerRef.current = controller
     return () => controller.dispose()
   }, [session])
@@ -367,12 +372,10 @@ export function Timeline(): ReactElement {
         <div className="timeline-canvases" ref={hostRef} data-testid="timeline">
           <canvas ref={contentRef} aria-hidden="true" />
           <canvas ref={overlayRef} aria-label="Timeline" />
-          {!hasContent && !isOpening && (
-            <p className="timeline-hint" style={{ top: RULER_HEIGHT + CAMERA_LANE_HEIGHT }}>
-              Drag media or annotations here to start.
-            </p>
-          )}
         </div>
+      </div>
+      <div className="timeline-scrollbar" ref={scrollbarRef} data-testid="timeline-scrollbar">
+        <div ref={scrollSpanRef} />
       </div>
       {menu !== undefined && <PopupMenu label={target === undefined ? 'Clip' : menuLabel} items={target === undefined ? clipMenu : targetMenu} at={menu.at} onClose={closeMenu} />}
       {speedClipIds !== undefined && <SpeedDialog clipIds={speedClipIds} onClose={() => setSpeedClipIds(undefined)} />}

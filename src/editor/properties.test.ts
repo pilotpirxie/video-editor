@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { ALL_MEDIA, FRAME, MEDIA_STATES, SECOND, audioClip, clipOf, groupClip, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import type { Clip, Project } from '../shared/project.js'
+import { setAnimation } from './animations.js'
+import { setTransition } from './transitions.js'
 import {
   changeKeyframe,
   hasKeyframesAt,
@@ -197,7 +199,7 @@ describe('timing', () => {
     expect(clipOf(faster, 'a')).toMatchObject({ speedPercent: 200, duration: 2 * SECOND, sourceStart: 0 })
     const slower = setSpeed(sample(), ['a'], 50)
     expect(clipOf(slower, 'a')).toMatchObject({ speedPercent: 50, duration: 6 * SECOND })
-    expect(clipOf(setSpeed(sample(), ['a'], 5), 'a')).toMatchObject({ speedPercent: 25 })
+    expect(clipOf(setSpeed(sample(), ['a'], 0), 'a')).toMatchObject({ speedPercent: 1 })
     expect(clipOf(setSpeed(sample(), ['a'], 99_999), 'a')).toMatchObject({ speedPercent: 10_000 })
     reopened(faster)
     reopened(slower)
@@ -408,5 +410,23 @@ describe('groups and sound', () => {
     expect(clipOf(reopened(back), 'music')).not.toHaveProperty('changesPitch')
     expect(clipOf(back, 'music')).toMatchObject({ hasFastSound: true })
     expect(setSoundSwitches(grouped, ['music'], { changesPitch: false })).toBe(grouped)
+  })
+})
+
+describe('one way in and out', () => {
+  it('keeps one fade, transition or animation at each end of a clip', () => {
+    const lone = projectOf([track('t1', [videoClip('a', 0, 4 * SECOND)])])
+    const wiped = setTransition(lone, { clipId: 'a', edge: 'in' }, { type: 'wipeRight', duration: SECOND }, FRAME)
+    const faded = setFade(setFade(wiped, ['a'], 'fadeIn', SECOND / 2), ['a'], 'fadeOut', SECOND / 2)
+    expect(clipOf(faded, 'a')).toMatchObject({ fadeIn: SECOND / 2, fadeOut: SECOND / 2 })
+    expect(clipOf(reopened(faded), 'a')).not.toHaveProperty('transitionIn')
+
+    const popped = setAnimation(faded, ['a'], 'in', { type: 'pop', duration: SECOND })
+    expect(clipOf(popped, 'a')).toMatchObject({ animationIn: { type: 'pop' }, fadeOut: SECOND / 2 })
+    expect(clipOf(reopened(popped), 'a')).not.toHaveProperty('fadeIn')
+
+    const slid = setTransition(popped, { clipId: 'a', edge: 'in' }, { type: 'slide', duration: SECOND }, FRAME)
+    expect(clipOf(slid, 'a')).toMatchObject({ transitionIn: { type: 'slide' }, fadeOut: SECOND / 2 })
+    expect(clipOf(reopened(slid), 'a')).not.toHaveProperty('animationIn')
   })
 })

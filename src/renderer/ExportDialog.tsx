@@ -97,7 +97,7 @@ export function ExportDialog(): ReactElement {
     const presets = EXPORT_PRESETS.filter((preset) => (shortSideOf(preset) !== undefined) === isShaped)
     return presets.map((preset, index) => {
       const pixels = exportSize(preset, canvas)
-      const label = `${PRESET_NAMES[preset]} · ${pixels.width}×${pixels.height}`
+      const label = `${PRESET_NAMES[preset]} (${pixels.width}x${pixels.height})`
       return index === 0 ? { value: preset, label, heading } : { value: preset, label }
     })
   }
@@ -121,10 +121,10 @@ export function ExportDialog(): ReactElement {
 
   function summary(): string {
     const name = SUMMARY_NAMES[format]
-    if (format === 'png') return `${name}, ${size.width}×${size.height}, the frame at ${timecode(playheadTime, canvas.frameRate)}`
+    if (format === 'png') return `${name}, ${size.width}x${size.height}, the frame at ${timecode(playheadTime, canvas.frameRate)}`
     const length = `${ticksText(range.end - range.start)} long`
     if (!isMovingPicture) return `${name}, ${length}`
-    return `${name}, ${size.width}×${size.height}, ${length}`
+    return `${name}, ${size.width}x${size.height}, ${length}`
   }
 
   return (
@@ -218,7 +218,7 @@ export function ExportDialog(): ReactElement {
                 disabled={selected === undefined}
                 onChange={() => setChoices({ ...choices, isSelectionOnly: true })}
               />
-              {selected === undefined ? 'Selected clips (select clips on the timeline first)' : 'Selected clips'}
+              Selected clips
             </label>
           </fieldset>
         )}
@@ -293,7 +293,7 @@ export function ExportProgressDialog(): ReactElement | undefined {
             <progress className="export-bar" value={status.done} max={status.total} aria-label="Frames exported" />
             <p className="dialog-summary" data-testid="export-progress">
               Frame {status.done.toLocaleString('en')} of {status.total.toLocaleString('en')}
-              {left !== undefined && ` · ${durationText(left)} left`}
+              {left !== undefined && `, ${durationText(left)} left`}
             </p>
           </>
         )}

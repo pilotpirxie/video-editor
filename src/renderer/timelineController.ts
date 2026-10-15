@@ -1,7 +1,7 @@
 import { ANNOTATION_NAMES, addAnnotation, type AnnotationKind } from '../editor/annotations.js'
 import { moveZoom, setZoom } from '../editor/camera.js'
 import { endOf, hasVolume, locateClip, makesSound, nextTrackName, type NewTrack } from '../editor/clips.js'
-import { addEffect, takesEffects } from '../editor/effects.js'
+import { addEffect, takesEffect } from '../editor/effects.js'
 import { moveClips, trimClip } from '../editor/moveTrim.js'
 import { dropMedia, mediaFileName, placeableMedia } from '../editor/place.js'
 import { changeKeyframe, keyframeFrame, setFade, setKeyframesAt, setProperties, type Fade } from '../editor/properties.js'
@@ -53,7 +53,8 @@ import type { Session } from './document.js'
 import { drawContent, drawOverlay, readColors, readFonts, type DropTarget, type Landing } from './timelineDraw.js'
 
 const DRAG_THRESHOLD = 3
-const SNAP_RANGE_PIXELS = 8
+const SNAP_RANGE_PIXELS = 12
+const MIDDLE_BUTTON = 1
 const WHEEL_ZOOM_RATE = 0.01
 const FOLLOW_LEAD = 0.1
 const SCROLL_PAST_END = 0.5
@@ -116,6 +117,8 @@ type Gesture =
   | { kind: 'volume-point'; clipId: string; index: number; clipStart: number; pointTime: number; grabOffset: number; band: Band; targets: number[] }
   | { kind: 'volume-line'; clipId: string; indices: number[]; band: Band; from: Point }
   | { kind: 'marquee'; from: Point; kept: readonly string[] }
+  // A drag with the middle button moves the view; `from` is where it started, in window coordinates.
+  | { kind: 'pan'; from: Point; scrollX: number; scrollY: number }
 
 // The gestures that change the project: each ends by keeping the change as one undo step, or by taking it back.
 const EDITING_GESTURES: ReadonlySet<Gesture['kind']> = new Set(['move', 'trim', 'fade', 'zoom', 'transition', 'volume-point', 'volume-line'])
@@ -135,6 +138,9 @@ export type TimelineElements = {
   content: HTMLCanvasElement
   overlay: HTMLCanvasElement
   headers: HTMLElement
+  // A native scroll bar under the tracks, and the element inside it that is as wide as the timeline can scroll.
+  scrollbar: HTMLElement
+  scrollSpan: HTMLElement
 }
 
 export type TimelineController = {
@@ -164,7 +170,7 @@ export function isLibraryDrag(event: Event): event is CustomEvent<LibraryDragDet
 // Draws the timeline and turns pointer input into commands. React only supplies the elements; nothing here re-renders components while dragging, scrolling or playing.
 // `openMenu` is told which volume keyframe or zoom was pressed, when the press was on one.
 export function createTimelineController(elements: TimelineElements, session: Session, openMenu: (at: Point, target: MenuTarget | undefined) => void): TimelineController {
-  const { host, content, overlay, headers } = elements
+  const { host, content, overlay, headers, scrollbar, scrollSpan } = elements
   const { store, transport, thumbnails, actions } = session
   const contentContext = contextOf(content)
   const overlayContext = contextOf(overlay)
@@ -187,6 +193,9 @@ export function createTimelineController(elements: TimelineElements, session: Se
   let isFitWanted = false
   let isLowestWanted = false
   let drawnTrackCount: number | undefined
+  let shownScrollWidth = -1
+  // Where the scroll bar is scrolled to, kept here so drawing never reads it back: a read lays out the page.
+  let shownScrollLeft = 0
   let wasPlaying = false
   let namedMedia: readonly MediaRef[] | undefined
   let mediaNames = new Map<string, string>()
@@ -202,9 +211,13 @@ export function createTimelineController(elements: TimelineElements, session: Se
     return { viewWidth: Math.max(1, size.width), duration: projectDuration(project), frameTicks: frameTicks() }
   }
 
+  function maxScrollXOf(project: Project, pixelsPerSecond: number): number {
+    const contentWidth = (projectDuration(project) / TICKS_PER_SECOND) * pixelsPerSecond
+    return Math.max(0, contentWidth - size.width * SCROLL_PAST_END)
+  }
+
   function withScrollInRange(next: TimelineView, project: Project): TimelineView {
-    const contentWidth = (projectDuration(project) / TICKS_PER_SECOND) * next.pixelsPerSecond
-    const maxScrollX = Math.max(0, contentWidth - size.width * SCROLL_PAST_END)
+    const maxScrollX = maxScrollXOf(project, next.pixelsPerSecond)
     const maxScrollY = Math.max(0, TRACKS_TOP + project.tracks.length * TRACK_HEIGHT - size.height)
     return {
       pixelsPerSecond: next.pixelsPerSecond,
@@ -250,6 +263,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
         thumbnails,
       })
       headers.style.transform = `translateY(${-view.scrollY}px)`
+      showScroll(state.project)
       // Tests read this to find where a time and a track are on screen.
       host.dataset.view = JSON.stringify(view)
       isOverlayStale = true
@@ -283,7 +297,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
     const trackCount = project.tracks.length
     if (item.kind === 'effect') {
       const hit = hitClip(project.tracks, inOrder, view, point.x, point.y)
-      if (hit === undefined || hit.track.locked || !takesEffects(hit.clip)) return undefined
+      if (hit === undefined || hit.track.locked || !takesEffect(hit.clip, item.effect)) return undefined
       // An effect dropped on one of several selected clips goes to all of them.
       const clipIds = selection.includes(hit.clip.id) ? selection : [hit.clip.id]
       const shown = { left: timeToX(hit.clip.start, view), right: timeToX(endOf(hit.clip), view), top: trackTop(hit.trackIndex, trackCount, view) }
@@ -518,6 +532,24 @@ export function createTimelineController(elements: TimelineElements, session: Se
   function setView(next: TimelineView): void {
     view = withScrollInRange(next, store.getState().project)
     invalidate('content')
+  }
+
+  // The scroll bar is told only what changed: setting its width lays out the page, and setting where it is scrolled to sends a scroll event back.
+  function showScroll(project: Project): void {
+    const scrollWidth = Math.round(maxScrollXOf(project, view.pixelsPerSecond) + size.width)
+    if (scrollWidth !== shownScrollWidth) {
+      shownScrollWidth = scrollWidth
+      scrollSpan.style.width = `${scrollWidth}px`
+    }
+    if (Math.abs(shownScrollLeft - view.scrollX) < 1) return
+    shownScrollLeft = view.scrollX
+    scrollbar.scrollLeft = view.scrollX
+  }
+
+  function onScrollbar(): void {
+    shownScrollLeft = scrollbar.scrollLeft
+    if (Math.abs(shownScrollLeft - view.scrollX) < 1) return
+    setView({ ...view, scrollX: shownScrollLeft })
   }
 
   function resize(): void {
@@ -763,6 +795,13 @@ export function createTimelineController(elements: TimelineElements, session: Se
   }
 
   function onPointerDown(event: PointerEvent): void {
+    if (event.button === MIDDLE_BUTTON) {
+      event.preventDefault()
+      overlay.setPointerCapture(event.pointerId)
+      gesture = { kind: 'pan', from: { x: event.clientX, y: event.clientY }, scrollX: view.scrollX, scrollY: view.scrollY }
+      overlay.style.cursor = 'grabbing'
+      return
+    }
     if (event.button !== 0) return
     overlay.setPointerCapture(event.pointerId)
     const at = pointOf(event)
@@ -849,6 +888,10 @@ export function createTimelineController(elements: TimelineElements, session: Se
     const point = pointOf(event)
     if (gesture === undefined) {
       showHover(point)
+      return
+    }
+    if (gesture.kind === 'pan') {
+      setView({ ...view, scrollX: gesture.scrollX - (event.clientX - gesture.from.x), scrollY: gesture.scrollY - (event.clientY - gesture.from.y) })
       return
     }
     if (gesture.kind === 'press') {
@@ -1034,6 +1077,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   overlay.addEventListener('lostpointercapture', cancel)
   overlay.addEventListener('pointerleave', leave)
   overlay.addEventListener('wheel', onWheel, { passive: false })
+  scrollbar.addEventListener('scroll', onScrollbar)
   overlay.addEventListener('contextmenu', onContextMenu)
   overlay.addEventListener('dblclick', onDoubleClick)
   host.addEventListener(LIBRARY_DROP_EVENT, onLibraryDrop)
@@ -1061,6 +1105,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
       overlay.removeEventListener('lostpointercapture', cancel)
       overlay.removeEventListener('pointerleave', leave)
       overlay.removeEventListener('wheel', onWheel)
+      scrollbar.removeEventListener('scroll', onScrollbar)
       overlay.removeEventListener('contextmenu', onContextMenu)
       overlay.removeEventListener('dblclick', onDoubleClick)
       host.removeEventListener(LIBRARY_DROP_EVENT, onLibraryDrop)

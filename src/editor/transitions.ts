@@ -1,6 +1,6 @@
 import type { Clip, Project, Track, Transition, TransitionType, VisualClip } from '../shared/project.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
-import { editClips, endOf, isVisual, locateClip } from './clips.js'
+import { editClips, endOf, isVisual, locateClip, withOnlyAtEnd } from './clips.js'
 
 export const DEFAULT_TRANSITION = TICKS_PER_SECOND
 
@@ -128,6 +128,6 @@ export function setTransition(project: Project, target: TransitionTarget, transi
     const duration = Math.max(frameTicks, Math.min(longest, Math.round(transition.duration / frameTicks) * frameTicks))
     const current = clip[key]
     const isUnchanged = current !== undefined && current.type === transition.type && current.duration === duration
-    return isUnchanged ? clip : { ...clip, [key]: { type: transition.type, duration } }
+    return withOnlyAtEnd(isUnchanged ? clip : { ...clip, [key]: { type: transition.type, duration } }, target.edge, 'transition')
   })
 }

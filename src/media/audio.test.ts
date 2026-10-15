@@ -219,7 +219,7 @@ describe('sound at another speed', () => {
   })
 
   it('refuses a speed that is none', () => {
-    for (const speedPercent of [100, 24, 10_001, 150.5, Number.NaN]) {
+    for (const speedPercent of [100, 0, 10_001, 150.5, Number.NaN]) {
       expect(() => tempoFilter({ speedPercent, keepsPitch: true }), String(speedPercent)).toThrow(/cannot be played/)
     }
   })

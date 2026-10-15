@@ -193,7 +193,7 @@ function EntryList({ noun, entries }: EntryListProps): ReactElement {
           <EntryTile key={entry.testId} entry={entry} />
         ))}
       </ul>
-      {shown.length === 0 && <p className="empty-state">Nothing here is called that.</p>}
+      {shown.length === 0 && <p className="empty-state">No matches</p>}
     </div>
   )
 }

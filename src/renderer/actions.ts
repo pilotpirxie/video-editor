@@ -2,9 +2,9 @@ import { ANNOTATION_NAMES, addAnnotation, type AnnotationKind } from '../editor/
 import { deleteZoom, setViewAt, zoomIndexAt } from '../editor/camera.js'
 import { copyClips, deleteClips, pasteClips, rippleDelete, spanEnd, type Clipboard } from '../editor/clipboard.js'
 import { allClips, isVisual, locateClip, nearestEdit, nextTrackName, trackAboveAll, unlockedClipIds, type NewTrack } from '../editor/clips.js'
-import { addEffect, takesEffects } from '../editor/effects.js'
+import { addEffect, takesEffect } from '../editor/effects.js'
 import { groupClips, ungroupClips } from '../editor/groups.js'
-import { dropMedia, placeableMedia } from '../editor/place.js'
+import { dropMedia, placeableMedia, withoutMedia } from '../editor/place.js'
 import { clipsToSeparate, separateAudio } from '../editor/separate.js'
 import { clipsToSplit, splitClips } from '../editor/split.js'
 import { addTrack } from '../editor/tracks.js'
@@ -24,6 +24,8 @@ export type Actions = {
   addAnnotation(kind: AnnotationKind, centre?: { x: number; y: number }): void
   // Adds the files that can be placed at the playhead, one after another on the layer above everything else.
   addMedia(mediaIds: readonly string[]): void
+  // Takes the files out of the project, with their clips.
+  removeMedia(mediaIds: readonly string[]): void
   group(): void
   ungroup(): void
   // Goes into the selected group; Escape and the path above the timeline lead out again.
@@ -170,6 +172,12 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       store.apply(media.length === 1 ? 'Add Clip' : `Add ${media.length} Clips`, (current) => dropMedia(current, { media, start, trackIndex: trackAboveAll(current), newTrack }))
       store.select(media.map((dropped) => dropped.clipId))
     },
+    removeMedia(mediaIds) {
+      if (mediaIds.length === 0) return
+      // An open group shows only its own tracks, and the files' clips may be anywhere in the project.
+      store.closeGroups(0)
+      store.apply(`Remove ${plural(mediaIds.length, 'File')}`, (project) => withoutMedia(project, mediaIds))
+    },
     group() {
       const { project } = store.getState()
       const clipIds = selectedClipIds(() => true)
@@ -211,9 +219,9 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       if (openGroups.length > 0) store.closeGroups(openGroups.length - 1)
     },
     addEffect(type) {
-      const clipIds = selectedClipIds(takesEffects)
+      const clipIds = selectedClipIds((clip) => takesEffect(clip, type))
       if (clipIds.length === 0) {
-        store.notify('Select a video, an image or a text first, or drag the effect onto one.')
+        store.notify(type === 'blurFill' ? 'Select a video or an image first, or drag the effect onto one.' : 'Select a video, an image or a text first, or drag the effect onto one.')
         return
       }
       store.apply('Add Effect', (project) => addEffect(project, clipIds, type))

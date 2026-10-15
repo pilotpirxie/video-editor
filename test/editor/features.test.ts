@@ -105,6 +105,7 @@ describe('controls', () => {
     console.info(`controls: ${JSON.stringify(report)}`)
 
     expect(report).toMatchObject({ isSwitchBesideSearch: true, isGridByDefault: true, isListStacked: true, areTilesSideBySide: true })
+    expect(report.groupsOpenAtFirst).toEqual(['Transform', 'Timing'])
 
     // A field starts at the padding of its panel and ends at the padding, or at the room kept for the scroll bar.
     expect(report.isLabelAbove).toBe(true)
@@ -136,11 +137,11 @@ describe('controls', () => {
     expect(report.listSamples).toBe(12)
     expect(report.fontListSamples).toBe(5)
     expect(report.listOpenP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
-    expect(report.groupSamples).toBe(3)
+    expect(report.groupSamples).toBe(6)
     expect(report.groupToggleP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
 
     const nextLaunch = await uiTest('controls-kept', [], profile)
-    expect(nextLaunch).toEqual({ isProjectOpen: false, isGridChosen: false, isListChosen: true })
+    expect(nextLaunch).toEqual({ isProjectOpen: true, isGridChosen: false, isListChosen: true })
   })
 })
 
@@ -154,7 +155,7 @@ describe('arranging by dragging', () => {
     const report = await uiTest('arrange', ['--media', MEDIA_DIRECTORY, '--out', join(scratch, 'arrange')])
 
     // The Media tab says how long or how large a file is, and no longer what kind it is or whether it is used.
-    expect(report.mediaDetails).toEqual(['0:02', '0:02', '320 × 180'])
+    expect(report.mediaDetails).toEqual(['0:02', '0:02', '320x180'])
 
     // Held over the first of the six empty tracks, the video shows where it would land while nothing is added, and the outline keeps up with the pointer.
     expect(report.heldOverEmpty).toEqual({ start: SECOND, trackIndex: 0, isNewTrack: false })
@@ -178,7 +179,7 @@ describe('arranging by dragging', () => {
     expect(projectIn(report, 'kept').tracks).toEqual(projectIn(report, 'lowered').tracks)
 
     // A hundred pixels cropped off the left of the 320-wide picture: the centre moved right by fifty, so what is left did not move.
-    expect(report.groupIcons).toEqual(['Transform 2', 'Layout 2', 'Crop 2', 'Timing 2', 'Opacity 2', 'Transitions 2', 'Animation 2', 'Volume 2'])
+    expect(report.groupIcons).toEqual(['Transform 2', 'Timing 2', 'Crop 2', 'Opacity 2', 'In and out 2', 'Volume 2'])
     expect(projectIn(report, 'cropped').tracks[0]?.clips[0]).toMatchObject({ crop: { left: 100, top: 0, right: 0, bottom: 0 }, transform: { x: 210, y: 90 } })
     expect(report.widthAfterCrop).toBe('220.0')
 
@@ -329,30 +330,21 @@ describe('missing fonts', () => {
   })
 })
 
-describe('animation presets', () => {
-  it('applies them at either end and turns them into keyframes', async () => {
+describe('in and out', () => {
+  it('chooses one fade, animation or transition at each end of a clip, and takes it away', async () => {
     const report = await uiTest('animations', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'animations')])
-    expect(report.canConvertBefore).toBe(false)
     // A video has no letters to type.
     expect(report.offersTypewriter).toBe(false)
 
     const animated = projectIn(report, 'animated').tracks[0]?.clips[0]
-    expect(animated).toMatchObject({ animationIn: { type: 'pop', duration: SECOND }, animationOut: { type: 'slideRight', duration: SECOND / 2 } })
-    expect(animated).not.toHaveProperty('keyframes')
+    expect(animated).toMatchObject({ animationIn: { type: 'pop', duration: SECOND }, fadeOut: SECOND / 2 })
 
-    const converted = projectIn(report, 'converted').tracks[0]?.clips[0]
-    expect(converted).not.toHaveProperty('animationIn')
-    expect(converted).not.toHaveProperty('animationOut')
-    // The pop became three scale keyframes that end at the size the clip has; the slide two position keyframes that end a canvas width away.
-    expect(converted?.keyframes?.scaleX?.map((keyframe) => keyframe.value)).toEqual([0, 2.2, 2])
-    expect(converted?.keyframes?.scaleY).toEqual(converted?.keyframes?.scaleX)
-    expect(converted?.keyframes?.x).toEqual([
-      { time: 1.5 * SECOND, value: 320, easing: 'easeIn' },
-      { time: 2 * SECOND, value: 960, easing: 'linear' },
-    ])
+    const replaced = projectIn(report, 'replaced').tracks[0]?.clips[0]
+    expect(replaced).toMatchObject({ animationIn: { type: 'pop' }, transitionOut: { type: 'slideRight', duration: SECOND / 2 } })
+    expect(replaced).not.toHaveProperty('fadeOut')
 
     const removed = projectIn(report, 'removed').tracks[0]?.clips[0]
-    expect(removed).toMatchObject({ animationOut: { type: 'slideRight' } })
+    expect(removed).toMatchObject({ transitionOut: { type: 'slideRight' } })
     expect(removed).not.toHaveProperty('animationIn')
   })
 })
@@ -435,35 +427,21 @@ describe('volume keyframes and the sound of fast clips', () => {
   })
 })
 
-describe('layout tools', () => {
-  it('arranges, aligns and spaces the selected clips, and rescales them with the canvas', async () => {
-    const report = await uiTest('layout-tools', ['--project', projectPath('02-mosaic'), '--out', join(scratch, 'layout-tools')])
+describe('canvas size', () => {
+  it('rescales every clip with the canvas', async () => {
+    const report = await uiTest('canvas-size', ['--project', projectPath('02-mosaic'), '--out', join(scratch, 'canvas-size')])
     const transforms = (stage: string): Transform[] => projectIn(report, stage).tracks.map((track) => {
       const [clip] = track.clips
       if (clip === undefined || !('transform' in clip)) throw new Error(`Track ${track.id} has no visual clip`)
       return clip.transform
     })
-    const rounded = (value: number): number => Math.round(value * 100) / 100
-
-    // A 2 x 2 grid with 20 pixels around and between the cells: each cell is 290 x 150, and the 320 x 180 clips fit its height.
-    // 3 x 3 cells are 186.7 x 93.3, then 2 x 2 cells 290 x 150; the clips fit their height.
-    expect(report.widthWhileTried).toBe('165.9')
-    expect(report.widthWhileTriedNext).toBe('266.7')
-    expect(report.undoAfterTrying).toBe('Undo')
-    const grid = transforms('grid')
-    expect(grid.map((transform) => [transform.x, transform.y])).toEqual([[165, 95], [475, 95], [165, 265], [475, 265]])
-    expect(grid.map((transform) => rounded(transform.scaleX))).toEqual([0.83, 0.83, 0.83, 0.83])
-
-    expect(transforms('aligned').map((transform) => transform.y)).toEqual([95, 95, 95, 95])
-    // The outermost two stay; the others are spaced evenly between them.
-    const across = transforms('distributed').map((transform) => rounded(transform.x)).sort((a, b) => a - b)
-    expect(across).toEqual([165, 268.33, 371.67, 475])
 
     // 640 x 360 to 1280 x 720 with the sides linked: everything doubles.
     const doubled = projectIn(report, 'doubled')
     expect(doubled.canvas).toMatchObject({ width: 1280, height: 720 })
-    expect(transforms('doubled').map((transform) => rounded(transform.scaleX))).toEqual([1.67, 1.67, 1.67, 1.67])
-    expect(transforms('doubled').map((transform) => rounded(transform.y))).toEqual([190, 190, 190, 190])
+    const rounded = (transform: Transform): number[] => [transform.x, transform.y, transform.scaleX, transform.scaleY].map((value) => Math.round(value * 1000) / 1000)
+    const doubledBefore = transforms('before').map((transform) => rounded({ ...transform, x: transform.x * 2, y: transform.y * 2, scaleX: transform.scaleX * 2, scaleY: transform.scaleY * 2 }))
+    expect(transforms('doubled').map(rounded)).toEqual(doubledBefore)
   })
 })
 
@@ -492,6 +470,11 @@ describe('effects', () => {
     expect(effectsOf('keyed')[3]).toMatchObject([{ type: 'border' }, { type: 'colorAdjust' }, { type: 'chromaKey', color: '#123456', tolerance: 0.4 }])
     expect(JSON.stringify(effectsOf('keyed')[3])).toContain('"chromaKey"')
     expect(effectsOf('removed')[3]).toMatchObject([{ type: 'colorAdjust' }, { type: 'chromaKey' }])
+
+    // The Cinematic look set its sliders at full strength; moving one made it custom, and undo made it Cinematic again.
+    expect(effectsOf('graded')[3]).toMatchObject([{ type: 'colorAdjust' }, { type: 'chromaKey' }, { type: 'look', strength: 1, contrast: 0.15, shadowAmount: 0.35, highlightAmount: 0.3 }])
+    expect(report.lookAfterEdit).toContain('Custom')
+    expect(report.lookAfterUndo).toContain('Cinematic')
   })
 })
 
@@ -569,7 +552,7 @@ describe('keyframes and the motion path', () => {
 
     // The button on Y keyed X with it, at the playhead, holding the place the clip had.
     expect(keyframesAt('keyed')).toEqual({ x: [{ time: 0, value: 320, easing: 'linear' }], y: [{ time: 0, value: 180, easing: 'linear' }] })
-    expect(report.isXPressed).toBe(true)
+    expect(report.isPositionPressed).toBe(true)
 
     // A second later the drag from the first dot moved the clip, which keyed that second.
     const moved = keyframesAt('moved')
@@ -585,7 +568,7 @@ describe('keyframes and the motion path', () => {
     expect(dotMoved.y?.[1]).toEqual(moved.y?.[1])
 
     // The size button on Scale keyed both scales and lit the Width and Height buttons.
-    expect(report.sizePressed).toEqual([true, true])
+    expect(report.isSizePressed).toBe(true)
     expect(keyframesAt('sized')).toMatchObject({ scaleX: [{ time: SECOND, value: 2 }], scaleY: [{ time: SECOND, value: 2 }] })
 
     // A typed X at 1.5 s keyed the place there, Y holding its value; the button took both away again.
@@ -718,7 +701,7 @@ describe('export dialog', () => {
 
     // The 640 x 360 project starts at its own size; nothing is selected yet, so there is no range to choose.
     expect(report.defaultPreset).toBe('360p')
-    expect(report.summaryAtOpen).toBe('MP4, 640×360, 3s long')
+    expect(report.summaryAtOpen).toBe('MP4, 640x360, 3s long')
     expect(report.canChooseSelection).toBe(false)
 
     // Tab reaches every control and stays inside the dialog.
@@ -762,7 +745,7 @@ describe('export dialog', () => {
     expect(sound.video).toEqual({})
     expect(sound.audio).toMatchObject({ codec_name: 'pcm_s16le', sample_rate: '48000', channels: '2' })
     expect(Math.abs(sound.duration - 3)).toBeLessThan(0.01)
-    expect(report.stillSummary).toMatch(/^PNG, 640×360, the frame at /)
+    expect(report.stillSummary).toMatch(/^PNG, 640x360, the frame at /)
     expect((await probeExport(String(report.still))).video).toMatchObject({ codec_name: 'png', width: '640', height: '360' })
 
     const low = await probeExport(String(report.low))
@@ -810,5 +793,18 @@ describe('accessibility', () => {
     expect(report.windowRegions).toEqual(expect.arrayContaining(['Canvas', 'Library', 'Properties', 'Timeline']))
     expect(report.exportRegions).toEqual(['dialog'])
     expect(report.settingsRegions).toEqual(['dialog'])
+  })
+})
+
+describe('timeline scrolling and removing media', () => {
+  it('scrolls with the scroll bar and the middle button, and Delete in the Media tab takes a file out with its clips', async () => {
+    const report = await uiTest('timeline-scroll', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'timeline-scroll')])
+    expect(report.scrolledByBar).toBe(120)
+    // Scrolling is not an edit.
+    expect(report.undoAfterScrolling).toBe('Undo')
+    const removed = projectIn(report, 'removed')
+    expect(removed.media).toEqual([])
+    expect(removed.tracks.flatMap((track) => track.clips)).toEqual([])
+    expect(projectIn(report, 'restored').tracks[0]?.clips.map((clip) => clip.id)).toEqual(['clip'])
   })
 })

@@ -33,7 +33,7 @@ import { TextEditor } from './TextEditor.js'
 import { LIBRARY_DRAG_EVENT, LIBRARY_DROP_EVENT, isLibraryDrag, type LibraryDragDetail } from './timelineController.js'
 
 const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 }
-const SNAP_RANGE_PIXELS = 8
+const SNAP_RANGE_PIXELS = 12
 const HANDLE_PIXELS = 10
 const PATH_DOT_PIXELS = 8
 const ROTATE_HANDLE_OFFSET_PIXELS = 26
@@ -49,7 +49,7 @@ const TRANSFORM_KEYS = ['x', 'y', 'scaleX', 'scaleY', 'rotation'] as const
 const NO_PIVOT: Point = { x: 0, y: 0 }
 
 // One clip of the open tracks as it is drawn, with everything the handles need to change it. A closed group is one of them, whatever it has inside.
-export type Shown = {
+type Shown = {
   clipId: string
   // A picture is a video or an image, which can be cropped; a shape is a blur or a highlight, which has no picture for an effect to change.
   kind: 'picture' | 'text' | 'callout' | 'arrow' | 'shape' | 'group'
@@ -124,7 +124,7 @@ function shownGroup(group: GroupClip, members: readonly Shown[], transform: Tran
   return { clipId: group.id, kind: 'group', natural, crop: NO_CROP, transform, box, hitBoxes: members.map((member) => member.box), pivot }
 }
 
-export type Open = {
+type Open = {
   // The tracks that are open, in their own time, and the moment of it the playhead is on.
   project: Project
   time: number
@@ -135,7 +135,7 @@ export type Open = {
 
 // The clips of the open tracks at the playhead, bottom first, placed exactly where the compositor draws them.
 // What lies outside the open group is drawn but cannot be grabbed, so it is not among them.
-export function shownClips(wholeProject: Project, mediaStates: MediaStates, wholeTime: number, open: Open): Shown[] {
+function shownClips(wholeProject: Project, mediaStates: MediaStates, wholeTime: number, open: Open): Shown[] {
   // Bottom first: a clip as it is shown, or the id of a closed group at the place of its lowest member.
   const order: (Shown | string)[] = []
   const membersOf = new Map<string, Shown[]>()
@@ -296,7 +296,7 @@ function unionOf(boxes: readonly Bounds[]): Bounds {
 }
 
 // A place on the canvas as values of a clip of the open tracks: inside a group they are measured in the group's own units.
-export function valuesInOpenTracks(openGroups: readonly string[], openFrame: GroupFrame, item: Shown, placed: Partial<Transform>): PropertyValues {
+function valuesInOpenTracks(openGroups: readonly string[], openFrame: GroupFrame, item: Shown, placed: Partial<Transform>): PropertyValues {
   if (openGroups.length === 0) return placed
   const inside = intoGroup(openFrame, { ...item.transform, ...placed })
   const values: PropertyValues = {}
@@ -368,7 +368,9 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     const svg = svgRef.current
     if (svg === null || detail.item.kind !== 'effect') return undefined
     const point = pointOnCanvas(detail, svg, frame, pictureWidth, pictureOffset)
-    return shown.findLast((item) => item.kind !== 'shape' && !locked.has(item.clipId) && item.hitBoxes.some((box) => containsPoint(box, point)))
+    // A blur fill goes only onto a video or an image.
+    const isFitting = (item: Shown): boolean => (detail.item.kind === 'effect' && detail.item.effect === 'blurFill' ? item.kind === 'picture' : item.kind !== 'shape')
+    return shown.findLast((item) => isFitting(item) && !locked.has(item.clipId) && item.hitBoxes.some((box) => containsPoint(box, point)))
   }
 
   // Heard for every move of a drag out of the library, wherever in the window it is: one that has left the canvas no longer has a target here.

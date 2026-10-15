@@ -1,7 +1,7 @@
 import type { Size } from '../shared/exportPresets.js'
 import type { MediaStates } from '../engine/resolve.js'
 import type { MediaInfo, MediaUse, UnlinkedMedia } from '../shared/mediaProtocol.js'
-import { MAX_CANVAS, MIN_CANVAS, type Canvas, type Clip, type MediaRef, type Project, type Transform } from '../shared/project.js'
+import { MAX_CANVAS, MIN_CANVAS, type Canvas, type Clip, type MediaRef, type Project, type Track, type Transform } from '../shared/project.js'
 import { NORMAL_SPEED_PERCENT, PROJECT_FRAME_RATES, TICKS_PER_SECOND, frameDuration, type FrameRate } from '../shared/time.js'
 import { allClips, endOf, hasMedia, placeOnTrack, type NewTrack } from './clips.js'
 
@@ -149,6 +149,33 @@ function hasClips(project: Project): boolean {
 export function withMedia(project: Project, reference: MediaRef): Project {
   if (project.media.some((existing) => existing.id === reference.id)) return project
   return { ...project, media: [...project.media, reference] }
+}
+
+function tracksWithoutMedia(tracks: readonly Track[], mediaIds: ReadonlySet<string>): Track[] {
+  const kept: Track[] = []
+  for (const track of tracks) {
+    const clips: Clip[] = []
+    for (const clip of track.clips) {
+      if (hasMedia(clip) && mediaIds.has(clip.mediaId)) continue
+      if (clip.type !== 'group') {
+        clips.push(clip)
+        continue
+      }
+      const members = tracksWithoutMedia(clip.tracks, mediaIds)
+      // A group left with nothing inside has nothing to show.
+      if (members.some((member) => member.clips.length > 0)) clips.push({ ...clip, tracks: members })
+    }
+    kept.push({ ...track, clips })
+  }
+  return kept
+}
+
+// Takes files out of the project with every clip that uses them, inside groups and on locked tracks too: a clip cannot outlive its file.
+export function withoutMedia(project: Project, mediaIds: readonly string[]): Project {
+  const removed = new Set(mediaIds)
+  const media = project.media.filter((reference) => !removed.has(reference.id))
+  if (media.length === project.media.length) return project
+  return { ...project, media, tracks: tracksWithoutMedia(project.tracks, removed) }
 }
 
 // The dropped files that can be placed, in the order given, each with the id of its new clip. Files that are missing or could not be read are left out.

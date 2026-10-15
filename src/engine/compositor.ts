@@ -13,6 +13,7 @@ import {
   OP_CHROMA_KEY,
   OP_COLOR_ADJUST,
   OP_INVERT,
+  OP_LOOK,
   OP_ROUNDED_CORNERS,
   OP_SEPIA,
   OP_TINT,
@@ -22,6 +23,7 @@ import {
   SHAPE_PIXELATE,
   SHAPE_SHADER,
   SHAPE_SPOTLIGHT,
+  SHARPEN_SHADER,
   SOURCE_ALPHA_BELOW,
   SOURCE_PICTURE,
   SOURCE_TARGET,
@@ -44,6 +46,13 @@ const SIGMA_PER_STEP = 2.5
 const SMALLEST_SIGMA = 0.01
 // Nothing smaller than this many output pixels can be told from no blur at all.
 const SMALLEST_VISIBLE_BLUR = 0.05
+// How far the settings of a look reach at their ends: the share a colour channel changes by, or what a lifted black becomes.
+const WHITE_BALANCE_REACH = 0.15
+const TONE_GAIN_REACH = 0.35
+const TONE_LIFT_REACH = 0.25
+const FADE_LIFT = 0.2
+const SHADOWS_REACH = 0.8
+const HIGHLIGHTS_REACH = 0.4
 const NO_LINE = [0, 0, -1] as const
 const NO_CIRCLE = [0, 0, 1e9, 1] as const
 
@@ -117,7 +126,12 @@ type Program = {
 }
 
 // The effects that need the pixels around each pixel. They cannot be worked out while the picture is drawn, so the picture is drawn into a spare target first.
-type AreaEffect = Extract<Effect, { type: 'clipBlur' | 'dropShadow' }>
+type AreaEffect = Extract<Effect, { type: 'clipBlur' | 'dropShadow' | 'sharpen' }>
+type Look = Extract<Effect, { type: 'look' }>
+type BlurFill = Extract<Effect, { type: 'blurFill' }>
+
+// The effects that change only the colour of each pixel. A blur fill takes them from its clip, so the backdrop has the clip's colours.
+const COLOUR_EFFECTS: ReadonlySet<Effect['type']> = new Set(['colorAdjust', 'look', 'blackAndWhite', 'sepia', 'tint', 'invert'])
 
 // Effects that are applied in one draw, and the area effect that follows them, if any.
 type Stage = {
@@ -158,6 +172,18 @@ type BlurPass = {
   shiftX: number
   shiftY: number
   shadow: Extract<Effect, { type: 'dropShadow' }> | undefined
+  // What the colour of the second direction is multiplied by: 1 leaves it, less darkens it.
+  gain: number
+}
+
+// What the shader applies for a look: each colour channel is multiplied by `gain`, the shadows and the highlights brightened, contrast and saturation changed, and black lifted to `lift`.
+type LookNumbers = {
+  gain: Rgb
+  lift: Rgb
+  contrast: number
+  saturation: number
+  shadows: number
+  highlights: number
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
@@ -188,7 +214,42 @@ function rgbOf(color: string): Rgb {
 }
 
 function isAreaEffect(effect: Effect): effect is AreaEffect {
-  return effect.type === 'clipBlur' || effect.type === 'dropShadow'
+  return effect.type === 'clipBlur' || effect.type === 'dropShadow' || effect.type === 'sharpen'
+}
+
+function lumaOf(color: Rgb): number {
+  return 0.2126 * color.red + 0.7152 * color.green + 0.0722 * color.blue
+}
+
+// A look at full strength, mixed toward changing nothing by its strength. With every setting at its middle, nothing changes.
+function lookNumbers(look: Look): LookNumbers {
+  const warmth = look.temperature * WHITE_BALANCE_REACH
+  const balance = { red: 1 + warmth, green: 1 - look.tint * WHITE_BALANCE_REACH, blue: 1 - warmth }
+  const balanceLuma = lumaOf(balance)
+  // The highlight colour is taken at its brightest, so it tints without darkening much; black tints nothing.
+  const highlight = rgbOf(look.highlightColor)
+  const brightest = Math.max(highlight.red, highlight.green, highlight.blue)
+  const shadow = rgbOf(look.shadowColor)
+  const shadowLuma = lumaOf(shadow)
+  const exposure = 2 ** look.exposure
+  const strength = look.strength
+  const channel = (key: keyof Rgb): { gain: number; lift: number } => {
+    const toned = brightest > 0 ? 1 + (highlight[key] / brightest - 1) * look.highlightAmount * TONE_GAIN_REACH : 1
+    const gain = exposure * (balance[key] / balanceLuma) * toned
+    const lift = look.fade * FADE_LIFT + (shadow[key] - shadowLuma) * look.shadowAmount * TONE_LIFT_REACH
+    return { gain: 1 + (gain - 1) * strength, lift: lift * strength }
+  }
+  const red = channel('red')
+  const green = channel('green')
+  const blue = channel('blue')
+  return {
+    gain: { red: red.gain, green: green.gain, blue: blue.gain },
+    lift: { red: red.lift, green: green.lift, blue: blue.lift },
+    contrast: look.contrast * strength,
+    saturation: look.saturation * strength,
+    shadows: look.shadows * SHADOWS_REACH * strength,
+    highlights: look.highlights * HIGHLIGHTS_REACH * strength,
+  }
 }
 
 function stagesOf(effects: readonly Effect[]): Stage[] {
@@ -268,6 +329,7 @@ function quadVertices(box: Box, margin: number): Float32Array {
 export function createCompositor(gl: WebGL2RenderingContext): Compositor {
   const layerProgram = linkProgram(gl, LAYER_SHADER)
   const blurProgram = linkProgram(gl, BLUR_SHADER)
+  const sharpenProgram = linkProgram(gl, SHARPEN_SHADER)
   const shapeProgram = linkProgram(gl, SHAPE_SHADER)
   const yuvProgram = linkProgram(gl, YUV_SHADER)
 
@@ -297,9 +359,11 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
   let held: Target | undefined
   let spare: Target | undefined
   let pair: Target | undefined
+  let backdrop: Target | undefined
   let yuv: Target | undefined
 
   let output: Size = { width: 0, height: 0 }
+  let canvasSize: Size = { width: 0, height: 0 }
   let mapping: OutputMapping = { scale: 1, offsetX: 0, offsetY: 0 }
   let used: Program | undefined
 
@@ -316,7 +380,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target.texture, 0)
     // An effect that is silently left out could show what a blur was meant to hide, so a refusal stops the frame.
     if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
-      throw new CompositorError(`The GPU cannot render at ${width}×${height}`)
+      throw new CompositorError(`The GPU cannot render at ${width}x${height}`)
     }
     target.width = width
     target.height = height
@@ -336,6 +400,11 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
   function pairTarget(): Target {
     pair ??= createTarget()
     return sized(pair)
+  }
+
+  function backdropTarget(): Target {
+    backdrop ??= createTarget()
+    return sized(backdrop)
   }
 
   function use(program: Program): void {
@@ -409,6 +478,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     const kinds = new Int32Array(MAX_OPS)
     const first = new Float32Array(MAX_OPS * COMPONENTS)
     const second = new Float32Array(MAX_OPS * COMPONENTS)
+    const third = new Float32Array(MAX_OPS * COMPONENTS)
     let count = 0
     for (const effect of effects) {
       if (count === MAX_OPS) break
@@ -444,6 +514,12 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
       } else if (effect.type === 'vignette') {
         kinds[count] = OP_VIGNETTE
         first.set([effect.amount, effect.size], base)
+      } else if (effect.type === 'look') {
+        const look = lookNumbers(effect)
+        kinds[count] = OP_LOOK
+        first.set([look.gain.red, look.gain.green, look.gain.blue, look.contrast], base)
+        second.set([look.lift.red, look.lift.green, look.lift.blue, look.saturation], base)
+        third.set([look.shadows, look.highlights], base)
       } else {
         continue
       }
@@ -453,6 +529,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     gl.uniform1iv(at('uOpKind'), kinds)
     gl.uniform4fv(at('uOpA'), first)
     gl.uniform4fv(at('uOpB'), second)
+    gl.uniform4fv(at('uOpC'), third)
   }
 
   function sendFinish(finish: Finish): void {
@@ -513,13 +590,42 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     gl.uniform1fv(at('uWeights'), plan.weights)
     const color = shadow === undefined || isHorizontal ? undefined : rgbOf(shadow.color)
     gl.uniform4f(at('uShadow'), color?.red ?? 0, color?.green ?? 0, color?.blue ?? 0, color === undefined ? 0 : (shadow?.opacity ?? 0))
+    gl.uniform1f(at('uGain'), isHorizontal ? 1 : pass.gain)
     drawQuad(pass.box, pass.margin)
     // A target whose filter asks for smaller copies it does not have reads as black, so the filter goes back at once.
     if (isHorizontal) gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
   }
 
-  // Blurs the picture a target holds, or lays its shadow under it. Returns how far past its box the picture now reaches.
-  function applyAreaEffect(effect: AreaEffect, picture: Target, other: Target, box: Box, reach: number): number {
+  // Sharpens the picture a target holds, through the other target, which is copied back whole: the other is cleared first so nothing old comes back with it.
+  function sharpen(effect: Extract<Effect, { type: 'sharpen' }>, picture: Target, other: Target, box: Box, reach: number): void {
+    const spacing = effect.radius * mapping.scale
+    const level = Math.max(0, Math.log2(spacing))
+    clear(other, 0)
+    drawInto(other, 'replace')
+    use(sharpenProgram)
+    gl.bindTexture(gl.TEXTURE_2D, picture.texture)
+    if (level > 0) {
+      gl.generateMipmap(gl.TEXTURE_2D)
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+    }
+    gl.uniform2f(at('uTexel'), 1 / picture.width, 1 / picture.height)
+    gl.uniform1f(at('uSpacing'), spacing)
+    gl.uniform1f(at('uLevel'), level)
+    gl.uniform1f(at('uAmount'), effect.amount)
+    drawQuad(box, reach)
+    if (level > 0) gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, other.framebuffer)
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, picture.framebuffer)
+    gl.disable(gl.SCISSOR_TEST)
+    gl.blitFramebuffer(0, 0, other.width, other.height, 0, 0, picture.width, picture.height, gl.COLOR_BUFFER_BIT, gl.NEAREST)
+  }
+
+  // Blurs the picture a target holds, sharpens it, or lays its shadow under it. Returns how far past its box the picture now reaches.
+  function applyAreaEffect(effect: AreaEffect, picture: Target, other: Target, box: Box, reach: number, gain = 1): number {
+    if (effect.type === 'sharpen') {
+      if (effect.amount > 0) sharpen(effect, picture, other, box, reach)
+      return reach
+    }
     const isShadow = effect.type === 'dropShadow'
     if (isShadow && !(effect.opacity > 0)) return reach
     const plan = blurPlan((isShadow ? effect.softness : effect.strength) * mapping.scale)
@@ -527,11 +633,34 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     const shiftY = isShadow ? effect.offsetY * mapping.scale : 0
     // A blur reaches along both axes, and the box may be turned: the diagonal of that reach covers every turn.
     const carried = reach + Math.hypot(shiftX, shiftY) + plan.reach * Math.SQRT2
-    const common = { box, plan, shadow: isShadow ? effect : undefined }
+    const common = { box, plan, shadow: isShadow ? effect : undefined, gain }
     // The first direction is written wider than the second reads, so the second never reads what the first did not write.
     blurPass({ ...common, source: picture, target: other, blend: 'replace', margin: carried + plan.reach, isHorizontal: true, shiftX: -shiftX, shiftY: -shiftY })
     blurPass({ ...common, source: other, target: picture, blend: isShadow ? 'under' : 'replace', margin: carried, isHorizontal: false, shiftX: 0, shiftY: 0 })
     return carried
+  }
+
+  // The picture of a clip, with its colour effects, made large enough to cover the canvas and the reach of the blur past it, then blurred and darkened.
+  function drawBlurFill(item: PictureItem, fill: BlurFill, croppedWidth: number, croppedHeight: number, target: Target): void {
+    const blurReach = blurPlan(fill.strength * mapping.scale).reach * Math.SQRT2
+    const needX = (canvasSize.width * mapping.scale) / 2 + blurReach
+    const needY = (canvasSize.height * mapping.scale) / 2 + blurReach
+    const aspect = croppedWidth / croppedHeight
+    const isWider = needX / needY > aspect
+    const box: Box = {
+      centerX: mapping.offsetX + (canvasSize.width * mapping.scale) / 2,
+      centerY: mapping.offsetY + (canvasSize.height * mapping.scale) / 2,
+      halfWidth: isWider ? needX : needY * aspect,
+      halfHeight: isWider ? needX / aspect : needY,
+      cosine: 1,
+      sine: 0,
+    }
+    const picture = heldTarget()
+    clear(picture, 0)
+    const colourEffects = (item.effects ?? []).filter((effect) => COLOUR_EFFECTS.has(effect.type))
+    drawPictureInto(picture, 'over', item, box, colourEffects, PLAIN)
+    const reach = applyAreaEffect({ type: 'clipBlur', strength: fill.strength }, picture, spareTarget(), box, EDGE_MARGIN, 1 - fill.darken)
+    drawTargetInto(target, 'over', picture, box, reach, [], 0, PLAIN)
   }
 
   function drawPicture(item: PictureItem, target: Target, blend: Blend): void {
@@ -542,6 +671,20 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     if (box === undefined) return
 
     const finish: Finish = { opacity: item.opacity, look: item.transition }
+    const fill = item.effects?.find((effect): effect is BlurFill => effect.type === 'blurFill')
+    if (fill === undefined) {
+      drawWithEffects(item, box, target, blend, finish)
+      return
+    }
+    // The clip goes over its fill first and the two are then drawn as one, so a fade or a transition shows neither through the other.
+    const backdrop = backdropTarget()
+    clear(backdrop, 0)
+    drawBlurFill(item, fill, croppedWidth, croppedHeight, backdrop)
+    drawWithEffects(item, box, backdrop, 'over', PLAIN)
+    drawTargetInto(target, blend, backdrop, wholeOutput(), 0, [], 0, finish)
+  }
+
+  function drawWithEffects(item: PictureItem, box: Box, target: Target, blend: Blend, finish: Finish): void {
     const [first, ...later] = stagesOf(item.effects ?? [])
     if (first === undefined) return
     if (first.then === undefined) {
@@ -573,14 +716,17 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     }
   }
 
+  function wholeOutput(): Box {
+    return { centerX: output.width / 2, centerY: output.height / 2, halfWidth: output.width / 2, halfHeight: output.height / 2, cosine: 1, sine: 0 }
+  }
+
   // Two pictures that a transition adds up. Each is drawn at its share into a target of their own, which is then drawn as one layer.
   function drawPair(first: PictureItem, second: PictureItem): void {
     const sum = pairTarget()
     clear(sum, 0)
     drawPicture(first, sum, 'add')
     drawPicture(second, sum, 'add')
-    const whole: Box = { centerX: output.width / 2, centerY: output.height / 2, halfWidth: output.width / 2, halfHeight: output.height / 2, cosine: 1, sine: 0 }
-    drawTargetInto(frame, 'over', sum, whole, 0, [], 0, PLAIN)
+    drawTargetInto(frame, 'over', sum, wholeOutput(), 0, [], 0, PLAIN)
   }
 
   function drawShape(item: BlurLayer | HighlightLayer): void {
@@ -681,6 +827,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     // Drawing on a lost context does nothing and would read back black pictures, so an export stops here instead.
     if (gl.isContextLost()) throw new CompositorError('The graphics processor stopped; export again once the preview is back.')
     output = outputSize
+    canvasSize = canvas
     mapping = outputMapping(canvas, output, view)
     sized(frame)
     gl.viewport(0, 0, output.width, output.height)

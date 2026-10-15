@@ -79,7 +79,7 @@ function formatArguments(target: ExportTarget, limits: EncoderLimits): string[] 
 export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encoder {
   const layout = pixelLayoutOf(target.format)
   const hasEvenSize = target.width > 0 && target.height > 0 && target.width % 2 === 0 && target.height % 2 === 0
-  if (layout === 'yuv420p' && !hasEvenSize) throw new EncoderError(`${target.format.toUpperCase()} video needs an even picture size, not ${target.width}×${target.height}`)
+  if (layout === 'yuv420p' && !hasEvenSize) throw new EncoderError(`${target.format.toUpperCase()} video needs an even picture size, not ${target.width}x${target.height}`)
 
   const limits = encoderLimits(target.width * target.height)
   const temporaryPath = temporaryPathFor(target.path)

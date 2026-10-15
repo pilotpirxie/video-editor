@@ -61,6 +61,21 @@
             "y": 360
           },
           "type": "image"
+        },
+        {
+          "duration": 24000000,
+          "id": "ground-3",
+          "mediaId": "image-white",
+          "opacity": 1,
+          "start": 48000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 4,
+            "scaleY": 4,
+            "x": 640,
+            "y": 360
+          },
+          "type": "image"
         }
       ],
       "hidden": false,
@@ -120,6 +135,71 @@
           },
           "type": "video",
           "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "effects": [
+            {
+              "contrast": 0.15,
+              "exposure": 0,
+              "fade": 0,
+              "highlightAmount": 0.3,
+              "highlightColor": "#F2A35E",
+              "highlights": -0.15,
+              "saturation": -0.1,
+              "shadowAmount": 0.35,
+              "shadowColor": "#1F6F8B",
+              "shadows": 0,
+              "strength": 1,
+              "temperature": 0,
+              "tint": 0,
+              "type": "look"
+            }
+          ],
+          "id": "cinematic",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 48000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.8,
+            "scaleY": 0.8,
+            "x": 160,
+            "y": 190
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "effects": [
+            {
+              "darken": 0.3,
+              "strength": 40,
+              "type": "blurFill"
+            },
+            {
+              "amount": 1,
+              "type": "sepia"
+            }
+          ],
+          "id": "filled",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 72000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.5,
+            "scaleY": 0.5,
+            "x": 640,
+            "y": 360
+          },
+          "type": "video",
+          "volume": 1
         }
       ],
       "hidden": false,
@@ -169,6 +249,42 @@
           "sourceStart": 0,
           "speedPercent": 100,
           "start": 24000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.8,
+            "scaleY": 0.8,
+            "x": 480,
+            "y": 190
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "effects": [
+            {
+              "contrast": -0.2,
+              "exposure": 0.5,
+              "fade": 0.35,
+              "highlightAmount": 0,
+              "highlightColor": "#F2A35E",
+              "highlights": 0,
+              "saturation": -0.3,
+              "shadowAmount": 0,
+              "shadowColor": "#1F6F8B",
+              "shadows": 0.5,
+              "strength": 0.7,
+              "temperature": 0.4,
+              "tint": -0.3,
+              "type": "look"
+            }
+          ],
+          "id": "faded",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 48000000,
           "transform": {
             "rotation": 0,
             "scaleX": 0.8,
@@ -292,6 +408,31 @@
           },
           "type": "video",
           "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "effects": [
+            {
+              "amount": 2,
+              "radius": 2,
+              "type": "sharpen"
+            }
+          ],
+          "id": "sharpened",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 48000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.8,
+            "scaleY": 0.8,
+            "x": 1120,
+            "y": 190
+          },
+          "type": "video",
+          "volume": 1
         }
       ],
       "hidden": false,
@@ -345,6 +486,43 @@
           "sourceStart": 0,
           "speedPercent": 100,
           "start": 24000000,
+          "transform": {
+            "rotation": 6,
+            "scaleX": 0.8,
+            "scaleY": 0.8,
+            "x": 160,
+            "y": 530
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "effects": [
+            {
+              "radius": 30,
+              "type": "roundedCorners"
+            },
+            {
+              "amount": 1.5,
+              "radius": 1,
+              "type": "sharpen"
+            },
+            {
+              "color": "#000000",
+              "offsetX": 10,
+              "offsetY": 10,
+              "opacity": 0.5,
+              "softness": 10,
+              "type": "dropShadow"
+            }
+          ],
+          "id": "sharpened-blurred",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 48000000,
           "transform": {
             "rotation": 6,
             "scaleX": 0.8,

@@ -86,7 +86,7 @@ export function animationCurves(animation: Animation, edge: 'in' | 'out', clipDu
 }
 
 // The curves of both animations of a clip; where both change the same thing, a clip has two curves for it.
-export function clipAnimationCurves(clip: AnimatedClip, canvas: Size): AnimationCurves[] {
+function clipAnimationCurves(clip: AnimatedClip, canvas: Size): AnimationCurves[] {
   const curves: AnimationCurves[] = []
   if (clip.animationIn !== undefined) curves.push(animationCurves(clip.animationIn, 'in', clip.duration, canvas))
   if (clip.animationOut !== undefined) curves.push(animationCurves(clip.animationOut, 'out', clip.duration, canvas))

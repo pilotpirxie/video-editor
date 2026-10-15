@@ -47,8 +47,8 @@ const OPENING_HINT_DELAY_MS = 200
 function canvasHintOf(state: EditorState): string | undefined {
   if (state.openingName !== undefined) return `Opening "${state.openingName}"…`
   if (projectDuration(state.wholeProject) > 0) return undefined
-  if (state.wholeProject.media.length === 0) return 'Drop video, audio or images here from the Finder, or use Import in the library.'
-  return 'Drag media here from the library to start.'
+  if (state.wholeProject.media.length === 0) return 'Drop files here or click Import'
+  return undefined
 }
 
 type CanvasPanelProps = {
@@ -168,11 +168,13 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
         <IconButton icon="stepBack" label="Previous frame" testId="step-back" shortcut={stepBackKeys} onClick={() => actions.stepFrames(-1)} />
         <IconButton icon={isBusy ? 'pause' : 'play'} label={isBusy ? 'Pause' : 'Play'} testId="play" shortcut={playKeys} onClick={() => void transport.toggle()} />
         <IconButton icon="stepForward" label="Next frame" testId="step-forward" shortcut={stepForwardKeys} onClick={() => actions.stepFrames(1)} />
-        <output className="timecode" data-testid="timecode" aria-label="Timecode" data-frames={frameCount} data-full-quality={fullQualityMs !== undefined}>
-          {timecode(time, canvas.frameRate)}
-        </output>
-        <span className="timecode total" data-testid="duration" aria-label="Project length">
-          / {timecode(duration, canvas.frameRate)}
+        <span className="timecodes">
+          <output className="timecode" data-testid="timecode" aria-label="Timecode" data-frames={frameCount} data-full-quality={fullQualityMs !== undefined}>
+            {timecode(time, canvas.frameRate)}
+          </output>{' '}
+          <span className="timecode total" data-testid="duration" aria-label="Project length">
+            / {timecode(duration, canvas.frameRate)}
+          </span>
         </span>
         {shuttleRate !== 0 && (
           <span className="badge" data-testid="shuttle-rate">
@@ -195,15 +197,15 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
         ) : (
           <>
             <span className="spacer" />
-            <IconButton icon="zoom" label="Zoom and pan: frame what the camera shows" testId="zoom-tool" isPressed={isZooming} isDisabled={isGroupOpen} onClick={() => setIsZoomToolOn(!isZooming)} />
-            <IconButton icon="fit" label="Zoom to full: the camera shows the whole canvas from here" testId="zoom-to-full" isDisabled={isGroupOpen} onClick={actions.zoomToFull} />
-            <IconButton icon="crop" label="Crop with the handles" testId="crop-mode" isPressed={isCropping} onClick={() => setIsCropping(!isCropping)} />
+            <IconButton icon="zoom" label="Zoom and pan" testId="zoom-tool" isPressed={isZooming} isDisabled={isGroupOpen} onClick={() => setIsZoomToolOn(!isZooming)} />
+            <IconButton icon="fit" label="Zoom to full" testId="zoom-to-full" isDisabled={isGroupOpen} onClick={actions.zoomToFull} />
+            <IconButton icon="crop" label="Crop" testId="crop-mode" isPressed={isCropping} onClick={() => setIsCropping(!isCropping)} />
             <div className="canvas-zoom">
               <Picker label="Canvas zoom" testId="canvas-zoom" choices={zoomChoices(zoom)} value={zoomKey(zoom)} onChoose={(key) => setZoom(key === 'fit' ? 'fit' : Number(key))} />
             </div>
           </>
         )}
-        <IconButton icon="preview" label={isPreviewing ? 'Leave preview mode' : 'Preview mode: only the canvas and the transport'} testId="preview-mode" shortcut={previewKeys} isPressed={isPreviewing} onClick={() => store.setPreviewing(!isPreviewing)} />
+        <IconButton icon="preview" label={isPreviewing ? 'Leave preview mode' : 'Preview mode'} testId="preview-mode" shortcut={previewKeys} isPressed={isPreviewing} onClick={() => store.setPreviewing(!isPreviewing)} />
       </footer>
     </main>
   )

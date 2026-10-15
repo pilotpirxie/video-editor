@@ -12,7 +12,8 @@ export type Layout = {
 export const DEFAULT_LAYOUT: Layout = {
   leftWidth: 300,
   rightWidth: 300,
-  timelineHeight: 280,
+  // 280 for the tracks as before, plus 11 for the scroll bar under them.
+  timelineHeight: 291,
   isLeftCollapsed: false,
   isRightCollapsed: false,
   isTimelineCollapsed: false,

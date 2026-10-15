@@ -57,6 +57,8 @@ type Shortcuts = {
 const SHORTCUTS_KEY = 'shortcuts'
 // Sent on the window for the menu's Select All, before the clips are selected.
 export const SELECT_ALL_EVENT = 'editor-select-all'
+// Sent on the window for Delete and Ripple Delete, before the clips are deleted.
+export const DELETE_EVENT = 'editor-delete'
 
 // The keys are kept per Mac, for every window: a change in one window reaches the others through the storage they share.
 function createShortcuts(): Shortcuts {
@@ -396,6 +398,11 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     else if (window.dispatchEvent(new Event(SELECT_ALL_EVENT, { cancelable: true }))) actions.selectAll()
   }
 
+  // A panel with a selection of its own cancels the event while it is the one in use, and then the clips stay as they are.
+  function deleteSelection(isRipple: boolean): void {
+    if (window.dispatchEvent(new Event(DELETE_EVENT, { cancelable: true }))) actions.deleteSelection(isRipple)
+  }
+
   // A menu command, chosen in the menu or with its keys.
   function runMenuAction(action: MenuAction): void {
     if (action === 'export') openExportDialog()
@@ -409,8 +416,8 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     else if (action === 'select-all') selectAll()
     else if (action === 'deselect-all') store.select([])
     else if (action === 'duplicate') actions.duplicate()
-    else if (action === 'delete') actions.deleteSelection(false)
-    else if (action === 'ripple-delete') actions.deleteSelection(true)
+    else if (action === 'delete') deleteSelection(false)
+    else if (action === 'ripple-delete') deleteSelection(true)
     else if (action === 'group') actions.group()
     else if (action === 'ungroup') actions.ungroup()
     else if (action === 'toggle-library') togglePanel('library')

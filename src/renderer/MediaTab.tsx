@@ -4,7 +4,7 @@ import type { MediaInfo, MediaState, Preparation } from '../shared/mediaProtocol
 import type { MediaRef } from '../shared/project.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
 import { useEditorState, useSession } from './context.js'
-import { SELECT_ALL_EVENT } from './document.js'
+import { DELETE_EVENT, SELECT_ALL_EVENT } from './document.js'
 import { Icon } from './icons.js'
 import { LibraryTools, useLibraryDrag, useLibraryView } from './LibraryTabs.js'
 
@@ -16,7 +16,7 @@ function nameOf(path: string): string {
 }
 
 function durationLabel(info: MediaInfo): string {
-  if (info.kind === 'image') return `${info.width} × ${info.height}`
+  if (info.kind === 'image') return `${info.width}x${info.height}`
   const seconds = Math.round(info.duration / TICKS_PER_SECOND)
   return `${Math.floor(seconds / SECONDS_PER_MINUTE)}:${String(seconds % SECONDS_PER_MINUTE).padStart(2, '0')}`
 }
@@ -63,6 +63,7 @@ function MediaItem({ reference, state, preparation, isSelected, isTabStop, dragg
   const drag = useLibraryDrag(info === undefined ? undefined : { kind: 'media', mediaIds: draggedIds }, draggedIds.length > 1 ? `${draggedIds.length} files` : name)
 
   const isPreparing = preparation !== undefined && preparation.progress < 1 && !preparation.hasFailed
+  const percent = Math.floor((preparation?.progress ?? 0) * PERCENT)
   return (
     <li
       className={isSelected ? 'library-item selected' : 'library-item'}
@@ -83,23 +84,27 @@ function MediaItem({ reference, state, preparation, isSelected, isTabStop, dragg
       onMouseDown={(event) => event.preventDefault()}
       onClick={(event) => onChoose(reference.id, event)}
     >
-      <div className="library-thumbnail">
+      <div className={isPreparing ? 'library-thumbnail preparing' : 'library-thumbnail'}>
         {picture !== undefined && <Poster picture={picture} />}
         {info?.kind === 'audio' && <Icon name="music" />}
+        {isPreparing && (
+          <span className="badge warning thumbnail-progress" role="img" aria-label={`Preparing ${percent}%`}>
+            {percent}%
+          </span>
+        )}
       </div>
       <div className="library-text">
         <span className="library-name">{name}</span>
         <span className="library-details">
           {info !== undefined && <span>{durationLabel(info)}</span>}
-          {isPreparing && <span className="badge warning">preparing {Math.floor(preparation.progress * PERCENT)}%</span>}
           {preparation?.hasFailed === true && (
             <span className="badge danger" data-tooltip="Getting it ready for playback failed, so it may stutter or be silent while editing. Its clips can still be edited.">
-              media error
+              Media error
             </span>
           )}
           {problem !== undefined && (
             <span className="badge danger" data-tooltip={problem.error}>
-              {problem.isMissing ? 'media missing' : 'media error'}
+              {problem.isMissing ? 'Media missing' : 'Media error'}
             </span>
           )}
         </span>
@@ -282,12 +287,23 @@ export function MediaTab(): ReactElement {
     event.stopPropagation()
   }
 
+  function isInUse(): boolean {
+    return wasPressedLastRef.current || tabRef.current?.contains(document.activeElement) === true
+  }
+
   // Select All picks every file listed while this tab is the one in use, instead of every clip.
   const onSelectAll = useEffectEvent((event: Event) => {
-    const isInUse = wasPressedLastRef.current || tabRef.current?.contains(document.activeElement) === true
-    if (!isInUse) return
+    if (!isInUse()) return
     event.preventDefault()
     setSelectedIds(shownIds)
+  })
+
+  // Delete takes the picked files out of the project while this tab is the one in use, instead of deleting the selected clips.
+  const onDelete = useEffectEvent((event: Event) => {
+    if (!isInUse() || selectedIds.length === 0) return
+    event.preventDefault()
+    session.actions.removeMedia(selectedIds)
+    setSelectedIds([])
   })
 
   useEffect(() => {
@@ -296,9 +312,11 @@ export function MediaTab(): ReactElement {
     }
     window.addEventListener('pointerdown', onAnyPress, true)
     window.addEventListener(SELECT_ALL_EVENT, onSelectAll)
+    window.addEventListener(DELETE_EVENT, onDelete)
     return () => {
       window.removeEventListener('pointerdown', onAnyPress, true)
       window.removeEventListener(SELECT_ALL_EVENT, onSelectAll)
+      window.removeEventListener(DELETE_EVENT, onDelete)
     }
   }, [])
 
@@ -333,13 +351,12 @@ export function MediaTab(): ReactElement {
   return (
     <div ref={tabRef} className="library-tab" onPointerDown={startBox} onPointerMove={moveBox} onPointerUp={endBox} onPointerCancel={endBox} onLostPointerCapture={endBox}>
       <LibraryTools noun="media" query={query} onQuery={setQuery} view={view} onView={setView}>
-        {/* Importing is the first thing to do in an empty project; after that the window's one primary action is Export. */}
-        <button type="button" className={media.length === 0 ? 'button primary' : 'button'} data-testid="import" onClick={() => void session.chooseAndImport()}>
+        <button type="button" className="button" data-testid="import" onClick={() => void session.chooseAndImport()}>
           Import
         </button>
       </LibraryTools>
-      {isEmpty && !isOpening && <p className="empty-state">Import video, audio or images, or drop files here.</p>}
-      {!isEmpty && shown.length === 0 && pending.length === 0 && <p className="empty-state">Nothing here is called that.</p>}
+      {isEmpty && !isOpening && <p className="empty-state">Drop files here</p>}
+      {!isEmpty && shown.length === 0 && pending.length === 0 && <p className="empty-state">No matches</p>}
       <ul ref={listRef} className={view === 'grid' ? 'library-list grid' : 'library-list'} role="listbox" aria-multiselectable="true" aria-label="Media" onKeyDown={onListKeyDown}>
         {shown.map((reference) => (
           <MediaItem

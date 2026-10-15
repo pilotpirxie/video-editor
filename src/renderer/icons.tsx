@@ -13,6 +13,7 @@ const PATHS = {
   lock: 'M4 7h8v6H4zM6 7V5a2 2 0 0 1 4 0v2',
   eye: 'M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8zM8 6.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z',
   speaker: 'M2 6h3l4-3v10l-4-3H2zM11.5 6a3 3 0 0 1 0 4',
+  speakerMuted: 'M2 6h3l4-3v10l-4-3H2zM11 6l3.5 4M14.5 6L11 10',
   crop: 'M4 1.5V12h10.5M1.5 4H12v10.5',
   link: 'M6.5 9.5l3-3M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9 11.5l-1 1A2.5 2.5 0 0 1 4.5 9l1-1',
   text: 'M3 4.5V3h10v1.5M8 3v10M6 13h4',
@@ -44,15 +45,6 @@ const PATHS = {
   arrow: 'M3 13L13 3M7.5 3H13v5.5',
   line: 'M3 13L13 3',
   group: 'M2.5 2.5h7v7h-7zM6.5 6.5h7v7h-7z',
-  motion: 'M2 12.5c3.5 0 3-9 6.5-9S11 9 14 9M11.5 6.5L14 9l-2.5 2.5',
-  edgeLeft: 'M2.5 2v12M4.5 4h8v3h-8zM4.5 9h5v3h-5z',
-  edgeCenter: 'M8 2v12M3.5 4h9v3h-9zM5.5 9h5v3h-5z',
-  edgeRight: 'M13.5 2v12M3.5 4h8v3h-8zM6.5 9h5v3h-5z',
-  edgeTop: 'M2 2.5h12M4 4.5h3v8H4zM9 4.5h3v5H9z',
-  edgeMiddle: 'M2 8h12M4 3.5h3v9H4zM9 5.5h3v5H9z',
-  edgeBottom: 'M2 13.5h12M4 3.5h3v8H4zM9 6.5h3v5H9z',
-  spreadAcross: 'M2 2v12M14 2v12M6.5 4.5h3v7h-3z',
-  spreadDown: 'M2 2h12M2 14h12M4.5 6.5h7v3h-7z',
   preview: 'M2 3h12v10H2zM6.5 5.5l4 2.5-4 2.5z',
   export: 'M8 10V2.5M5 5.5l3-3 3 3M3 9v4.5h10V9',
 } as const
@@ -74,14 +66,16 @@ type IconButtonProps = {
   // The keys that do the same, as written in the tooltip.
   shortcut?: string
   isPressed?: boolean
+  // Pressed, the icon turns red: for a switch that silences or takes something away.
+  isDanger?: boolean
   isDisabled?: boolean
   onClick(): void
 }
 
-export function IconButton({ icon, label, testId, shortcut, isPressed, isDisabled, onClick }: IconButtonProps): ReactElement {
+export function IconButton({ icon, label, testId, shortcut, isPressed, isDanger = false, isDisabled, onClick }: IconButtonProps): ReactElement {
   const tooltip = shortcut === undefined ? label : `${label} (${shortcut})`
   return (
-    <button type="button" className="button icon" aria-label={label} aria-pressed={isPressed} data-tooltip={tooltip} data-testid={testId} disabled={isDisabled} onClick={onClick}>
+    <button type="button" className={isDanger ? 'button icon danger' : 'button icon'} aria-label={label} aria-pressed={isPressed} data-tooltip={tooltip} data-testid={testId} disabled={isDisabled} onClick={onClick}>
       <Icon name={icon} />
     </button>
   )

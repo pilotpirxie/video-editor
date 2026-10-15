@@ -89,6 +89,8 @@ const MEDIA_EXTENSIONS = [
 const UNSAVED_CHOICES: readonly UnsavedChoice[] = ['save', 'discard', 'cancel']
 // A new window opens this far below and to the right of the one in front, so both can be seen.
 const CASCADE_PIXELS = 22
+// Where windows of a test run open: beyond every screen, so a run does not cover the desktop. Shown there, they still draw every frame.
+const OFF_SCREEN = { x: -20_000, y: 0 }
 // A window whose page dies again this soon after it was brought back is left as it is: reloading it once more would loop.
 const RESTART_GUARD_MS = 10_000
 
@@ -442,6 +444,8 @@ function createWindow(state: AppState, options: WindowOptions): BrowserWindow {
   if (options.isUnattended) {
     window.webContents.setAudioMuted(true)
     window.showInactive()
+    // macOS keeps a window on a screen as it first shows it, so it is moved once shown.
+    if (options.position === undefined) window.setPosition(OFF_SCREEN.x, OFF_SCREEN.y)
   } else if (!isHeadless) {
     window.show()
   }
@@ -1008,6 +1012,7 @@ async function runCliUiTest(state: AppState, scenario: string, inputs: UiTestInp
     // A recovery file can only be there because the test left one on purpose, so it is restored without asking.
     state.dialogAnswers.restore = true
     state.isUnattended = true
+    app.dock?.hide()
     const window = await openFirstEditors(state, inputs.projectPath)
     const { outputDirectory, mediaDirectory, seconds, seed } = inputs
     const report = await runUiTest(window, { scenario, outputDirectory, mediaDirectory, seconds, seed, answers: state.dialogAnswers })

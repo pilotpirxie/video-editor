@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
-import { ANIMATION_NAMES, DEFAULT_ANIMATION, convertAnimations, setAnimation, takesAnimation } from '../editor/animations.js'
+import { ANIMATION_NAMES, DEFAULT_ANIMATION, setAnimation, takesAnimation } from '../editor/animations.js'
 import { CALLOUT_NAMES, setArrowStyle, setCalloutStyle } from '../editor/annotations.js'
-import { align, arrange, distribute, type AlignEdge, type ArrangePreset, type Arranged, type ArrangedItem, type DistributeAxis } from '../editor/arrange.js'
 import { deleteZoom, setZoom, type ZoomChanges } from '../editor/camera.js'
 import { freeTrackId, hasMedia, hasSource, isCroppable, isVisual, makesSound, nextTrackName } from '../editor/clips.js'
 import { cropFromValue } from '../editor/geometry.js'
@@ -23,12 +22,11 @@ import {
   sharedValue,
   type Fade,
   type KeyframeSet,
-  type PropertyValues,
 } from '../editor/properties.js'
 import { setShapeStyle, type ShapeStyle } from '../editor/shapes.js'
 import { missingFonts, setTextStyle, type TextStyle } from '../editor/text.js'
 import { DEFAULT_TRANSITION, TRANSITION_NAMES, setTransition, type TransitionEdge } from '../editor/transitions.js'
-import { groupFrameAt, type MediaStates } from '../engine/resolve.js'
+import type { MediaStates } from '../engine/resolve.js'
 import { arrowSize } from '../engine/annotations.js'
 import { measureText } from '../engine/text.js'
 import type { Size } from '../shared/exportPresets.js'
@@ -42,6 +40,7 @@ import {
   MIN_CANVAS,
   TRANSITION_TYPES,
   type AnimatableProperty,
+  type AnimationType,
   type ArrowClip,
   type ArrowHead,
   type BlurClip,
@@ -61,7 +60,6 @@ import {
 } from '../shared/project.js'
 import { FAST_SOUND_ABOVE_PERCENT, MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, PROJECT_FRAME_RATES, TICKS_PER_SECOND, frameDuration, type FrameRate } from '../shared/time.js'
 import { useEditorState, usePosition, useSession } from './context.js'
-import { shownClips, valuesInOpenTracks, type Shown } from './CanvasOverlay.js'
 import { installedFontFamilies } from './fonts.js'
 import { Icon, IconButton, type IconName } from './icons.js'
 import { NumberField } from './NumberField.js'
@@ -111,15 +109,11 @@ const EASINGS: readonly { easing: Easing; label: string }[] = [
   { easing: 'easeIn', label: 'Ease in' },
   { easing: 'easeOut', label: 'Ease out' },
   { easing: 'linear', label: 'Linear' },
-  { easing: 'hold', label: 'Jump, with no move' },
+  { easing: 'hold', label: 'Hold' },
 ]
 const SHAPES: readonly { shape: Shape; label: string }[] = [
   { shape: 'rectangle', label: 'Rectangle' },
   { shape: 'ellipse', label: 'Ellipse' },
-]
-const EDGES: readonly { edge: TransitionEdge; label: string }[] = [
-  { edge: 'in', label: 'Start' },
-  { edge: 'out', label: 'End' },
 ]
 const CROP_SIDES: readonly { side: keyof Crop; property: AnimatableProperty; label: string }[] = [
   { side: 'left', property: 'cropLeft', label: 'Left' },
@@ -131,31 +125,6 @@ const ALIGNMENTS: readonly { align: TextAlign; icon: IconName; label: string }[]
   { align: 'left', icon: 'alignLeft', label: 'Align left' },
   { align: 'center', icon: 'alignCenter', label: 'Align centre' },
   { align: 'right', icon: 'alignRight', label: 'Align right' },
-]
-const ARRANGE_GAP_KEY = 'arrange-gap'
-const ARRANGE_FILL_KEY = 'arrange-fill'
-const DEFAULT_GAP = 0
-const GAPS = [0, 10, 20, 40, 80]
-const ALIGN_EDGES: readonly { edge: AlignEdge; icon: IconName; label: string }[] = [
-  { edge: 'left', icon: 'edgeLeft', label: 'Align left edges' },
-  { edge: 'center', icon: 'edgeCenter', label: 'Align centres across' },
-  { edge: 'right', icon: 'edgeRight', label: 'Align right edges' },
-  { edge: 'top', icon: 'edgeTop', label: 'Align top edges' },
-  { edge: 'middle', icon: 'edgeMiddle', label: 'Align middles' },
-  { edge: 'bottom', icon: 'edgeBottom', label: 'Align bottom edges' },
-]
-const DISTRIBUTE_AXES: readonly { axis: DistributeAxis; icon: IconName; label: string }[] = [
-  { axis: 'across', icon: 'spreadAcross', label: 'Space evenly across' },
-  { axis: 'down', icon: 'spreadDown', label: 'Space evenly down' },
-]
-const ARRANGE_PRESETS: readonly { value: ArrangePreset; label: string }[] = [
-  { value: 'grid2', label: '2 × 2 grid' },
-  { value: 'grid3', label: '3 × 3 grid' },
-  { value: 'onePlusThree', label: '1 large + 3 small' },
-  { value: 'pipTopLeft', label: 'Picture in picture, top left' },
-  { value: 'pipTopRight', label: 'Picture in picture, top right' },
-  { value: 'pipBottomLeft', label: 'Picture in picture, bottom left' },
-  { value: 'pipBottomRight', label: 'Picture in picture, bottom right' },
 ]
 const KEYFRAME_NAMES: Record<KeyframeSet, string> = { position: 'Position', size: 'Size', rotation: 'Rotation', opacity: 'Opacity', crop: 'Crop', volume: 'Volume' }
 
@@ -208,6 +177,8 @@ type GroupProps = {
   icon: IconName
   // Controls that belong to the whole group, shown at the end of its title line.
   actions?: ReactElement
+  // Groups start folded each time the editor opens, except these.
+  isOpenAtStart?: boolean
   children: ReactNode
 }
 
@@ -256,33 +227,18 @@ export function ColorField({ label, testId, command, value, edit }: ColorFieldPr
   )
 }
 
-function remember(key: string, value: string): void {
-  try {
-    localStorage.setItem(key, value)
-  } catch (error) {
-    logError('Could not remember a setting of the layout tools', error, { key })
-  }
-}
-
-function storedGap(): number {
-  const stored = Number(localStorage.getItem(ARRANGE_GAP_KEY) ?? DEFAULT_GAP)
-  return Number.isFinite(stored) && stored >= 0 ? stored : DEFAULT_GAP
-}
-
-function cropValues(crop: Crop | undefined): PropertyValues {
-  if (crop === undefined) return {}
-  return { cropLeft: crop.left, cropTop: crop.top, cropRight: crop.right, cropBottom: crop.bottom }
-}
-
-// Fields that belong together, under a title that folds them away. What is folded stays folded the next time the editor opens.
-export function Group({ title, icon, actions, children }: GroupProps): ReactElement {
+// Fields that belong together, under a title that folds them away. What is folded or unfolded stays so while the window is open.
+export function Group({ title, icon, actions, isOpenAtStart = false, children }: GroupProps): ReactElement {
   const storageKey = `group-${title}`
-  const [isOpen, setIsOpen] = useState(() => localStorage.getItem(storageKey) !== 'closed')
+  const [isOpen, setIsOpen] = useState(() => {
+    const stored = sessionStorage.getItem(storageKey)
+    return stored === null ? isOpenAtStart : stored === 'open'
+  })
 
   function toggle(): void {
     setIsOpen(!isOpen)
     try {
-      localStorage.setItem(storageKey, isOpen ? 'closed' : 'open')
+      sessionStorage.setItem(storageKey, isOpen ? 'closed' : 'open')
     } catch (error) {
       logError('Could not remember which groups are folded', error)
     }
@@ -291,7 +247,7 @@ export function Group({ title, icon, actions, children }: GroupProps): ReactElem
   return (
     <section className="group" aria-label={title}>
       <div className="group-header">
-        <button type="button" className="group-toggle focusable" aria-expanded={isOpen} data-testid={`group-${title.toLowerCase()}`} onClick={toggle}>
+        <button type="button" className="group-toggle focusable" aria-expanded={isOpen} data-testid={`group-${title.toLowerCase().replaceAll(' ', '-')}`} onClick={toggle}>
           <Icon name={isOpen ? 'chevronDown' : 'chevronRight'} />
           <Icon name={icon} />
           {title}
@@ -323,7 +279,7 @@ function ProjectSettings(): ReactElement {
   }
 
   return (
-    <Group title="Project" icon="film" actions={<IconButton icon="link" label="Keep the aspect ratio" testId="canvas-aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />}>
+    <Group title="Project" icon="film" isOpenAtStart actions={<IconButton icon="link" label="Keep the aspect ratio" testId="canvas-aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />}>
       <EditField label="Width" testId="canvas-width" command="Change Canvas Size" value={canvas.width} min={MIN_CANVAS.width} max={MAX_CANVAS.width} edit={setSide('width')} />
       <EditField label="Height" testId="canvas-height" command="Change Canvas Size" value={canvas.height} min={MIN_CANVAS.height} max={MAX_CANVAS.height} edit={setSide('height')} />
       <div className="labelled">
@@ -623,7 +579,7 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
         presets={LINE_SPACINGS}
         edit={set((lineSpacing) => ({ lineSpacing }))}
       />
-      {boxed.length > 0 && <SwitchField label="Wrap words in a box of fixed width" testId="text-wrap" isOn={isWrapped} onSwitch={wrap} />}
+      {boxed.length > 0 && <SwitchField label="Fixed-width box" testId="text-wrap" isOn={isWrapped} onSwitch={wrap} />}
       {isWrapped && (
         <EditField
           label="Box width"
@@ -675,7 +631,7 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
             )}
           />
           <EditField
-            label="Shadow right"
+            label="Shadow X"
             testId="text-shadow-x"
             command="Change Shadow"
             value={sharedValue(clips.map((clip) => clip.shadow?.offsetX))}
@@ -685,7 +641,7 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
             edit={set((shadowOffsetX) => ({ shadowOffsetX }))}
           />
           <EditField
-            label="Shadow down"
+            label="Shadow Y"
             testId="text-shadow-y"
             command="Change Shadow"
             value={sharedValue(clips.map((clip) => clip.shadow?.offsetY))}
@@ -861,9 +817,9 @@ function ZoomProperties({ index }: { index: number }): ReactElement | undefined 
   }
 
   return (
-    <Group title="Zoom" icon="zoom" actions={<IconButton icon="trash" label="Delete zoom" testId="zoom-delete" onClick={() => store.apply('Delete Zoom', (project) => deleteZoom(project, index))} />}>
+    <Group title="Zoom" icon="zoom" isOpenAtStart actions={<IconButton icon="trash" label="Delete zoom" testId="zoom-delete" onClick={() => store.apply('Delete Zoom', (project) => deleteZoom(project, index))} />}>
       <EditField
-        label="Scale %"
+        label="Scale (%)"
         testId="zoom-scale"
         command="Change Zoom"
         value={zoom.scale * PERCENT}
@@ -876,7 +832,7 @@ function ZoomProperties({ index }: { index: number }): ReactElement | undefined 
       <EditField label="X" testId="zoom-x" command="Change Zoom" value={zoom.x} min={0} max={canvas.width} decimals={1} edit={set((x) => ({ x }))} />
       <EditField label="Y" testId="zoom-y" command="Change Zoom" value={zoom.y} min={0} max={canvas.height} decimals={1} edit={set((y) => ({ y }))} />
       <EditField
-        label="Length s"
+        label="Length (s)"
         testId="zoom-duration"
         command="Change Zoom Length"
         value={zoom.duration / TICKS_PER_SECOND}
@@ -904,33 +860,108 @@ function eachClip<Kind extends Clip>(clips: readonly Kind[], editOf: (project: P
   }
 }
 
-type EndFieldsProps = {
-  // What the fields are called in tests: 'transition-in', 'animation-out'.
-  testId: string
+type InOutProps = {
+  edge: TransitionEdge
   label: string
-  pickerLabel: string
-  command: string
-  choices: readonly { value: string; label: string }[]
-  // What each selected clip has at this end: nothing, or a kind of move and its length.
-  current: readonly ({ type: string; duration: number } | undefined)[]
+  clips: readonly VisualClip[]
   frameTicks: number
-  onChoose(chosen: string): void
-  setLength(ticks: number): Edit
 }
 
-// The transition or the animation at one end of the selected clips: which one, and for how long.
-function EndFields({ testId, label, pickerLabel, command, choices, current, frameTicks, onChoose, setLength }: EndFieldsProps): ReactElement {
+type ClipEnd = {
+  // FADE, `animation-<type>` or the type of a transition.
+  value: string
+  duration: number
+}
+
+const FADE = 'fade'
+const ANIMATION_PREFIX = 'animation-'
+// Slides and zooms are offered as transitions, which do the same at an edge with nothing beside it; files may still hold them as animations.
+const OFFERED_ANIMATIONS: readonly AnimationType[] = ['pop', 'typewriter']
+
+// How a clip comes in or goes out. An end has one of them; files from before may hold more, and then the transition is what is shown.
+function clipEnd(clip: VisualClip, edge: TransitionEdge): ClipEnd | undefined {
+  const transition = edge === 'in' ? clip.transitionIn : clip.transitionOut
+  if (transition !== undefined) return { value: transition.type, duration: transition.duration }
+  const animation = edge === 'in' ? clip.animationIn : clip.animationOut
+  if (animation !== undefined) return { value: `${ANIMATION_PREFIX}${animation.type}`, duration: animation.duration }
+  const fade = edge === 'in' ? clip.fadeIn : clip.fadeOut
+  if (fade !== undefined) return { value: FADE, duration: fade }
+  return undefined
+}
+
+function animationOf(value: string): AnimationType | undefined {
+  return ANIMATION_TYPES.find((type) => `${ANIMATION_PREFIX}${type}` === value)
+}
+
+// Setting one way in or out takes the others at that end away (see `withOnlyAtEnd`).
+function withEnd(project: Project, clip: VisualClip, edge: TransitionEdge, end: ClipEnd | undefined, frameTicks: number): Project {
+  const fade = edge === 'in' ? 'fadeIn' : 'fadeOut'
+  if (end === undefined) {
+    const withoutTransition = setTransition(project, { clipId: clip.id, edge }, undefined, frameTicks)
+    return setFade(setAnimation(withoutTransition, [clip.id], edge, undefined), [clip.id], fade, 0)
+  }
+  if (end.value === FADE) return setFade(project, [clip.id], fade, end.duration)
+  const animation = animationOf(end.value)
+  if (animation !== undefined) return setAnimation(project, [clip.id], edge, { type: animation, duration: end.duration })
+  const transition = TRANSITION_TYPES.find((type) => type === end.value)
+  if (transition === undefined) return project
+  return setTransition(project, { clipId: clip.id, edge }, { type: transition, duration: end.duration }, frameTicks)
+}
+
+// The one place a clip's fade, animation or transition at one end is chosen, and for how long.
+function InOutFields({ edge, label, clips, frameTicks }: InOutProps): ReactElement {
+  const { store } = useSession()
+  const current = clips.map((clip) => clipEnd(clip, edge))
+  const command = `Change Clip ${label}`
   const frameSeconds = frameTicks / TICKS_PER_SECOND
+
+  const choices = [
+    { value: NONE, label: 'None' },
+    { value: FADE, label: 'Fade' },
+  ]
+  // Only what every selected clip can do is offered: a typewriter needs letters.
+  for (const type of OFFERED_ANIMATIONS) {
+    if (clips.every((clip) => takesAnimation(clip, type))) choices.push({ value: `${ANIMATION_PREFIX}${type}`, label: ANIMATION_NAMES[type] })
+  }
+  for (const type of TRANSITION_TYPES) choices.push({ value: type, label: TRANSITION_NAMES[type] })
+  // An animation no longer offered is still named while a clip has it.
+  for (const end of current) {
+    const animation = end === undefined ? undefined : animationOf(end.value)
+    const isListed = choices.some((choice) => choice.value === end?.value)
+    if (end !== undefined && animation !== undefined && !isListed) choices.push({ value: end.value, label: ANIMATION_NAMES[animation] })
+  }
+
+  function onChoose(chosen: string): void {
+    const edit = eachClip(clips, (project, clip) => {
+      const end = clipEnd(clip, edge)
+      if ((end?.value ?? NONE) === chosen) return project
+      if (chosen === NONE) return withEnd(project, clip, edge, undefined, frameTicks)
+      let duration = end?.duration
+      if (duration === undefined) duration = TRANSITION_TYPES.some((type) => type === chosen) ? DEFAULT_TRANSITION : DEFAULT_ANIMATION
+      return withEnd(project, clip, edge, { value: chosen, duration }, frameTicks)
+    })
+    store.apply(command, edit)
+  }
+
+  function setLength(lengthInSeconds: number): Edit {
+    const duration = Math.max(1, Math.round((lengthInSeconds * TICKS_PER_SECOND) / frameTicks)) * frameTicks
+    return eachClip(clips, (project, clip) => {
+      const end = clipEnd(clip, edge)
+      if (end === undefined || end.duration === duration) return project
+      return withEnd(project, clip, edge, { value: end.value, duration }, frameTicks)
+    })
+  }
+
   return (
     <>
       <div className="labelled">
         <span className="field-label">{label}</span>
-        <Picker label={pickerLabel} testId={testId} choices={[{ value: NONE, label: 'None' }, ...choices]} value={sharedValue(current.map((end) => end?.type ?? NONE))} onChoose={onChoose} />
+        <Picker label={`How the clip comes ${edge}`} testId={`clip-${edge}`} choices={choices} value={sharedValue(current.map((end) => end?.value ?? NONE))} onChoose={onChoose} />
       </div>
       {current.some((end) => end !== undefined) && (
         <EditField
-          label={`${label} length s`}
-          testId={`${testId}-length`}
+          label={`${label} length (s)`}
+          testId={`clip-${edge}-length`}
           command={command}
           value={seconds(sharedValue(current.map((end) => end?.duration)))}
           min={frameSeconds}
@@ -938,90 +969,10 @@ function EndFields({ testId, label, pickerLabel, command, choices, current, fram
           step={frameSeconds}
           decimals={3}
           presets={MOVE_SECONDS}
-          edit={(length) => setLength(length * TICKS_PER_SECOND)}
+          edit={setLength}
         />
       )}
     </>
-  )
-}
-
-type EndProps = {
-  edge: TransitionEdge
-  label: string
-  clips: readonly VisualClip[]
-  frameTicks: number
-}
-
-function TransitionFields({ edge, label, clips, frameTicks }: EndProps): ReactElement {
-  const { store } = useSession()
-  const key = edge === 'in' ? 'transitionIn' : 'transitionOut'
-
-  function onChoose(chosen: string): void {
-    const picked = TRANSITION_TYPES.find((candidate) => candidate === chosen)
-    const edit = eachClip(clips, (project, clip) => {
-      const transition = picked === undefined ? undefined : { type: picked, duration: clip[key]?.duration ?? DEFAULT_TRANSITION }
-      return setTransition(project, { clipId: clip.id, edge }, transition, frameTicks)
-    })
-    store.apply(picked === undefined ? 'Remove Transition' : 'Change Transition', edit)
-  }
-
-  function setLength(duration: number): Edit {
-    return eachClip(clips, (project, clip) => {
-      const current = clip[key]
-      return current === undefined ? project : setTransition(project, { clipId: clip.id, edge }, { type: current.type, duration }, frameTicks)
-    })
-  }
-
-  return (
-    <EndFields
-      testId={`transition-${edge}`}
-      label={label}
-      pickerLabel={`Transition at the ${label.toLowerCase()}`}
-      command="Change Transition"
-      choices={TRANSITION_TYPES.map((type) => ({ value: type, label: TRANSITION_NAMES[type] }))}
-      current={clips.map((clip) => clip[key])}
-      frameTicks={frameTicks}
-      onChoose={onChoose}
-      setLength={setLength}
-    />
-  )
-}
-
-// How the selected clips come in, or go out.
-function AnimationFields({ edge, label, clips, frameTicks }: EndProps): ReactElement {
-  const { store } = useSession()
-  const key = edge === 'in' ? 'animationIn' : 'animationOut'
-  // Only what every selected clip can do is offered: a typewriter needs letters.
-  const types = ANIMATION_TYPES.filter((type) => clips.every((clip) => takesAnimation(clip, type)))
-
-  function onChoose(chosen: string): void {
-    const picked = types.find((candidate) => candidate === chosen)
-    const edit = eachClip(clips, (project, clip) => {
-      const animation = picked === undefined ? undefined : { type: picked, duration: clip[key]?.duration ?? DEFAULT_ANIMATION }
-      return setAnimation(project, [clip.id], edge, animation)
-    })
-    store.apply(picked === undefined ? 'Remove Animation' : 'Change Animation', edit)
-  }
-
-  function setLength(duration: number): Edit {
-    return eachClip(clips, (project, clip) => {
-      const current = clip[key]
-      return current === undefined ? project : setAnimation(project, [clip.id], edge, { type: current.type, duration })
-    })
-  }
-
-  return (
-    <EndFields
-      testId={`animation-${edge}`}
-      label={label}
-      pickerLabel={`Animation ${label.toLowerCase()}`}
-      command="Change Animation"
-      choices={types.map((type) => ({ value: type, label: ANIMATION_NAMES[type] }))}
-      current={clips.map((clip) => clip[key])}
-      frameTicks={frameTicks}
-      onChoose={onChoose}
-      setLength={setLength}
-    />
   )
 }
 
@@ -1061,128 +1012,6 @@ type SwitchFieldProps = {
   testId: string
   isOn: boolean
   onSwitch(isOn: boolean): void
-}
-
-// Ready-made places for the selected clips, worked out from where the canvas shows them at the playhead, also inside an open group.
-// They are read when a button is pressed, so nothing is worked out while the playhead moves.
-function LayoutFields({ clips }: { clips: readonly VisualClip[] }): ReactElement {
-  const { store, transport } = useSession()
-  const [gap, setGap] = useState(storedGap)
-  const [isFill, setIsFill] = useState(() => localStorage.getItem(ARRANGE_FILL_KEY) === 'fill')
-  const gapAtStartRef = useRef(gap)
-  const isTryingRef = useRef(false)
-
-  function rememberGap(next: number): void {
-    setGap(next)
-    remember(ARRANGE_GAP_KEY, String(next))
-  }
-
-  function chooseFill(next: boolean): void {
-    setIsFill(next)
-    remember(ARRANGE_FILL_KEY, next ? 'fill' : 'fit')
-  }
-
-  function placing(place: (items: readonly ArrangedItem[], canvas: Size) => Map<string, Arranged>): Edit {
-    const state = store.getState()
-    const time = transport.position().time
-    const wholeTime = time + (state.scope?.offset ?? 0)
-    const openFrame = groupFrameAt(state.wholeProject, state.openGroups, wholeTime)
-    const shown = shownClips(state.wholeProject, state.mediaStates, wholeTime, { project: state.project, time, groups: state.openGroups, frame: openFrame })
-    // In the order the clips were selected, which is the order the cells are filled in.
-    const chosen: Shown[] = []
-    for (const clip of clips) {
-      const item = shown.find((candidate) => candidate.clipId === clip.id)
-      if (item !== undefined) chosen.push(item)
-    }
-    const items: ArrangedItem[] = []
-    for (const item of chosen) {
-      const arranged: ArrangedItem = { id: item.clipId, box: item.box, place: { x: item.transform.x, y: item.transform.y }, scaleX: item.transform.scaleX, scaleY: item.transform.scaleY }
-      if (item.kind === 'picture') arranged.natural = item.natural
-      items.push(arranged)
-    }
-    const placed = place(items, state.project.canvas)
-    return (project) => {
-      let edited = project
-      for (const item of chosen) {
-        const arranged = placed.get(item.clipId)
-        if (arranged === undefined) continue
-        const { crop, ...transform } = arranged
-        const values = { ...valuesInOpenTracks(state.openGroups, openFrame, item, transform), ...cropValues(crop) }
-        edited = setProperties(edited, [item.clipId], values, time)
-      }
-      return edited
-    }
-  }
-
-  // The layout under the pointer, or reached with the arrow keys, is shown on the canvas at once; only choosing it makes it an undo step.
-  function tryPreset(chosen: string): void {
-    const preset = ARRANGE_PRESETS.find((option) => option.value === chosen)?.value
-    if (preset === undefined) return
-    // Each layout is worked out from the clips as they were before any was tried, so a crop that fills a cell never adds to the last one tried.
-    if (isTryingRef.current) store.cancel()
-    store.begin('Arrange Clips')
-    store.update(placing((items, canvas) => arrange(items, preset, canvas, { gap, isFill })))
-    isTryingRef.current = true
-  }
-
-  function choosePreset(chosen: string): void {
-    tryPreset(chosen)
-    isTryingRef.current = false
-    store.commit()
-  }
-
-  function putBack(): void {
-    if (isTryingRef.current) store.cancel()
-    isTryingRef.current = false
-  }
-
-  return (
-    <>
-      <div className="labelled">
-        <span className="field-label">Align</span>
-        <div className="segmented wide" role="group" aria-label="Align">
-          {ALIGN_EDGES.map(({ edge, icon, label }) => (
-            <IconButton key={edge} icon={icon} label={label} testId={`align-${edge}`} onClick={() => store.apply('Align Clips', placing((items, canvas) => align(items, edge, canvas)))} />
-          ))}
-        </div>
-      </div>
-      <div className="labelled">
-        <span className="field-label">Distribute</span>
-        <div className="segmented wide" role="group" aria-label="Distribute">
-          {DISTRIBUTE_AXES.map(({ axis, icon, label }) => (
-            <IconButton key={axis} icon={icon} label={label} testId={`distribute-${axis}`} isDisabled={clips.length < 3} onClick={() => store.apply('Distribute Clips', placing((items) => distribute(items, axis)))} />
-          ))}
-        </div>
-      </div>
-      <NumberField
-        label="Gap"
-        testId="arrange-gap"
-        value={gap}
-        min={0}
-        max={MAX_POSITION}
-        presets={GAPS}
-        onBegin={() => (gapAtStartRef.current = gap)}
-        onChange={rememberGap}
-        onCommit={() => undefined}
-        onCancel={() => rememberGap(gapAtStartRef.current)}
-      />
-      <div className="labelled">
-        <span className="field-label">In each cell</span>
-        <div className="segmented wide" role="group" aria-label="In each cell">
-          <button type="button" className="button" data-testid="arrange-fit" aria-pressed={!isFill} onClick={() => chooseFill(false)}>
-            Fit
-          </button>
-          <button type="button" className="button" data-testid="arrange-fill" aria-pressed={isFill} onClick={() => chooseFill(true)}>
-            Fill
-          </button>
-        </div>
-      </div>
-      <div className="labelled">
-        <span className="field-label">Arrange</span>
-        <Picker label="Arrange" testId="arrange-preset" choices={ARRANGE_PRESETS} value={undefined} placeholder="Choose a layout" onPreview={tryPreset} onChoose={choosePreset} onClose={putBack} />
-      </div>
-    </>
-  )
 }
 
 function SwitchField({ label, testId, isOn, onSwitch }: SwitchFieldProps): ReactElement {
@@ -1295,9 +1124,6 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const highlights = clips.filter(isHighlight)
   const isPixelated = blurs.length > 0 && blurs.every((clip) => clip.isPixelated === true)
   const isSpotlight = highlights.length > 0 && highlights.every((clip) => clip.isSpotlight === true)
-  // A typewriter stays an animation: only the other presets have keyframes to become.
-  const animations = visual.flatMap((clip) => [clip.animationIn, clip.animationOut])
-  const canConvertAnimations = animations.some((animation) => animation !== undefined && animation.type !== 'typewriter')
 
   function styleShapes(label: string, style: ShapeStyle): void {
     store.apply(label, (project) => setShapeStyle(project, ids, style))
@@ -1395,6 +1221,130 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const frameSeconds = frameTicks / TICKS_PER_SECOND
   return (
     <>
+      {visual.length > 0 && (
+        <Group title="Transform" icon="move" isOpenAtStart actions={<IconButton icon="link" label="Keep the aspect ratio" testId="aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />}>
+          <div className="field-pair">
+            <EditField label="X" testId="clip-x" command="Move Clip" value={shared('x')} min={-MAX_POSITION} max={MAX_POSITION} decimals={1} edit={set('x')} />
+            <EditField label="Y" testId="clip-y" command="Move Clip" value={shared('y')} min={-MAX_POSITION} max={MAX_POSITION} decimals={1} edit={set('y')} />
+            <KeyframeButtons clips={visual} set="position" testId="clip-position" />
+          </div>
+          {hasSize && (
+            <div className="field-pair">
+              <EditField label="Width" testId="clip-width" command="Resize Clip" value={sizeOf('width')} min={0} max={MAX_POSITION} decimals={1} edit={setSide('width')} />
+              <EditField label="Height" testId="clip-height" command="Resize Clip" value={sizeOf('height')} min={0} max={MAX_POSITION} decimals={1} edit={setSide('height')} />
+              <KeyframeButtons clips={visual} set="size" testId="clip-size" />
+            </div>
+          )}
+          <EditField
+            label="Scale (%)"
+            testId="clip-scale"
+            command="Resize Clip"
+            value={uniformScale}
+            min={0}
+            max={MAX_SCALE_PERCENT}
+            decimals={1}
+            presets={SCALES}
+            keyframes={<KeyframeButtons clips={visual} set="size" testId="clip-scale" />}
+            edit={(percent) => (project) => setProperties(project, ids, { scaleX: percent / PERCENT, scaleY: percent / PERCENT }, time)}
+          />
+          <EditField
+            label="Rotation (°)"
+            testId="clip-rotation"
+            command="Rotate Clip"
+            value={shared('rotation')}
+            min={-MAX_ROTATION}
+            max={MAX_ROTATION}
+            decimals={1}
+            presets={ROTATIONS}
+            keyframes={<KeyframeButtons clips={visual} set="rotation" testId="clip-rotation" />}
+            edit={set('rotation')}
+          />
+        </Group>
+      )}
+      <Group title="Timing" icon="clock" isOpenAtStart>
+        <EditField label="Start (s)" testId="clip-start" command="Move Clip" value={seconds(sharedValue(clips.map((clip) => clip.start)))} min={0} max={MAX_SECONDS} step={frameSeconds} decimals={3} edit={setStart} />
+        <EditField
+          label="Duration (s)"
+          testId="clip-duration"
+          command="Trim Clip"
+          value={seconds(sharedValue(clips.map((clip) => clip.duration)))}
+          min={frameSeconds}
+          max={MAX_SECONDS}
+          step={frameSeconds}
+          decimals={3}
+          edit={(next) => (project) => setDuration(project, ids, wholeFrames(next), frameTicks, mediaStates)}
+        />
+        {sourced.length > 0 && (
+          <>
+            <EditField
+              label="Source offset (s)"
+              testId="clip-source-start"
+              command="Change Source Offset"
+              value={seconds(sharedValue(sourced.map((clip) => clip.sourceStart)))}
+              min={0}
+              max={MAX_SECONDS}
+              step={frameSeconds}
+              decimals={3}
+              edit={(next) => (project) => setSourceStart(project, ids, next * TICKS_PER_SECOND, mediaStates)}
+            />
+            <EditField
+              label="Speed (%)"
+              testId="clip-speed"
+              command="Change Speed"
+              value={sharedValue(sourced.map((clip) => clip.speedPercent))}
+              min={MIN_SPEED_PERCENT}
+              max={MAX_SPEED_PERCENT}
+              presets={SPEEDS}
+              edit={(percent) => (project) => setSpeed(project, ids, percent)}
+            />
+          </>
+        )}
+        {stretched.length > 0 && (
+          <SwitchField
+            label="Keep pitch"
+            testId="clip-keep-pitch"
+            isOn={stretched.every((clip) => clip.changesPitch !== true)}
+            onSwitch={(isOn) => store.apply(isOn ? 'Keep Pitch' : 'Let Pitch Follow Speed', (project) => setSoundSwitches(project, ids, { changesPitch: !isOn }))}
+          />
+        )}
+        {fast.length > 0 && (
+          <SwitchField
+            label="Sound above 400%"
+            testId="clip-fast-sound"
+            isOn={fast.every((clip) => clip.hasFastSound === true)}
+            onSwitch={(isOn) => store.apply(isOn ? 'Play Fast Sound' : 'Mute Fast Sound', (project) => setSoundSwitches(project, ids, { hasFastSound: isOn }))}
+          />
+        )}
+        {loopable.length > 0 && (
+          <label className="check-field">
+            <input
+              type="checkbox"
+              data-testid="clip-loop"
+              checked={isLooping}
+              onChange={(event) => store.apply(event.target.checked ? 'Loop Clip' : 'Stop Looping', (project) => setLoop(project, ids, event.target.checked, mediaStates))}
+            />
+            Loop
+          </label>
+        )}
+      </Group>
+      {croppable.length > 0 && (
+        <Group title="Crop" icon="crop">
+          {CROP_SIDES.map(({ side, property, label }) => (
+            <EditField
+              key={side}
+              label={label}
+              testId={`clip-crop-${side}`}
+              command="Crop Clip"
+              value={sharedValue(croppable.map((clip) => propertyAt(clip, property, time)))}
+              min={0}
+              max={MAX_POSITION}
+              decimals={1}
+              keyframes={<KeyframeButtons clips={croppable} set="crop" testId={`clip-crop-${side}`} />}
+              edit={setCrop(side, property)}
+            />
+          ))}
+        </Group>
+      )}
       {groups.length > 0 && (
         <Group title="Group" icon="group">
           <button type="button" className="button" data-testid="group-open" disabled={clips.length !== 1} onClick={actions.openGroup}>
@@ -1440,178 +1390,13 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
         <Group title="Highlight" icon="marker">
           <ShapeFields clips={highlights} />
           <ColorField label="Colour" testId="highlight-color" command="Change Highlight Colour" value={sharedValue(highlights.map((clip) => clip.color))} edit={(color) => (project) => setShapeStyle(project, ids, { color })} />
-          <SwitchField label="Spotlight: dim everything outside the shape" testId="highlight-spotlight" isOn={isSpotlight} onSwitch={(isOn) => styleShapes(isOn ? 'Make Spotlight' : 'Make Highlight', { isSpotlight: isOn })} />
+          <SwitchField label="Spotlight" testId="highlight-spotlight" isOn={isSpotlight} onSwitch={(isOn) => styleShapes(isOn ? 'Make Spotlight' : 'Make Highlight', { isSpotlight: isOn })} />
         </Group>
       )}
-      {visual.length > 0 && (
-        <Group title="Transform" icon="move" actions={<IconButton icon="link" label="Keep the aspect ratio" testId="aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />}>
-          <EditField
-            label="X"
-            testId="clip-x"
-            command="Move Clip"
-            value={shared('x')}
-            min={-MAX_POSITION}
-            max={MAX_POSITION}
-            decimals={1}
-            keyframes={<KeyframeButtons clips={visual} set="position" testId="clip-x" />}
-            edit={set('x')}
-          />
-          <EditField
-            label="Y"
-            testId="clip-y"
-            command="Move Clip"
-            value={shared('y')}
-            min={-MAX_POSITION}
-            max={MAX_POSITION}
-            decimals={1}
-            keyframes={<KeyframeButtons clips={visual} set="position" testId="clip-y" />}
-            edit={set('y')}
-          />
-          {hasSize && (
-            <EditField
-              label="Width"
-              testId="clip-width"
-              command="Resize Clip"
-              value={sizeOf('width')}
-              min={0}
-              max={MAX_POSITION}
-              decimals={1}
-              keyframes={<KeyframeButtons clips={visual} set="size" testId="clip-width" />}
-              edit={setSide('width')}
-            />
-          )}
-          {hasSize && (
-            <EditField
-              label="Height"
-              testId="clip-height"
-              command="Resize Clip"
-              value={sizeOf('height')}
-              min={0}
-              max={MAX_POSITION}
-              decimals={1}
-              keyframes={<KeyframeButtons clips={visual} set="size" testId="clip-height" />}
-              edit={setSide('height')}
-            />
-          )}
-          <EditField
-            label="Scale %"
-            testId="clip-scale"
-            command="Resize Clip"
-            value={uniformScale}
-            min={0}
-            max={MAX_SCALE_PERCENT}
-            decimals={1}
-            presets={SCALES}
-            keyframes={<KeyframeButtons clips={visual} set="size" testId="clip-scale" />}
-            edit={(percent) => (project) => setProperties(project, ids, { scaleX: percent / PERCENT, scaleY: percent / PERCENT }, time)}
-          />
-          <EditField
-            label="Rotation °"
-            testId="clip-rotation"
-            command="Rotate Clip"
-            value={shared('rotation')}
-            min={-MAX_ROTATION}
-            max={MAX_ROTATION}
-            decimals={1}
-            presets={ROTATIONS}
-            keyframes={<KeyframeButtons clips={visual} set="rotation" testId="clip-rotation" />}
-            edit={set('rotation')}
-          />
-        </Group>
-      )}
-      {visual.length > 0 && (
-        <Group title="Layout" icon="grid">
-          <LayoutFields clips={visual} />
-        </Group>
-      )}
-      {croppable.length > 0 && (
-        <Group title="Crop" icon="crop">
-          {CROP_SIDES.map(({ side, property, label }) => (
-            <EditField
-              key={side}
-              label={label}
-              testId={`clip-crop-${side}`}
-              command="Crop Clip"
-              value={sharedValue(croppable.map((clip) => propertyAt(clip, property, time)))}
-              min={0}
-              max={MAX_POSITION}
-              decimals={1}
-              keyframes={<KeyframeButtons clips={croppable} set="crop" testId={`clip-crop-${side}`} />}
-              edit={setCrop(side, property)}
-            />
-          ))}
-        </Group>
-      )}
-      <Group title="Timing" icon="clock">
-        <EditField label="Start s" testId="clip-start" command="Move Clip" value={seconds(sharedValue(clips.map((clip) => clip.start)))} min={0} max={MAX_SECONDS} step={frameSeconds} decimals={3} edit={setStart} />
-        <EditField
-          label="Duration s"
-          testId="clip-duration"
-          command="Trim Clip"
-          value={seconds(sharedValue(clips.map((clip) => clip.duration)))}
-          min={frameSeconds}
-          max={MAX_SECONDS}
-          step={frameSeconds}
-          decimals={3}
-          edit={(next) => (project) => setDuration(project, ids, wholeFrames(next), frameTicks, mediaStates)}
-        />
-        {sourced.length > 0 && (
-          <>
-            <EditField
-              label="Source offset s"
-              testId="clip-source-start"
-              command="Change Source Offset"
-              value={seconds(sharedValue(sourced.map((clip) => clip.sourceStart)))}
-              min={0}
-              max={MAX_SECONDS}
-              step={frameSeconds}
-              decimals={3}
-              edit={(next) => (project) => setSourceStart(project, ids, next * TICKS_PER_SECOND, mediaStates)}
-            />
-            <EditField
-              label="Speed %"
-              testId="clip-speed"
-              command="Change Speed"
-              value={sharedValue(sourced.map((clip) => clip.speedPercent))}
-              min={MIN_SPEED_PERCENT}
-              max={MAX_SPEED_PERCENT}
-              presets={SPEEDS}
-              edit={(percent) => (project) => setSpeed(project, ids, percent)}
-            />
-          </>
-        )}
-        {stretched.length > 0 && (
-          <SwitchField
-            label="Keep the pitch when the speed changes"
-            testId="clip-keep-pitch"
-            isOn={stretched.every((clip) => clip.changesPitch !== true)}
-            onSwitch={(isOn) => store.apply(isOn ? 'Keep Pitch' : 'Let Pitch Follow Speed', (project) => setSoundSwitches(project, ids, { changesPitch: !isOn }))}
-          />
-        )}
-        {fast.length > 0 && (
-          <SwitchField
-            label="Play the sound, although faster than 400%"
-            testId="clip-fast-sound"
-            isOn={fast.every((clip) => clip.hasFastSound === true)}
-            onSwitch={(isOn) => store.apply(isOn ? 'Play Fast Sound' : 'Mute Fast Sound', (project) => setSoundSwitches(project, ids, { hasFastSound: isOn }))}
-          />
-        )}
-        {loopable.length > 0 && (
-          <label className="check-field">
-            <input
-              type="checkbox"
-              data-testid="clip-loop"
-              checked={isLooping}
-              onChange={(event) => store.apply(event.target.checked ? 'Loop Clip' : 'Stop Looping', (project) => setLoop(project, ids, event.target.checked, mediaStates))}
-            />
-            Loop
-          </label>
-        )}
-      </Group>
       {visual.length > 0 && (
         <Group title="Opacity" icon="droplet">
           <EditField
-            label="Opacity %"
+            label="Opacity (%)"
             testId="clip-opacity"
             command="Change Opacity"
             value={sharedValue(visual.map((clip) => (propertyAt(clip, 'opacity', time) ?? 1) * PERCENT))}
@@ -1621,36 +1406,18 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
             keyframes={<KeyframeButtons clips={visual} set="opacity" testId="clip-opacity" />}
             edit={(percent) => set('opacity')(percent / PERCENT)}
           />
-          {fadeField('Fade in s', 'fadeIn', visual.map((clip) => clip.fadeIn))}
-          {fadeField('Fade out s', 'fadeOut', visual.map((clip) => clip.fadeOut))}
         </Group>
       )}
       {visual.length > 0 && (
-        <Group title="Transitions" icon="transition">
-          {EDGES.map(({ edge, label }) => (
-            <TransitionFields key={edge} edge={edge} label={label} clips={visual} frameTicks={frameTicks} />
-          ))}
-        </Group>
-      )}
-      {visual.length > 0 && (
-        <Group title="Animation" icon="motion">
-          <AnimationFields edge="in" label="In" clips={visual} frameTicks={frameTicks} />
-          <AnimationFields edge="out" label="Out" clips={visual} frameTicks={frameTicks} />
-          <button
-            type="button"
-            className="button"
-            data-testid="animation-convert"
-            disabled={!canConvertAnimations}
-            onClick={() => store.apply('Convert Animation to Keyframes', (project) => convertAnimations(project, ids))}
-          >
-            Convert to keyframes
-          </button>
+        <Group title="In and out" icon="transition">
+          <InOutFields edge="in" label="In" clips={visual} frameTicks={frameTicks} />
+          <InOutFields edge="out" label="Out" clips={visual} frameTicks={frameTicks} />
         </Group>
       )}
       {sounding.length > 0 && (
         <Group title="Volume" icon="speaker">
           <EditField
-            label="Volume %"
+            label="Volume (%)"
             testId="clip-volume"
             command="Change Volume"
             value={sharedValue(sounding.map((clip) => (propertyAt(clip, 'volume', time) ?? 1) * PERCENT))}
@@ -1660,8 +1427,8 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
             keyframes={<KeyframeButtons clips={sounding} set="volume" testId="clip-volume" />}
             edit={(percent) => (project) => setProperties(project, soundingIds, { volume: percent / PERCENT }, time)}
           />
-          {fadeField('Fade in s', 'volumeFadeIn', sounding.map((clip) => clip.volumeFadeIn))}
-          {fadeField('Fade out s', 'volumeFadeOut', sounding.map((clip) => clip.volumeFadeOut))}
+          {fadeField('Fade in (s)', 'volumeFadeIn', sounding.map((clip) => clip.volumeFadeIn))}
+          {fadeField('Fade out (s)', 'volumeFadeOut', sounding.map((clip) => clip.volumeFadeOut))}
         </Group>
       )}
     </>

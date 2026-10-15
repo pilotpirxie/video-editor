@@ -18,8 +18,8 @@ const scratch = scratchDirectory('editor')
 describe('window layout', () => {
   it('resizes and collapses panels, and remembers the layout for the next launch', async () => {
     const report = await uiTest('layout', [], scratch)
-    expect(report.before).toEqual({ left: 300, right: 300, timeline: 280 })
-    expect(report.after).toEqual({ left: 360, right: 0, timeline: 320 })
+    expect(report.before).toEqual({ left: 300, right: 300, timeline: 291 })
+    expect(report.after).toEqual({ left: 360, right: 0, timeline: 331 })
 
     const nextLaunch = await uiTest('layout-kept', [], scratch)
     expect(nextLaunch.after).toEqual(report.after)

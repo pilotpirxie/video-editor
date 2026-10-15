@@ -157,6 +157,27 @@ export type Effect =
   | (EffectSwitch & { type: 'tint'; color: string; amount: number })
   // `size` is the share of the way from the middle of the clip to its corners that stays clear.
   | (EffectSwitch & { type: 'vignette'; amount: number; size: number })
+  // A colour grade. Exposure is in stops; the colours tint the shadows and the highlights by their amounts; strength mixes the whole grade with the picture as it was.
+  | (EffectSwitch & {
+      type: 'look'
+      strength: number
+      exposure: number
+      contrast: number
+      highlights: number
+      shadows: number
+      temperature: number
+      tint: number
+      saturation: number
+      fade: number
+      shadowColor: string
+      shadowAmount: number
+      highlightColor: string
+      highlightAmount: number
+    })
+  // `amount` runs from 0 to 2.
+  | (EffectSwitch & { type: 'sharpen'; amount: number; radius: number })
+  // A blurred copy of the clip that covers the canvas behind it. Only video and image clips have it.
+  | (EffectSwitch & { type: 'blurFill'; strength: number; darken: number })
 
 export type EffectType = Effect['type']
 
@@ -391,6 +412,7 @@ export const TRANSITION_TYPES: readonly TransitionType[] = [
 ]
 export const EFFECT_TYPES: readonly EffectType[] = [
   'colorAdjust',
+  'look',
   'blackAndWhite',
   'sepia',
   'tint',
@@ -400,7 +422,9 @@ export const EFFECT_TYPES: readonly EffectType[] = [
   'border',
   'roundedCorners',
   'clipBlur',
+  'sharpen',
   'chromaKey',
+  'blurFill',
 ]
 const SHAPES: readonly Shape[] = ['rectangle', 'ellipse']
 export const ANIMATION_TYPES: readonly AnimationType[] = ['fade', 'pop', 'slideLeft', 'slideRight', 'slideUp', 'slideDown', 'zoom', 'typewriter']
@@ -408,6 +432,8 @@ export const CALLOUT_SHAPES: readonly CalloutShape[] = ['rectangle', 'roundedBox
 export const ARROW_HEADS: readonly ArrowHead[] = ['none', 'triangle', 'open', 'dot']
 const AMOUNT: NumberRule = { min: 0, max: 1 }
 const ADJUSTMENT: NumberRule = { min: -1, max: 1 }
+const EXPOSURE: NumberRule = { min: -2, max: 2 }
+const SHARPEN_AMOUNT: NumberRule = { min: 0, max: 2 }
 
 class FormatError extends Error {}
 
@@ -642,6 +668,9 @@ const EFFECT_KEYS: Record<EffectType, readonly string[]> = {
   invert: ['amount'],
   tint: ['color', 'amount'],
   vignette: ['amount', 'size'],
+  look: ['strength', 'exposure', 'contrast', 'highlights', 'shadows', 'temperature', 'tint', 'saturation', 'fade', 'shadowColor', 'shadowAmount', 'highlightColor', 'highlightAmount'],
+  sharpen: ['amount', 'radius'],
+  blurFill: ['strength', 'darken'],
 }
 
 function effectSettings(type: EffectType, fields: Fields): Effect {
@@ -668,12 +697,34 @@ function effectSettings(type: EffectType, fields: Fields): Effect {
     return { type, color: fields.opaqueColor('color'), amount: fields.number('amount', AMOUNT) }
   } else if (type === 'vignette') {
     return { type, amount: fields.number('amount', AMOUNT), size: fields.number('size', AMOUNT) }
+  } else if (type === 'look') {
+    return {
+      type,
+      strength: fields.number('strength', AMOUNT),
+      exposure: fields.number('exposure', EXPOSURE),
+      contrast: fields.number('contrast', ADJUSTMENT),
+      highlights: fields.number('highlights', ADJUSTMENT),
+      shadows: fields.number('shadows', ADJUSTMENT),
+      temperature: fields.number('temperature', ADJUSTMENT),
+      tint: fields.number('tint', ADJUSTMENT),
+      saturation: fields.number('saturation', ADJUSTMENT),
+      fade: fields.number('fade', AMOUNT),
+      shadowColor: fields.opaqueColor('shadowColor'),
+      shadowAmount: fields.number('shadowAmount', AMOUNT),
+      highlightColor: fields.opaqueColor('highlightColor'),
+      highlightAmount: fields.number('highlightAmount', AMOUNT),
+    }
+  } else if (type === 'sharpen') {
+    return { type, amount: fields.number('amount', SHARPEN_AMOUNT), radius: fields.number('radius', { above: 0 }) }
+  } else if (type === 'blurFill') {
+    return { type, strength: fields.number('strength', { above: 0 }), darken: fields.number('darken', AMOUNT) }
   } else {
     return { type, color: fields.opaqueColor('color'), tolerance: fields.number('tolerance', AMOUNT), softness: fields.number('softness', AMOUNT), spill: fields.number('spill', AMOUNT) }
   }
 }
 
-function parseEffects(value: unknown, path: string): Effect[] {
+// Only a video or an image clip has a picture of the shape of a frame to fill the canvas behind it with.
+function parseEffects(value: unknown, path: string, canFill = false): Effect[] {
   if (!Array.isArray(value) || value.length === 0) fail(path, 'must be a list with at least one effect; leave it out instead')
 
   const effects: Effect[] = []
@@ -683,6 +734,7 @@ function parseEffects(value: unknown, path: string): Effect[] {
     const type = EFFECT_TYPES.find((known) => known === named)
     if (type === undefined) fail(`${entryPath}.type`, `must be one of ${EFFECT_TYPES.join(', ')}`)
     if (effects.some((other) => other.type === type)) fail(`${entryPath}.type`, `"${type}" is used more than once on this clip`)
+    if (type === 'blurFill' && !canFill) fail(`${entryPath}.type`, 'can only be "blurFill" on a video or image clip')
 
     const fields = readFields(entry, entryPath, ['type', ...EFFECT_KEYS[type]], ['isOff'])
     const effect = effectSettings(type, fields)
@@ -795,7 +847,7 @@ function parseVideoClip(value: unknown, path: string, context: ParseContext): Vi
     ...parseVolume(fields, timing.duration),
   }
   if (fields.has('crop')) clip.crop = parseCrop(fields.raw('crop'), fields.at('crop'))
-  if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'))
+  if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'), true)
   if (fields.has('isAudioSeparated')) clip.isAudioSeparated = parseSwitch(fields, 'isAudioSeparated')
   if (fields.has('loop')) clip.loop = parseSwitch(fields, 'loop')
   return clip
@@ -817,7 +869,7 @@ function parseImageClip(value: unknown, path: string, context: ParseContext): Im
     mediaId: parseMediaId(fields, context),
   }
   if (fields.has('crop')) clip.crop = parseCrop(fields.raw('crop'), fields.at('crop'))
-  if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'))
+  if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'), true)
   return clip
 }
 

@@ -1,9 +1,10 @@
 import { useMemo, type ReactElement } from 'react'
-import { EFFECT_NAMES, moveEffect, removeEffect, setEffect, setEffectOff, takesEffects } from '../editor/effects.js'
+import { EFFECT_NAMES, LOOK_PRESETS, lookPresetOf, moveEffect, removeEffect, setEffect, setEffectOff, takesEffects } from '../editor/effects.js'
 import { describeErrorAsSentence, logError } from '../shared/log.js'
 import type { Effect } from '../shared/project.js'
 import { useEditorState, useSession } from './context.js'
 import { IconButton } from './icons.js'
+import { Picker } from './Picker.js'
 import { ColorField, EditField, Group, selectedClips } from './Properties.js'
 import { updateStep, type Edit } from './store.js'
 
@@ -12,6 +13,15 @@ const MAX_LENGTH = 10_000
 const LENGTHS = [2, 4, 8, 16, 32]
 const AMOUNTS = [0, 25, 50, 75, 100]
 const ADJUSTMENTS = [-100, -50, 0, 50, 100]
+const STOPS = [-1, -0.5, 0, 0.5, 1]
+const MAX_STOPS = 2
+const SHARPEN_AMOUNTS = [0, 50, 100, 150, 200]
+const MAX_SHARPEN = 200
+const RADII = [0.5, 1, 2, 3, 5]
+const SMALLEST_RADIUS = 0.1
+const CUSTOM_LOOK = 'custom'
+
+type Look = Extract<Effect, { type: 'look' }>
 
 // The system's colour picker, which reads one pixel from anywhere on screen. The type library of this TypeScript does not describe it yet.
 declare class EyeDropper {
@@ -42,11 +52,11 @@ function lengthOf(label: string, key: string, value: number, changed: (value: nu
 }
 
 function amountOf(label: string, key: string, value: number, changed: (value: number) => Effect): NumberSetting {
-  return { label: `${label} %`, testId: key, value, shownPer: PERCENT, min: 0, max: PERCENT, presets: AMOUNTS, changed }
+  return { label: `${label} (%)`, testId: key, value, shownPer: PERCENT, min: 0, max: PERCENT, presets: AMOUNTS, changed }
 }
 
 function adjustmentOf(label: string, key: string, value: number, changed: (value: number) => Effect): NumberSetting {
-  return { label: `${label} %`, testId: key, value, shownPer: PERCENT, min: -PERCENT, max: PERCENT, presets: ADJUSTMENTS, changed }
+  return { label: `${label} (%)`, testId: key, value, shownPer: PERCENT, min: -PERCENT, max: PERCENT, presets: ADJUSTMENTS, changed }
 }
 
 // The numbers of an effect, in the order they are shown. Lengths are canvas pixels.
@@ -74,6 +84,25 @@ function numberSettings(effect: Effect): NumberSetting[] {
     return [lengthOf('Radius', 'radius', effect.radius, (radius) => ({ ...effect, radius }), 1)]
   } else if (effect.type === 'clipBlur') {
     return [lengthOf('Strength', 'strength', effect.strength, (strength) => ({ ...effect, strength }), 1)]
+  } else if (effect.type === 'look') {
+    return [
+      amountOf('Strength', 'strength', effect.strength, (strength) => ({ ...effect, strength })),
+      { label: 'Exposure (stops)', testId: 'exposure', value: effect.exposure, shownPer: 1, min: -MAX_STOPS, max: MAX_STOPS, presets: STOPS, changed: (exposure) => ({ ...effect, exposure }) },
+      adjustmentOf('Contrast', 'contrast', effect.contrast, (contrast) => ({ ...effect, contrast })),
+      adjustmentOf('Highlights', 'highlights', effect.highlights, (highlights) => ({ ...effect, highlights })),
+      adjustmentOf('Shadows', 'shadows', effect.shadows, (shadows) => ({ ...effect, shadows })),
+      adjustmentOf('Temperature', 'temperature', effect.temperature, (temperature) => ({ ...effect, temperature })),
+      adjustmentOf('Tint', 'tint', effect.tint, (tint) => ({ ...effect, tint })),
+      adjustmentOf('Saturation', 'saturation', effect.saturation, (saturation) => ({ ...effect, saturation })),
+      amountOf('Fade', 'fade', effect.fade, (fade) => ({ ...effect, fade })),
+    ]
+  } else if (effect.type === 'sharpen') {
+    return [
+      { ...amountOf('Amount', 'amount', effect.amount, (amount) => ({ ...effect, amount })), max: MAX_SHARPEN, presets: SHARPEN_AMOUNTS },
+      { ...lengthOf('Radius', 'radius', effect.radius, (radius) => ({ ...effect, radius }), SMALLEST_RADIUS), presets: RADII },
+    ]
+  } else if (effect.type === 'blurFill') {
+    return [lengthOf('Strength', 'strength', effect.strength, (strength) => ({ ...effect, strength }), 1), amountOf('Darken', 'darken', effect.darken, (darken) => ({ ...effect, darken }))]
   } else {
     return [
       amountOf('Tolerance', 'tolerance', effect.tolerance, (tolerance) => ({ ...effect, tolerance })),
@@ -81,6 +110,68 @@ function numberSettings(effect: Effect): NumberSetting[] {
       amountOf('Spill removal', 'spill', effect.spill, (spill) => ({ ...effect, spill })),
     ]
   }
+}
+
+type SettingFieldProps = {
+  type: Effect['type']
+  setting: NumberSetting
+  withSettings(changed: Effect): Edit
+}
+
+function SettingField({ type, setting, withSettings }: SettingFieldProps): ReactElement {
+  return (
+    <EditField
+      label={setting.label}
+      testId={`effect-${type}-${setting.testId}`}
+      command="Change Effect"
+      value={setting.value * setting.shownPer}
+      min={setting.min}
+      max={setting.max}
+      decimals={1}
+      presets={setting.presets}
+      edit={(shown) => withSettings(setting.changed(shown / setting.shownPer))}
+    />
+  )
+}
+
+type LookFieldsProps = {
+  look: Look
+  withSettings(changed: Effect): Edit
+}
+
+// The ready-made looks, which set every slider but the strength; "Custom" is shown once a slider no longer matches any of them.
+function LookPresetField({ look, withSettings }: LookFieldsProps): ReactElement {
+  const { store } = useSession()
+  const current = lookPresetOf(look)
+  const presets = LOOK_PRESETS.map((preset) => ({ value: preset.name, label: preset.label }))
+  const choices = current === CUSTOM_LOOK ? [...presets, { value: CUSTOM_LOOK, label: 'Custom' }] : presets
+
+  function onChoose(chosen: string): void {
+    const preset = LOOK_PRESETS.find((candidate) => candidate.name === chosen)
+    if (preset === undefined) return
+    store.apply('Change Effect', withSettings({ ...look, ...preset.values }))
+  }
+
+  return (
+    <div className="labelled">
+      <span className="field-label">Look</span>
+      <Picker label="Look" testId="effect-look-preset" choices={choices} value={current} onChoose={onChoose} />
+    </div>
+  )
+}
+
+// The colours the shadows and the highlights are tinted with, each with how strongly.
+function LookToneFields({ look, withSettings }: LookFieldsProps): ReactElement {
+  const shadowAmount = amountOf('Shadow colour amount', 'shadowAmount', look.shadowAmount, (amount) => ({ ...look, shadowAmount: amount }))
+  const highlightAmount = amountOf('Highlight colour amount', 'highlightAmount', look.highlightAmount, (amount) => ({ ...look, highlightAmount: amount }))
+  return (
+    <>
+      <ColorField label="Shadow colour" testId="effect-look-shadowColor" command="Change Effect" value={look.shadowColor} edit={(color) => withSettings({ ...look, shadowColor: color })} />
+      <SettingField type="look" setting={shadowAmount} withSettings={withSettings} />
+      <ColorField label="Highlight colour" testId="effect-look-highlightColor" command="Change Effect" value={look.highlightColor} edit={(color) => withSettings({ ...look, highlightColor: color })} />
+      <SettingField type="look" setting={highlightAmount} withSettings={withSettings} />
+    </>
+  )
 }
 
 // One effect of the selected clip: its settings, and in its title line the switch, its place in the order and its removal.
@@ -121,7 +212,7 @@ function EffectGroup({ clipId, effect, isFirst, isLast }: EffectGroupProps): Rea
   )
 
   return (
-    <Group title={name} icon="wand" actions={actions}>
+    <Group title={name} icon="wand" actions={actions} isOpenAtStart>
       {(effect.type === 'dropShadow' || effect.type === 'border' || effect.type === 'chromaKey' || effect.type === 'tint') && (
         <ColorField label={effect.type === 'chromaKey' ? 'Key colour' : 'Colour'} testId={`effect-${type}-color`} command="Change Effect" value={effect.color} edit={(color) => withSettings({ ...effect, color })} />
       )}
@@ -130,20 +221,11 @@ function EffectGroup({ clipId, effect, isFirst, isLast }: EffectGroupProps): Rea
           Pick the key colour from the screen
         </button>
       )}
+      {effect.type === 'look' && <LookPresetField look={effect} withSettings={withSettings} />}
       {numberSettings(effect).map((setting) => (
-        <EditField
-          key={setting.testId}
-          label={setting.label}
-          testId={`effect-${type}-${setting.testId}`}
-          command="Change Effect"
-          value={setting.value * setting.shownPer}
-          min={setting.min}
-          max={setting.max}
-          decimals={1}
-          presets={setting.presets}
-          edit={(shown) => withSettings(setting.changed(shown / setting.shownPer))}
-        />
+        <SettingField key={setting.testId} type={type} setting={setting} withSettings={withSettings} />
       ))}
+      {effect.type === 'look' && <LookToneFields look={effect} withSettings={withSettings} />}
     </Group>
   )
 }

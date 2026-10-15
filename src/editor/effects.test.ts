@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SECOND, audioClip, clipOf, groupClip, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import { EFFECT_TYPES, type Clip, type Effect, type EffectType, type Project } from '../shared/project.js'
-import { addEffect, defaultEffect, moveEffect, removeEffect, setEffect, setEffectOff, takesEffects } from './effects.js'
+import { LOOK_PRESETS, addEffect, defaultEffect, lookPresetOf, moveEffect, removeEffect, setEffect, setEffectOff, takesEffects } from './effects.js'
 
 const BLUR_CLIP: Clip = { id: 'blur', type: 'blur', start: SECOND, duration: SECOND, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, width: 100, height: 100, shape: 'rectangle', softEdge: 0, strength: 10 }
 
@@ -38,6 +38,16 @@ describe('addEffect', () => {
     expect(clipOf(added, 'a')).toMatchObject({ effects: [{ type: 'border', width: 9, color: '#ff0000' }] })
     expect(JSON.stringify(clipOf(added, 'a'))).not.toContain('isOff')
     expect(addEffect(added, ['a'], 'border')).toBe(added)
+  })
+
+  it('adds a blur fill only to video and image clips', () => {
+    const base = { start: 0, duration: SECOND, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1 }
+    const arrow: Clip = { ...base, id: 'arrow', type: 'arrow', length: 100, thickness: 4, color: '#ff0000', startHead: 'none', endHead: 'triangle' }
+    const project = projectOf([track('t1', [videoClip('a', 0, SECOND)]), track('t2', [arrow]), track('t3', [groupClip('group', 0, SECOND, [[videoClip('m', 0, SECOND)]])])])
+    const added = addEffect(project, ['a', 'arrow', 'group'], 'blurFill')
+    expect(kindsOn(added, 'a')).toEqual(['blurFill'])
+    expect(clipOf(added, 'arrow')).toBe(clipOf(project, 'arrow'))
+    expect(clipOf(added, 'group')).toBe(clipOf(project, 'group'))
   })
 
   it('scales lengths with the height of the canvas', () => {
@@ -126,5 +136,38 @@ describe('effects on drawn clips and groups', () => {
     const added = addEffect(project, ['callout', 'arrow', 'group'], 'dropShadow')
     for (const id of ['callout', 'arrow', 'group']) expect(kindsOn(added, id)).toEqual(['dropShadow'])
     expect(reopened(added)).toEqual(added)
+  })
+})
+
+describe('looks', () => {
+  const look = defaultEffect('look', { width: 1920, height: 1080 })
+
+  it('starts as no look at full strength', () => {
+    expect(look).toMatchObject({ strength: 1 })
+    expect(look.type === 'look' && lookPresetOf(look)).toBe('none')
+  })
+
+  it('names the preset a look matches, and none once a setting is changed', () => {
+    if (look.type !== 'look') throw new Error('expected a look')
+    for (const preset of LOOK_PRESETS) {
+      expect(lookPresetOf({ ...look, ...preset.values, strength: 0.4 })).toBe(preset.name)
+    }
+    const cinematic = LOOK_PRESETS.find((preset) => preset.name === 'cinematic')
+    expect(lookPresetOf({ ...look, ...cinematic?.values, contrast: 0.5 })).toBe('custom')
+  })
+
+  it('keeps every preset inside what the project file accepts', () => {
+    if (look.type !== 'look') throw new Error('expected a look')
+    for (const preset of LOOK_PRESETS) {
+      const project = sample([{ ...look, ...preset.values }])
+      expect(reopened(project)).toEqual(project)
+    }
+  })
+
+  it('keeps settings in range and the colour it had for one the file refuses', () => {
+    const project = sample([look])
+    if (look.type !== 'look') throw new Error('expected a look')
+    const changed = setEffect(project, ['a'], { ...look, exposure: 5, fade: -1, shadowColor: 'teal' })
+    expect(clipOf(changed, 'a')).toMatchObject({ effects: [{ exposure: 2, fade: 0, shadowColor: look.shadowColor }] })
   })
 })

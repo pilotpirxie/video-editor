@@ -34,6 +34,51 @@ export const EFFECT_NAMES: Record<EffectType, string> = {
   invert: 'Invert colours',
   tint: 'Colour tint',
   vignette: 'Vignette',
+  look: 'Look',
+  sharpen: 'Sharpen',
+  blurFill: 'Blur fill',
+}
+
+type Look = Extract<Effect, { type: 'look' }>
+// The settings of a look that a preset chooses; how strongly the look is applied stays the user's.
+export type LookValues = Omit<Look, 'type' | 'strength' | 'isOff'>
+
+const NO_LOOK: LookValues = {
+  exposure: 0,
+  contrast: 0,
+  highlights: 0,
+  shadows: 0,
+  temperature: 0,
+  tint: 0,
+  saturation: 0,
+  fade: 0,
+  shadowColor: '#1f6f8b',
+  shadowAmount: 0,
+  highlightColor: '#f2a35e',
+  highlightAmount: 0,
+}
+
+// Ready-made looks. Each one sets every setting, so choosing one after another never leaves part of the first behind.
+export const LOOK_PRESETS: readonly { name: string; label: string; values: LookValues }[] = [
+  { name: 'none', label: 'None', values: NO_LOOK },
+  { name: 'warm', label: 'Warm', values: { ...NO_LOOK, contrast: 0.05, temperature: 0.35, saturation: 0.1, highlightAmount: 0.15 } },
+  { name: 'cool', label: 'Cool', values: { ...NO_LOOK, contrast: 0.1, temperature: -0.35, shadowAmount: 0.15 } },
+  { name: 'vivid', label: 'Vivid', values: { ...NO_LOOK, contrast: 0.2, highlights: -0.1, shadows: 0.1, saturation: 0.35 } },
+  { name: 'faded', label: 'Faded', values: { ...NO_LOOK, contrast: -0.2, saturation: -0.3, fade: 0.35 } },
+  { name: 'cinematic', label: 'Cinematic', values: { ...NO_LOOK, contrast: 0.15, highlights: -0.15, saturation: -0.1, shadowAmount: 0.35, highlightAmount: 0.3 } },
+  {
+    name: 'vintage',
+    label: 'Vintage',
+    values: { ...NO_LOOK, contrast: -0.1, temperature: 0.2, saturation: -0.25, fade: 0.3, shadowColor: '#6b4a2f', shadowAmount: 0.25, highlightColor: '#e8d98a', highlightAmount: 0.3 },
+  },
+  { name: 'moody', label: 'Moody', values: { ...NO_LOOK, exposure: -0.3, contrast: 0.2, shadows: -0.15, temperature: -0.15, saturation: -0.35, shadowAmount: 0.25 } },
+  { name: 'bright', label: 'Bright', values: { ...NO_LOOK, exposure: 0.25, contrast: 0.05, highlights: -0.2, shadows: 0.3, saturation: 0.1 } },
+]
+
+// The preset a look's settings are exactly, or 'custom' once any of them has been changed.
+export function lookPresetOf(look: Look): string {
+  const preset = LOOK_PRESETS.find(({ values }) => Object.entries(values).every(([key, value]) => look[key as keyof LookValues] === value))
+  return preset?.name ?? 'custom'
 }
 
 export function defaultEffect(type: EffectType, canvas: Size): Effect {
@@ -54,6 +99,12 @@ export function defaultEffect(type: EffectType, canvas: Size): Effect {
     return { type, color: '#3d7be6', amount: 0.5 }
   } else if (type === 'vignette') {
     return { type, amount: 0.6, size: 0.5 }
+  } else if (type === 'look') {
+    return { type, strength: 1, ...NO_LOOK }
+  } else if (type === 'sharpen') {
+    return { type, amount: 0.5, radius: sized(1) }
+  } else if (type === 'blurFill') {
+    return { type, strength: sized(40), darken: 0.3 }
   } else {
     return { type, color: '#00b140', tolerance: 0.4, softness: 0.1, spill: 0.5 }
   }
@@ -78,6 +129,28 @@ function withinLimits(effect: Effect, before: Effect): Effect {
     return { ...effect, color: colorOr(effect.color, before.type === 'tint' ? before.color : '#3d7be6'), amount: between(effect.amount, 0, 1) }
   } else if (effect.type === 'vignette') {
     return { ...effect, amount: between(effect.amount, 0, 1), size: between(effect.size, 0, 1) }
+  } else if (effect.type === 'look') {
+    const was = before.type === 'look' ? before : { ...NO_LOOK }
+    return {
+      ...effect,
+      strength: between(effect.strength, 0, 1),
+      exposure: between(effect.exposure, -2, 2),
+      contrast: between(effect.contrast, -1, 1),
+      highlights: between(effect.highlights, -1, 1),
+      shadows: between(effect.shadows, -1, 1),
+      temperature: between(effect.temperature, -1, 1),
+      tint: between(effect.tint, -1, 1),
+      saturation: between(effect.saturation, -1, 1),
+      fade: between(effect.fade, 0, 1),
+      shadowColor: colorOr(effect.shadowColor, was.shadowColor),
+      shadowAmount: between(effect.shadowAmount, 0, 1),
+      highlightColor: colorOr(effect.highlightColor, was.highlightColor),
+      highlightAmount: between(effect.highlightAmount, 0, 1),
+    }
+  } else if (effect.type === 'sharpen') {
+    return { ...effect, amount: between(effect.amount, 0, 2), radius: Math.max(SMALLEST_LENGTH, effect.radius) }
+  } else if (effect.type === 'blurFill') {
+    return { ...effect, strength: Math.max(SMALLEST_LENGTH, effect.strength), darken: between(effect.darken, 0, 1) }
   } else {
     const color = colorOr(effect.color, before.type === 'chromaKey' ? before.color : '#00b140')
     return { ...effect, color, tolerance: between(effect.tolerance, 0, 1), softness: between(effect.softness, 0, 1), spill: between(effect.spill, 0, 1) }
@@ -100,20 +173,26 @@ function withEffects(clip: PictureClip | GroupClip, effects: Effect[]): Clip {
   return { ...clip, effects: effects.length === 0 ? undefined : effects }
 }
 
-// Applies a change to the list of effects of the chosen clips that can have effects. A change that returns the list it was given changes nothing.
-function editEffects(project: Project, clipIds: readonly string[], edit: (effects: readonly Effect[]) => readonly Effect[]): Project {
+// Applies a change to the list of effects of the chosen clips that can have an effect of this kind. A change that returns the list it was given changes nothing.
+function editEffects(project: Project, clipIds: readonly string[], type: EffectType, edit: (effects: readonly Effect[]) => readonly Effect[]): Project {
   return editClips(project, new Set(clipIds), (clip) => {
-    if (!takesEffects(clip)) return clip
+    if (!takesEffect(clip, type)) return clip
     const before = clip.effects ?? []
     const after = edit(before)
     return after === before ? clip : withEffects(clip, [...after])
   })
 }
 
+// A blur fill covers the canvas with a frame-shaped picture: on text or a group it would cover it with blurred letters, or once for each member.
+export function takesEffect(clip: Clip, type: EffectType): clip is PictureClip | GroupClip {
+  if (type === 'blurFill') return clip.type === 'video' || clip.type === 'image'
+  return takesEffects(clip)
+}
+
 // Adds an effect at the end of each clip's list. A clip that has the effect already keeps it as it is, switched on.
 export function addEffect(project: Project, clipIds: readonly string[], type: EffectType): Project {
   const added = defaultEffect(type, project.canvas)
-  return editEffects(project, clipIds, (effects) => {
+  return editEffects(project, clipIds, type, (effects) => {
     const existing = effects.find((effect) => effect.type === type)
     if (existing === undefined) return [...effects, added]
     if (existing.isOff !== true) return effects
@@ -122,11 +201,11 @@ export function addEffect(project: Project, clipIds: readonly string[], type: Ef
 }
 
 export function removeEffect(project: Project, clipIds: readonly string[], type: EffectType): Project {
-  return editEffects(project, clipIds, (effects) => (effects.some((effect) => effect.type === type) ? effects.filter((effect) => effect.type !== type) : effects))
+  return editEffects(project, clipIds, type, (effects) => (effects.some((effect) => effect.type === type) ? effects.filter((effect) => effect.type !== type) : effects))
 }
 
 export function setEffectOff(project: Project, clipIds: readonly string[], type: EffectType, isOff: boolean): Project {
-  return editEffects(project, clipIds, (effects) => {
+  return editEffects(project, clipIds, type, (effects) => {
     const existing = effects.find((effect) => effect.type === type)
     if (existing === undefined || (existing.isOff === true) === isOff) return effects
     return effects.map((effect) => (effect === existing ? switched(effect, isOff) : effect))
@@ -135,7 +214,7 @@ export function setEffectOff(project: Project, clipIds: readonly string[], type:
 
 // Moves an effect one place toward the start of the list (-1) or toward its end (1). Effects are applied from first to last.
 export function moveEffect(project: Project, clipIds: readonly string[], type: EffectType, direction: 1 | -1): Project {
-  return editEffects(project, clipIds, (effects) => {
+  return editEffects(project, clipIds, type, (effects) => {
     const from = effects.findIndex((effect) => effect.type === type)
     const moved = effects[from]
     const passed = effects[from + direction]
@@ -149,7 +228,7 @@ export function moveEffect(project: Project, clipIds: readonly string[], type: E
 
 // Replaces the settings of the effect of the same kind on each clip that has it. Whether it is switched off stays as it is.
 export function setEffect(project: Project, clipIds: readonly string[], changed: Effect): Project {
-  return editEffects(project, clipIds, (effects) => {
+  return editEffects(project, clipIds, changed.type, (effects) => {
     const existing = effects.find((effect) => effect.type === changed.type)
     if (existing === undefined) return effects
     const next = switched(withinLimits(changed, existing), existing.isOff === true)

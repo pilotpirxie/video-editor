@@ -217,11 +217,11 @@ function clipName(clip: Clip, mediaNames: ReadonlyMap<string, string>): string {
 function badgeOf(clip: Clip, scene: ContentScene): { text: string; color: string } | undefined {
   if (!hasMedia(clip)) return undefined
   const state = scene.mediaStates[clip.mediaId]
-  if (state === undefined || ('error' in state && state.isMissing)) return { text: 'media missing', color: scene.colors.danger }
-  if ('error' in state) return { text: 'media error', color: scene.colors.danger }
+  if (state === undefined || ('error' in state && state.isMissing)) return { text: 'Media missing', color: scene.colors.danger }
+  if ('error' in state) return { text: 'Media error', color: scene.colors.danger }
   const preparation = scene.preparation[clip.mediaId]
-  if (preparation?.hasFailed === true) return { text: 'media error', color: scene.colors.danger }
-  if (preparation !== undefined && preparation.progress < 1) return { text: 'preparing', color: scene.colors.warning }
+  if (preparation?.hasFailed === true) return { text: 'Media error', color: scene.colors.danger }
+  if (preparation !== undefined && preparation.progress < 1) return { text: 'Preparing', color: scene.colors.warning }
   return undefined
 }
 

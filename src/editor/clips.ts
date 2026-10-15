@@ -165,6 +165,21 @@ export function withFadesWithin(clip: Clip): Clip {
   return { ...visual, volumeFadeIn: fadeWithin(visual.volumeFadeIn, duration), volumeFadeOut: fadeWithin(visual.volumeFadeOut, duration) }
 }
 
+const END_KEYS = {
+  in: { fade: 'fadeIn', transition: 'transitionIn', animation: 'animationIn' },
+  out: { fade: 'fadeOut', transition: 'transitionOut', animation: 'animationOut' },
+} as const
+
+// A clip comes in one way and goes out one way: a fade, a transition or an animation. The one kept at an end takes the others there away.
+export function withOnlyAtEnd(clip: VisualClip, edge: 'in' | 'out', kept: 'fade' | 'transition' | 'animation'): VisualClip {
+  let edited = clip
+  for (const kind of ['fade', 'transition', 'animation'] as const) {
+    const key = END_KEYS[edge][kind]
+    if (kind !== kept && edited[key] !== undefined) edited = { ...edited, [key]: undefined }
+  }
+  return edited
+}
+
 // Applies an edit to the chosen clips on unlocked tracks; an edit that returns nothing removes the clip. Untouched tracks keep their identity.
 export function editClips(project: Project, clipIds: ReadonlySet<string>, edit: (clip: Clip) => Clip | undefined): Project {
   let hasChanged = false

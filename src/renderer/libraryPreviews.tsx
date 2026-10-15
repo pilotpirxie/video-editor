@@ -17,6 +17,7 @@ const RIGHT_HALF: Box = { x: 32, y: 0, width: 32, height: 36 }
 const TOP_HALF: Box = { x: 0, y: 0, width: 64, height: 18 }
 const BOTTOM_HALF: Box = { x: 0, y: 18, width: 64, height: 18 }
 const CARD: Box = { x: 12, y: 6, width: 40, height: 22.5 }
+const FILLED_CARD: Box = { x: 18, y: 10.125, width: 28, height: 15.75 }
 const REGION: Box = { x: 16, y: 6, width: 32, height: 22 }
 // The colours of the pixel blocks: rows from the top, as the landscape under them roughly is.
 const BLOCKS: readonly (readonly ('sky' | 'sun' | 'hill')[])[] = [
@@ -275,6 +276,7 @@ function PixelBlocks(): ReactElement {
 
 export const EFFECT_PREVIEWS: Record<EffectType, ReactElement> = {
   colorAdjust: <Compared look="look-vivid" />,
+  look: <Compared look="look-graded" />,
   blackAndWhite: <Compared look="look-grey" />,
   sepia: <Compared look="look-sepia" />,
   tint: <Compared look="look-tint" />,
@@ -301,6 +303,25 @@ export const EFFECT_PREVIEWS: Record<EffectType, ReactElement> = {
     <Picture>
       <Scene />
       <Scene look="look-soft" />
+    </Picture>
+  ),
+  // Soft on the left, crisp on the right.
+  sharpen: (
+    <Picture>
+      <Scene look="look-soft" />
+      <Part view={RIGHT_HALF}>
+        <Scene />
+      </Part>
+      <Divider />
+    </Picture>
+  ),
+  // The picture, blurred and darkened, fills the frame around a smaller copy of itself.
+  blurFill: (
+    <Picture>
+      <Scene look="look-fill" />
+      <Shrunk box={FILLED_CARD}>
+        <Scene />
+      </Shrunk>
     </Picture>
   ),
   // A person in front of a green screen on the left; with the green keyed out on the right.

@@ -53,12 +53,24 @@ body {
   font-size: var(--text-label);
 }
 
-.button:hover:not(:disabled) {
+.button,
+.picker {
+  box-shadow: var(--raised-edge);
+}
+
+.button:hover:not(:disabled),
+.picker:hover:not(:disabled) {
   background: var(--hover-surface);
 }
 
-.button:active:not(:disabled) {
+.button:active:not(:disabled),
+.picker:active:not(:disabled) {
   background: var(--divider);
+  box-shadow: var(--pressed-edge);
+}
+
+.button:disabled {
+  box-shadow: none;
 }
 
 .button:disabled,
@@ -74,8 +86,9 @@ body {
 }
 
 .button.primary {
-  border-color: var(--primary);
+  border-color: var(--primary-pressed);
   background: var(--primary);
+  box-shadow: var(--primary-edge);
   color: var(--text-on-primary);
   font-weight: 600;
 }
@@ -86,11 +99,13 @@ body {
 
 .button.primary:active:not(:disabled) {
   background: var(--primary-pressed);
+  box-shadow: var(--pressed-edge);
 }
 
 .button.primary:disabled {
   border-color: var(--divider);
   background: var(--raised-surface);
+  box-shadow: none;
   color: var(--text-disabled);
 }
 
@@ -109,6 +124,7 @@ body {
   padding: 0;
   border-color: transparent;
   background: transparent;
+  box-shadow: none;
   color: var(--text-secondary);
 }
 
@@ -121,8 +137,13 @@ body {
   color: var(--primary);
 }
 
+.button.icon.danger[aria-pressed='true'] {
+  color: var(--danger);
+}
+
 .button.icon:active:not(:disabled) {
   background: var(--hover-surface);
+  box-shadow: var(--pressed-edge);
 }
 
 /* Written after the icon colours, which would otherwise make a disabled icon look usable. */
@@ -132,6 +153,7 @@ body {
 
 .field {
   width: 100%;
+  box-shadow: var(--sunken-edge);
   user-select: text;
 }
 
@@ -150,6 +172,7 @@ body {
   border-color: var(--divider);
   border-radius: 0;
   background: var(--raised-surface);
+  box-shadow: var(--raised-edge);
 }
 
 .segmented .button + .button {
@@ -168,6 +191,8 @@ body {
 .segmented .button[aria-pressed='true'] {
   position: relative;
   border-color: var(--primary);
+  background: var(--window-background);
+  box-shadow: var(--pressed-edge);
   color: var(--primary);
 }
 
@@ -209,6 +234,7 @@ body {
   border: 1px solid var(--divider);
   border-radius: var(--radius);
   background: var(--raised-surface);
+  box-shadow: var(--float-shadow);
   color: var(--text-primary);
 }
 
@@ -284,6 +310,7 @@ body {
   border: 1px solid var(--divider);
   border-radius: var(--space-1);
   background: var(--raised-surface);
+  box-shadow: var(--float-shadow);
   color: var(--text-primary);
   font-size: var(--text-body);
   white-space: nowrap;
@@ -360,6 +387,15 @@ legend.field-label {
   gap: var(--space-1);
   text-align: left;
   user-select: none;
+}
+
+/* A drop-down is pressed, not typed into, so it is raised like a button rather than sunken like the fields. */
+.field.picker {
+  box-shadow: var(--raised-edge);
+}
+
+.field.picker:active:not(:disabled) {
+  box-shadow: var(--pressed-edge);
 }
 
 .picker-value {
@@ -471,6 +507,7 @@ legend.field-label {
   border: 1px solid var(--divider);
   border-radius: var(--radius);
   background: var(--raised-surface);
+  box-shadow: var(--sunken-edge);
 }
 
 .text-field {
@@ -493,6 +530,7 @@ legend.field-label {
   border: 1px solid var(--divider);
   border-radius: var(--radius);
   background: var(--panel-background);
+  box-shadow: var(--float-shadow);
   color: var(--text-primary);
 }
 
@@ -587,6 +625,7 @@ legend.field-label {
 
 .export-bar::-webkit-progress-bar {
   background: var(--raised-surface);
+  box-shadow: var(--sunken-edge);
 }
 
 .export-bar::-webkit-progress-value {
@@ -604,4 +643,15 @@ legend.field-label {
   flex: 1;
   min-width: 0;
   margin-right: var(--space-1);
+}
+
+/* Two fields side by side, such as X and Y, with the keyframe buttons they share at the end. */
+.field-pair {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.field-pair > .labelled {
+  flex: 1;
 }
