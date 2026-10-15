@@ -47,7 +47,7 @@ const OPENING_HINT_DELAY_MS = 200
 function canvasHintOf(state: EditorState): string | undefined {
   if (state.openingName !== undefined) return `Opening "${state.openingName}"…`
   if (projectDuration(state.wholeProject) > 0) return undefined
-  if (state.wholeProject.media.length === 0) return 'Drop files here or click Import'
+  if (state.wholeProject.media.length === 0) return 'Drop files here'
   return undefined
 }
 

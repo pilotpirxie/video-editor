@@ -47,6 +47,7 @@ const PATHS = {
   group: 'M2.5 2.5h7v7h-7zM6.5 6.5h7v7h-7z',
   preview: 'M2 3h12v10H2zM6.5 5.5l4 2.5-4 2.5z',
   export: 'M8 10V2.5M5 5.5l3-3 3 3M3 9v4.5h10V9',
+  search: 'M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM10.25 10.25L13.5 13.5',
 } as const
 
 export type IconName = keyof typeof PATHS

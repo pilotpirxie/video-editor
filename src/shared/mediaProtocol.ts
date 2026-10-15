@@ -34,7 +34,8 @@ export type MediaInfo =
   | { kind: 'image'; width: number; height: number; hasAlpha: boolean }
 
 // `isMissing` tells a file that is not where the project expects it from one that is there but cannot be read.
-export type MediaState = { info: MediaInfo } | { error: string; isMissing: boolean }
+// `createdAt` is when the file was created on disk, in milliseconds since 1970; only the Media tab sorts by it.
+export type MediaState = { info: MediaInfo; createdAt?: number } | { error: string; isMissing: boolean }
 
 export type LoadedProject = {
   project: Project
@@ -44,6 +45,7 @@ export type LoadedProject = {
 export type AddedMedia = {
   id: string
   info: MediaInfo
+  createdAt: number
 }
 
 // What the clips of a project use a media file for. A file relinked in its place has to offer the same.
@@ -58,6 +60,7 @@ export type RelinkedMedia = {
   id: string
   path: string
   info: MediaInfo
+  createdAt: number
 }
 
 export type Preparation = {

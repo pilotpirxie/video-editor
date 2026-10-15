@@ -1,7 +1,8 @@
-import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
 import { mediaFileName } from '../editor/place.js'
 import type { MediaInfo, MediaState, Preparation } from '../shared/mediaProtocol.js'
 import type { MediaRef } from '../shared/project.js'
+import type { MediaSort } from '../shared/settings.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
 import { useEditorState, useSession } from './context.js'
 import { DELETE_EVENT, SELECT_ALL_EVENT } from './document.js'
@@ -10,6 +11,29 @@ import { LibraryTools, useLibraryDrag, useLibraryView } from './LibraryTabs.js'
 
 const SECONDS_PER_MINUTE = 60
 const PERCENT = 100
+// Numbers in names sort as numbers, as in the Finder: "clip 2" comes before "clip 10".
+const NAME_ORDER = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+// Files that cannot be read have no date and no length, so they come last.
+const UNKNOWN_DATE = Number.MAX_SAFE_INTEGER
+const UNKNOWN_DURATION = -1
+
+function createdAtOf(state: MediaState | undefined): number {
+  if (state === undefined || !('info' in state)) return UNKNOWN_DATE
+  return state.createdAt ?? UNKNOWN_DATE
+}
+
+// Still images have no length either.
+function durationOf(state: MediaState | undefined): number {
+  if (state === undefined || !('info' in state) || state.info.kind === 'image') return UNKNOWN_DURATION
+  return state.info.duration
+}
+
+// The sort is stable, so files that tie keep the order they were added in.
+function sortedMedia(media: readonly MediaRef[], mediaStates: Readonly<Record<string, MediaState>>, sort: MediaSort): readonly MediaRef[] {
+  if (sort === 'name') return [...media].sort((first, second) => NAME_ORDER.compare(mediaFileName(first), mediaFileName(second)))
+  if (sort === 'duration') return [...media].sort((first, second) => durationOf(mediaStates[second.id]) - durationOf(mediaStates[first.id]))
+  return [...media].sort((first, second) => createdAtOf(mediaStates[first.id]) - createdAtOf(mediaStates[second.id]))
+}
 
 function nameOf(path: string): string {
   return path.split('/').at(-1) ?? path
@@ -198,6 +222,7 @@ export function MediaTab(): ReactElement {
   const media = useEditorState((state) => state.project.media)
   const mediaStates = useEditorState((state) => state.mediaStates)
   const pending = useEditorState((state) => state.pendingImports)
+  const sort = useEditorState((state) => state.settings.mediaSort)
   const isOpening = useEditorState((state) => state.openingName !== undefined)
   const preparation = useSyncExternalStore(session.onPreparation, session.preparation)
   const [query, setQuery] = useState('')
@@ -229,14 +254,15 @@ export function MediaTab(): ReactElement {
     }
   }, [session])
 
+  const sorted = useMemo(() => sortedMedia(media, mediaStates, sort), [media, mediaStates, sort])
   const wanted = query.trim().toLowerCase()
-  const shown = media.filter((reference) => mediaFileName(reference).toLowerCase().includes(wanted))
+  const shown = sorted.filter((reference) => mediaFileName(reference).toLowerCase().includes(wanted))
   const shownIds = shown.map((reference) => reference.id)
   const isEmpty = media.length === 0 && pending.length === 0
   const selected = new Set(selectedIds)
   // A drag takes the selected files that can be placed, in the order they are listed.
   const draggedSelection: string[] = []
-  for (const reference of media) {
+  for (const reference of sorted) {
     const state = mediaStates[reference.id]
     if (selected.has(reference.id) && state !== undefined && 'info' in state) draggedSelection.push(reference.id)
   }
@@ -362,11 +388,7 @@ export function MediaTab(): ReactElement {
 
   return (
     <div ref={tabRef} className="library-tab" onPointerDown={startBox} onPointerMove={moveBox} onPointerUp={endBox} onPointerCancel={endBox} onLostPointerCapture={endBox}>
-      <LibraryTools noun="media" query={query} onQuery={setQuery} view={view} onView={setView}>
-        <button type="button" className="button" data-testid="import" onClick={() => void session.chooseAndImport()}>
-          Import
-        </button>
-      </LibraryTools>
+      <LibraryTools noun="media" query={query} onQuery={setQuery} view={view} onView={setView} />
       {isEmpty && !isOpening && <p className="empty-state">Drop files here</p>}
       {!isEmpty && shown.length === 0 && pending.length === 0 && <p className="empty-state">No matches</p>}
       <ul ref={listRef} className={view === 'grid' ? 'library-list grid' : 'library-list'} role="listbox" aria-multiselectable="true" aria-label="Media" onKeyDown={onListKeyDown}>

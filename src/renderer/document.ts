@@ -225,7 +225,7 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
         continue
       }
       const added = addition.value
-      store.setMediaState(added.id, { info: added.info })
+      store.setMediaState(added.id, { info: added.info, createdAt: added.createdAt })
       store.apply('Import Media', (project) => withMedia(project, { id: added.id, path, relativePath: '' }))
       watchPreparation()
     }
@@ -249,7 +249,7 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     await mediaReopened
     try {
       const found = await media.relinkMedia(path, { reference, uses: mediaUses(project, mediaId) }, others)
-      for (const item of found) store.setMediaState(item.id, { info: item.info })
+      for (const item of found) store.setMediaState(item.id, { info: item.info, createdAt: item.createdAt })
       store.apply('Relink Media', (current) => relinkedMedia(current, found))
       watchPreparation()
       if (found.length > 1) store.notify(`${found.length - 1} more missing ${found.length === 2 ? 'file was' : 'files were'} found in the same folder.`)

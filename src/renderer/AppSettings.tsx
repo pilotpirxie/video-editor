@@ -111,14 +111,20 @@ export function PerformanceSettings(): ReactElement {
         </button>
       </div>
       <SettingField label="Remove unused cache after (h)" setting="unusedMediaHours" onChange={change} />
-      <Picker label="Playback preview (px)" testId="setting-previewLongSide" choices={SIZE_CHOICES} value={String(settings.previewLongSide)} onChoose={(value) => change({ ...settings, previewLongSide: Number(value) })} />
-      <Picker
-        label="Preparation cores"
-        testId="setting-backgroundCores"
-        choices={CORE_CHOICES}
-        value={settings.backgroundCores}
-        onChoose={(value) => change({ ...settings, backgroundCores: value === 'half' ? 'half' : 'all' })}
-      />
+      <div className="labelled">
+        <span className="field-label">Playback preview (px)</span>
+        <Picker label="Playback preview (px)" testId="setting-previewLongSide" choices={SIZE_CHOICES} value={String(settings.previewLongSide)} onChoose={(value) => change({ ...settings, previewLongSide: Number(value) })} />
+      </div>
+      <div className="labelled">
+        <span className="field-label">Preparation cores</span>
+        <Picker
+          label="Preparation cores"
+          testId="setting-backgroundCores"
+          choices={CORE_CHOICES}
+          value={settings.backgroundCores}
+          onChoose={(value) => change({ ...settings, backgroundCores: value === 'half' ? 'half' : 'all' })}
+        />
+      </div>
     </>
   )
 }

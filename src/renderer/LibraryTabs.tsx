@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
 import { ANNOTATION_KINDS, ANNOTATION_NAMES } from '../editor/annotations.js'
 import { EFFECT_NAMES } from '../editor/effects.js'
 import { TRANSITION_NAMES } from '../editor/transitions.js'
 import { logError } from '../shared/log.js'
 import { EFFECT_TYPES, TRANSITION_TYPES } from '../shared/project.js'
 import { useSession } from './context.js'
-import { IconButton } from './icons.js'
+import { Icon, IconButton } from './icons.js'
 import { ANNOTATION_PREVIEWS, EFFECT_PREVIEWS, TRANSITION_PREVIEWS } from './libraryPreviews.js'
 import { LIBRARY_DRAG_EVENT, LIBRARY_DROP_EVENT, type LibraryDragDetail, type LibraryItem } from './timelineController.js'
 
@@ -130,18 +130,19 @@ type LibraryToolsProps = {
   onQuery(query: string): void
   view: LibraryView
   onView(view: LibraryView): void
-  children?: ReactNode
 }
 
-export function LibraryTools({ noun, query, onQuery, view, onView, children }: LibraryToolsProps): ReactElement {
+export function LibraryTools({ noun, query, onQuery, view, onView }: LibraryToolsProps): ReactElement {
   return (
     <div className="library-tools">
-      <input className="field" type="search" placeholder={`Search ${noun}`} aria-label={`Search ${noun}`} data-testid={`${noun}-search`} value={query} onChange={(event) => onQuery(event.target.value)} />
+      <div className="field-box search-box">
+        <Icon name="search" />
+        <input className="field" type="search" placeholder={`Search ${noun}`} aria-label={`Search ${noun}`} data-testid={`${noun}-search`} value={query} onChange={(event) => onQuery(event.target.value)} />
+      </div>
       <div className="segmented" role="group" aria-label={`Show ${noun} as`}>
         <IconButton icon="list" label="List" testId={`${noun}-view-list`} isPressed={view === 'list'} onClick={() => onView('list')} />
         <IconButton icon="grid" label="Grid" testId={`${noun}-view-grid`} isPressed={view === 'grid'} onClick={() => onView('grid')} />
       </div>
-      {children}
     </div>
   )
 }

@@ -342,7 +342,7 @@ async function testText(driver: Driver): Promise<UiTestReport> {
 async function testAnimated(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   driver.options.answers.importMedia = [mediaFile(driver, 'animated.gif')]
-  await driver.page.click('import')
+  driver.menu('import')
   await driver.until(`${selector('media-animated.gif')} !== null`, 'the animated image in the Media tab')
 
   await dragMedia(driver, 'animated.gif', await driver.timelinePoint(0, 0, 6))
@@ -731,7 +731,7 @@ async function testTutorial(driver: Driver): Promise<UiTestReport> {
   await driver.drag(splitter, { x: splitter.x, y: splitter.y - TALLER_TIMELINE })
   const names = ['screen.mp4', 'voice.m4a', 'music.mp3', 'logo.png']
   driver.options.answers.importMedia = names.map((name) => mediaFile(driver, name))
-  await driver.page.click('import')
+  driver.menu('import')
   await driver.until(names.map((name) => `${selector(`media-${name}`)} !== null`).join(' && '), 'the four files in the Media tab')
 
   // A new project has six empty tracks. Each sound, dropped on occupied space, goes onto the empty track above; a dropped clip is selected, so its Volume field shows it landed.
@@ -842,8 +842,10 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   await clickOn(driver, 'group-project')
   await driver.until(`${selector('canvas-width')} === null`, 'the project settings to fold away')
 
+  // As in importThreeFiles, sorted by duration the files are listed in the order they are imported.
+  driver.menu('sort-duration')
   driver.options.answers.importMedia = ['h264.mp4', 'audio.wav', 'image.jpg'].map((name) => mediaFile(driver, name))
-  await driver.page.click('import')
+  driver.menu('import')
   await driver.until(`${selector('media-image.jpg')} !== null`, 'the import to finish')
   await untilPrepared(driver)
 
@@ -1056,10 +1058,13 @@ function clearOfVolumeLine(point: Point): Point {
 
 // Builds a small project by dragging: looks at where held media would land before it is let go, moves two clips across tracks together, and crops by typing.
 // Imports a video, a sound and a picture, and waits until they are ready to be dragged out.
+// Sorted by duration the files are listed in the order they are imported: the video and the sound are both 2 s long and keep that order, and the image has no length.
+// The dates the test files were created on would give an order that changes when they are made again.
 async function importThreeFiles(driver: Driver): Promise<void> {
   const names = ['h264.mp4', 'audio.wav', 'image.jpg']
+  driver.menu('sort-duration')
   driver.options.answers.importMedia = names.map((name) => mediaFile(driver, name))
-  await driver.page.click('import')
+  driver.menu('import')
   await driver.until(names.map((name) => `${selector(`media-${name}`)} !== null`).join(' && '), 'the three files in the Media tab')
   await untilPrepared(driver)
 }
@@ -2229,14 +2234,14 @@ async function testBrokenMedia(driver: Driver): Promise<UiTestReport> {
   if (mediaDirectory === undefined) throw new PageError('This UI test needs --media <directory>')
   const names = (await readdir(mediaDirectory)).filter((name) => name.startsWith('broken-')).sort()
   driver.options.answers.importMedia = names.map((name) => mediaFile(driver, name))
-  await driver.page.click('import')
+  driver.menu('import')
   await driver.until(`${selector('notice')} !== null && ${selector('media-pending')} === null`, 'every broken file to be read', LONG_STEP_TIMEOUT_MS)
   const notice = await driver.page.text('notice')
   const listed = names.filter((name) => notice.includes(`"${name}"`) === false)
   const listedShown: unknown = await driver.page.evaluate(`${JSON.stringify(listed)}.filter((name) => document.querySelector('[data-testid="media-' + name + '"]') !== null)`)
 
   driver.options.answers.importMedia = [mediaFile(driver, 'h264.mp4')]
-  await driver.page.click('import')
+  driver.menu('import')
   await driver.until(`Boolean(${selector('media-h264.mp4')}?.querySelector('.library-poster'))`, 'the good file after the broken ones')
   await dragMedia(driver, 'h264.mp4', await driver.timelinePoint(0, 0, 6))
   await driver.untilUndoLabel('Undo Add Clip')
@@ -2462,7 +2467,7 @@ async function testSoak(driver: Driver): Promise<UiTestReport> {
   const seed = driver.options.seed ?? Date.now() % 2 ** 31
   const soak: Soak = { driver, random: seededRandom(seed) }
   driver.options.answers.importMedia = SOAK_MEDIA.map((name) => mediaFile(driver, name))
-  await driver.page.click('import')
+  driver.menu('import')
   await driver.until(SOAK_MEDIA.map((name) => `Boolean(${selector(`media-${name}`)}?.querySelector('.library-poster, .icon'))`).join(' && '), 'the media of the session')
 
   const startedAt = Date.now()

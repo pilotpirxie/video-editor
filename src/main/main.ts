@@ -52,7 +52,7 @@ import { runSelfTest, type SelfTestOptions } from './selfTest.js'
 import type { DialogAnswers } from './uiDriver.js'
 import { runUiTest } from './uiTest.js'
 import { readSettings, writeSettings } from './settingsFile.js'
-import { mediaSettingsOf, parseSettings, type AppSettings } from '../shared/settings.js'
+import { mediaSettingsOf, parseSettings, type AppSettings, type MediaSort } from '../shared/settings.js'
 
 const RENDERER_DIRECTORY = join(import.meta.dirname, '..', '..', '..', 'renderer')
 const MEDIA_SERVICE_PATH = join(import.meta.dirname, '..', 'media', 'service.js')
@@ -359,6 +359,8 @@ function changeSettings(state: AppState, value: unknown): void {
   for (const editor of state.editors) send(editor.window, { type: 'settings', settings })
   const command: MediaProcessCommand = { type: 'settings', settings: mediaSettingsOf(settings) }
   state.mediaProcess?.postMessage(command)
+  // The Media menu ticks the sort in use, which Restore Defaults can change too.
+  if (state.activeEditor !== undefined) buildEditorMenu(state)
 }
 
 function slowFramesLogPath(): string {
@@ -862,6 +864,11 @@ function buildEditorMenu(state: AppState): void {
     return accelerator === undefined ? item(action, label) : { ...item(action, label, accelerator), registerAccelerator: false }
   }
 
+  // The order is a setting, so the Media tab of every window follows the one ticked here.
+  function sortItem(sort: MediaSort, label: string): MenuItemConstructorOptions {
+    return { id: `sort-${sort}`, label, type: 'radio', checked: state.settings.mediaSort === sort, click: () => changeSettings(state, { ...state.settings, mediaSort: sort }) }
+  }
+
   function withLabel(verb: string, label: string | undefined): string {
     return label === undefined ? verb : `${verb} ${label}`
   }
@@ -893,7 +900,6 @@ function buildEditorMenu(state: AppState): void {
         item('save', 'Save', 'CmdOrCtrl+S'),
         item('save-as', 'Save As…', 'Shift+CmdOrCtrl+S'),
         { type: 'separator' },
-        rebindable('import', 'Import Media…'),
         rebindable('export', 'Export…'),
         { type: 'separator' },
         { role: 'close' },
@@ -939,6 +945,16 @@ function buildEditorMenu(state: AppState): void {
         { role: 'zoomOut' },
         { type: 'separator' },
         { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'Media',
+      submenu: [
+        rebindable('import', 'Import Media…'),
+        { type: 'separator' },
+        sortItem('created', 'Sort by Date Created'),
+        sortItem('name', 'Sort by Name'),
+        sortItem('duration', 'Sort by Duration'),
       ],
     },
     { role: 'windowMenu' },

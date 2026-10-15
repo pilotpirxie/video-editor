@@ -12,10 +12,16 @@ export type AppSettings = {
   stillDurationSeconds: number
   autosaveSeconds: number
   undoSteps: number
+  mediaSort: MediaSort
 }
 
 // How many of the Mac's cores preparing media in the background may use.
 type BackgroundCores = 'all' | 'half'
+
+const MEDIA_SORTS = ['created', 'name', 'duration'] as const
+
+// The order of the Media tab: by when each file was created, oldest first; by name; or by length, longest first.
+export type MediaSort = (typeof MEDIA_SORTS)[number]
 
 // The settings the media process works by.
 export type MediaSettings = Pick<AppSettings, 'cacheLimitGb' | 'previewLongSide' | 'backgroundCores' | 'unusedMediaHours'>
@@ -35,6 +41,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   stillDurationSeconds: 5,
   autosaveSeconds: 10,
   undoSteps: 500,
+  mediaSort: 'created',
 }
 
 export const SETTING_RANGES: Record<NumberSetting, { min: number; max: number }> = {
@@ -63,7 +70,7 @@ function numberWithin(value: unknown, setting: NumberSetting, isWhole: boolean):
 // Anything read from disk or sent by a window becomes valid settings: a missing or wrong value takes its default, a number out of range its nearest limit.
 export function parseSettings(value: unknown): AppSettings {
   const record: Record<string, unknown> = typeof value === 'object' && value !== null && !Array.isArray(value) ? { ...value } : {}
-  const { previewLongSide, backgroundCores, isSnappingAtLaunch } = record
+  const { previewLongSide, backgroundCores, isSnappingAtLaunch, mediaSort } = record
   return {
     cacheLimitGb: numberWithin(record.cacheLimitGb, 'cacheLimitGb', true),
     previewLongSide: PREVIEW_LONG_SIDES.find((side) => side === previewLongSide) ?? DEFAULT_SETTINGS.previewLongSide,
@@ -74,6 +81,7 @@ export function parseSettings(value: unknown): AppSettings {
     stillDurationSeconds: numberWithin(record.stillDurationSeconds, 'stillDurationSeconds', false),
     autosaveSeconds: numberWithin(record.autosaveSeconds, 'autosaveSeconds', true),
     undoSteps: numberWithin(record.undoSteps, 'undoSteps', true),
+    mediaSort: MEDIA_SORTS.find((sort) => sort === mediaSort) ?? DEFAULT_SETTINGS.mediaSort,
   }
 }
 

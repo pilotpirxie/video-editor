@@ -27,7 +27,7 @@ function isRawFrame(value: unknown): value is RawFrame {
 }
 
 function isAddedMedia(value: unknown): value is AddedMedia {
-  return typeof value === 'object' && value !== null && 'id' in value && typeof value.id === 'string' && 'info' in value
+  return typeof value === 'object' && value !== null && 'id' in value && typeof value.id === 'string' && 'info' in value && 'createdAt' in value && typeof value.createdAt === 'number'
 }
 
 function isRelinkedMedia(value: unknown): value is RelinkedMedia[] {

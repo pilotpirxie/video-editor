@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { BrowserWindow, Menu } from 'electron'
 import type { MenuAction, UnsavedChoice } from '../shared/mediaProtocol.js'
+import type { MediaSort } from '../shared/settings.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
 import { PageError, pageOf, selector, type Page } from './page.js'
 
@@ -54,6 +55,9 @@ type Rect = Point & {
 
 type Modifier = 'shift' | 'meta' | 'control' | 'alt'
 
+// The sort items of the Media menu are handled by main, so they are no actions of a window.
+type MenuItemId = MenuAction | `sort-${MediaSort}`
+
 export type Driver = {
   page: Page
   window: BrowserWindow
@@ -79,7 +83,7 @@ export type Driver = {
   // Types into whatever has the focus, one key at a time, as a person would.
   typeKeys(text: string): Promise<void>
   value(testId: string): Promise<string>
-  menu(action: MenuAction): void
+  menu(action: MenuItemId): void
   menuLabel(action: MenuAction): string
   timelinePoint(time: number, trackIndex: number, trackCount: number): Promise<Point>
   savedProject(name: string): Promise<unknown>
@@ -234,14 +238,14 @@ function driverOf(window: BrowserWindow, options: UiTestOptions): Driver {
     return typeof content === 'string' ? content : ''
   }
 
-  function menuItem(action: MenuAction): Electron.MenuItem {
+  function menuItem(action: MenuItemId): Electron.MenuItem {
     const item = Menu.getApplicationMenu()?.getMenuItemById(action)
     if (item === null || item === undefined) throw new PageError(`The menu has no "${action}" item`)
     return item
   }
 
   // Chosen with this window in front, as a person would choose it.
-  function clickMenu(action: MenuAction): void {
+  function clickMenu(action: MenuItemId): void {
     menuItem(action).click(undefined, window, window.webContents)
   }
 

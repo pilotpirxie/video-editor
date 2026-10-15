@@ -61,6 +61,7 @@ export class MediaError extends Error {
 type MediaEntry = {
   path: string
   info: MediaInfo
+  createdAt: number
   directory: string
   failures: number
   hasFailed: boolean
@@ -201,7 +202,7 @@ export class MediaSession implements MediaClient {
     const id = randomUUID()
     const entry = await this.openFile(path)
     this.register(project, id, entry)
-    return { id, info: entry.info }
+    return { id, info: entry.info, createdAt: entry.createdAt }
   }
 
   // Puts the file the user pointed at in the place of unlinked media, then looks beside it for the other unlinked files by name.
@@ -213,7 +214,7 @@ export class MediaSession implements MediaClient {
       throw new MediaError(`"${basename(path)}" cannot take the place of "${fileNameOf(wanted.reference)}": the project uses that file for its ${lacking}.`)
     }
     this.register(project, wanted.reference.id, chosen)
-    const relinked: RelinkedMedia[] = [{ id: wanted.reference.id, path, info: chosen.info }]
+    const relinked: RelinkedMedia[] = [{ id: wanted.reference.id, path, info: chosen.info, createdAt: chosen.createdAt }]
 
     for (const other of others) {
       const beside = join(dirname(path), fileNameOf(other.reference))
@@ -222,7 +223,7 @@ export class MediaSession implements MediaClient {
         const entry = await this.openFile(beside)
         if (!other.uses.every((use) => offers(entry.info, use))) continue
         this.register(project, other.reference.id, entry)
-        relinked.push({ id: other.reference.id, path: beside, info: entry.info })
+        relinked.push({ id: other.reference.id, path: beside, info: entry.info, createdAt: entry.createdAt })
       } catch (error) {
         // A neighbour that cannot be read simply stays unlinked; the file that was asked for is relinked all the same.
         if (!(error instanceof ProbeError) && !(error instanceof MediaError)) throw error
@@ -454,7 +455,7 @@ export class MediaSession implements MediaClient {
     if (found === undefined) return { state: { error: `"${fileNameOf(reference)}" was not found.`, isMissing: true } }
     try {
       const entry = await this.openFile(found)
-      return { state: { info: entry.info }, entry }
+      return { state: { info: entry.info, createdAt: entry.createdAt }, entry }
     } catch (error) {
       if (!(error instanceof ProbeError) && !(error instanceof MediaError)) throw error
       return { state: { error: error.message, isMissing: false } }
@@ -488,7 +489,9 @@ export class MediaSession implements MediaClient {
     const directory = join(this.cache.directory, cacheKey(`${path}\n${file.size}\n${file.mtimeMs}`))
     await mkdir(directory, { recursive: true })
     const info = await this.infoOf(path, directory)
-    return { path, info, directory, failures: 0, hasFailed: false, soundless: new Set() }
+    // A disk that keeps no creation time reports 0; the time of the last change stands in for it.
+    const createdAt = file.birthtimeMs > 0 ? file.birthtimeMs : file.mtimeMs
+    return { path, info, createdAt, directory, failures: 0, hasFailed: false, soundless: new Set() }
   }
 
   private async infoOf(path: string, directory: string): Promise<MediaInfo> {

@@ -11,8 +11,8 @@ describe('parseSettings', () => {
   })
 
   it('keeps valid values, brings numbers into range and replaces wrong ones by their default', () => {
-    const parsed = parseSettings({ cacheLimitGb: 20.6, previewLongSide: 720, backgroundCores: 'half', unusedMediaHours: 99999, snapRangePixels: 0, isSnappingAtLaunch: false, stillDurationSeconds: 'long', undoSteps: Number.NaN })
-    expect(parsed).toEqual({ ...DEFAULT_SETTINGS, cacheLimitGb: 21, previewLongSide: 720, backgroundCores: 'half', unusedMediaHours: 8760, snapRangePixels: 1, isSnappingAtLaunch: false })
+    const parsed = parseSettings({ cacheLimitGb: 20.6, previewLongSide: 720, backgroundCores: 'half', unusedMediaHours: 99999, snapRangePixels: 0, isSnappingAtLaunch: false, stillDurationSeconds: 'long', undoSteps: Number.NaN, mediaSort: 'name' })
+    expect(parsed).toEqual({ ...DEFAULT_SETTINGS, cacheLimitGb: 21, previewLongSide: 720, backgroundCores: 'half', unusedMediaHours: 8760, snapRangePixels: 1, isSnappingAtLaunch: false, mediaSort: 'name' })
   })
 
   it('allows only the offered preview sizes', () => {

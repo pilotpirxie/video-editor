@@ -84,7 +84,7 @@ async function testEdit(driver: Driver): Promise<UiTestReport> {
   const names = ['h264.mp4', 'audio.wav', 'image.jpg', 'broken-garbage.mp4']
   driver.options.answers.importMedia = names.map((name) => mediaFile(driver, name))
   const importStartedAt = Date.now()
-  await driver.page.click('import')
+  driver.menu('import')
   await driver.until(`Boolean(${selector('media-h264.mp4')}?.querySelector('.library-poster'))`, 'the poster of the imported video')
   const posterMilliseconds = Date.now() - importStartedAt
   await driver.until(`${selector('media-image.jpg')} !== null && ${selector('notice')} !== null`, 'the import to finish')

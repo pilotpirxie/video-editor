@@ -373,8 +373,22 @@
   min-width: 0;
 }
 
-.library-tools .button {
-  flex: none;
+.search-box {
+  flex: 1;
+  min-width: 0;
+}
+
+.search-box .icon {
+  position: absolute;
+  top: 50%;
+  left: var(--space-1);
+  color: var(--text-secondary);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.search-box .field {
+  padding-left: calc(var(--space-1) + 20px);
 }
 
 .library-list {
