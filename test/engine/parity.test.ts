@@ -30,6 +30,9 @@ const REFERENCE_PROJECTS: Case[] = [
   { project: '20-groups', frames: [0, 7, 15, 31, 45, 59, 80, 89, 90, 95, 120, 149] },
   // HLG, 240 fps, 8K, a turned phone, wide pixels and a phone recording with a 12 s gap; the gap ends at frame 363.
   { project: '21-difficult-sources', frames: [0, 1, 2, 3, 5, 9, 30, 59, 300, 362, 363, 364, 377] },
+  // Values a hand-edited file may hold: a 2000 pt heading, typing at ten times zoom, no width, a billion pixels away,
+  // shadows and blurs of a million pixels, a 100,000 px arrow, 600 keyframes and groups eight deep.
+  { project: '23-weird', frames: [0, 7, 15, 22, 30, 45, 59] },
 ]
 
 const REDUCED_SIZE: Case[] = [

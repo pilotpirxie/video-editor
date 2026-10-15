@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto'
-import { readdir, rm, stat, utimes } from 'node:fs/promises'
+import { readdir, rm, stat, statfs, utimes } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
 import { logError } from '../shared/log.js'
+import { DEFAULT_SETTINGS, unusedMediaMs } from '../shared/settings.js'
 
 const TEMPORARY_SUFFIX = '.tmp'
+// The name, before its extension, of the file that holds what a probe found about a media file; clearing the cache keeps it.
+const MEDIA_FACTS_NAME = 'info'
 // Media folders of the first cache layout, which sat directly in the parent of this one.
 const OLD_LAYOUT_FOLDER = /^[0-9a-f]{32}$/
 
@@ -46,6 +49,13 @@ export type DiskCache = {
   pending(path: string): Promise<void> | undefined
   totalBytes(): number
   limitBytes(): number
+  // A new limit counts at once: the cache shrinks to it if need be.
+  setLimit(bytes: number): Promise<void>
+  // The size of a whole file in the cache.
+  bytesOf(path: string): number | undefined
+  // Removes every file but the facts about each media file and what is being written.
+  clear(): Promise<void>
+  freeBytes(): Promise<number>
 }
 
 // Files that belong together share their name before the extension.
@@ -76,7 +86,9 @@ async function sizeOf(path: string): Promise<{ bytes: number; modifiedAt: number
 }
 
 // One disk cache for the whole media process: every window's session prepares into it, and it stays under its limit by removing what was used longest ago.
-export function createDiskCache(directory: string, limitBytes: number): DiskCache {
+// The cache of a media file no project used for `maxUnusedMs` is removed at launch, even while the cache is under its limit.
+export function createDiskCache(directory: string, initialLimitBytes: number, maxUnusedMs = unusedMediaMs(DEFAULT_SETTINGS)): DiskCache {
+  let limitBytes = initialLimitBytes
   const units = new Map<string, Unit>()
   const protectedBy = new Map<object, ReadonlySet<string>>()
   const building = new Map<string, Deferred>()
@@ -130,7 +142,10 @@ export function createDiskCache(directory: string, limitBytes: number): DiskCach
     }
   }
 
-  async function scanMediaFolder(folder: string): Promise<void> {
+  // A media folder is removed whole when it is empty or none of its files was used since `unusedSince`.
+  async function scanMediaFolder(folder: string, unusedSince: number): Promise<void> {
+    const files: { path: string; bytes: number; modifiedAt: number }[] = []
+    let lastUsedAt = 0
     for (const name of await readdir(folder)) {
       const path = join(folder, name)
       if (name.endsWith(TEMPORARY_SUFFIX)) {
@@ -138,8 +153,15 @@ export function createDiskCache(directory: string, limitBytes: number): DiskCach
         continue
       }
       const size = await sizeOf(path)
-      if (size !== undefined) record(path, size.bytes, size.modifiedAt)
+      if (size === undefined) continue
+      files.push({ path, ...size })
+      lastUsedAt = Math.max(lastUsedAt, size.modifiedAt)
     }
+    if (lastUsedAt < unusedSince) {
+      await rm(folder, { recursive: true, force: true })
+      return
+    }
+    for (const file of files) record(file.path, file.bytes, file.modifiedAt)
   }
 
   async function removeOldLayout(): Promise<void> {
@@ -164,9 +186,10 @@ export function createDiskCache(directory: string, limitBytes: number): DiskCach
       // No cache yet: nothing to count.
       folders = []
     }
+    const unusedSince = Date.now() - maxUnusedMs
     for (const folder of folders) {
       try {
-        await scanMediaFolder(join(directory, folder))
+        await scanMediaFolder(join(directory, folder), unusedSince)
       } catch (error) {
         logError('Could not count a cache folder', error, { folder })
       }
@@ -184,6 +207,36 @@ export function createDiskCache(directory: string, limitBytes: number): DiskCach
     record(path, size.bytes, Date.now())
     evicting = evicting.then(evictOverLimit, evictOverLimit)
     await evicting
+  }
+
+  async function setLimit(bytes: number): Promise<void> {
+    limitBytes = bytes
+    evicting = evicting.then(evictOverLimit, evictOverLimit)
+    await evicting
+  }
+
+  async function clear(): Promise<void> {
+    await ready
+    for (const [key, unit] of [...units.entries()]) {
+      if (basename(key) === MEDIA_FACTS_NAME || isBeingBuilt(key)) continue
+      try {
+        await removeUnit(key, unit)
+      } catch (error) {
+        logError('Could not remove a cache file while clearing the cache', error, { key })
+      }
+    }
+  }
+
+  async function freeBytes(): Promise<number> {
+    const disk = await statfs(directory)
+    return disk.bavail * disk.bsize
+  }
+
+  function bytesOf(path: string): number | undefined {
+    const unit = units.get(unitKeyOf(path))
+    if (unit === undefined || !unit.files.has(path)) return undefined
+    // The files of a unit are counted together; a preview segment's index is tiny beside its pictures.
+    return unit.bytes
   }
 
   function used(path: string): void {
@@ -243,5 +296,9 @@ export function createDiskCache(directory: string, limitBytes: number): DiskCach
     has: (path) => units.get(unitKeyOf(path))?.files.has(path) === true,
     totalBytes: () => total,
     limitBytes: () => limitBytes,
+    setLimit,
+    bytesOf,
+    clear,
+    freeBytes,
   }
 }

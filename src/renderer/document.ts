@@ -5,8 +5,9 @@ import { menuShortcutsOf, parseBindings, type Bindings } from '../editor/shortcu
 import { missingFonts } from '../editor/text.js'
 import type { MediaStates } from '../engine/resolve.js'
 import { describeError, describeErrorAsSentence, logError } from '../shared/log.js'
-import type { AddedMedia, DocumentInfo, DocumentState, HostCommand, JobEvent, MenuAction, Preparation } from '../shared/mediaProtocol.js'
+import type { AddedMedia, CacheUsage, DocumentInfo, DocumentState, HostCommand, JobEvent, MenuAction, Preparation } from '../shared/mediaProtocol.js'
 import { projectDuration, type Project } from '../shared/project.js'
+import { cacheLimitOffer, type AppSettings } from '../shared/settings.js'
 import { frameDuration } from '../shared/time.js'
 import { createActions, type Actions } from './actions.js'
 import type { EngineHost, MediaPorts } from './engineHost.js'
@@ -16,7 +17,7 @@ import { createEditorStore, type EditorStore } from './store.js'
 import { createThumbnails, type Thumbnails } from './thumbnails.js'
 import { createTransport, isModalOpen, isTypingTarget, type Transport } from './transport.js'
 
-const AUTOSAVE_INTERVAL_MS = 10_000
+const MS_PER_SECOND = 1000
 const PREPARATION_POLL_MS = 500
 // Chromium gives the preview back within a second or two of starting a new GPU process.
 const PREVIEW_RETURN_MS = 5_000
@@ -44,6 +45,10 @@ export type Session = {
   shortcuts: Shortcuts
   // The View menu shows and hides the panels, which the window lays out.
   onPanelToggle(listener: (panel: Panel) => void): () => void
+  // Counts at once in this window; the main process keeps it and tells the other windows and the media process.
+  changeSettings(settings: AppSettings): void
+  cacheUsage(): Promise<CacheUsage>
+  clearCache(): Promise<void>
 }
 
 export type Panel = 'library' | 'properties' | 'timeline'
@@ -118,8 +123,8 @@ async function missingFontsNotice(project: Project): Promise<string | undefined>
   return `The fonts ${names} are not installed on this Mac. Their words are shown in the system font until they are.`
 }
 
-export function createSession(engine: EngineHost, media: MediaConnection, info: DocumentInfo): Session {
-  const store = createEditorStore()
+export function createSession(engine: EngineHost, media: MediaConnection, info: DocumentInfo, settings: AppSettings): Session {
+  const store = createEditorStore(settings)
   const transport = createTransport(engine, store.notify)
   const actions = createActions(store, transport)
   const thumbnails = createThumbnails(media, () => transport.position().isPlaying)
@@ -127,6 +132,7 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   const panelListeners = new Set<(panel: Panel) => void>()
   let preparation: PreparationStates = {}
   let preparationTimer: number | undefined
+  let isCacheOffered = false
   let sent: SentProject | undefined
   let isSendScheduled = false
   let reportedState = ''
@@ -140,6 +146,22 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   let mediaReopened: Promise<void> = Promise.resolve()
   let previewLostTimer: number | undefined
 
+  // Asked while copies are being made, as the guess of what the project needs grows with them. The offer is made once per window.
+  async function offerLargerCache(): Promise<void> {
+    if (isCacheOffered) return
+    let usage: CacheUsage
+    try {
+      usage = await media.cacheUsage()
+    } catch (error) {
+      logError('Could not read how much cache the project needs', error)
+      return
+    }
+    const offerGb = cacheLimitOffer(usage)
+    if (offerGb === undefined || isCacheOffered) return
+    isCacheOffered = true
+    store.offerCacheLimit({ neededBytes: usage.neededBytes, offerGb })
+  }
+
   // Preparation is only asked about while something is still being prepared, so an idle editor does no work.
   async function pollPreparation(): Promise<void> {
     preparationTimer = undefined
@@ -149,6 +171,7 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
       logError('Could not read the preparation progress', error)
       return
     }
+    void offerLargerCache()
     for (const listener of preparationListeners) listener()
     const isBusy = Object.values(preparation).some((state) => state.progress < 1 && !state.hasFailed)
     if (isBusy) preparationTimer = window.setTimeout(() => void pollPreparation(), PREPARATION_POLL_MS)
@@ -292,7 +315,16 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     recoveryWork = writeRecovery(recoveryWork, project)
   }
 
-  const autosaveTimer = setInterval(autosave, AUTOSAVE_INTERVAL_MS)
+  // Undefined once the window is closing: no autosave may start after that.
+  let autosaveTimer: number | undefined = window.setInterval(autosave, settings.autosaveSeconds * MS_PER_SECOND)
+
+  function applySettings(next: AppSettings): void {
+    const before = store.getState().settings
+    store.setSettings(next)
+    if (autosaveTimer === undefined || next.autosaveSeconds === before.autosaveSeconds) return
+    window.clearInterval(autosaveTimer)
+    autosaveTimer = window.setInterval(autosave, next.autosaveSeconds * MS_PER_SECOND)
+  }
 
   async function saveTo(path: string): Promise<boolean> {
     const project = store.committedProject()
@@ -375,7 +407,8 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
       if (choice === 'save' && !(await save())) return
     }
     // An autosave still running would write the recovery file again after the main process removed it.
-    clearInterval(autosaveTimer)
+    window.clearInterval(autosaveTimer)
+    autosaveTimer = undefined
     await recoveryWork
     window.host.closeDocument()
   }
@@ -423,6 +456,7 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     else if (action === 'toggle-library') togglePanel('library')
     else if (action === 'toggle-properties') togglePanel('properties')
     else if (action === 'toggle-timeline') togglePanel('timeline')
+    else if (action === 'toggle-debug') store.showDebug(!store.getState().isDebugShown)
     else if (action === 'preview-mode') store.setPreviewing(!store.getState().isPreviewing)
     else if (action === 'settings') store.showSettings(true)
   }
@@ -435,6 +469,10 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     if (command.type === 'memory-pressure') {
       engine.send({ type: 'memory-pressure', isUnderPressure: command.isUnderPressure })
       thumbnails.setUnderPressure(command.isUnderPressure)
+      return
+    }
+    if (command.type === 'settings') {
+      applySettings(command.settings)
       return
     }
     if (command.type !== 'menu') return
@@ -536,6 +574,15 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     onPanelToggle(listener) {
       panelListeners.add(listener)
       return () => panelListeners.delete(listener)
+    },
+    changeSettings(settings) {
+      applySettings(settings)
+      window.host.setSettings(settings)
+    },
+    cacheUsage: () => media.cacheUsage(),
+    async clearCache() {
+      await media.clearCache()
+      watchPreparation()
     },
   }
 }

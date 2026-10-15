@@ -29,4 +29,8 @@ contextBridge.exposeInMainWorld('host', {
   closeDocument: () => ipcRenderer.send('close-document'),
   discardRecovery: () => ipcRenderer.send('discard-recovery'),
   setMenuShortcuts: (shortcuts: unknown) => ipcRenderer.send('menu-shortcuts', shortcuts),
+  reportSlowFrame: (frame: unknown) => ipcRenderer.send('slow-frame', frame),
+  debugInfo: () => ipcRenderer.invoke('debug-info'),
+  settings: () => ipcRenderer.invoke('settings'),
+  setSettings: (settings: unknown) => ipcRenderer.send('set-settings', settings),
 })

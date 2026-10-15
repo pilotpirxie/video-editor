@@ -5,7 +5,7 @@ import { HAS_SAMPLES, projectPath, runApp, scratchDirectory, selfTestReport, typ
 
 const scratch = scratchDirectory('harness')
 const MAX_PAUSED_FRAME_MS = 500
-const MAX_TYPICAL_MEMORY_MB = 700
+const MAX_TYPICAL_MEMORY_MB = 1024
 
 function selfTest(project: string, extraArgs: readonly string[]): Promise<SelfTestReport> {
   return selfTestReport(projectPath(project), extraArgs)

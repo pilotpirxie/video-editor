@@ -33,7 +33,6 @@ import { TextEditor } from './TextEditor.js'
 import { LIBRARY_DRAG_EVENT, LIBRARY_DROP_EVENT, isLibraryDrag, type LibraryDragDetail } from './timelineController.js'
 
 const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 }
-const SNAP_RANGE_PIXELS = 12
 const HANDLE_PIXELS = 10
 const PATH_DOT_PIXELS = 8
 const ROTATE_HANDLE_OFFSET_PIXELS = 26
@@ -483,7 +482,8 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
   }
 
   function snapRange(event: PointerEvent<SVGSVGElement>): number | undefined {
-    return store.getState().isSnapping && !event.metaKey ? SNAP_RANGE_PIXELS * canvasPerPixel : undefined
+    const { isSnapping, settings } = store.getState()
+    return isSnapping && !event.metaKey ? settings.snapRangePixels * canvasPerPixel : undefined
   }
 
   // The values a clip needs to be drawn on the canvas as `placed` says. Inside an open group they are counted from that group.

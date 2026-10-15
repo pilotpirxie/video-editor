@@ -19,9 +19,6 @@ export const FRAME_DECODE_PIXEL_BUDGET = ULTRA_HD_PIXELS
 
 export const MAX_OPEN_STREAMS = 8
 
-// Preview copies, sound, waveforms and media facts of all projects together stay under this.
-export const CACHE_LIMIT_BYTES = 10 * 1024 * MEBIBYTE
-
 // Preview copies and sound are made and removed in pieces of this length of their source.
 export const CACHE_SEGMENT_SECONDS = 30
 

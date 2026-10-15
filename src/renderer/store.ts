@@ -4,6 +4,7 @@ import { EMPTY_HISTORY, record, redo, undo, type History } from '../editor/histo
 import type { MediaStates } from '../engine/resolve.js'
 import type { LoadedProject, MediaState } from '../shared/mediaProtocol.js'
 import type { Project, Track } from '../shared/project.js'
+import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings.js'
 
 export type Edit = (project: Project) => Project
 
@@ -39,12 +40,22 @@ export type EditorState = {
   // The panels are hidden and the canvas has the window to itself, with the transport only.
   isPreviewing: boolean
   isSettingsOpen: boolean
+  // The debug panel under the properties, off at every launch.
+  isDebugShown: boolean
+  settings: AppSettings
+  // The project needs more cache than the limit allows, and a larger limit is offered once.
+  cacheOffer: CacheOffer | undefined
   // Counts the documents opened in this window, so views can reset themselves for a new one.
   openCount: number
   // The text clip whose words are being typed on the canvas.
   editingTextId: string | undefined
   // The name of the project file being read, while the window waits for it.
   openingName: string | undefined
+}
+
+export type CacheOffer = {
+  neededBytes: number
+  offerGb: number
 }
 
 export type EditorStore = {
@@ -79,6 +90,9 @@ export type EditorStore = {
   setSnapping(isSnapping: boolean): void
   setPreviewing(isPreviewing: boolean): void
   showSettings(isOpen: boolean): void
+  showDebug(isShown: boolean): void
+  setSettings(settings: AppSettings): void
+  offerCacheLimit(offer: CacheOffer | undefined): void
   editText(clipId: string | undefined): void
   setOpening(name: string | undefined): void
 }
@@ -119,7 +133,7 @@ function withoutMissingClips(selection: readonly string[], project: Project): re
   return kept.length === selection.length ? selection : kept
 }
 
-export function createEditorStore(): EditorStore {
+export function createEditorStore(settings: AppSettings = DEFAULT_SETTINGS): EditorStore {
   // Also the saved project of a window that has not been saved, so the untouched blank project counts as unchanged.
   const blank = blankProject()
   let state: EditorState = {
@@ -137,9 +151,12 @@ export function createEditorStore(): EditorStore {
     isExportDialogOpen: false,
     exportStatus: undefined,
     pendingImports: [],
-    isSnapping: true,
+    isSnapping: settings.isSnappingAtLaunch,
     isPreviewing: false,
     isSettingsOpen: false,
+    isDebugShown: false,
+    settings,
+    cacheOffer: undefined,
     openCount: 0,
     editingTextId: undefined,
     openingName: undefined,
@@ -188,7 +205,7 @@ export function createEditorStore(): EditorStore {
     const { label, base } = gesture
     gesture = undefined
     if (state.wholeProject === base) return
-    setState({ history: record(state.history, { label, before: base, after: state.wholeProject }) })
+    setState({ history: record(state.history, { label, before: base, after: state.wholeProject }, state.settings.undoSteps) })
   }
 
   function begin(label: string): void {
@@ -275,6 +292,9 @@ export function createEditorStore(): EditorStore {
     setSnapping: (isSnapping) => setState({ isSnapping }),
     setPreviewing: (isPreviewing) => setState({ isPreviewing }),
     showSettings: (isSettingsOpen) => setState({ isSettingsOpen }),
+    showDebug: (isDebugShown) => setState({ isDebugShown }),
+    setSettings: (next) => setState({ settings: next }),
+    offerCacheLimit: (cacheOffer) => setState({ cacheOffer }),
     editText: (editingTextId) => setState({ editingTextId }),
     setOpening: (openingName) => setState({ openingName }),
   }

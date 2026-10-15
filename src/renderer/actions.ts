@@ -10,6 +10,7 @@ import { clipsToSplit, splitClips } from '../editor/split.js'
 import { addTrack } from '../editor/tracks.js'
 import { DEFAULT_TRANSITION, setTransition } from '../editor/transitions.js'
 import { projectDuration, type Clip, type EffectType, type TransitionType } from '../shared/project.js'
+import { stillDurationTicks } from '../shared/settings.js'
 import { frameAt, frameDuration } from '../shared/time.js'
 import type { EditorStore } from './store.js'
 import type { TimelineLimits, Transport } from './transport.js'
@@ -157,19 +158,21 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     },
     addAnnotation(kind, centre) {
       const { project } = store.getState()
-      const added = { clipId: crypto.randomUUID(), start: playheadFrame(), trackIndex: trackAboveAll(project), newTrack: { id: crypto.randomUUID(), name: nextTrackName(project) }, centre }
+      const duration = stillDurationTicks(store.getState().settings)
+      const added = { clipId: crypto.randomUUID(), start: playheadFrame(), duration, trackIndex: trackAboveAll(project), newTrack: { id: crypto.randomUUID(), name: nextTrackName(project) }, centre }
       store.apply(`Add ${ANNOTATION_NAMES[kind]}`, (current) => addAnnotation(current, kind, added))
       store.select([added.clipId])
       // New words open for typing at once, so the usual next step needs no extra click.
       if (kind === 'text' || kind === 'callout') store.editText(added.clipId)
     },
     addMedia(mediaIds) {
-      const { project, mediaStates } = store.getState()
+      const { project, mediaStates, settings } = store.getState()
       const media = placeableMedia(project, mediaStates, mediaIds, () => crypto.randomUUID())
       if (media.length === 0) return
       const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
       const start = transport.position().time
-      store.apply(media.length === 1 ? 'Add Clip' : `Add ${media.length} Clips`, (current) => dropMedia(current, { media, start, trackIndex: trackAboveAll(current), newTrack }))
+      const stillDuration = stillDurationTicks(settings)
+      store.apply(media.length === 1 ? 'Add Clip' : `Add ${media.length} Clips`, (current) => dropMedia(current, { media, start, trackIndex: trackAboveAll(current), newTrack, stillDuration }))
       store.select(media.map((dropped) => dropped.clipId))
     },
     removeMedia(mediaIds) {

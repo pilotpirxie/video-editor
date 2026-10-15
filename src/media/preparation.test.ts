@@ -74,6 +74,14 @@ describe('planPreparation', () => {
     expect(plan).toHaveLength(120)
   })
 
+  it('counts a fast clip with a sparse copy as needed by its time on the timeline, not by its source', () => {
+    // Fifty times the speed: two hours of the recording play in 144 seconds, one picture every 50 frames.
+    const fiftyTimes = { ...rangeOf('picture', 0, 144 * SECOND, 0, 5000), cadence: { step: 50 * LONG_RECORDING.video.frameDuration, phase: 0 } }
+    const plan = planPreparation({ playhead: 0, ranges: [fiftyTimes] }, [RECORDING], SEGMENT_SECONDS)
+    expect(described(plan)).toEqual(['picture 0 near', 'picture 1 near', 'picture 2 near', 'picture 3 near', 'picture 4 near'])
+    expect(plan[0]).toMatchObject({ kind: 'picture', cadence: fiftyTimes.cadence })
+  })
+
   it('keeps a segment two clips use once, at its most urgent', () => {
     const later = rangeOf('sound', 30 * MINUTE, MINUTE)
     const now = rangeOf('sound', 0, MINUTE)

@@ -36,17 +36,24 @@ export type Keyframe = {
 }
 
 // The value a list of keyframes gives at a time measured from the start of its clip; before the first keyframe its value, after the last one its value.
+// The list is in time order, which loading a file checks. A binary search keeps it cheap where the mixer asks once per audio sample.
 export function valueAt(keyframes: readonly Keyframe[], localTime: number): number | undefined {
-  let previous: Keyframe | undefined
-  for (const keyframe of keyframes) {
-    if (keyframe.time > localTime) {
-      if (previous === undefined) return keyframe.value
-      const progress = (localTime - previous.time) / (keyframe.time - previous.time)
-      return previous.value + (keyframe.value - previous.value) * ease(previous.easing, progress)
-    }
-    previous = keyframe
+  // The first keyframe later than `localTime` is at `later`, or `later` is the length of the list when there is none.
+  let earlier = 0
+  let later = keyframes.length
+  while (earlier < later) {
+    const middle = (earlier + later) >>> 1
+    const keyframe = keyframes[middle]
+    if (keyframe !== undefined && keyframe.time > localTime) later = middle
+    else earlier = middle + 1
   }
-  return previous?.value
+
+  const next = keyframes[later]
+  const previous = keyframes[later - 1]
+  if (previous === undefined) return next?.value
+  if (next === undefined) return previous.value
+  const progress = (localTime - previous.time) / (next.time - previous.time)
+  return previous.value + (next.value - previous.value) * ease(previous.easing, progress)
 }
 
 export type AnimatableProperty =
@@ -760,6 +767,8 @@ type ParseContext = {
   clipIds: Set<string>
   // How many groups the clips being read are inside.
   depth: number
+  // Project time minus the time of the track being read; 0 outside groups.
+  shift: number
 }
 
 function parseTiming(fields: Fields, context: ParseContext, animatable: readonly AnimatableProperty[]): ClipTiming {
@@ -772,6 +781,9 @@ function parseTiming(fields: Fields, context: ParseContext, animatable: readonly
     start: fields.gridTime('start', 'zero or more'),
     duration: fields.gridTime('duration', 'positive'),
   }
+  // Past the largest safe integer, times stop being exact and stop adding up.
+  const projectEnd = context.shift + timing.start + timing.duration
+  if (!Number.isSafeInteger(projectEnd)) fail(fields.at('duration'), 'ends the clip too far along the timeline')
   if (fields.has('keyframes')) {
     timing.keyframes = parseKeyframes(fields.raw('keyframes'), fields.at('keyframes'), animatable)
   }
@@ -807,12 +819,14 @@ function parseMediaId(fields: Fields, context: ParseContext): string {
   return mediaId
 }
 
-function parseSource(fields: Fields, context: ParseContext): SourceSettings {
+function parseSource(fields: Fields, context: ParseContext, clipDuration: number): SourceSettings {
   const source: SourceSettings = {
     mediaId: parseMediaId(fields, context),
     sourceStart: fields.integer('sourceStart', { min: 0 }),
     speedPercent: fields.integer('speedPercent', { min: MIN_SPEED_PERCENT, max: MAX_SPEED_PERCENT }),
   }
+  const sourceEnd = source.sourceStart + (clipDuration / TIMELINE_GRID) * source.speedPercent
+  if (!Number.isSafeInteger(sourceEnd)) fail(fields.at('sourceStart'), 'reaches too far into the source')
   if (fields.has('changesPitch')) source.changesPitch = parseSwitch(fields, 'changesPitch')
   if (fields.has('hasFastSound')) source.hasFastSound = parseSwitch(fields, 'hasFastSound')
   return source
@@ -843,7 +857,7 @@ function parseVideoClip(value: unknown, path: string, context: ParseContext): Vi
     type: 'video',
     ...timing,
     ...parseVisual(fields, timing.duration),
-    ...parseSource(fields, context),
+    ...parseSource(fields, context, timing.duration),
     ...parseVolume(fields, timing.duration),
   }
   if (fields.has('crop')) clip.crop = parseCrop(fields.raw('crop'), fields.at('crop'))
@@ -856,7 +870,7 @@ function parseVideoClip(value: unknown, path: string, context: ParseContext): Vi
 function parseAudioClip(value: unknown, path: string, context: ParseContext): AudioClip {
   const fields = readFields(value, path, [...TIMING_KEYS, ...SOURCE_KEYS, 'volume'], [...OPTIONAL_VOLUME_KEYS, ...OPTIONAL_SOURCE_KEYS, 'keyframes'])
   const timing = parseTiming(fields, context, ['volume'])
-  return { type: 'audio', ...timing, ...parseSource(fields, context), ...parseVolume(fields, timing.duration) }
+  return { type: 'audio', ...timing, ...parseSource(fields, context, timing.duration), ...parseVolume(fields, timing.duration) }
 }
 
 function parseImageClip(value: unknown, path: string, context: ParseContext): ImageClip {
@@ -981,18 +995,20 @@ function parseGroupClip(value: unknown, path: string, context: ParseContext): Gr
   if (context.depth >= MAX_GROUP_DEPTH) fail(path, `is a group inside more than ${MAX_GROUP_DEPTH} groups`)
   const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, 'volume', 'tracks'], [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_VOLUME_KEYS, 'contentStart'])
   const timing = parseTiming(fields, context, [...TRANSFORM_PROPERTIES, 'volume'])
+  const contentStart = fields.has('contentStart') ? fields.gridTime('contentStart', 'positive') : undefined
+  const memberContext: ParseContext = { ...context, depth: context.depth + 1, shift: context.shift + timing.start - (contentStart ?? 0) }
   const clip: GroupClip = {
     type: 'group',
     ...timing,
     ...parseVisual(fields, timing.duration),
     ...parseVolume(fields, timing.duration),
-    tracks: parseTracks(fields.array('tracks'), fields.at('tracks'), { ...context, depth: context.depth + 1 }),
+    tracks: parseTracks(fields.array('tracks'), fields.at('tracks'), memberContext),
   }
   // The members keep their shapes only when the group is scaled by one number.
   const hasSameScaleKeyframes = JSON.stringify(timing.keyframes?.scaleX) === JSON.stringify(timing.keyframes?.scaleY)
   const isEvenlyScaled = clip.transform.scaleX === clip.transform.scaleY && hasSameScaleKeyframes
   if (!isEvenlyScaled) fail(fields.at('transform'), 'of a group must have the same scaleX and scaleY, in its keyframes too')
-  if (fields.has('contentStart')) clip.contentStart = fields.gridTime('contentStart', 'positive')
+  if (contentStart !== undefined) clip.contentStart = contentStart
   if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'))
   return clip
 }
@@ -1140,7 +1156,7 @@ function parseDocument(document: unknown): Project {
   }
   rejectDuplicateIds(media, 'media')
 
-  const context: ParseContext = { mediaIds: new Set(media.map((entry) => entry.id)), clipIds: new Set(), depth: 0 }
+  const context: ParseContext = { mediaIds: new Set(media.map((entry) => entry.id)), clipIds: new Set(), depth: 0, shift: 0 }
   const tracks = parseTracks(fields.array('tracks'), 'tracks', context)
 
   const project: Project = {

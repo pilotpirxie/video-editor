@@ -7,6 +7,7 @@ import { createDiskCache, type DiskCache } from './cache.js'
 
 const scratch = await mkdtemp(join(tmpdir(), 'disk-cache-'))
 const KIBIBYTE = 1024
+const DAY_MS = 24 * 60 * 60 * 1000
 
 afterAll(() => rm(scratch, { recursive: true, force: true }))
 
@@ -27,6 +28,30 @@ async function put(cache: DiskCache, name: string, bytes: number): Promise<strin
 }
 
 describe('createDiskCache', () => {
+  it('shrinks to a lower limit at once, oldest first', async () => {
+    const cache = await emptyCache(100 * KIBIBYTE)
+    const older = await put(cache, 'audio-0.f32', 30 * KIBIBYTE)
+    const newer = await put(cache, 'audio-1.f32', 30 * KIBIBYTE)
+    await cache.setLimit(40 * KIBIBYTE)
+    expect(cache.limitBytes()).toBe(40 * KIBIBYTE)
+    expect(cache.has(older)).toBe(false)
+    expect(cache.has(newer)).toBe(true)
+    expect(cache.bytesOf(newer)).toBe(30 * KIBIBYTE)
+    expect(cache.bytesOf(older)).toBeUndefined()
+  })
+
+  it('clears everything but the facts about each media file', async () => {
+    const cache = await emptyCache(100 * KIBIBYTE)
+    const facts = await put(cache, 'info.json', KIBIBYTE)
+    const sound = await put(cache, 'audio-0.f32', 10 * KIBIBYTE)
+    await cache.clear()
+    expect(cache.has(facts)).toBe(true)
+    expect(cache.has(sound)).toBe(false)
+    expect(existsSync(sound)).toBe(false)
+    expect(cache.totalBytes()).toBe(KIBIBYTE)
+    expect(await cache.freeBytes()).toBeGreaterThan(0)
+  })
+
   it('counts what an earlier run left, removes unfinished files and old-layout folders', async () => {
     const parent = await mkdtemp(join(scratch, 'parent-'))
     const directory = join(parent, 'v2')
@@ -44,6 +69,29 @@ describe('createDiskCache', () => {
     expect(cache.totalBytes()).toBe(3 * KIBIBYTE)
     expect(cache.has(join(media, 'audio-0.f32'))).toBe(true)
     expect(existsSync(join(media, 'audio-1.f32.1234.tmp'))).toBe(false)
+  })
+
+  it('removes at launch the cache of media no project used for 48 hours, and empty media folders', async () => {
+    const directory = await mkdtemp(join(scratch, 'unused-'))
+    const unused = join(directory, 'unused')
+    const recent = join(directory, 'recent')
+    const empty = join(directory, 'empty')
+    for (const folder of [unused, recent, empty]) await mkdir(folder)
+    await writeFile(join(unused, 'audio-0.f32'), Buffer.alloc(KIBIBYTE))
+    await writeFile(join(recent, 'audio-0.f32'), Buffer.alloc(KIBIBYTE))
+    await writeFile(join(recent, 'info.json'), '{}')
+    const longAgo = new Date(Date.now() - 31 * DAY_MS)
+    await utimes(join(unused, 'audio-0.f32'), longAgo, longAgo)
+    // One file used lately keeps the whole folder of its media.
+    await utimes(join(recent, 'audio-0.f32'), longAgo, longAgo)
+
+    const cache = createDiskCache(directory, 100 * KIBIBYTE)
+    await cache.ready
+
+    expect(existsSync(unused)).toBe(false)
+    expect(existsSync(empty)).toBe(false)
+    expect(existsSync(join(recent, 'audio-0.f32'))).toBe(true)
+    expect(cache.totalBytes()).toBe(KIBIBYTE + 2)
   })
 
   it('removes what was used longest ago once over the limit', async () => {

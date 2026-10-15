@@ -10,12 +10,12 @@ const VIDEO_REF: MediaRef = { id: 'video', path: '/footage/video.mp4', relativeP
 
 function drop(overrides: Partial<MediaDrop> & { info?: MediaInfo }): MediaDrop {
   const { info = VIDEO_MEDIA, ...rest } = overrides
-  return { media: [{ reference: VIDEO_REF, info, clipId: 'dropped' }], start: 0, trackIndex: 0, newTrack: NEW_TRACK, ...rest }
+  return { media: [{ reference: VIDEO_REF, info, clipId: 'dropped' }], start: 0, trackIndex: 0, newTrack: NEW_TRACK, stillDuration: 5 * SECOND, ...rest }
 }
 
 describe('clipForMedia', () => {
   it('makes a video clip as long as its source, centred at full size', () => {
-    expect(clipForMedia('video', VIDEO_MEDIA, CANVAS, 'c', 2 * SECOND)).toEqual({
+    expect(clipForMedia('video', VIDEO_MEDIA, CANVAS, 'c', 2 * SECOND, 5 * SECOND)).toEqual({
       id: 'c',
       type: 'video',
       mediaId: 'video',
@@ -31,32 +31,32 @@ describe('clipForMedia', () => {
 
   it('cuts the duration down to whole frames', () => {
     const info: MediaInfo = { ...VIDEO_MEDIA, duration: 10 * SECOND + 12_345 }
-    expect(clipForMedia('video', info, CANVAS, 'c', 0).duration).toBe(10 * SECOND)
-    expect(clipForMedia('video', { ...VIDEO_MEDIA, duration: 5 }, CANVAS, 'c', 0).duration).toBe(SECOND / 30)
+    expect(clipForMedia('video', info, CANVAS, 'c', 0, 5 * SECOND).duration).toBe(10 * SECOND)
+    expect(clipForMedia('video', { ...VIDEO_MEDIA, duration: 5 }, CANVAS, 'c', 0, 5 * SECOND).duration).toBe(SECOND / 30)
   })
 
   it('scales a picture larger than the canvas down to fit, and never enlarges a small one', () => {
     const large: MediaInfo = { kind: 'image', width: 3840, height: 1080, hasAlpha: false }
-    expect(clipForMedia('logo', large, CANVAS, 'c', 0)).toMatchObject({ type: 'image', duration: 5 * SECOND, transform: { scaleX: 0.5, scaleY: 0.5 } })
+    expect(clipForMedia('logo', large, CANVAS, 'c', 0, 5 * SECOND)).toMatchObject({ type: 'image', duration: 5 * SECOND, transform: { scaleX: 0.5, scaleY: 0.5 } })
     const small = MEDIA_STATES.logo
     if (small === undefined || 'error' in small) throw new Error('fixture')
-    expect(clipForMedia('logo', small.info, CANVAS, 'c', 0)).toMatchObject({ transform: { scaleX: 1, scaleY: 1 } })
+    expect(clipForMedia('logo', small.info, CANVAS, 'c', 0, 5 * SECOND)).toMatchObject({ transform: { scaleX: 1, scaleY: 1 } })
   })
 
   it('makes an animated image a looping clip that lasts as long as a still', () => {
-    expect(clipForMedia('sticker', STICKER_MEDIA, CANVAS, 'c', 0)).toMatchObject({ type: 'video', loop: true, duration: 5 * SECOND, sourceStart: 0, speedPercent: 100 })
+    expect(clipForMedia('sticker', STICKER_MEDIA, CANVAS, 'c', 0, 5 * SECOND)).toMatchObject({ type: 'video', loop: true, duration: 5 * SECOND, sourceStart: 0, speedPercent: 100 })
     const long = { ...STICKER_MEDIA, duration: 8 * SECOND }
-    expect(clipForMedia('sticker', long, CANVAS, 'c', 0)).toMatchObject({ loop: true, duration: 8 * SECOND })
+    expect(clipForMedia('sticker', long, CANVAS, 'c', 0, 5 * SECOND)).toMatchObject({ loop: true, duration: 8 * SECOND })
   })
 
   it('gives a still image five seconds', () => {
-    expect(clipForMedia('logo', { kind: 'image', width: 400, height: 200, hasAlpha: true }, CANVAS, 'c', SECOND)).toMatchObject({ type: 'image', start: SECOND, duration: 5 * SECOND })
+    expect(clipForMedia('logo', { kind: 'image', width: 400, height: 200, hasAlpha: true }, CANVAS, 'c', SECOND, 5 * SECOND)).toMatchObject({ type: 'image', start: SECOND, duration: 5 * SECOND })
   })
 
   it('makes an audio clip without a picture', () => {
     const music = MEDIA_STATES.music
     if (music === undefined || 'error' in music) throw new Error('fixture')
-    expect(clipForMedia('music', music.info, CANVAS, 'c', 0)).toEqual({ id: 'c', type: 'audio', mediaId: 'music', start: 0, duration: 60 * SECOND, sourceStart: 0, speedPercent: 100, volume: 1 })
+    expect(clipForMedia('music', music.info, CANVAS, 'c', 0, 5 * SECOND)).toEqual({ id: 'c', type: 'audio', mediaId: 'music', start: 0, duration: 60 * SECOND, sourceStart: 0, speedPercent: 100, volume: 1 })
   })
 })
 
@@ -149,7 +149,7 @@ describe('dropMedia', () => {
     const video = { reference: VIDEO_REF, info: VIDEO_MEDIA, clipId: 'first' }
 
     it('lays them end to end on one track, in the order given', () => {
-      const dropped = dropMedia(occupied, { media: [video, sound], start: 4 * SECOND, trackIndex: 0, newTrack: NEW_TRACK })
+      const dropped = dropMedia(occupied, { media: [video, sound], start: 4 * SECOND, trackIndex: 0, newTrack: NEW_TRACK, stillDuration: 5 * SECOND })
       expect(clipIds(dropped)).toEqual([['a', 'first', 'second'], []])
       expect(clipOf(dropped, 'first')).toMatchObject({ start: 4 * SECOND, duration: 10 * SECOND })
       expect(clipOf(dropped, 'second')).toMatchObject({ start: 14 * SECOND, duration: 3 * SECOND })
@@ -158,18 +158,18 @@ describe('dropMedia', () => {
     })
 
     it('moves them all to the track above when any of them would overlap', () => {
-      const dropped = dropMedia(occupied, { media: [sound, video], start: 2 * SECOND, trackIndex: 0, newTrack: NEW_TRACK })
+      const dropped = dropMedia(occupied, { media: [sound, video], start: 2 * SECOND, trackIndex: 0, newTrack: NEW_TRACK, stillDuration: 5 * SECOND })
       expect(clipIds(dropped)).toEqual([['a'], ['second', 'first']])
     })
 
     it('takes the canvas of an empty project from the first picture, not from sound', () => {
       const info: MediaInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, width: 1280, height: 720 } }
-      const dropped = dropMedia(projectOf([], []), { media: [sound, { ...video, info }], start: 0, trackIndex: 0, newTrack: NEW_TRACK })
+      const dropped = dropMedia(projectOf([], []), { media: [sound, { ...video, info }], start: 0, trackIndex: 0, newTrack: NEW_TRACK, stillDuration: 5 * SECOND })
       expect(dropped.canvas).toMatchObject({ width: 1280, height: 720 })
     })
 
     it('changes nothing when nothing is dropped', () => {
-      expect(dropMedia(occupied, { media: [], start: 0, trackIndex: 0, newTrack: NEW_TRACK })).toBe(occupied)
+      expect(dropMedia(occupied, { media: [], start: 0, trackIndex: 0, newTrack: NEW_TRACK, stillDuration: 5 * SECOND })).toBe(occupied)
     })
   })
 })

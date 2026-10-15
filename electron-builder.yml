@@ -1,5 +1,5 @@
-appId: com.internal.video-editor
-productName: Video Editor
+appId: com.opensource.playback
+productName: Playback
 directories:
   output: release
 files:

@@ -1,6 +1,6 @@
 import { rename, rm } from 'node:fs/promises'
 import { encoderLimits, type EncoderLimits } from '../shared/limits.js'
-import { hasMovingPicture, hasSound, pixelLayoutOf, type ExportQuality } from '../shared/exportPresets.js'
+import { hasMovingPicture, hasSound, pixelLayoutOf, temporaryPathFor, type ExportQuality } from '../shared/exportPresets.js'
 import type { ExportTarget } from '../shared/mediaProtocol.js'
 import { SAMPLE_RATE } from '../shared/time.js'
 import { FfmpegError, writeAll, type FfmpegRunner } from './ffmpeg.js'
@@ -31,10 +31,6 @@ export type Encoder = {
   write(pixels: ArrayBuffer, audio: Float32Array): Promise<void>
   finish(): Promise<void>
   cancel(): Promise<void>
-}
-
-export function temporaryPathFor(path: string): string {
-  return `${path}.part`
 }
 
 function soundArguments(target: ExportTarget): string[] {

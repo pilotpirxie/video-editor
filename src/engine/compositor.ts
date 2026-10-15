@@ -306,24 +306,20 @@ function boxOf(width: number, height: number, transform: Transform, mapping: Out
   }
 }
 
-// The four corners of a box that reaches `margin` output pixels past its edges on every side.
+// Reused for every quad: bufferSubData copies it before the next one is written.
+const quad = new Float32Array(4 * FLOATS_PER_VERTEX)
+
+// The four corners of a box that reaches `margin` output pixels past its edges on every side, in triangle-strip order.
 function quadVertices(box: Box, margin: number): Float32Array {
-  const vertices = new Float32Array(4 * FLOATS_PER_VERTEX)
-  const corners = [
-    { x: -1, y: -1 },
-    { x: 1, y: -1 },
-    { x: -1, y: 1 },
-    { x: 1, y: 1 },
-  ]
-  for (const [index, corner] of corners.entries()) {
-    const localX = corner.x * (box.halfWidth + margin)
-    const localY = corner.y * (box.halfHeight + margin)
-    vertices[index * FLOATS_PER_VERTEX] = box.centerX + localX * box.cosine - localY * box.sine
-    vertices[index * FLOATS_PER_VERTEX + 1] = box.centerY + localX * box.sine + localY * box.cosine
-    vertices[index * FLOATS_PER_VERTEX + 2] = localX
-    vertices[index * FLOATS_PER_VERTEX + 3] = localY
+  for (let index = 0; index < 4; index++) {
+    const localX = (index % 2 === 0 ? -1 : 1) * (box.halfWidth + margin)
+    const localY = (index < 2 ? -1 : 1) * (box.halfHeight + margin)
+    quad[index * FLOATS_PER_VERTEX] = box.centerX + localX * box.cosine - localY * box.sine
+    quad[index * FLOATS_PER_VERTEX + 1] = box.centerY + localX * box.sine + localY * box.cosine
+    quad[index * FLOATS_PER_VERTEX + 2] = localX
+    quad[index * FLOATS_PER_VERTEX + 3] = localY
   }
-  return vertices
+  return quad
 }
 
 export function createCompositor(gl: WebGL2RenderingContext): Compositor {
@@ -468,6 +464,14 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     }
   }
 
+  // Reused by every layer with effects: the uniform calls copy them.
+  const effectUniforms = {
+    kinds: new Int32Array(MAX_OPS),
+    first: new Float32Array(MAX_OPS * COMPONENTS),
+    second: new Float32Array(MAX_OPS * COMPONENTS),
+    third: new Float32Array(MAX_OPS * COMPONENTS),
+  }
+
   function sendEffects(effects: readonly Effect[], radius: number): void {
     gl.uniform1f(at('uRadius'), radius)
     // Most layers have no effects, and every layer is drawn on every frame: nothing is built for them.
@@ -475,10 +479,11 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
       gl.uniform1i(at('uOpCount'), 0)
       return
     }
-    const kinds = new Int32Array(MAX_OPS)
-    const first = new Float32Array(MAX_OPS * COMPONENTS)
-    const second = new Float32Array(MAX_OPS * COMPONENTS)
-    const third = new Float32Array(MAX_OPS * COMPONENTS)
+    const { kinds, first, second, third } = effectUniforms
+    kinds.fill(0)
+    first.fill(0)
+    second.fill(0)
+    third.fill(0)
     let count = 0
     for (const effect of effects) {
       if (count === MAX_OPS) break

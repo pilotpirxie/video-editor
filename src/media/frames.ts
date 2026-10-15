@@ -106,10 +106,15 @@ function pictureFilters(video: VideoInfo, halvings: number): string[] {
   return filters
 }
 
+// Makes the count of pictures after it start at the frame a decode starts at.
+export function trimToFrame(source: VideoSource, frame: number): string {
+  return `trim=start=${seconds(source.containerStart + cutOf(source.video, frame))}`
+}
+
 // A fast clip asks for every `step`-th frame. The ones between are dropped right after decoding, before their colour is converted and they are piped. The trim makes the count start at the frame asked for.
 function stepFilters(source: VideoSource, frame: number, step: number): string[] {
   if (step === 1) return []
-  return [`trim=start=${seconds(source.containerStart + cutOf(source.video, frame))}`, `select='not(mod(n,${step}))'`]
+  return [trimToFrame(source, frame), `select='not(mod(n,${step}))'`]
 }
 
 function videoFilters(source: VideoSource, frame: number, halvings: number, step: number): string {

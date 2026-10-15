@@ -1,5 +1,6 @@
+import { app } from 'electron'
 import { existsSync } from 'node:fs'
-import { mkdir, readdir } from 'node:fs/promises'
+import { mkdir, readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { describeError } from '../shared/log.js'
@@ -484,6 +485,7 @@ async function testShortcuts(driver: Driver): Promise<UiTestReport> {
   const settingsOpen = `${selector('settings-dialog')}?.open === true`
   driver.menu('settings')
   await driver.until(settingsOpen, 'the settings')
+  await clickOn(driver, 'settings-tab-shortcuts')
   await clickOn(driver, 'shortcut-split-0')
   await driver.press('S')
   await driver.until(`${selector('shortcut-split-0')}.textContent === 'S'`, 'S to be the key of Split')
@@ -515,6 +517,7 @@ async function testShortcuts(driver: Driver): Promise<UiTestReport> {
 
   driver.menu('settings')
   await driver.until(settingsOpen, 'the settings again')
+  await clickOn(driver, 'settings-tab-shortcuts')
   await clickOn(driver, 'shortcuts-defaults')
   await driver.until(`${selector('shortcut-split-0')}.textContent === '⌘T'`, 'the default key of Split')
   await driver.untilMenuKeys('split', 'Cmd+T')
@@ -2636,7 +2639,66 @@ async function testTimelineScroll(driver: Driver): Promise<UiTestReport> {
   return { scrolledByBar, undoAfterScrolling, removed, restored: await driver.savedProject('restored.json') }
 }
 
+const SETTINGS_SAVE_TIMEOUT_MS = 5000
+
+// The value of a setting once settings.json holds the one expected, or what it holds when that never comes.
+async function savedSetting(key: string, expected: unknown): Promise<unknown> {
+  const path = join(app.getPath('userData'), 'settings.json')
+  const deadline = Date.now() + SETTINGS_SAVE_TIMEOUT_MS
+  let found: unknown
+  while (Date.now() < deadline) {
+    if (existsSync(path)) {
+      const saved: unknown = JSON.parse(await readFile(path, 'utf8'))
+      const record: Record<string, unknown> = typeof saved === 'object' && saved !== null ? { ...saved } : {}
+      found = record[key]
+      if (found === expected) return found
+    }
+    await sleep(50)
+  }
+  return found
+}
+
+// Three clips end to end get twice as fast and stay end to end; the View menu shows the debug text for the project and then for the selected clips;
+// Settings shows the cache in use and keeps a new snap range in settings.json until Restore Defaults.
+async function testDebugAndSettings(driver: Driver): Promise<UiTestReport> {
+  await importThreeFiles(driver)
+  await driver.clickAt(centerOf(await driver.rect('media-h264.mp4')))
+  driver.menu('select-all')
+  await driver.until(`document.querySelectorAll('.library-item.selected').length === 3`, 'Select All to pick every file')
+  await driver.drag(centerOf(await driver.rect('media-h264.mp4')), await driver.timelinePoint(0, 0, 6))
+  await driver.untilUndoLabel('Undo Add 3 Clips')
+
+  // The dropped clips are selected; with none, the text is about the project only.
+  driver.menu('deselect-all')
+  driver.menu('toggle-debug')
+  await driver.until(`${selector('debug-text')}?.textContent.startsWith('Playback ') === true`, 'the debug panel with the system info')
+  const debugWithoutSelection = await driver.page.text('debug-text')
+  await driver.clickAt(await driver.timelinePoint(30 * TICKS_PER_SECOND, 3, 6))
+  driver.menu('select-all')
+  await driver.until(`${selector('debug-text')}.textContent.includes('Selected 3')`, 'the selected clips in the debug text')
+  const debugWithSelection = await driver.page.text('debug-text')
+
+  await driver.typeInto('clip-speed', '200')
+  await driver.untilUndoLabel('Undo Change Speed')
+  const faster = await driver.savedProject('faster.json')
+  driver.menu('toggle-debug')
+  await driver.until(`${selector('debug-text')} === null`, 'the debug panel to go')
+
+  const used = `${selector('cache-used')}?.textContent ?? ''`
+  driver.menu('settings')
+  await driver.until(`${selector('settings-dialog')}?.open === true`, 'the settings')
+  await driver.until(`/^Using \\d/.test(${used})`, 'the cache in use')
+  const cacheUsed = await driver.page.evaluate(used)
+  await clickOn(driver, 'settings-tab-editing')
+  await driver.typeInto('setting-snapRangePixels', '20')
+  const savedSnapRange = await savedSetting('snapRangePixels', 20)
+  await clickOn(driver, 'shortcuts-defaults')
+  const restoredSnapRange = await savedSetting('snapRangePixels', 12)
+  return { debugWithoutSelection, debugWithSelection, faster, cacheUsed, savedSnapRange, restoredSnapRange }
+}
+
 export const FEATURE_SCENARIOS: Record<string, Scenario> = {
+  'debug-and-settings': testDebugAndSettings,
   'quick-edits': testQuickEdits,
   'timeline-scroll': testTimelineScroll,
   'broken-media': testBrokenMedia,

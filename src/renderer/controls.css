@@ -460,6 +460,23 @@ legend.field-label {
   padding: 0 var(--space-2) var(--space-2);
 }
 
+.debug-text {
+  max-height: 320px;
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  overflow: auto;
+  border-radius: var(--radius);
+  background: var(--raised-surface);
+  box-shadow: var(--sunken-edge);
+  color: var(--text-secondary);
+  font-family: ui-monospace, monospace;
+  font-size: var(--text-small);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 .badge {
   padding: 1px var(--space-1);
   border-radius: var(--space-1);
@@ -566,12 +583,19 @@ legend.field-label {
   width: 360px;
 }
 
+/* One height for every tab, so the buttons stay put when the tab changes. */
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: min(70vh, 480px);
+  overflow: auto;
+}
+
 .shortcut-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  max-height: 60vh;
-  overflow: auto;
 }
 
 .shortcut-row {

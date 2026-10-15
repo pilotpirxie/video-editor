@@ -219,6 +219,30 @@ describe('keyframes', () => {
     expect(valueAt([], SECOND)).toBeUndefined()
   })
 
+  it('gives the same bits as reading the keyframes one by one, at and between every keyframe of a long track', () => {
+    const easings: Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut', 'hold']
+    const long: Keyframe[] = []
+    for (let index = 0; index < 600; index++) long.push({ time: index * 80_000, value: (index * 37) % 11, easing: easings[index % easings.length] ?? 'linear' })
+
+    function oneByOne(list: readonly Keyframe[], time: number): number | undefined {
+      let previous: Keyframe | undefined
+      for (const keyframe of list) {
+        if (keyframe.time > time) {
+          if (previous === undefined) return keyframe.value
+          const progress = (time - previous.time) / (keyframe.time - previous.time)
+          return previous.value + (keyframe.value - previous.value) * ease(previous.easing, progress)
+        }
+        previous = keyframe
+      }
+      return previous?.value
+    }
+
+    for (let time = -80_000; time <= 601 * 80_000; time += 20_000) {
+      expect(valueAt(long, time), `time ${time}`).toBe(oneByOne(long, time))
+    }
+    expect(valueAt(long.slice(0, 1), 5)).toBe(0)
+  })
+
   it('animates transform, crop and opacity relative to the clip start', () => {
     const clip = videoClip({
       start: 10 * SECOND,

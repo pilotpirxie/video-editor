@@ -2,9 +2,9 @@ import { scaledEffect, type MediaStates } from '../engine/resolve.js'
 import type { Size } from '../shared/exportPresets.js'
 import { MAX_CANVAS, MIN_CANVAS, valueAt, type AnimatableProperty, type Clip, type Crop, type Easing, type Keyframe, type Keyframes, type Project, type Transform } from '../shared/project.js'
 import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, TIMELINE_GRID, frameAt, frameDuration, type FrameRate } from '../shared/time.js'
-import { editClips, hasSource, hasVolume, isCroppable, isVisual, locateClip, withFadesWithin, withOnlyAtEnd } from './clips.js'
+import { editClips, endOf, hasSource, hasVolume, isCroppable, isVisual, locateClip, withFadesWithin, withOnlyAtEnd } from './clips.js'
 import type { Point } from './geometry.js'
-import { neighbours, sourceDuration, timelineSpan, trimClip } from './moveTrim.js'
+import { shiftLater, sourceDuration, timelineSpan, trimClip } from './moveTrim.js'
 
 function clampWhole(value: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(value), min), max)
@@ -420,18 +420,20 @@ export function setSourceStart(project: Project, clipIds: readonly string[], sou
   })
 }
 
-// Changing the speed keeps the same stretch of source, so the clip gets shorter or longer; it stops growing at the next clip.
+// Changing the speed keeps the same stretch of source, so the clip gets shorter or longer. The clips after it on its track move by as much,
+// so clips laid end to end stay that way and gaps between them keep their length.
 export function setSpeed(project: Project, clipIds: readonly string[], speedPercent: number): Project {
   const speed = Math.min(MAX_SPEED_PERCENT, Math.max(MIN_SPEED_PERCENT, Math.round(speedPercent)))
   let edited = project
   for (const clipId of clipIds) {
+    // Located again each time: an earlier clip of the same track may have moved this one.
     const located = locateClip(edited, clipId)
     if (located === undefined || !hasSource(located.clip) || located.clip.speedPercent === speed) continue
     const { clip, track } = located
     const used = (clip.duration / TIMELINE_GRID) * clip.speedPercent
-    const room = neighbours(track, clip).nextStart - clip.start
-    const duration = Math.max(TIMELINE_GRID, Math.min(room, Math.floor(used / speed) * TIMELINE_GRID))
+    const duration = Math.max(TIMELINE_GRID, Math.floor(used / speed) * TIMELINE_GRID)
     edited = editClips(edited, new Set([clipId]), (found) => (hasSource(found) ? withFadesWithin({ ...found, speedPercent: speed, duration }) : found))
+    edited = shiftLater(edited, track, endOf(clip), duration - clip.duration, clipId)
   }
   return edited
 }

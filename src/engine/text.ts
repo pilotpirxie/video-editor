@@ -2,6 +2,8 @@ import { lettersOf, type TextLook } from './resolve.js'
 
 const PADDING_PER_FONT_SIZE = 0.25
 const MAX_RASTER_SIDE = 8192
+// 64 MB of pixels: a zoomed-in heading on a 4 GB Mac must not take a quarter of its memory, and twice that with a shadow.
+const MAX_RASTER_PIXELS = 4096 * 4096
 const FALLBACK_FAMILY = 'sans-serif'
 // A canvas shadow of blur b fades out over about this many times b.
 const SHADOW_REACH_PER_BLUR = 2
@@ -26,10 +28,28 @@ function contextOf(canvas: OffscreenCanvas): OffscreenCanvasRenderingContext2D {
   return context
 }
 
+// At least one pixel, and finite even for the absurd sizes of a hand-edited file.
+function wantedPixels(units: number, pixelsPerUnit: number): number {
+  const pixels = units * pixelsPerUnit
+  if (Number.isNaN(pixels)) return 1
+  return Math.min(Number.MAX_VALUE, Math.max(1, pixels))
+}
+
+// The pixel size of the raster for a drawing of the given size in canvas units.
+export function rasterSize(naturalWidth: number, naturalHeight: number, pixelsPerUnitX: number, pixelsPerUnitY: number): { width: number; height: number } {
+  const wantedWidth = wantedPixels(naturalWidth, pixelsPerUnitX)
+  const wantedHeight = wantedPixels(naturalHeight, pixelsPerUnitY)
+  // Both sides shrink by the same factor, so a drawing that is too large keeps its shape and only loses detail.
+  // The square roots are taken apart so their product cannot overflow.
+  const shrink = Math.min(1, MAX_RASTER_SIDE / wantedWidth, MAX_RASTER_SIDE / wantedHeight, Math.sqrt(MAX_RASTER_PIXELS) / Math.sqrt(wantedWidth) / Math.sqrt(wantedHeight))
+  return { width: Math.max(1, Math.ceil(wantedWidth * shrink)), height: Math.max(1, Math.ceil(wantedHeight * shrink)) }
+}
+
 // A canvas for a drawing of the given size in canvas units, at the given number of pixels per unit. Drawing on its context is done in canvas units.
 export function rasterOf(naturalWidth: number, naturalHeight: number, pixelsPerUnitX: number, pixelsPerUnitY: number): Raster & { context: OffscreenCanvasRenderingContext2D } {
-  const rasterWidth = Math.min(MAX_RASTER_SIDE, Math.max(1, Math.ceil(naturalWidth * pixelsPerUnitX)))
-  const rasterHeight = Math.min(MAX_RASTER_SIDE, Math.max(1, Math.ceil(naturalHeight * pixelsPerUnitY)))
+  const size = rasterSize(naturalWidth, naturalHeight, pixelsPerUnitX, pixelsPerUnitY)
+  const rasterWidth = size.width
+  const rasterHeight = size.height
   const canvas = new OffscreenCanvas(rasterWidth, rasterHeight)
   const context = contextOf(canvas)
   context.scale(rasterWidth / naturalWidth, rasterHeight / naturalHeight)

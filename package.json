@@ -1,6 +1,6 @@
 {
   "name": "video-editor",
-  "productName": "Video Editor",
+  "productName": "Playback",
   "version": "0.1.0",
   "description": "Lightweight non-linear video editor",
   "private": true,

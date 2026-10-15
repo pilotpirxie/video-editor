@@ -3,12 +3,28 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
+import { FRAME, SECOND, VIDEO_INFO, projectOf, track, videoClip } from '../../test/fixtures.js'
 import { ROOT, blockColorError, bundledFfmpeg, decodeJpeg, patternFrame, pixelAt, psnr, readBarcode, type Picture } from '../../test/helpers.js'
 import { GAP_END_FRAME, GAP_START_FRAME, LATE_JITTER_FRAME, mediaPath } from '../../test/media/generate.js'
 import { createDiskCache, type DiskCache } from './cache.js'
 import { writeAll } from './ffmpeg.js'
 import { decodeFrame, type VideoSource } from './frames.js'
-import { buildPreviewRun, createPreviewReader, isPreviewSegmentReady, previewLayout, previewSegmentFiles, previewSize, splitJpegFrames, type PreviewLayout, type SegmentInProgress } from './previewCopy.js'
+import { pictureRanges, type MediaStates } from '../engine/resolve.js'
+import type { Cadence } from '../shared/mediaProtocol.js'
+import { frameDuration, frameIndexAt, sourceTime, type FrameRate } from '../shared/time.js'
+import {
+  buildPreviewRun,
+  createPreviewReader,
+  isPreviewSegmentReady,
+  pictureIndexOf,
+  previewLayout,
+  previewSegmentFiles,
+  previewSize,
+  sourceFrameOf,
+  splitJpegFrames,
+  type PreviewLayout,
+  type SegmentInProgress,
+} from './previewCopy.js'
 import { probeMedia } from './probe.js'
 
 const ffmpeg = bundledFfmpeg()
@@ -35,20 +51,20 @@ type Built = {
   readFrame(frame: number): Promise<Buffer | undefined>
 }
 
-async function prepared(path: string, segmentSeconds: number): Promise<Built> {
+async function prepared(path: string, segmentSeconds: number, cadence?: Cadence): Promise<Built> {
   const source = await sourceAt(path)
   const directory = await mkdtemp(join(scratch, 'media-'))
   const cache = createDiskCache(directory, PLENTY_OF_ROOM)
-  const layout = previewLayout(source.video, segmentSeconds)
+  const layout = previewLayout(source.video, segmentSeconds, cadence)
   const reader = createPreviewReader(cache)
   return { source, directory, layout, cache, readFrame: (frame) => reader.read(directory, layout, frame, undefined) }
 }
 
 async function buildSegments(built: Built, first: number, count: number, signal = never, onFrame: (inProgress: SegmentInProgress | undefined) => void = () => {}): Promise<void> {
   const paths: string[] = []
-  for (let segment = first; segment < Math.min(built.layout.segmentCount, first + count); segment++) paths.push(previewSegmentFiles(built.directory, segment).index)
+  for (let segment = first; segment < Math.min(built.layout.segmentCount, first + count); segment++) paths.push(previewSegmentFiles(built.directory, segment, built.layout).index)
   const claim = built.cache.claim(paths)
-  await buildPreviewRun({ ffmpeg, source: built.source, directory: built.directory, layout: built.layout, cache: built.cache, firstSegment: first, claim, signal, onFrame })
+  await buildPreviewRun({ ffmpeg, source: built.source, directory: built.directory, layout: built.layout, cache: built.cache, firstSegment: first, claim, threads: 0, signal, onFrame })
 }
 
 async function build(name: string, segmentSeconds = WHOLE_FILE_SEGMENT_SECONDS): Promise<Built> {
@@ -94,6 +110,36 @@ describe('splitJpegFrames', () => {
   })
 })
 
+describe('sparse layout', () => {
+  const LONG_VIDEO = { ...VIDEO_INFO, frameCount: 5 * 60 * 60 * 30 }
+  const states: MediaStates = { video: { info: { kind: 'video', duration: LONG_VIDEO.frameCount * FRAME, containerStart: 0, video: LONG_VIDEO } } }
+
+  // A clip in a group, and the clip's own start and offset, all move the frames it shows; the copy has to hold each of them.
+  it.each([
+    { speedPercent: 5000, rate: { num: 30, den: 1 } },
+    { speedPercent: 1234, rate: { num: 30, den: 1 } },
+    { speedPercent: 800, rate: { num: 60, den: 1 } },
+    { speedPercent: 2500, rate: { num: 30_000, den: 1001 } },
+  ])('holds every frame a clip at $speedPercent% shows in a project at $rate.num/$rate.den fps', ({ speedPercent, rate }: { speedPercent: number; rate: FrameRate }) => {
+    const clip = videoClip('fast', 7 * SECOND + 300, 20 * SECOND, { speedPercent, sourceStart: 3 * SECOND + 1700 })
+    const project = { ...projectOf([track('t1', [clip])]), canvas: { width: 1920, height: 1080, frameRate: rate } }
+    const [range] = pictureRanges(project, states)
+    const cadence = range?.cadence
+    if (cadence === undefined) throw new Error('A fast clip gets a cadence')
+    const layout = previewLayout(LONG_VIDEO, 30, cadence)
+    const ticks = frameDuration(rate)
+    for (let frame = Math.ceil(clip.start / ticks); frame * ticks < clip.start + clip.duration; frame++) {
+      const shown = frameIndexAt(LONG_VIDEO, sourceTime(clip, frame * ticks))
+      expect(pictureIndexOf(layout, shown), `project frame ${frame}`).toBeDefined()
+    }
+  })
+
+  it('gives no cadence to a clip that shows most of its frames', () => {
+    const project = projectOf([track('t1', [videoClip('slow', 0, SECOND, { speedPercent: 300 })])])
+    expect(pictureRanges(project, states)[0]?.cadence).toBeUndefined()
+  })
+})
+
 describe('previewSize', () => {
   it('limits the long side to 960 and never enlarges', async () => {
     expect(previewSize((await sourceAt(mediaPath('1080p.mp4'))).video)).toEqual({ width: 960, height: 540 })
@@ -105,7 +151,7 @@ describe('previewSize', () => {
 describe('preview segments', () => {
   it('stores every frame as its own JPEG, in order, across segments', async () => {
     const built = await build('h264.mp4', 1)
-    expect(built.layout).toEqual({ framesPerSegment: 30, segmentCount: 2 })
+    expect(built.layout).toEqual({ framesPerSegment: 30, segmentCount: 2, longSide: 960 })
     for (let frame = 0; frame < 60; frame++) {
       const jpeg = await frameOrFail(built, frame)
       expect(jpeg.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]))
@@ -127,6 +173,25 @@ describe('preview segments', () => {
       expect(await previewBarcode(oneRun, frame), `frame ${frame}, one run`).toBe(truth)
       expect(await previewBarcode(separately, frame), `frame ${frame}, segment by segment`).toBe(truth)
     }
+  })
+
+  // Every seventh frame from frame 2, and a step of two and a half frames, which keeps frames 0, 2, 5, 7, 10…
+  it.each([
+    { name: 'a whole number of frames', cadence: { step: 7 * FRAME, phase: 2 * FRAME + FRAME / 3 } },
+    { name: 'a fraction of a frame', cadence: { step: 2.5 * FRAME, phase: 0 } },
+  ])('keeps only the frames of a fast clip, a step of $name apart, across segments', async ({ cadence }) => {
+    const built = await prepared(mediaPath('h264.mp4'), 0.2, cadence)
+    for (let segment = built.layout.segmentCount - 1; segment >= 0; segment -= 2) await buildSegments(built, Math.max(0, segment - 1), 2)
+    const kept: number[] = []
+    for (let frame = 0; frame < built.source.video.frameCount; frame++) {
+      const jpeg = await built.readFrame(frame)
+      if (jpeg === undefined) continue
+      kept.push(frame)
+      expect(readBarcode(await decodeJpeg(ffmpeg, jpeg, 320, 180)), `frame ${frame}`).toBe(frame)
+    }
+    const expected: number[] = []
+    for (let index = 0; sourceFrameOf(built.layout, index) < built.source.video.frameCount; index++) expected.push(sourceFrameOf(built.layout, index))
+    expect(kept).toEqual(expected)
   })
 
   it('shows the last picture before a long gap, whichever segment it starts in', async () => {

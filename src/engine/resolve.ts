@@ -1,6 +1,6 @@
 import type { Size } from '../shared/exportPresets.js'
 import { minimumHalvings } from '../shared/limits.js'
-import type { MediaState, VideoInfo, WantedRange } from '../shared/mediaProtocol.js'
+import type { Cadence, MediaState, VideoInfo, WantedRange } from '../shared/mediaProtocol.js'
 import {
   ease,
   valueAt,
@@ -20,9 +20,10 @@ import {
   type Transform,
   type Transition,
   type TransitionType,
+  type VideoClip,
   type VisualClip,
 } from '../shared/project.js'
-import { frameIndexAt, loopedTime, sourceTime } from '../shared/time.js'
+import { TIMELINE_GRID, frameDuration, frameIndexAt, loopedTime, sourceTime } from '../shared/time.js'
 import { largestScaleBetween } from './camera.js'
 import { animationChangeAt, largestAnimationScale } from './presets.js'
 
@@ -692,14 +693,31 @@ export function forEachPlacedClip(tracks: readonly Track[], window: { from: numb
   }
 }
 
+// A clip that shows at most one of this many frames of its source gets a preview copy of only the frames it shows.
+const SPARSE_FROM_FRAMES = 4
+
+// Which frames of its source a clip shows at the frames of the project, when it skips enough of them to be worth a copy of its own.
+function cadenceOf(clip: VideoClip, shift: number, video: VideoInfo, frameTicks: number): Cadence | undefined {
+  if (clip.loop === true) return undefined
+  const step = (frameTicks / TIMELINE_GRID) * clip.speedPercent
+  if (step < SPARSE_FROM_FRAMES * video.frameDuration) return undefined
+  // The source time the clip would show at project time 0: every frame it shows is a whole number of steps from there.
+  const origin = sourceTime(clip, -shift) - video.startOffset
+  return { step, phase: ((origin % step) + step) % step }
+}
+
 // The parts of video files the visible tracks show, and where in project time, so the media process prepares what is nearest the playhead first.
 export function pictureRanges(project: Project, media: MediaStates): WantedRange[] {
   const found: WantedRange[] = []
+  const frameTicks = frameDuration(project.canvas.frameRate)
   forEachPlacedClip(project.tracks, { from: 0, to: Infinity }, (track) => track.hidden, ({ clip, shift, from, to }) => {
     if (clip.type !== 'video') return
     const state = media[clip.mediaId]
     if (state === undefined || 'error' in state || state.info.kind !== 'video') return
-    found.push({ mediaId: clip.mediaId, use: 'picture', timelineStart: from, timelineEnd: to, sourceStart: sourceTime(clip, from - shift), speedPercent: clip.speedPercent, isLooping: clip.loop === true })
+    const range: WantedRange = { mediaId: clip.mediaId, use: 'picture', timelineStart: from, timelineEnd: to, sourceStart: sourceTime(clip, from - shift), speedPercent: clip.speedPercent, isLooping: clip.loop === true }
+    const cadence = cadenceOf(clip, shift, state.info.video, frameTicks)
+    if (cadence !== undefined) range.cadence = cadence
+    found.push(range)
   })
   return found
 }

@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { projectOf, track } from '../../test/fixtures.js'
-import { EMPTY_HISTORY, MAX_UNDO_STEPS, record, redo, undo, type History } from './history.js'
+import { EMPTY_HISTORY, record, redo, undo, type History } from './history.js'
+
+const MAX_UNDO_STEPS = 500
 
 const first = projectOf([])
 const second = projectOf([track('t1', [])])
 const third = projectOf([track('t1', []), track('t2', [])])
 
 function twoSteps(): History {
-  const afterOne = record(EMPTY_HISTORY, { label: 'Add Track', before: first, after: second })
-  return record(afterOne, { label: 'Add Track', before: second, after: third })
+  const afterOne = record(EMPTY_HISTORY, { label: 'Add Track', before: first, after: second }, MAX_UNDO_STEPS)
+  return record(afterOne, { label: 'Add Track', before: second, after: third }, MAX_UNDO_STEPS)
 }
 
 describe('history', () => {
@@ -32,7 +34,7 @@ describe('history', () => {
 
   it('drops the redo steps when a new command is recorded', () => {
     const undone = undo(twoSteps())
-    const recorded = record(undone?.history ?? EMPTY_HISTORY, { label: 'Rename Track', before: second, after: first })
+    const recorded = record(undone?.history ?? EMPTY_HISTORY, { label: 'Rename Track', before: second, after: first }, MAX_UNDO_STEPS)
     expect(recorded.undone).toEqual([])
     expect(recorded.done.map((step) => step.label)).toEqual(['Add Track', 'Rename Track'])
   })
@@ -40,17 +42,19 @@ describe('history', () => {
   it('keeps the newest 500 steps', () => {
     let history = EMPTY_HISTORY
     for (let index = 0; index < MAX_UNDO_STEPS + 20; index++) {
-      history = record(history, { label: `Step ${index}`, before: first, after: second })
+      history = record(history, { label: `Step ${index}`, before: first, after: second }, MAX_UNDO_STEPS)
     }
     expect(history.done).toHaveLength(MAX_UNDO_STEPS)
     expect(history.done[0]?.label).toBe('Step 20')
     expect(history.done.at(-1)?.label).toBe(`Step ${MAX_UNDO_STEPS + 19}`)
+    // A lower limit drops the oldest steps at once.
+    expect(record(history, { label: 'Last', before: first, after: second }, 50).done).toHaveLength(50)
   })
 
   it('never changes the history it was given', () => {
     const history = twoSteps()
     undo(history)
-    record(history, { label: 'Other', before: third, after: first })
+    record(history, { label: 'Other', before: third, after: first }, MAX_UNDO_STEPS)
     expect(history.done).toHaveLength(2)
     expect(history.undone).toHaveLength(0)
   })

@@ -198,11 +198,33 @@ describe('timing', () => {
     const faster = setSpeed(sample(), ['a'], 200)
     expect(clipOf(faster, 'a')).toMatchObject({ speedPercent: 200, duration: 2 * SECOND, sourceStart: 0 })
     const slower = setSpeed(sample(), ['a'], 50)
-    expect(clipOf(slower, 'a')).toMatchObject({ speedPercent: 50, duration: 6 * SECOND })
+    expect(clipOf(slower, 'a')).toMatchObject({ speedPercent: 50, duration: 8 * SECOND })
     expect(clipOf(setSpeed(sample(), ['a'], 0), 'a')).toMatchObject({ speedPercent: 1 })
     expect(clipOf(setSpeed(sample(), ['a'], 99_999), 'a')).toMatchObject({ speedPercent: 10_000 })
     reopened(faster)
     reopened(slower)
+  })
+
+  it('moves the later clips of the track by as much as the speed changes the length', () => {
+    // Clip b starts two seconds after a ends; the gap keeps its length both ways.
+    expect(clipOf(setSpeed(sample(), ['a'], 200), 'b').start).toBe(4 * SECOND)
+    expect(clipOf(setSpeed(sample(), ['a'], 50), 'b').start).toBe(10 * SECOND)
+    // Another track stays where it is.
+    expect(clipOf(setSpeed(sample(), ['a'], 200), 'music').start).toBe(0)
+  })
+
+  it('keeps clips laid end to end together when they all get faster or slower', () => {
+    const ids = Array.from({ length: 10 }, (_, index) => `c${index}`)
+    const packed = projectOf([track('t1', ids.map((id, index) => videoClip(id, (2 + index * 4) * SECOND, 4 * SECOND)))])
+    for (const speed of [5000, 50]) {
+      const edited = reopened(setSpeed(packed, ids, speed))
+      const clips = ids.map((id) => clipOf(edited, id))
+      expect(clips[0]?.start).toBe(2 * SECOND)
+      for (const [index, clip] of clips.entries()) {
+        const previous = clips[index - 1]
+        if (previous !== undefined) expect(clip.start).toBe(previous.start + previous.duration)
+      }
+    }
   })
 
   it('sets and removes fades, never longer than the clip', () => {

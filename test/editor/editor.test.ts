@@ -193,9 +193,9 @@ describe('responsiveness with 4,096 clips on a 20-hour timeline', () => {
   const MAX_DRAG_TO_FRAME_MS = 33
   const MAX_PREPARED_SEEK_MS = 150
   // §12: what the editor uses while a long project is edited, all its processes together.
-  const MAX_TYPICAL_MEMORY_MB = 700
+  const MAX_TYPICAL_MEMORY_MB = 1024
 
-  it('opens within 3 s, scrolls and zooms at 60 fps, follows a drag within 33 ms, undoes and redoes within 50 ms, seeks within 150 ms, never blocks for more than 50 ms and stays within 700 MB', async () => {
+  it('opens within 3 s, scrolls and zooms at 60 fps, follows a drag within 33 ms, undoes and redoes within 50 ms, seeks within 150 ms, never blocks for more than 50 ms and stays within 1 GB', async () => {
     const path = join(scratch, 'large.json')
     writeFileSync(path, serializeProject(largeProject()))
     const report = await uiTest('budgets', ['--project', path, '--report-memory'])

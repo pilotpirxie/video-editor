@@ -214,8 +214,20 @@ export function MediaTab(): ReactElement {
   // Whether the last press in the window was in this tab: a click on a file leaves the focus with the editor, so the focus alone cannot tell.
   const wasPressedLastRef = useRef(false)
 
-  // Posters arrive after the row is first shown; each arrival draws the list again.
-  useEffect(() => session.thumbnails.subscribe(() => setPictureCount((count) => count + 1)), [session])
+  // Posters arrive after the row is first shown, and so do the timeline's pictures; the list is drawn again at most once a frame.
+  useEffect(() => {
+    let redraw: number | undefined
+    const unsubscribe = session.thumbnails.subscribe(() => {
+      redraw ??= requestAnimationFrame(() => {
+        redraw = undefined
+        setPictureCount((count) => count + 1)
+      })
+    })
+    return () => {
+      unsubscribe()
+      if (redraw !== undefined) cancelAnimationFrame(redraw)
+    }
+  }, [session])
 
   const wanted = query.trim().toLowerCase()
   const shown = media.filter((reference) => mediaFileName(reference).toLowerCase().includes(wanted))

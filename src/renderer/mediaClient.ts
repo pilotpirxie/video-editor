@@ -1,4 +1,4 @@
-import type { AddedMedia, LoadedProject, MediaClient, MediaMessage, MediaReply, MediaRequest, MediaState, Preparation, RawFrame, RelinkedMedia, WaveformLevel } from '../shared/mediaProtocol.js'
+import type { AddedMedia, CacheUsage, LoadedProject, MediaClient, MediaMessage, MediaReply, MediaRequest, MediaState, Preparation, RawFrame, RelinkedMedia, WaveformLevel } from '../shared/mediaProtocol.js'
 
 type Pending = {
   resolve(answer: unknown): void
@@ -36,6 +36,12 @@ function isRelinkedMedia(value: unknown): value is RelinkedMedia[] {
 
 function isMediaStates(value: unknown): value is Record<string, MediaState> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isCacheUsage(value: unknown): value is CacheUsage {
+  if (typeof value !== 'object' || value === null) return false
+  const record: Record<string, unknown> = { ...value }
+  return ['usedBytes', 'limitBytes', 'neededBytes', 'freeBytes'].every((key) => typeof record[key] === 'number')
 }
 
 function isPreparationRecord(value: unknown): value is Record<string, Preparation> {
@@ -216,6 +222,13 @@ export function createMediaClient(firstPort: MessagePort): MediaConnection {
       await callWithin({ method: 'saveProject', path, project }, SAVE_TIMEOUT_MS)
     },
     want: (wanted) => callForNothing({ method: 'want', wanted }),
+    async cacheUsage() {
+      const request: MediaRequest = { method: 'cacheUsage' }
+      const answer = await call(request)
+      if (!isCacheUsage(answer)) throw unexpectedAnswer(request)
+      return answer
+    },
+    clearCache: () => callForNothing({ method: 'clearCache' }),
     async openMedia(media, projectPath) {
       const request: MediaRequest = { method: 'openMedia', media: [...media], projectPath }
       const answer = await call(request)

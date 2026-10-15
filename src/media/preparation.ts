@@ -1,4 +1,4 @@
-import type { AudioStretch, MediaInfo, Wanted, WantedRange } from '../shared/mediaProtocol.js'
+import type { AudioStretch, Cadence, MediaInfo, Wanted, WantedRange } from '../shared/mediaProtocol.js'
 import { NORMAL_SPEED_PERCENT, TICKS_PER_SAMPLE, TICKS_PER_SECOND, frameIndexAt } from '../shared/time.js'
 import { audioLayout, stretchedLayout, stretchKey, type AudioLayout } from './audio.js'
 import { previewLayout, type PreviewLayout } from './previewCopy.js'
@@ -7,6 +7,7 @@ import { previewLayout, type PreviewLayout } from './previewCopy.js'
 const NEAR_BEFORE_TICKS = 60 * TICKS_PER_SECOND
 const NEAR_AFTER_TICKS = 300 * TICKS_PER_SECOND
 // A fast clip covers much of its file in little time; no more than ten minutes of one clip's file count as needed now.
+// A sparse copy costs by the time it plays, not by the source it covers, so it has only the window on the timeline.
 const NEAR_SOURCE_TICKS = 600 * TICKS_PER_SECOND
 // Something behind the playhead is less likely to be played next than something as far ahead.
 const BEHIND_WEIGHT = 2
@@ -15,7 +16,7 @@ const BEHIND_WEIGHT = 2
 const TIERS = { nearSound: 0, waveform: 1, nearPicture: 2, later: 3 } as const
 
 export type PreparationJob =
-  | { kind: 'picture'; mediaId: string; segment: number; isNear: boolean; tier: number; distance: number }
+  | { kind: 'picture'; mediaId: string; segment: number; cadence?: Cadence; isNear: boolean; tier: number; distance: number }
   | { kind: 'sound'; mediaId: string; segment: number; stretch?: AudioStretch; isNear: boolean; tier: number; distance: number }
   | { kind: 'waveform'; mediaId: string; isNear: true; tier: number; distance: number }
 
@@ -29,9 +30,9 @@ type SourceSpan = {
   to: number
 }
 
-export function previewLayoutOf(info: MediaInfo, segmentSeconds: number): PreviewLayout | undefined {
+export function previewLayoutOf(info: MediaInfo, segmentSeconds: number, cadence?: Cadence, longSide?: number): PreviewLayout | undefined {
   if (info.kind !== 'video') return undefined
-  return previewLayout(info.video, segmentSeconds)
+  return previewLayout(info.video, segmentSeconds, cadence, longSide)
 }
 
 export function audioLayoutOf(info: MediaInfo, segmentSeconds: number): AudioLayout | undefined {
@@ -83,8 +84,8 @@ type PlacedSegment = {
   isNear: boolean
 }
 
-// How far from the playhead each segment of a range plays. The nearest within the window count as needed now, up to ten minutes of source.
-function placeSegments(range: WantedRange, spans: readonly SegmentSpan[], playhead: number): PlacedSegment[] {
+// How far from the playhead each segment of a range plays. The nearest within the window count as needed now, up to `nearSource` of source.
+function placeSegments(range: WantedRange, spans: readonly SegmentSpan[], playhead: number, nearSource: number): PlacedSegment[] {
   const candidates: Candidate[] = []
   for (const { segment, sourceFrom, sourceTo } of spans) {
     candidates.push({ segment, sourceFrom, distance: distanceOf(range, sourceFrom, sourceTo, playhead), isWithinWindow: isWithinNearWindow(range, sourceFrom, sourceTo, playhead) })
@@ -93,15 +94,14 @@ function placeSegments(range: WantedRange, spans: readonly SegmentSpan[], playhe
   const nearest = candidates[order[0] ?? 0]
   const placed: PlacedSegment[] = []
   for (const candidate of candidates) {
-    const isNear = nearest !== undefined && candidate.isWithinWindow && Math.abs(candidate.sourceFrom - nearest.sourceFrom) <= NEAR_SOURCE_TICKS
+    const isNear = nearest !== undefined && candidate.isWithinWindow && Math.abs(candidate.sourceFrom - nearest.sourceFrom) <= nearSource
     placed.push({ segment: candidate.segment, distance: candidate.distance, isNear })
   }
   return placed
 }
 
-function pictureJobs(range: WantedRange, info: MediaInfo, layout: PreviewLayout, playhead: number): PreparationJob[] {
-  if (info.kind !== 'video') return []
-  const span = sourceSpanOf(range, info)
+// The segments of a full copy a stretch of source falls in, and the source each covers.
+function fullSpans(info: Extract<MediaInfo, { kind: 'video' }>, layout: PreviewLayout, span: SourceSpan): SegmentSpan[] {
   const firstFrame = frameIndexAt(info.video, span.from)
   const lastFrame = frameIndexAt(info.video, Math.max(span.from, span.to - 1))
   const segmentTicks = layout.framesPerSegment * info.video.frameDuration
@@ -110,9 +110,35 @@ function pictureJobs(range: WantedRange, info: MediaInfo, layout: PreviewLayout,
     const sourceFrom = info.video.startOffset + segment * segmentTicks
     spans.push({ segment, sourceFrom, sourceTo: sourceFrom + segmentTicks })
   }
+  return spans
+}
+
+// The same for a sparse copy, whose pictures lie one step of source apart.
+function sparseSpans(info: Extract<MediaInfo, { kind: 'video' }>, layout: PreviewLayout, cadence: Cadence, span: SourceSpan): SegmentSpan[] {
+  const { startOffset } = info.video
+  const firstPicture = Math.max(0, Math.ceil((span.from - startOffset - cadence.phase) / cadence.step))
+  const lastPicture = Math.max(firstPicture, Math.ceil((span.to - startOffset - cadence.phase) / cadence.step) - 1)
+  const lastSegment = Math.min(layout.segmentCount - 1, Math.floor(lastPicture / layout.framesPerSegment))
+  const segmentTicks = layout.framesPerSegment * cadence.step
+  const spans: SegmentSpan[] = []
+  for (let segment = Math.floor(firstPicture / layout.framesPerSegment); segment <= lastSegment; segment++) {
+    const sourceFrom = startOffset + cadence.phase + segment * segmentTicks
+    spans.push({ segment, sourceFrom, sourceTo: sourceFrom + segmentTicks })
+  }
+  return spans
+}
+
+function pictureJobs(range: WantedRange, info: MediaInfo, layout: PreviewLayout, playhead: number): PreparationJob[] {
+  if (info.kind !== 'video') return []
+  const span = sourceSpanOf(range, info)
+  const { cadence } = range
+  const spans = cadence === undefined ? fullSpans(info, layout, span) : sparseSpans(info, layout, cadence, span)
+  const nearSource = cadence === undefined ? NEAR_SOURCE_TICKS : Infinity
   const jobs: PreparationJob[] = []
-  for (const { segment, distance, isNear } of placeSegments(range, spans, playhead)) {
-    jobs.push({ kind: 'picture', mediaId: range.mediaId, segment, isNear, tier: isNear ? TIERS.nearPicture : TIERS.later, distance })
+  for (const { segment, distance, isNear } of placeSegments(range, spans, playhead, nearSource)) {
+    const job: PreparationJob = { kind: 'picture', mediaId: range.mediaId, segment, isNear, tier: isNear ? TIERS.nearPicture : TIERS.later, distance }
+    if (cadence !== undefined) job.cadence = cadence
+    jobs.push(job)
   }
   return jobs
 }
@@ -137,7 +163,7 @@ function soundJobs(range: WantedRange, info: MediaInfo, layout: AudioLayout, pla
     spans.push({ segment, sourceFrom: toSource(segment * perSegment), sourceTo: toSource((segment + 1) * perSegment) })
   }
   const jobs: PreparationJob[] = []
-  for (const { segment, distance, isNear } of placeSegments(range, spans, playhead)) {
+  for (const { segment, distance, isNear } of placeSegments(range, spans, playhead, NEAR_SOURCE_TICKS)) {
     const job: PreparationJob = { kind: 'sound', mediaId: range.mediaId, segment, isNear, tier: isNear ? TIERS.nearSound : TIERS.later, distance }
     if (stretch !== undefined) job.stretch = stretch
     jobs.push(job)
@@ -152,7 +178,7 @@ function unusedRange(media: PreparableMedia, use: WantedRange['use']): WantedRan
 
 function jobKey(job: PreparationJob): string {
   if (job.kind === 'waveform') return `waveform:${job.mediaId}`
-  if (job.kind === 'picture') return `picture:${job.mediaId}:${job.segment}`
+  if (job.kind === 'picture') return job.cadence === undefined ? `picture:${job.mediaId}:${job.segment}` : `picture:${job.mediaId}:${job.cadence.step}:${job.cadence.phase}:${job.segment}`
   return `sound:${job.mediaId}:${job.stretch === undefined ? '' : stretchKey(job.stretch)}:${job.segment}`
 }
 
@@ -180,7 +206,7 @@ export function planPreparation(wanted: Wanted | undefined, media: readonly Prep
     const item = byId.get(range.mediaId)
     if (item === undefined || range.timelineEnd <= range.timelineStart || range.speedPercent <= 0) continue
     if (range.use === 'picture') {
-      const layout = previewLayoutOf(item.info, segmentSeconds)
+      const layout = previewLayoutOf(item.info, segmentSeconds, range.cadence)
       if (layout !== undefined) for (const job of pictureJobs(range, item.info, layout, playhead)) keep(job)
       continue
     }

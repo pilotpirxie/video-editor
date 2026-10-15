@@ -2,11 +2,9 @@ import type { Size } from '../shared/exportPresets.js'
 import type { MediaStates } from '../engine/resolve.js'
 import type { MediaInfo, MediaUse, UnlinkedMedia } from '../shared/mediaProtocol.js'
 import { MAX_CANVAS, MIN_CANVAS, type Canvas, type Clip, type MediaRef, type Project, type Track, type Transform } from '../shared/project.js'
-import { NORMAL_SPEED_PERCENT, PROJECT_FRAME_RATES, TICKS_PER_SECOND, frameDuration, type FrameRate } from '../shared/time.js'
+import { NORMAL_SPEED_PERCENT, PROJECT_FRAME_RATES, frameDuration, type FrameRate } from '../shared/time.js'
 import { allClips, endOf, hasMedia, placeOnTrack, type NewTrack } from './clips.js'
 
-// How long a clip without a source of its own length lasts when it is added: a still image, an animated image, a text.
-const STILL_DURATION = 5 * TICKS_PER_SECOND
 const MAX_AUTOMATIC_FRAMES_PER_SECOND = 60
 
 // Where a clip without media is added: from `start`, on the track at `trackIndex`, with its middle at `centre` in canvas pixels.
@@ -14,19 +12,21 @@ const MAX_AUTOMATIC_FRAMES_PER_SECOND = 60
 export type NewStill = {
   clipId: string
   start: number
+  // How long a clip without a source of its own length lasts when it is added, as the settings say.
+  duration: number
   newTrack: NewTrack
   trackIndex?: number
   centre?: { x: number; y: number }
 }
 
-// What every clip that is added without media starts with: five seconds, upright and at its natural size.
+// What every clip that is added without media starts with: the still duration, upright and at its natural size.
 export function centredStill(project: Project, added: NewStill): { id: string; start: number; duration: number; transform: Transform; opacity: number } {
   const { canvas } = project
   const centre = added.centre ?? { x: canvas.width / 2, y: canvas.height / 2 }
   return {
     id: added.clipId,
     start: added.start,
-    duration: STILL_DURATION,
+    duration: added.duration,
     transform: { x: centre.x, y: centre.y, scaleX: 1, scaleY: 1, rotation: 0 },
     opacity: 1,
   }
@@ -44,6 +44,8 @@ export type MediaDrop = {
   start: number
   trackIndex: number
   newTrack: NewTrack
+  // How long a still or an animated image lasts.
+  stillDuration: number
 }
 
 function wholeFrames(duration: number, frameTicks: number): number {
@@ -56,10 +58,10 @@ function centred(natural: Size, canvas: Canvas): Transform {
 }
 
 // A new clip shows the whole picture: centred and scaled down to fit, never enlarged.
-export function clipForMedia(mediaId: string, info: MediaInfo, canvas: Canvas, clipId: string, start: number): Clip {
+export function clipForMedia(mediaId: string, info: MediaInfo, canvas: Canvas, clipId: string, start: number, stillDuration: number): Clip {
   const frameTicks = frameDuration(canvas.frameRate)
   if (info.kind === 'image') {
-    return { id: clipId, type: 'image', mediaId, start, duration: STILL_DURATION, transform: centred(info, canvas), opacity: 1 }
+    return { id: clipId, type: 'image', mediaId, start, duration: stillDuration, transform: centred(info, canvas), opacity: 1 }
   }
   const source = { mediaId, sourceStart: 0, speedPercent: NORMAL_SPEED_PERCENT, volume: 1 }
   const timing = { id: clipId, start, duration: wholeFrames(info.duration, frameTicks) }
@@ -67,7 +69,7 @@ export function clipForMedia(mediaId: string, info: MediaInfo, canvas: Canvas, c
   const video: Clip = { ...timing, ...source, type: 'video', transform: centred(info.video, canvas), opacity: 1 }
   if (info.isAnimatedImage !== true) return video
   // An animated image behaves like a still that moves: it lasts as long as a still, and repeats to fill that time.
-  return { ...video, loop: true, duration: Math.max(timing.duration, STILL_DURATION) }
+  return { ...video, loop: true, duration: Math.max(timing.duration, stillDuration) }
 }
 
 // Higher project rates are a deliberate choice: a phone's slow-motion clip should not make the whole project twice as heavy to play and export.
@@ -200,7 +202,7 @@ export function dropMedia(project: Project, drop: MediaDrop): Project {
   const clips: Clip[] = []
   let start = drop.start
   for (const item of drop.media) {
-    const clip = clipForMedia(item.reference.id, item.info, canvas, item.clipId, start)
+    const clip = clipForMedia(item.reference.id, item.info, canvas, item.clipId, start, drop.stillDuration)
     clips.push(clip)
     start = endOf(clip)
     prepared = withMedia(prepared, item.reference)

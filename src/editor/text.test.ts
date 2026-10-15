@@ -6,7 +6,7 @@ import { addText, missingFonts, setTextStyle } from './text.js'
 const NEW_TRACK = { id: 'titles', name: 'Track 2' }
 
 function withTitle(): ReturnType<typeof addText> {
-  return addText(projectOf([track('t1', [videoClip('a', 0, 10 * SECOND)])]), { clipId: 'title', start: 2 * SECOND, newTrack: NEW_TRACK })
+  return addText(projectOf([track('t1', [videoClip('a', 0, 10 * SECOND)])]), { clipId: 'title', start: 2 * SECOND, duration: 5 * SECOND, newTrack: NEW_TRACK })
 }
 
 describe('addText', () => {
@@ -29,7 +29,7 @@ describe('addText', () => {
   })
 
   it('sizes the text to the canvas', () => {
-    const small = addText({ ...projectOf([]), canvas: { width: 160, height: 120, frameRate: { num: 30, den: 1 } } }, { clipId: 'title', start: 0, newTrack: NEW_TRACK })
+    const small = addText({ ...projectOf([]), canvas: { width: 160, height: 120, frameRate: { num: 30, den: 1 } } }, { clipId: 'title', start: 0, duration: 5 * SECOND, newTrack: NEW_TRACK })
     expect(clipOf(small, 'title')).toMatchObject({ font: { size: 10 }, transform: { x: 80, y: 60 } })
   })
 

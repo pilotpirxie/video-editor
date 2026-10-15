@@ -14,11 +14,12 @@ import {
 } from 'electron'
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { totalmem } from 'node:os'
+import { cpus, totalmem } from 'node:os'
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path'
 import { EXPORT_FORMATS, EXPORT_PRESETS, isExportEncoder, isExportFormat, isExportPreset, isExportQuality, type ExportFormat } from '../shared/exportPresets.js'
 import { describeError, logError } from '../shared/log.js'
 import type {
+  DebugSystemInfo,
   DocumentInfo,
   DocumentState,
   ExportJob,
@@ -33,7 +34,8 @@ import type {
   UnsavedChoice,
 } from '../shared/mediaProtocol.js'
 import { DEFAULT_BINDINGS, MENU_SHORTCUT_ACTIONS, menuShortcutsOf } from '../editor/shortcuts.js'
-import { isMemoryUnderPressure, startMemoryMonitor, type MemoryMonitor } from './memory.js'
+import { MAX_LOG_BYTES, MAX_SLOW_FRAMES_PER_RUN, appendLogLine, isSlowFrame, trimLogFile } from './logFiles.js'
+import { footprintNow, isMemoryUnderPressure, startMemoryMonitor, type MemoryMonitor } from './memory.js'
 import { SAMPLE_RATE, isProjectFrameRate } from '../shared/time.js'
 import {
   discardExportSnapshot,
@@ -42,12 +44,15 @@ import {
   exportSnapshotPath,
   findRecoveries,
   newRecoveryPath,
+  rememberExportOutput,
   rememberProjectPath,
   type FoundRecovery,
 } from './recovery.js'
 import { runSelfTest, type SelfTestOptions } from './selfTest.js'
 import type { DialogAnswers } from './uiDriver.js'
 import { runUiTest } from './uiTest.js'
+import { readSettings, writeSettings } from './settingsFile.js'
+import { mediaSettingsOf, parseSettings, type AppSettings } from '../shared/settings.js'
 
 const RENDERER_DIRECTORY = join(import.meta.dirname, '..', '..', '..', 'renderer')
 const MEDIA_SERVICE_PATH = join(import.meta.dirname, '..', 'media', 'service.js')
@@ -132,7 +137,12 @@ type AppState = {
   versions: string[] | undefined
   // Test runs open every window muted and in the background.
   isUnattended: boolean
+  // Lines written to the slow-frame log since launch.
+  slowFramesLogged: number
   menuShortcuts: MenuShortcuts
+  settings: AppSettings
+  // Saves of the settings, one after the other, so two never write the file at once.
+  savingSettings: Promise<void>
 }
 
 class UsageError extends Error {}
@@ -289,6 +299,7 @@ function launchMediaProcess(state: AppState): UtilityProcess {
       ffmpegDirectory: app.isPackaged ? join(process.resourcesPath, 'ffmpeg') : join(app.getAppPath(), 'vendor', 'ffmpeg'),
       // The second layout of the cache, in segments; the media process removes the first one.
       cacheDirectory: join(app.getPath('userData'), 'cache', 'v2'),
+      settings: mediaSettingsOf(state.settings),
     },
   }
   child.postMessage(setup)
@@ -334,6 +345,24 @@ function restartMediaProcess(state: AppState, uptimeMs: number): void {
 
 function crashLogPath(): string {
   return join(app.getPath('userData'), 'logs', 'crash.log')
+}
+
+function settingsPath(): string {
+  return join(app.getPath('userData'), 'settings.json')
+}
+
+// A change counts at once in every window and in the media process, and is kept for the next launch.
+function changeSettings(state: AppState, value: unknown): void {
+  const settings = parseSettings(value)
+  state.settings = settings
+  state.savingSettings = state.savingSettings.then(() => writeSettings(settingsPath(), settings)).catch((error: unknown) => logError('Could not save the settings', error))
+  for (const editor of state.editors) send(editor.window, { type: 'settings', settings })
+  const command: MediaProcessCommand = { type: 'settings', settings: mediaSettingsOf(settings) }
+  state.mediaProcess?.postMessage(command)
+}
+
+function slowFramesLogPath(): string {
+  return join(app.getPath('userData'), 'logs', 'slow-frames.log')
 }
 
 // One line for each process that died, kept on this Mac only. Written at once, as the process may be about to end.
@@ -537,6 +566,8 @@ function startExportFor(state: AppState, requester: BrowserWindow, job: ExportJo
     send(requester, { type: 'export-event', event: { type: 'error', message: 'Another export is already running.' } })
     return
   }
+  // The note is on disk long before the export window has loaded and the encoder opens its unfinished file.
+  const outputNote = rememberExportOutput(state.recoveryDirectory, job.outputPath)
   const window = runHeadlessJob(state, job, (event) => {
     if (event.type === 'done') state.lastExportPath = job.outputPath
     send(requester, { type: 'export-event', event })
@@ -548,6 +579,7 @@ function startExportFor(state: AppState, requester: BrowserWindow, job: ExportJo
     state.exportWindow = undefined
     state.exportRequester = undefined
     void discardExportSnapshot(job.projectPath, state.recoveryDirectory)
+    void outputNote.then(discardRecoveredWork)
   })
 }
 
@@ -700,6 +732,32 @@ function registerDocumentIpc(state: AppState): void {
   ipcMain.handle('confirm-unsaved-changes', async (event): Promise<UnsavedChoice> => {
     const editor = editorOf(state, event.sender)
     return editor === undefined ? 'cancel' : askUnsavedChanges(state, editor)
+  })
+
+  ipcMain.on('slow-frame', (_event, frame: unknown) => {
+    if (!isSlowFrame(frame) || state.slowFramesLogged >= MAX_SLOW_FRAMES_PER_RUN) return
+    state.slowFramesLogged += 1
+    void appendLogLine(slowFramesLogPath(), frame)
+  })
+
+  ipcMain.handle('settings', (): AppSettings => state.settings)
+  ipcMain.on('set-settings', (_event, value: unknown) => changeSettings(state, value))
+
+  ipcMain.handle('debug-info', async (): Promise<DebugSystemInfo> => {
+    let footprintBytes: number | undefined
+    try {
+      footprintBytes = await footprintNow(process.pid)
+    } catch (error) {
+      logError('Could not measure the memory of the app for the debug panel', error)
+    }
+    return {
+      appVersion: app.getVersion(),
+      versions: state.versions ?? [],
+      macOS: process.getSystemVersion(),
+      cpu: cpus()[0]?.model ?? 'unknown',
+      totalMemoryBytes: totalmem(),
+      footprintBytes,
+    }
   })
 
   ipcMain.on('discard-recovery', (event) => {
@@ -869,6 +927,7 @@ function buildEditorMenu(state: AppState): void {
         item('toggle-library', 'Toggle Library'),
         item('toggle-properties', 'Toggle Properties'),
         item('toggle-timeline', 'Toggle Timeline'),
+        item('toggle-debug', 'Toggle Debug Info'),
         rebindable('preview-mode', 'Preview Mode'),
         { type: 'separator' },
         { role: 'reload' },
@@ -1079,9 +1138,15 @@ async function main(): Promise<void> {
     memory: options.has('report-memory') ? startMemoryMonitor(process.pid) : undefined,
     versions: undefined,
     isUnattended: false,
+    slowFramesLogged: 0,
     menuShortcuts: menuShortcutsOf(DEFAULT_BINDINGS),
+    settings: await readSettings(settingsPath()),
+    savingSettings: Promise.resolve(),
   }
   started = state
+  for (const path of [crashLogPath(), slowFramesLogPath()]) {
+    trimLogFile(path, MAX_LOG_BYTES).catch((error: unknown) => logError('Could not trim a log', error, { path }))
+  }
   watchForCrashes(state)
   if (!isInteractive) exitWhenOutputCloses(state)
   state.mediaProcess = launchMediaProcess(state)

@@ -324,6 +324,22 @@ function without(path: string): string {
   })
 }
 
+// The latest time on the timeline grid that is still an exact whole number.
+const LATEST_GRID_TIME = Math.floor(Number.MAX_SAFE_INTEGER / 100) * 100
+
+// A member of the group that ends just inside exact time on its own track, and so past it on the timeline, where the group moves it later.
+function memberEndingPastExactTime(): string {
+  return editedAt('tracks.3.clips.2.tracks.0.clips.0', (holder, key) => {
+    const member = childOf(holder, key)
+    if (!isRecord(member) || typeof member.duration !== 'number') throw new Error('The sample group has no member with a duration')
+    member.start = LATEST_GRID_TIME - 100 - member.duration
+  })
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function messageFor(text: string): string {
   const result = parseProject(text)
   if (result.ok) throw new Error('expected the project to be rejected')
@@ -441,6 +457,9 @@ describe('parseProject', () => {
     ['a speed below 1%', withValue('tracks.0.clips.0.speedPercent', 0), /speedPercent must be at least 1$/],
     ['a speed above 10000%', withValue('tracks.0.clips.0.speedPercent', 20_000), /speedPercent must be at most 10000$/],
     ['a fractional speed', withValue('tracks.0.clips.0.speedPercent', 150.5), /speedPercent must be a whole number$/],
+    ['a clip that ends past exact time', withValue('tracks.0.clips.0.start', LATEST_GRID_TIME), /^tracks\[0\]\.clips\[0\]\.duration ends the clip too far along the timeline$/],
+    ['a group member that ends past exact time on the timeline', memberEndingPastExactTime(), /^tracks\[3\]\.clips\[2\]\.tracks\[0\]\.clips\[0\]\.duration ends the clip too far along the timeline$/],
+    ['a source read past exact time', withValue('tracks.0.clips.0.sourceStart', Number.MAX_SAFE_INTEGER - 1), /^tracks\[0\]\.clips\[0\]\.sourceStart reaches too far into the source$/],
     ['an unknown media reference', withValue('tracks.0.clips.0.mediaId', 'nope'), /mediaId "nope" is not in the media list$/],
     ['an unknown clip type', withValue('tracks.0.clips.0.type', 'sticker'), /^tracks\[0\]\.clips\[0\]\.type must be one of video, audio, image, text, blur, highlight, callout, arrow, group;/],
     ['an unknown clip setting', withValue('tracks.0.clips.1.volume', 1), /^tracks\[0\]\.clips\[1\]\.volume is not a known setting$/],

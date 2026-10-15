@@ -48,12 +48,12 @@ import {
 import { DEFAULT_TRANSITION, setTransition, transitionTargetAt, type TransitionTarget } from '../editor/transitions.js'
 import type { Size } from '../shared/exportPresets.js'
 import { projectDuration, type Clip, type EffectType, type MediaRef, type Project, type Track, type TransitionType } from '../shared/project.js'
+import { stillDurationTicks } from '../shared/settings.js'
 import { TICKS_PER_SECOND, frameDuration } from '../shared/time.js'
 import type { Session } from './document.js'
 import { drawContent, drawOverlay, readColors, readFonts, type DropTarget, type Landing } from './timelineDraw.js'
 
 const DRAG_THRESHOLD = 3
-const SNAP_RANGE_PIXELS = 12
 const MIDDLE_BUTTON = 1
 const WHEEL_ZOOM_RATE = 0.01
 const FOLLOW_LEAD = 0.1
@@ -332,13 +332,14 @@ export function createTimelineController(elements: TimelineElements, session: Se
       guide = snap.guide
     }
     const trackIndex = Math.max(0, trackIndexAt(Math.max(point.y, TRACKS_TOP), project.tracks.length, view))
+    const stillDuration = stillDurationTicks(store.getState().settings)
     if (item.kind === 'annotation') {
-      const added = { clipId: newClipId(0), start, trackIndex, newTrack }
+      const added = { clipId: newClipId(0), start, duration: stillDuration, trackIndex, newTrack }
       return { clipIds: [added.clipId], guide, label: `Add ${ANNOTATION_NAMES[item.annotation]}`, place: (current) => addAnnotation(current, item.annotation, added) }
     }
     const media = placeableMedia(project, mediaStates, item.mediaIds, newClipId)
     if (media.length === 0) return undefined
-    const drop = { media, start, trackIndex, newTrack }
+    const drop = { media, start, trackIndex, newTrack, stillDuration }
     const clipIds = media.map((dropped) => dropped.clipId)
     return { clipIds, guide, label: media.length === 1 ? 'Add Clip' : `Add ${media.length} Clips`, place: (current) => dropMedia(current, drop) }
   }
@@ -588,7 +589,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   }
 
   function snapRange(): number {
-    return (SNAP_RANGE_PIXELS / view.pixelsPerSecond) * TICKS_PER_SECOND
+    return (store.getState().settings.snapRangePixels / view.pixelsPerSecond) * TICKS_PER_SECOND
   }
 
   function isSnapping(event: MouseEvent): boolean {

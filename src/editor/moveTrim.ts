@@ -131,7 +131,7 @@ export function moveClips(project: Project, move: Move): Project {
   return placeOnTrack(lifted, { clips: [{ ...located.clip, start }], trackIndex, newTrack: move.newTrack })
 }
 
-export function neighbours(track: Track, clip: Clip): { previousEnd: number; nextStart: number } {
+function neighbours(track: Track, clip: Clip): { previousEnd: number; nextStart: number } {
   let previousEnd = 0
   let nextStart = Infinity
   for (const other of track.clips) {
@@ -171,7 +171,7 @@ function trimmedStart(clip: Clip, start: number): Clip {
   return withFadesWithin({ ...clip, ...timing, contentStart: contentStart === 0 ? undefined : contentStart })
 }
 
-function shiftLater(project: Project, track: Track, from: number, delta: number, exceptId: string): Project {
+export function shiftLater(project: Project, track: Track, from: number, delta: number, exceptId: string): Project {
   const later = new Set<string>()
   for (const other of track.clips) {
     if (other.id !== exceptId && other.start >= from) later.add(other.id)

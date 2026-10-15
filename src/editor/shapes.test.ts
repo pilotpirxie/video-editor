@@ -7,7 +7,7 @@ const NEW_TRACK = { id: 'new-track', name: 'Track 2' }
 
 function withShape(kind: ShapeKind): Project {
   const project = projectOf([track('footage', [videoClip('footage', 0, 10 * SECOND)])])
-  return addShape(project, { kind, clipId: kind, start: 2 * SECOND, newTrack: NEW_TRACK })
+  return addShape(project, { kind, clipId: kind, start: 2 * SECOND, duration: 5 * SECOND, newTrack: NEW_TRACK })
 }
 
 describe('addShape', () => {

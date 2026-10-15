@@ -376,3 +376,49 @@ describe('soundRanges', () => {
     expect(soundRanges(project([group]), MEDIA)).toEqual([{ mediaId: 'voice', use: 'sound', timelineStart: 10 * SECOND, timelineEnd: 12 * SECOND, sourceStart: SECOND, speedPercent: 100, isLooping: false }])
   })
 })
+
+describe('mix with many sounds at once', () => {
+  const MANY = 40
+  const crowded = project(...Array.from({ length: MANY }, (_, index) => [audioClip({ id: `s${index}`, mediaId: index % 2 === 0 ? 'voice' : 'loud', volume: 2 })]))
+
+  it('reads up to eight sounds at the same time, never more', async () => {
+    let inFlight = 0
+    let mostInFlight = 0
+    const slowReader: AudioReader = async (mediaId, firstSample, sampleCount) => {
+      inFlight += 1
+      mostInFlight = Math.max(mostInFlight, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 1))
+      inFlight -= 1
+      return readSource(mediaId, firstSample, sampleCount)
+    }
+    await mix(crowded, MEDIA, 0, 2048, slowReader)
+    expect(mostInFlight).toBe(8)
+  })
+
+  it('gives the same bits whatever order the reads finish in, and stays under the ceiling', async () => {
+    let calls = 0
+    const shuffledReader: AudioReader = async (mediaId, firstSample, sampleCount) => {
+      // Each read of a batch waits a different time, so they finish out of order.
+      calls += 1
+      await new Promise((resolve) => setTimeout(resolve, (calls * 7) % 5))
+      return readSource(mediaId, firstSample, sampleCount)
+    }
+    const inOrder = await mix(crowded, MEDIA, 1000, 4800, readSource)
+    const outOfOrder = await mix(crowded, MEDIA, 1000, 4800, shuffledReader)
+    expect(sameBits(inOrder, outOfOrder)).toBe(true)
+    let peak = 0
+    for (const sample of inOrder) {
+      expect(Number.isFinite(sample)).toBe(true)
+      peak = Math.max(peak, Math.abs(sample))
+    }
+    expect(peak).toBeLessThanOrEqual(LIMITER_CEILING)
+  })
+
+  it('fails the mix when one read fails, without an unhandled rejection from the others', async () => {
+    const failingReader: AudioReader = async (mediaId, firstSample, sampleCount) => {
+      if (mediaId === 'loud') throw new Error('media process restarted')
+      return readSource(mediaId, firstSample, sampleCount)
+    }
+    await expect(mix(crowded, MEDIA, 0, 2048, failingReader)).rejects.toThrow('media process restarted')
+  })
+})

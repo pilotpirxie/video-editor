@@ -1,18 +1,17 @@
 import { existsSync } from 'node:fs'
 import { open, readFile, rename, rm, writeFile, type FileHandle } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { VideoInfo } from '../shared/mediaProtocol.js'
+import type { Cadence, VideoInfo } from '../shared/mediaProtocol.js'
+import { DEFAULT_PREVIEW_LONG_SIDE } from '../shared/settings.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
 import type { BuildClaim, DiskCache } from './cache.js'
 import type { FfmpegRunner } from './ffmpeg.js'
-import { colorToRgb, inputArguments, shrinkBeforeToneMapping, sourceColorFilters, timingFilters, type FrameSize, type VideoSource } from './frames.js'
+import { colorToRgb, inputArguments, shrinkBeforeToneMapping, sourceColorFilters, timingFilters, trimToFrame, type FrameSize, type VideoSource } from './frames.js'
 
-const PREVIEW_LONG_SIDE = 960
 const JPEG_QUALITY = 10
 const READ_TIMEOUT_MS = 30_000
 const FRAME_SEAM = Buffer.from([0xff, 0xd9, 0xff, 0xd8])
 const END_OF_IMAGE_BYTES = 2
-const BUILD_THREADS = 0
 const BYTES_PER_INDEX_FIELD = 8
 const BYTES_PER_INDEX_ENTRY = 2 * BYTES_PER_INDEX_FIELD
 // Indexes of the segments read last, kept so playback does not read one from disk for every frame.
@@ -23,16 +22,24 @@ type FrameLocation = {
   length: number
 }
 
+// The frames a copy for a fast clip holds: its picture `index` is the source frame `phase + index * step` ticks after the first frame.
+type SparseFrames = Cadence & {
+  frameDuration: number
+}
+
 // A preview copy is cut into segments of a fixed number of frames, each built and removed on its own, so a long source is prepared around the playhead.
+// A sparse copy holds only the frames of its cadence, so the same number of pictures covers many times as much of the source.
 export type PreviewLayout = {
   framesPerSegment: number
   segmentCount: number
+  // The long side of the pictures, in pixels.
+  longSide: number
+  sparse?: SparseFrames
 }
 
-// The segment being written: its first frames can be shown before it is done.
+// The segment being written: its first frames can be shown before it is done. `index` is where its index file will be.
 export type SegmentInProgress = {
-  directory: string
-  segment: number
+  index: string
   dataPath: string
   locations: readonly FrameLocation[]
 }
@@ -50,12 +57,14 @@ export type PreviewRun = {
   firstSegment: number
   // The index files of the segments this run writes, from `firstSegment` on.
   claim: BuildClaim
+  // FFmpeg's threads for the build; 0 lets it use every core.
+  threads: number
   signal: AbortSignal
   onFrame(inProgress: SegmentInProgress | undefined): void
 }
 
-export function previewSize(video: VideoInfo): FrameSize {
-  const scale = Math.min(1, PREVIEW_LONG_SIDE / Math.max(video.width, video.height))
+export function previewSize(video: VideoInfo, longSide = DEFAULT_PREVIEW_LONG_SIDE): FrameSize {
+  const scale = Math.min(1, longSide / Math.max(video.width, video.height))
   return {
     width: Math.max(2, Math.round((video.width * scale) / 2) * 2),
     height: Math.max(2, Math.round((video.height * scale) / 2) * 2),
@@ -75,11 +84,20 @@ export function splitJpegFrames(data: Buffer): { frames: Buffer[]; rest: Buffer 
   return { frames, rest: data.subarray(start) }
 }
 
-function previewFilters(source: VideoSource, firstFrame: number): string {
+// Picture n after the first is kept when a whole number of steps from the phase lands within its frame; the numbers are whole ticks, so the arithmetic is exact.
+function sparseFilters(source: VideoSource, firstFrame: number, sparse: SparseFrames | undefined): string[] {
+  if (sparse === undefined) return []
+  const { step, phase, frameDuration } = sparse
+  const sinceFirst = `((n+${firstFrame})*${frameDuration}-${phase})`
+  return [trimToFrame(source, firstFrame), `select='lt(ceil(${sinceFirst}/${step})*${step}-${sinceFirst},${frameDuration})'`]
+}
+
+function previewFilters(source: VideoSource, firstFrame: number, layout: PreviewLayout): string {
   const { video } = source
-  const size = previewSize(video)
+  const size = previewSize(video, layout.longSide)
+  const { sparse } = layout
   const jpegColor = 'out_color_matrix=bt601:out_range=pc'
-  const timing = timingFilters(source, firstFrame)
+  const timing = [...timingFilters(source, firstFrame), ...sparseFilters(source, firstFrame, sparse)]
   if (video.transfer !== 'sdr') {
     return [...timing, ...shrinkBeforeToneMapping(size, 'area'), ...sourceColorFilters(video), `scale=${jpegColor}`, 'setsar=1', 'format=yuvj420p'].join(',')
   }
@@ -97,13 +115,36 @@ function previewFilters(source: VideoSource, firstFrame: number): string {
   ].join(';')
 }
 
-export function previewLayout(video: VideoInfo, segmentSeconds: number): PreviewLayout {
+export function previewLayout(video: VideoInfo, segmentSeconds: number, cadence?: Cadence, longSide = DEFAULT_PREVIEW_LONG_SIDE): PreviewLayout {
   const framesPerSegment = Math.max(1, Math.ceil((segmentSeconds * TICKS_PER_SECOND) / video.frameDuration))
-  return { framesPerSegment, segmentCount: Math.max(1, Math.ceil(video.frameCount / framesPerSegment)) }
+  if (cadence === undefined) return { framesPerSegment, segmentCount: Math.max(1, Math.ceil(video.frameCount / framesPerSegment)), longSide }
+  const pictureCount = Math.ceil((video.frameCount * video.frameDuration - cadence.phase) / cadence.step)
+  const sparse = { step: cadence.step, phase: cadence.phase, frameDuration: video.frameDuration }
+  return { framesPerSegment, segmentCount: Math.max(1, Math.ceil(pictureCount / framesPerSegment)), longSide, sparse }
 }
 
-export function previewSegmentFiles(directory: string, segment: number): { data: string; index: string } {
-  return { data: join(directory, `preview-${segment}.mjpeg`), index: join(directory, `preview-${segment}.idx`) }
+// The source frame a copy holds as its picture `index`.
+export function sourceFrameOf(layout: PreviewLayout, index: number): number {
+  const { sparse } = layout
+  if (sparse === undefined) return index
+  return Math.floor((sparse.phase + index * sparse.step) / sparse.frameDuration)
+}
+
+// Which picture of a copy a source frame is; undefined when a sparse copy leaves it out.
+export function pictureIndexOf(layout: PreviewLayout, frame: number): number | undefined {
+  const { sparse } = layout
+  if (sparse === undefined) return frame
+  const index = Math.max(0, Math.ceil((frame * sparse.frameDuration - sparse.phase) / sparse.step))
+  return sourceFrameOf(layout, index) === frame ? index : undefined
+}
+
+// Copies of the default size keep the names they had before the size could be chosen, so those already made stay in use.
+export function previewSegmentFiles(directory: string, segment: number, layout?: Pick<PreviewLayout, 'longSide' | 'sparse'>): { data: string; index: string } {
+  const longSide = layout?.longSide ?? DEFAULT_PREVIEW_LONG_SIDE
+  const prefix = longSide === DEFAULT_PREVIEW_LONG_SIDE ? 'preview' : `preview${longSide}`
+  const sparse = layout?.sparse
+  const name = sparse === undefined ? `${prefix}-${segment}` : `${prefix}-${sparse.step}-${sparse.phase}-${segment}`
+  return { data: join(directory, `${name}.mjpeg`), index: join(directory, `${name}.idx`) }
 }
 
 // An index is written last, so a segment with one is whole.
@@ -157,10 +198,12 @@ export function createPreviewReader(cache: DiskCache): PreviewReader {
   }
 
   async function read(directory: string, layout: PreviewLayout, frame: number, inProgress: SegmentInProgress | undefined): Promise<Buffer | undefined> {
-    const segment = Math.floor(frame / layout.framesPerSegment)
-    const position = frame - segment * layout.framesPerSegment
-    const isInProgress = inProgress !== undefined && inProgress.directory === directory && inProgress.segment === segment
-    if (isInProgress) {
+    const pictureIndex = pictureIndexOf(layout, frame)
+    if (pictureIndex === undefined) return undefined
+    const segment = Math.floor(pictureIndex / layout.framesPerSegment)
+    const position = pictureIndex - segment * layout.framesPerSegment
+    const files = previewSegmentFiles(directory, segment, layout)
+    if (inProgress?.index === files.index) {
       const location = inProgress.locations[position]
       if (location === undefined) return undefined
       try {
@@ -171,7 +214,6 @@ export function createPreviewReader(cache: DiskCache): PreviewReader {
       }
     }
 
-    const files = previewSegmentFiles(directory, segment)
     try {
       const location = (await indexOf(files.index))[position]
       if (location === undefined) return undefined
@@ -196,15 +238,15 @@ async function discard(output: FileHandle | undefined, path: string | undefined)
 
 // Builds consecutive segments with one FFmpeg run, so the seek before the first is paid once.
 export async function buildPreviewRun(run: PreviewRun): Promise<void> {
-  const { ffmpeg, source, directory, layout, cache, firstSegment, claim, signal } = run
+  const { ffmpeg, source, directory, layout, cache, firstSegment, claim, threads, signal } = run
   const segmentCount = claim.paths.length
   if (segmentCount === 0) return
-  const firstFrame = firstSegment * layout.framesPerSegment
+  const firstFrame = sourceFrameOf(layout, firstSegment * layout.framesPerSegment)
   const frameCount = segmentCount * layout.framesPerSegment
   const args = [
-    ...inputArguments(source, firstFrame, BUILD_THREADS),
+    ...inputArguments(source, firstFrame, threads),
     '-vf',
-    previewFilters(source, firstFrame),
+    previewFilters(source, firstFrame, layout),
     '-frames:v',
     String(frameCount),
     '-c:v',
@@ -226,7 +268,7 @@ export async function buildPreviewRun(run: PreviewRun): Promise<void> {
     if (output === undefined || temporaryPath === undefined) return
     await output.close()
     output = undefined
-    const files = previewSegmentFiles(directory, segment)
+    const files = previewSegmentFiles(directory, segment, layout)
     await rename(temporaryPath, files.data)
     temporaryPath = undefined
     const indexTemporary = cache.temporaryPathFor(files.index)
@@ -242,12 +284,13 @@ export async function buildPreviewRun(run: PreviewRun): Promise<void> {
   }
 
   async function append(picture: Buffer): Promise<void> {
-    temporaryPath ??= cache.temporaryPathFor(previewSegmentFiles(directory, segment).data)
+    const files = previewSegmentFiles(directory, segment, layout)
+    temporaryPath ??= cache.temporaryPathFor(files.data)
     output ??= await open(temporaryPath, 'w')
     await output.write(picture)
     locations.push({ offset: writtenBytes, length: picture.length })
     writtenBytes += picture.length
-    run.onFrame({ directory, segment, dataPath: temporaryPath, locations })
+    run.onFrame({ index: files.index, dataPath: temporaryPath, locations })
     if (locations.length === layout.framesPerSegment) await finishSegment()
   }
 

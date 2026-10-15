@@ -1,5 +1,6 @@
 import type { ExportEncoder, ExportFormat, ExportPreset, ExportQuality } from './exportPresets.js'
 import type { MediaRef, Project } from './project.js'
+import type { AppSettings, MediaSettings } from './settings.js'
 import type { FrameRate } from './time.js'
 
 export type VideoInfo = {
@@ -77,6 +78,13 @@ export type AudioStretch = {
 }
 
 // A part of a media file the timeline uses, and where it plays, so the media process prepares what is nearest the playhead first.
+// A fast clip shows only some frames of its source: those at `phase + k * step` ticks after the source's first frame, for whole k.
+// Such a clip gets a preview copy of just those frames.
+export type Cadence = {
+  step: number
+  phase: number
+}
+
 export type WantedRange = {
   mediaId: string
   use: 'picture' | 'sound'
@@ -86,6 +94,7 @@ export type WantedRange = {
   sourceStart: number
   speedPercent: number
   isLooping: boolean
+  cadence?: Cadence
 }
 
 export type Wanted = {
@@ -142,6 +151,18 @@ export type MediaClient = {
   want(wanted: Wanted): Promise<void>
   waveform(mediaId: string): Promise<WaveformLevel[] | undefined>
   saveProject(path: string, project: Project): Promise<void>
+  cacheUsage(): Promise<CacheUsage>
+  // Removes every cached copy no build is writing; what the timeline needs is made again.
+  clearCache(): Promise<void>
+}
+
+export type CacheUsage = {
+  usedBytes: number
+  limitBytes: number
+  // What this project's copies would take, from the size of those already made; 0 until one is.
+  neededBytes: number
+  // Free space on the disk the cache is on.
+  freeBytes: number
 }
 
 export type MediaRequest =
@@ -167,6 +188,8 @@ export type MediaRequest =
   | { method: 'want'; wanted: Wanted }
   | { method: 'waveform'; mediaId: string }
   | { method: 'saveProject'; path: string; project: Project }
+  | { method: 'cacheUsage' }
+  | { method: 'clearCache' }
 
 export type MediaMessage = { id: number; request: MediaRequest } | { abort: number }
 
@@ -175,9 +198,10 @@ export type MediaReply = { id: number; result: unknown } | { id: number; error: 
 type MediaProcessSetup = {
   ffmpegDirectory: string
   cacheDirectory: string
+  settings: MediaSettings
 }
 
-export type MediaProcessCommand = { type: 'setup'; setup: MediaProcessSetup } | { type: 'connect' }
+export type MediaProcessCommand = { type: 'setup'; setup: MediaProcessSetup } | { type: 'connect' } | { type: 'settings'; settings: MediaSettings }
 
 export type MediaProcessReport = { type: 'versions'; ffmpeg: string; ffprobe: string }
 
@@ -235,6 +259,7 @@ export type MenuAction =
   | 'toggle-library'
   | 'toggle-properties'
   | 'toggle-timeline'
+  | 'toggle-debug'
   | 'preview-mode'
   | 'settings'
 
@@ -248,6 +273,7 @@ export type HostCommand =
   | { type: 'menu'; action: MenuAction }
   // macOS reports that memory is short (or no longer is): the caches of the window shrink, or grow back.
   | { type: 'memory-pressure'; isUnderPressure: boolean }
+  | { type: 'settings'; settings: AppSettings }
 
 // `loadFrom` is the file to read (the project, or its recovery file after a crash); `path` is where Save writes.
 export type DocumentInfo = {
@@ -268,6 +294,24 @@ export type DocumentState = {
 
 export type UnsavedChoice = 'save' | 'discard' | 'cancel'
 
+// A frame of the editor window that took over 50 ms, and the scripts that ran in it.
+export type SlowFrame = {
+  durationMs: number
+  blockingMs: number
+  scripts: { invoker: string; functionName: string; sourceUrl: string; durationMs: number }[]
+}
+
+// What the debug panel tells about the app and the Mac it runs on.
+export type DebugSystemInfo = {
+  appVersion: string
+  // Electron, Chromium, FFmpeg and FFprobe, once the media process has reported them.
+  versions: string[]
+  macOS: string
+  cpu: string
+  totalMemoryBytes: number
+  // The app and every process it started, together; undefined when macOS could not tell.
+  footprintBytes: number | undefined
+}
 
 export type Host = {
   openProjectDialog(): Promise<string | undefined>
@@ -289,4 +333,8 @@ export type Host = {
   closeDocument(): void
   discardRecovery(): void
   setMenuShortcuts(shortcuts: MenuShortcuts): void
+  reportSlowFrame(frame: SlowFrame): void
+  debugInfo(): Promise<DebugSystemInfo>
+  settings(): Promise<AppSettings>
+  setSettings(settings: AppSettings): void
 }

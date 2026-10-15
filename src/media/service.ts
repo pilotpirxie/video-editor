@@ -1,7 +1,7 @@
 import type { MessagePortMain } from 'electron'
 import { describeError, logError } from '../shared/log.js'
 import type { MediaMessage, MediaProcessCommand, MediaProcessReport, MediaReply, MediaRequest } from '../shared/mediaProtocol.js'
-import { CACHE_LIMIT_BYTES } from '../shared/limits.js'
+import { cacheLimitBytes, unusedMediaMs, type MediaSettings } from '../shared/settings.js'
 import { createDiskCache, type DiskCache } from './cache.js'
 import { createFfmpegRunner, type Binary, type FfmpegRunner } from './ffmpeg.js'
 import { MediaError, MediaSession } from './mediaStore.js'
@@ -10,7 +10,7 @@ const VERSION_TIMEOUT_MS = 10_000
 const VERSION_PATTERN = /version (?<version>\d[\w.]*)/
 
 function isCommand(value: unknown): value is MediaProcessCommand {
-  return typeof value === 'object' && value !== null && 'type' in value && (value.type === 'setup' || value.type === 'connect')
+  return typeof value === 'object' && value !== null && 'type' in value && (value.type === 'setup' || value.type === 'connect' || value.type === 'settings')
 }
 
 function isMessage(value: unknown): value is MediaMessage {
@@ -69,6 +69,10 @@ function perform(session: MediaSession, request: MediaRequest, signal: AbortSign
       return session.waveform(request.mediaId)
     case 'saveProject':
       return session.saveProject(request.path, request.project)
+    case 'cacheUsage':
+      return session.cacheUsage()
+    case 'clearCache':
+      return session.clearCache()
     default:
       return unknownRequest(request)
   }
@@ -104,13 +108,15 @@ function listen(port: MessagePortMain, session: MediaSession, onClose: () => voi
 }
 
 // A window's engine worker and its UI thread each hold a port; both talk to the same session, so media the UI imports is known to the engine.
-function serve(ports: readonly MessagePortMain[], ffmpeg: FfmpegRunner, cache: DiskCache): void {
-  const session = new MediaSession(ffmpeg, cache)
+function serve(ports: readonly MessagePortMain[], ffmpeg: FfmpegRunner, cache: DiskCache, settings: () => MediaSettings, sessions: Set<MediaSession>): void {
+  const session = new MediaSession(ffmpeg, cache, undefined, settings)
+  sessions.add(session)
   let isShutDown = false
 
   async function shutDown(): Promise<void> {
     if (isShutDown) return
     isShutDown = true
+    sessions.delete(session)
     try {
       await session.dispose()
     } catch (error) {
@@ -142,6 +148,18 @@ async function reportVersions(ffmpeg: FfmpegRunner): Promise<void> {
 function start(): void {
   let ffmpeg: FfmpegRunner | undefined
   let cache: DiskCache | undefined
+  let settings: MediaSettings | undefined
+  const sessions = new Set<MediaSession>()
+
+  async function applySettings(next: MediaSettings): Promise<void> {
+    settings = next
+    for (const session of sessions) session.settingsChanged()
+    try {
+      await cache?.setLimit(cacheLimitBytes(next))
+    } catch (error) {
+      logError('Could not bring the cache to its new limit', error)
+    }
+  }
 
   // Background work that fails without a handler is a bug to log, not a reason to stop the media of every window. An uncaught exception still ends the process; the main process records its last words.
   process.on('unhandledRejection', (reason) => logError('A media task failed and nothing handled it', reason))
@@ -150,19 +168,26 @@ function start(): void {
     const command: unknown = event.data
     if (!isCommand(command)) return
 
+    if (command.type === 'settings') {
+      void applySettings(command.settings)
+      return
+    }
+
     if (command.type === 'setup') {
+      settings = command.setup.settings
       ffmpeg = createFfmpegRunner(command.setup.ffmpegDirectory)
-      cache = createDiskCache(command.setup.cacheDirectory, CACHE_LIMIT_BYTES)
+      cache = createDiskCache(command.setup.cacheDirectory, cacheLimitBytes(settings), unusedMediaMs(settings))
       process.on('exit', ffmpeg.killAll)
       void reportVersions(ffmpeg)
       return
     }
 
-    if (event.ports.length === 0 || ffmpeg === undefined || cache === undefined) {
+    if (event.ports.length === 0 || ffmpeg === undefined || cache === undefined || settings === undefined) {
       logError('A window connected before the media process was set up', new Error('missing setup or port'))
       return
     }
-    serve(event.ports, ffmpeg, cache)
+    const current = settings
+    serve(event.ports, ffmpeg, cache, () => settings ?? current, sessions)
   })
 }
 

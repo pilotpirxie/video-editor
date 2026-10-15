@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import { logError } from '../shared/log.js'
+import type { SlowFrame } from '../shared/mediaProtocol.js'
 import { createSession } from './document.js'
 import { Editor } from './Editor.js'
 import { Harness } from './Harness.js'
@@ -31,6 +32,36 @@ function rootContainer(): HTMLElement {
   return container
 }
 
+function textOf(script: PerformanceEntry, field: string): string {
+  if (!(field in script)) return ''
+  return String(Reflect.get(script, field))
+}
+
+function scriptsOf(entry: PerformanceEntry): SlowFrame['scripts'] {
+  if (!('scripts' in entry) || !Array.isArray(entry.scripts)) return []
+  const scripts: SlowFrame['scripts'] = []
+  for (const script of entry.scripts) {
+    if (!(script instanceof PerformanceEntry)) continue
+    scripts.push({
+      invoker: textOf(script, 'invoker'),
+      functionName: textOf(script, 'sourceFunctionName'),
+      sourceUrl: textOf(script, 'sourceURL'),
+      durationMs: Math.round(script.duration),
+    })
+  }
+  return scripts
+}
+
+// Every frame of the editor that took over 50 ms goes to a log on this Mac, with the scripts that held it, so stalls on real projects can be found.
+function logSlowFrames(): void {
+  new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) {
+      const blockingMs = 'blockingDuration' in entry && typeof entry.blockingDuration === 'number' ? entry.blockingDuration : 0
+      window.host.reportSlowFrame({ durationMs: Math.round(entry.duration), blockingMs: Math.round(blockingMs), scripts: scriptsOf(entry) })
+    }
+  }).observe({ type: 'long-animation-frame' })
+}
+
 async function runEditor(): Promise<void> {
   // The engine must listen for its media port before the page finishes loading, so it starts before anything is awaited or rendered.
   const preview = document.createElement('canvas')
@@ -38,11 +69,13 @@ async function runEditor(): Promise<void> {
   preview.setAttribute('aria-label', 'Preview')
   const engine = startEngine(preview)
   const media = createMediaClient(await engine.uiMediaPort)
-  const session = createSession(engine, media, await window.host.documentInfo())
+  const [info, settings] = await Promise.all([window.host.documentInfo(), window.host.settings()])
+  const session = createSession(engine, media, info, settings)
   engine.onEvent((event) => {
     if (event.type === 'error') session.store.notify(event.message)
   })
   createRoot(rootContainer(), { onUncaughtError: logUncaughtError }).render(<Editor session={session} preview={preview} />)
+  logSlowFrames()
   await session.open()
 }
 

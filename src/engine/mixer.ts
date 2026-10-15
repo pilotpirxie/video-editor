@@ -12,6 +12,9 @@ const UNITY_GAIN = 1 << 20
 const LIMITER_REACH = 2 * LIMITER_WINDOW
 const AUDIO_CHUNK_SAMPLES = SAMPLE_RATE
 const BYTES_PER_STEREO_SAMPLE = CHANNELS * Float32Array.BYTES_PER_ELEMENT
+// Sounds read at the same time: after a seek their reads wait on the media process together instead of one after another,
+// and a project with hundreds of sounds at one moment still holds only this many windows of samples.
+const READS_IN_FLIGHT = 8
 
 // With a `stretch`, the samples are counted in the sound as it is at that speed.
 export type AudioReader = (mediaId: string, firstSample: number, sampleCount: number, stretch?: AudioStretch) => Promise<Float32Array | undefined>
@@ -161,12 +164,16 @@ export async function mix(project: Project, media: MediaStates, firstSample: num
   const sounds: Sounding[] = []
   const range = { from: rangeFirst * TICKS_PER_SAMPLE, to: (rangeFirst + rangeCount) * TICKS_PER_SAMPLE }
   collectSounds(project.tracks, media, range, sounds)
-  for (const sounding of sounds) {
-    const contribution = await contributionOf(sounding, rangeFirst, readAudio)
-    if (contribution === undefined) continue
-    const start = contribution.offset * CHANNELS
-    for (let index = 0; index < contribution.samples.length; index++) {
-      mixed[start + index] = (mixed[start + index] ?? 0) + (contribution.samples[index] ?? 0)
+  for (let batchStart = 0; batchStart < sounds.length; batchStart += READS_IN_FLIGHT) {
+    const batch = sounds.slice(batchStart, batchStart + READS_IN_FLIGHT)
+    const contributions = await Promise.all(batch.map((sounding) => contributionOf(sounding, rangeFirst, readAudio)))
+    // Added in the order of the sounds, so the sum is the same to the last bit however the reads finished.
+    for (const contribution of contributions) {
+      if (contribution === undefined) continue
+      const start = contribution.offset * CHANNELS
+      for (let index = 0; index < contribution.samples.length; index++) {
+        mixed[start + index] = (mixed[start + index] ?? 0) + (contribution.samples[index] ?? 0)
+      }
     }
   }
   return limit(mixed, sampleCount)

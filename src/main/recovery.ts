@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
+import { temporaryPathFor } from '../shared/exportPresets.js'
 import { logError } from '../shared/log.js'
 
 const RECOVERY_EXTENSION = '.json'
 const PROJECT_PATH_EXTENSION = '.path'
 const EXPORT_SNAPSHOT_EXTENSION = '.export'
+const EXPORT_OUTPUT_EXTENSION = '.output'
 
 export type FoundRecovery = {
   recoveryPath: string
@@ -50,6 +52,29 @@ export async function discardExportSnapshot(path: string, directory: string): Pr
   if (isOurs) await discardRecoveredWork(path)
 }
 
+// Notes where a running export writes, so the unfinished file of one that a crash cuts short is removed at the next launch. Returns the note.
+export async function rememberExportOutput(directory: string, outputPath: string): Promise<string> {
+  const notePath = join(directory, `${randomUUID()}${EXPORT_OUTPUT_EXTENSION}`)
+  try {
+    await mkdir(directory, { recursive: true })
+    await writeFile(notePath, outputPath)
+  } catch (error) {
+    logError('Could not note where an export writes', error, { outputPath })
+  }
+  return notePath
+}
+
+// Only the unfinished file is removed, never the finished export or anything else the note might name.
+async function removeUnfinishedExport(notePath: string): Promise<void> {
+  try {
+    const outputPath = await readFile(notePath, 'utf8')
+    if (isAbsolute(outputPath)) await rm(temporaryPathFor(outputPath), { force: true })
+  } catch (error) {
+    if (!isMissingFile(error)) logError('Could not remove what an interrupted export left', error, { notePath })
+  }
+  await discardRecoveredWork(notePath)
+}
+
 // The recovery file itself is a plain project file, so this note is the only record of which project it belongs to.
 export async function rememberProjectPath(recoveryPath: string, projectPath: string): Promise<void> {
   try {
@@ -88,6 +113,9 @@ export async function findRecoveries(directory: string): Promise<FoundRecovery[]
   for (const name of names) {
     // No export is running at launch, so a copy an interrupted one left behind is of no use any more.
     if (name.endsWith(EXPORT_SNAPSHOT_EXTENSION)) await discardRecoveredWork(join(directory, name))
+    if (name.endsWith(EXPORT_OUTPUT_EXTENSION)) await removeUnfinishedExport(join(directory, name))
+    // A note whose recovery file is gone belonged to a window that closed without unsaved work, or never had any.
+    if (name.endsWith(PROJECT_PATH_EXTENSION) && !names.includes(name.slice(0, -PROJECT_PATH_EXTENSION.length))) await discardRecoveredWork(join(directory, name))
     if (!name.endsWith(RECOVERY_EXTENSION)) continue
     const recoveryPath = join(directory, name)
     const writtenAt = await modifiedAt(recoveryPath)

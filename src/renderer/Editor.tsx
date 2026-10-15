@@ -3,7 +3,9 @@ import { clampLayout, parseLayout, widestSidebar, type Layout } from '../editor/
 import { actionFor, type ShortcutAction } from '../editor/shortcuts.js'
 import type { Size } from '../shared/exportPresets.js'
 import { describeErrorAsSentence, logError } from '../shared/log.js'
+import { CacheLimitDialog } from './AppSettings.js'
 import { CanvasPanel } from './CanvasPanel.js'
+import { DebugInfo } from './DebugInfo.js'
 import { SessionContext, useEditorState, useSession } from './context.js'
 import { EffectProperties } from './EffectProperties.js'
 import { ExportDialog, ExportProgressDialog } from './ExportDialog.js'
@@ -337,6 +339,11 @@ function SettingsWhenOpen(): ReactElement | undefined {
   return isOpen ? <ShortcutSettings /> : undefined
 }
 
+function CacheOfferWhenAsked(): ReactElement | undefined {
+  const offer = useEditorState((state) => state.cacheOffer)
+  return offer === undefined ? undefined : <CacheLimitDialog {...offer} />
+}
+
 // First the choices, then, from the moment the export starts until its result has been read, how it is going.
 function ExportDialogWhenOpen(): ReactElement | undefined {
   const isChoosing = useEditorState((state) => state.isExportDialogOpen)
@@ -349,6 +356,7 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
   const rootRef = useRef<HTMLDivElement>(null)
   // The session is provided below this component, so its store is read directly.
   const isPreviewing = useSyncExternalStore(session.store.subscribe, () => session.store.getState().isPreviewing)
+  const isDebugShown = useSyncExternalStore(session.store.subscribe, () => session.store.getState().isDebugShown)
   const isOpening = useSyncExternalStore(session.store.subscribe, () => session.store.getState().openingName !== undefined)
   const [stored, setStored] = useState<Layout>(storedLayout)
   const [size, setSize] = useState<Size>(windowSize)
@@ -422,6 +430,7 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
           <PanelBoundary panel="properties">
             <Properties />
             <EffectProperties />
+            {isDebugShown && <DebugInfo />}
           </PanelBoundary>
         </aside>
         <Splitter label="Resize timeline" testId="split-timeline" sizeKey="timelineHeight" size={layout.timelineHeight} isHidden={layout.isTimelineCollapsed} growth={-1} onPreview={showSize} onResize={resize} />
@@ -434,6 +443,7 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
         <PanelBoundary panel="dialog">
           <ExportDialogWhenOpen />
           <SettingsWhenOpen />
+          <CacheOfferWhenAsked />
         </PanelBoundary>
       </div>
     </SessionContext>

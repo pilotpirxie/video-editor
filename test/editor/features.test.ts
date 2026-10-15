@@ -757,6 +757,31 @@ describe('export dialog', () => {
   })
 })
 
+describe('debug info and settings', () => {
+  it('keeps clips end to end when they get faster, shows the debug text from the View menu and keeps settings on disk', async () => {
+    const report = await uiTest('debug-and-settings', ['--media', MEDIA_DIRECTORY, '--out', join(scratch, 'debug-and-settings')])
+
+    expect(report.debugWithoutSelection).toMatch(/^Playback \S+ \| Electron \S+ \| Chromium \S+ \| FFmpeg /)
+    expect(report.debugWithoutSelection).toContain('3 clips')
+    expect(report.debugWithoutSelection).not.toContain('Selected')
+    expect(report.debugWithSelection).toContain('Selected 3')
+    expect(report.debugWithSelection).toContain('h264.mp4')
+
+    // The video and the sound play twice as fast, and what follows them on the track closes up.
+    const clips = projectIn(report, 'faster').tracks[0]?.clips ?? []
+    const timing = clips.map((clip) => ({ type: clip.type, start: clip.start, duration: clip.duration }))
+    expect(timing).toEqual([
+      { type: 'video', start: 0, duration: SECOND },
+      { type: 'audio', start: SECOND, duration: SECOND },
+      { type: 'image', start: 2 * SECOND, duration: 5 * SECOND },
+    ])
+
+    expect(report.cacheUsed).toMatch(/^Using \d+\.\d GB$/)
+    expect(report.savedSnapRange).toBe(20)
+    expect(report.restoredSnapRange).toBe(12)
+  })
+})
+
 describe('quick edits', () => {
   it('starts with six tracks, picks files by box and Select All, picks the part after a cut, sets the speed from the clip menu and grabs a clip off the canvas', async () => {
     const report = await uiTest('quick-edits', ['--media', MEDIA_DIRECTORY, '--out', join(scratch, 'quick-edits')])

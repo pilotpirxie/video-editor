@@ -59,7 +59,7 @@ FFprobe binaries into `vendor/ffmpeg` and checks their SHA-256.
 | `npm run test:acceptance` | Builds a ten-minute tutorial through the editor window and exports it at 1080p; takes several minutes and is not part of `npm test` |
 | `npm run test:stability` | An eight-hour random session of edits, playback, undo, saves and exports, and every broken test file imported; `STABILITY_HOURS` shortens it and `STABILITY_SEED` repeats a session a failure printed. Run by hand, not part of `npm test` |
 | `npm run test:extremes` | 120p and 4K projects, an 8K source, 100× speed, 4,096 clips over twenty hours, §12's heaviest playback, CPU at rest and the installed size (after `npm run dist`). Run by hand on the reference Mac, not part of `npm test` |
-| `npm run dist` | Builds `release/Video Editor-<version>-arm64.dmg` |
+| `npm run dist` | Builds `release/Playback-<version>-arm64.dmg` |
 
 `UPDATE_GOLDEN=1 npm run test:engine` rewrites the golden images in `test/golden`.
 

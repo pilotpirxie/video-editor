@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactElement, type SyntheticEvent } from 'react'
 import { DEFAULT_BINDINGS, MAX_KEYS, SHORTCUT_ACTIONS, bindingOf, conflictsOf, hintOf, isSameBinding, reservedBy, type Binding, type ShortcutAction } from '../editor/shortcuts.js'
+import { DEFAULT_SETTINGS } from '../shared/settings.js'
 import { useSession } from './context.js'
+import { EditingSettings, PerformanceSettings } from './AppSettings.js'
 import { IconButton } from './icons.js'
 
 const SECTIONS = ['Playback', 'Timeline', 'Editing', 'File and view'] as const
+const TABS = ['Performance', 'Editing', 'Shortcuts'] as const
+
+type SettingsTab = (typeof TABS)[number]
 
 // The key of an action that is waiting for its new keys: an existing one, or, at the end of the list, a new one.
 type Recording = {
@@ -15,13 +20,14 @@ function nameOf(action: ShortcutAction): string {
   return SHORTCUT_ACTIONS.find((entry) => entry.action === action)?.name ?? action
 }
 
-// Every action that can be given keys, with up to two keys each. A key is changed by pressing its button and then the new keys; changes count at once and are kept on this Mac.
+// The Settings dialog. On its Shortcuts tab every action can be given up to two keys; a key is changed by pressing its button and then the new keys. Changes count at once and are kept on this Mac.
 export function ShortcutSettings(): ReactElement {
-  const { store, shortcuts } = useSession()
+  const { store, shortcuts, changeSettings } = useSession()
   const bindings = useSyncExternalStore(shortcuts.subscribe, shortcuts.get)
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [recording, setRecording] = useState<Recording | undefined>(undefined)
   const [refusal, setRefusal] = useState<{ action: ShortcutAction; text: string } | undefined>(undefined)
+  const [tab, setTab] = useState<SettingsTab>('Performance')
   // A key that was just recorded is also let go: Space and Enter would then press the focused button and start recording again.
   const isReleasingRef = useRef(false)
   const conflicts = conflictsOf(bindings)
@@ -30,6 +36,11 @@ export function ShortcutSettings(): ReactElement {
     dialogRef.current?.showModal()
   }, [])
 
+  function restoreDefaults(): void {
+    shortcuts.set(DEFAULT_BINDINGS)
+    changeSettings(DEFAULT_SETTINGS)
+  }
+
   function setKeys(action: ShortcutAction, keys: readonly Binding[]): void {
     shortcuts.set({ ...bindings, [action]: keys })
   }
@@ -37,6 +48,20 @@ export function ShortcutSettings(): ReactElement {
   function record(next: Recording | undefined): void {
     setRecording(next)
     setRefusal(undefined)
+  }
+
+  // A key waiting for its new keys would otherwise take the next press on another tab.
+  function showTab(next: SettingsTab): void {
+    setTab(next)
+    record(undefined)
+  }
+
+  function onTabKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+    event.preventDefault()
+    const direction = event.key === 'ArrowRight' ? 1 : -1
+    const next = TABS[(TABS.indexOf(tab) + direction + TABS.length) % TABS.length]
+    if (next !== undefined) showTab(next)
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDialogElement>): void {
@@ -97,41 +122,62 @@ export function ShortcutSettings(): ReactElement {
     <dialog ref={dialogRef} className="dialog settings" aria-labelledby="settings-title" data-testid="settings-dialog" onKeyDown={onKeyDown} onKeyUp={onKeyUp} onCancel={onCancel} onClose={() => store.showSettings(false)}>
       <div className="dialog-form">
         <h2 className="dialog-title" id="settings-title">
-          Keyboard Shortcuts
+          Settings
         </h2>
-        <p className="dialog-summary">Press a key to change it, then press the new keys. Two actions can share keys, but only the first in the list answers to them.</p>
-        <div className="shortcut-list">
-          {SECTIONS.map((section) => (
-            <section key={section} aria-label={section}>
-              <h3 className="field-label">{section}</h3>
-              {SHORTCUT_ACTIONS.filter((entry) => entry.section === section).map(({ action, name }) => {
-                const keys = bindings[action]
-                const shared = conflicts.get(action)
-                const slots = keys.length < MAX_KEYS ? [...keys, undefined] : keys
-                return (
-                  <div key={action} className="shortcut-row" data-testid={`shortcut-${action}`}>
-                    <span className="shortcut-name">
-                      {name}
-                      {shared !== undefined && (
-                        <span className="badge warning" data-testid={`shortcut-${action}-conflict`}>
-                          Also {shared.map(nameOf).join(', ')}
-                        </span>
-                      )}
-                    </span>
-                    <span className="shortcut-keys">{slots.map((binding, slot) => keyButton(action, slot, binding))}</span>
-                    {refusal?.action === action && (
-                      <p className="hint" role="alert">
-                        {refusal.text}
-                      </p>
-                    )}
-                  </div>
-                )
-              })}
-            </section>
+        <div className="tabs" role="tablist" aria-label="Settings" onKeyDown={onTabKeyDown}>
+          {TABS.map((name) => (
+            <button
+              key={name}
+              type="button"
+              role="tab"
+              className="tab focusable"
+              aria-selected={tab === name}
+              tabIndex={tab === name ? 0 : -1}
+              data-testid={`settings-tab-${name.toLowerCase()}`}
+              onClick={() => showTab(name)}
+            >
+              {name}
+            </button>
           ))}
         </div>
+        <div className="settings-body" role="tabpanel" aria-label={tab}>
+          {tab === 'Performance' && <PerformanceSettings />}
+          {tab === 'Editing' && <EditingSettings />}
+          {tab === 'Shortcuts' && (
+            <div className="shortcut-list">
+              {SECTIONS.map((section) => (
+                <section key={section} aria-label={section}>
+                  <h3 className="field-label">{section}</h3>
+                  {SHORTCUT_ACTIONS.filter((entry) => entry.section === section).map(({ action, name }) => {
+                    const keys = bindings[action]
+                    const shared = conflicts.get(action)
+                    const slots = keys.length < MAX_KEYS ? [...keys, undefined] : keys
+                    return (
+                      <div key={action} className="shortcut-row" data-testid={`shortcut-${action}`}>
+                        <span className="shortcut-name">
+                          {name}
+                          {shared !== undefined && (
+                            <span className="badge warning" data-testid={`shortcut-${action}-conflict`}>
+                              Also {shared.map(nameOf).join(', ')}
+                            </span>
+                          )}
+                        </span>
+                        <span className="shortcut-keys">{slots.map((binding, slot) => keyButton(action, slot, binding))}</span>
+                        {refusal?.action === action && (
+                          <p className="hint" role="alert">
+                            {refusal.text}
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </section>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="dialog-buttons">
-          <button type="button" className="button" data-testid="shortcuts-defaults" onClick={() => shortcuts.set(DEFAULT_BINDINGS)}>
+          <button type="button" className="button" data-testid="shortcuts-defaults" onClick={restoreDefaults}>
             Restore Defaults
           </button>
           <button type="button" className="button primary" data-testid="settings-done" onClick={() => dialogRef.current?.close()}>

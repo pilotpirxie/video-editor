@@ -8,8 +8,8 @@ const NEW_TRACK = { id: 'notes', name: 'Track 2' }
 
 function sample(): Project {
   const project = projectOf([track('t1', [videoClip('a', 0, 10 * SECOND)])])
-  const withCallout = addCallout(project, { clipId: 'callout', start: SECOND, newTrack: NEW_TRACK })
-  return addArrow(withCallout, { clipId: 'arrow', start: SECOND, newTrack: { id: 'arrows', name: 'Track 3' }, kind: 'arrow' })
+  const withCallout = addCallout(project, { clipId: 'callout', start: SECOND, duration: 5 * SECOND, newTrack: NEW_TRACK })
+  return addArrow(withCallout, { clipId: 'arrow', start: SECOND, duration: 5 * SECOND, newTrack: { id: 'arrows', name: 'Track 3' }, kind: 'arrow' })
 }
 
 describe('adding annotations', () => {
@@ -22,14 +22,14 @@ describe('adding annotations', () => {
   })
 
   it('adds a line as an arrow without heads', () => {
-    const project = addArrow(projectOf([]), { clipId: 'line', start: 0, newTrack: NEW_TRACK, kind: 'line' })
+    const project = addArrow(projectOf([]), { clipId: 'line', start: 0, duration: 5 * SECOND, newTrack: NEW_TRACK, kind: 'line' })
     expect(clipOf(project, 'line')).toMatchObject({ startHead: 'none', endHead: 'none' })
   })
 
   it('adds every kind where it was dropped: on the chosen track when it is free, with its middle at the chosen point', () => {
     const project = projectOf([track('t1', [videoClip('a', 0, 2 * SECOND)]), track('t2', [])])
     for (const kind of ANNOTATION_KINDS) {
-      const dropped = addAnnotation(project, kind, { clipId: 'note', start: 3 * SECOND, trackIndex: 0, newTrack: NEW_TRACK, centre: { x: 200, y: 100 } })
+      const dropped = addAnnotation(project, kind, { clipId: 'note', start: 3 * SECOND, duration: 5 * SECOND, trackIndex: 0, newTrack: NEW_TRACK, centre: { x: 200, y: 100 } })
       expect(clipIds(dropped)).toEqual([['a', 'note'], []])
       expect(clipOf(dropped, 'note')).toMatchObject({ start: 3 * SECOND, transform: { x: 200, y: 100 } })
       reopened(dropped)
@@ -38,7 +38,7 @@ describe('adding annotations', () => {
 
   it('goes on a new track above the chosen one when its place there is taken', () => {
     const project = projectOf([track('t1', [videoClip('a', 0, 10 * SECOND)]), track('t2', [videoClip('b', 20 * SECOND, SECOND)])])
-    expect(clipIds(addAnnotation(project, 'blur', { clipId: 'note', start: SECOND, trackIndex: 0, newTrack: NEW_TRACK }))).toEqual([['a'], ['note'], ['b']])
+    expect(clipIds(addAnnotation(project, 'blur', { clipId: 'note', start: SECOND, duration: 5 * SECOND, trackIndex: 0, newTrack: NEW_TRACK }))).toEqual([['a'], ['note'], ['b']])
   })
 })
 

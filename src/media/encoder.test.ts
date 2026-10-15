@@ -5,9 +5,9 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { bundledFfmpeg } from '../../test/helpers.js'
 import { createDiskCache } from './cache.js'
-import { pixelLayoutOf, type ExportFormat, type Size } from '../shared/exportPresets.js'
-import { CACHE_LIMIT_BYTES } from '../shared/limits.js'
-import { EncoderError, startEncoder, temporaryPathFor } from './encoder.js'
+import { pixelLayoutOf, temporaryPathFor, type ExportFormat, type Size } from '../shared/exportPresets.js'
+import { DEFAULT_SETTINGS, cacheLimitBytes } from '../shared/settings.js'
+import { EncoderError, startEncoder } from './encoder.js'
 import { MediaSession } from './mediaStore.js'
 import { probeMedia } from './probe.js'
 
@@ -106,7 +106,7 @@ describe('startEncoder', () => {
 describe('MediaSession exports', () => {
   it('removes a running export when its window goes away', async () => {
     const path = join(scratch, 'abandoned.mp4')
-    const session = new MediaSession(ffmpeg, createDiskCache(join(scratch, 'cache'), CACHE_LIMIT_BYTES))
+    const session = new MediaSession(ffmpeg, createDiskCache(join(scratch, 'cache'), cacheLimitBytes(DEFAULT_SETTINGS)))
     const jobId = await session.exportStart({ path, ...SIZE, ...DEFAULTS })
     for (let frame = 0; frame < 10; frame++) await session.exportWrite(jobId, grayFrame(64), new Float32Array(SAMPLES_PER_FRAME * 2))
     await session.dispose()

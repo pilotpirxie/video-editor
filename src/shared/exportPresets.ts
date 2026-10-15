@@ -78,6 +78,11 @@ export function pixelLayoutOf(format: ExportFormat): PixelLayout {
   return format === 'mp4' || format === 'webm' ? 'yuv420p' : 'rgba'
 }
 
+// The name an export is written under until it is complete.
+export function temporaryPathFor(path: string): string {
+  return `${path}.part`
+}
+
 // How an MP4 is encoded: by x264, which makes the smallest files, or by the Mac's media engine, which is much faster and uses little memory.
 export const EXPORT_ENCODERS = ['x264', 'hardware'] as const
 
