@@ -1,7 +1,7 @@
 import { ANNOTATION_NAMES, addAnnotation, type AnnotationKind } from '../editor/annotations.js'
 import { deleteZoom, setViewAt, zoomIndexAt } from '../editor/camera.js'
 import { copyClips, deleteClips, pasteClips, rippleDelete, spanEnd, type Clipboard } from '../editor/clipboard.js'
-import { allClips, isVisual, locateClip, nearestEdit, nextTrackName, unlockedClipIds, type NewTrack } from '../editor/clips.js'
+import { allClips, isVisual, locateClip, nearestEdit, nextTrackName, trackAboveAll, unlockedClipIds, type NewTrack } from '../editor/clips.js'
 import { addEffect, takesEffects } from '../editor/effects.js'
 import { groupClips, ungroupClips } from '../editor/groups.js'
 import { dropMedia, placeableMedia } from '../editor/place.js'
@@ -20,9 +20,9 @@ export type Actions = {
   selectAll(): void
   canSeparateAudio(): boolean
   separateAudio(): void
-  // Adds one at the playhead on a new layer above everything else, with its middle at `centre` (the middle of the canvas when left out).
+  // Adds one at the playhead on the layer above everything else (see `trackAboveAll`), with its middle at `centre` (the middle of the canvas when left out).
   addAnnotation(kind: AnnotationKind, centre?: { x: number; y: number }): void
-  // Adds the files that can be placed at the playhead, one after another on a new layer above everything else.
+  // Adds the files that can be placed at the playhead, one after another on the layer above everything else.
   addMedia(mediaIds: readonly string[]): void
   group(): void
   ungroup(): void
@@ -80,7 +80,11 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       newIds.set(clipId, crypto.randomUUID())
       addMemberIds(locateClip(project, clipId)?.clip, newIds)
     }
-    if (splitIds.length > 0) store.apply(`Split ${plural(splitIds.length, 'Clip')}`, (current) => splitClips(current, cut, newIds))
+    if (splitIds.length === 0) return
+    store.apply(`Split ${plural(splitIds.length, 'Clip')}`, (current) => splitClips(current, cut, newIds))
+    // People edit from left to right, so a selected clip that was cut hands its selection to the part after the cut.
+    const laterParts = new Map(splitIds.map((clipId) => [clipId, newIds.get(clipId) ?? clipId]))
+    store.select(store.getState().selection.map((clipId) => laterParts.get(clipId) ?? clipId))
   }
 
   function pasteAt(copied: Clipboard, at: number, label: string): void {
@@ -150,7 +154,8 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       store.apply('Separate Video and Audio', (current) => separateAudio(current, mediaStates, newIds, newTracks))
     },
     addAnnotation(kind, centre) {
-      const added = { clipId: crypto.randomUUID(), start: playheadFrame(), newTrack: { id: crypto.randomUUID(), name: nextTrackName(store.getState().project) }, centre }
+      const { project } = store.getState()
+      const added = { clipId: crypto.randomUUID(), start: playheadFrame(), trackIndex: trackAboveAll(project), newTrack: { id: crypto.randomUUID(), name: nextTrackName(project) }, centre }
       store.apply(`Add ${ANNOTATION_NAMES[kind]}`, (current) => addAnnotation(current, kind, added))
       store.select([added.clipId])
       // New words open for typing at once, so the usual next step needs no extra click.
@@ -162,7 +167,7 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       if (media.length === 0) return
       const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
       const start = transport.position().time
-      store.apply(media.length === 1 ? 'Add Clip' : `Add ${media.length} Clips`, (current) => dropMedia(current, { media, start, trackIndex: current.tracks.length, newTrack }))
+      store.apply(media.length === 1 ? 'Add Clip' : `Add ${media.length} Clips`, (current) => dropMedia(current, { media, start, trackIndex: trackAboveAll(current), newTrack }))
       store.select(media.map((dropped) => dropped.clipId))
     },
     group() {

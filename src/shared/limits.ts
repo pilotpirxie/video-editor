@@ -6,6 +6,9 @@ export const MAX_SOURCE_DIMENSION = 4096
 
 export const TEXTURE_CACHE_BYTES = 128 * MEBIBYTE
 
+// The part of its usual size each cache of a window keeps while macOS reports memory pressure.
+export const UNDER_PRESSURE_SHARE = 0.25
+
 export const READ_AHEAD_FRAMES = 4
 
 export const AUDIO_QUEUE_SECONDS = 0.15

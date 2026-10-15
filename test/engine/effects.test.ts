@@ -189,6 +189,24 @@ describe('effects', () => {
     expectPixel(picture, 405, 300, WHITE, 1)
   })
 
+  it('tones each pixel with the colour effects as their settings say', async () => {
+    const tracks = [
+      [WHITE_GROUND],
+      tile('image-red.png', 'sepia', 100, 60, [{ type: 'sepia', amount: 1 }]),
+      tile('image-red.png', 'inverted', 300, 60, [{ type: 'invert', amount: 1 }]),
+      tile('image-red.png', 'tinted', 500, 60, [{ type: 'tint', color: '#3D7BE6', amount: 1 }]),
+      tile('image-red.png', 'vignetted', 300, 180, [{ type: 'vignette', amount: 1, size: 0 }]),
+    ]
+    const picture = await frameOf('colour-effects', tracks)
+    expectPixel(picture, 100, 60, { red: 100, green: 89, blue: 69 })
+    expectPixel(picture, 300, 60, { red: 0, green: 255, blue: 255 })
+    // The tint colour at the brightness of red.
+    expectPixel(picture, 500, 60, { red: 13, green: 26, blue: 49 })
+    // Clear in the middle, black in the corners.
+    expectPixel(picture, 300, 180, RED, 0)
+    expectPixel(picture, 300 + 76, 180 + 42, { red: 0, green: 0, blue: 0 })
+  })
+
   it('applies effects in their order: a border follows corners rounded before it and is cut by corners rounded after it', async () => {
     const corners: Effect = { type: 'roundedCorners', radius: 40 }
     const border: Effect = { type: 'border', width: 6, color: '#0000FF' }
@@ -208,7 +226,8 @@ describe('effects', () => {
   })
 
   it('matches the golden image of all effects', async () => {
-    const pictures = await renderFrames('16-effects', { via: 'paused', frames: [0] })
+    const pictures = await renderFrames('16-effects', { via: 'paused', frames: [0, 30] })
     await expectGolden(ffmpeg, 'effects-720p', pictureAt(pictures, 0))
+    await expectGolden(ffmpeg, 'effects-colour-720p', pictureAt(pictures, 1))
   })
 })

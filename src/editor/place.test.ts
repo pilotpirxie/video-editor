@@ -116,11 +116,20 @@ describe('dropMedia', () => {
     expect(clipIds(dropMedia(occupied, drop({ trackIndex: 1 })))).toEqual([['a'], ['dropped']])
   })
 
-  it('creates a track directly above when the space is occupied', () => {
-    const dropped = dropMedia(occupied, drop({ start: 2 * SECOND }))
-    expect(clipIds(dropped)).toEqual([['a'], ['dropped'], []])
+  it('uses the empty track directly above when the space is occupied', () => {
+    expect(clipIds(dropMedia(occupied, drop({ start: 2 * SECOND })))).toEqual([['a'], ['dropped']])
+  })
+
+  it('creates a track directly above when the space is occupied and the track above is in use, muted, hidden or locked', () => {
+    const busy = projectOf([track('t1', [videoClip('a', 0, 4 * SECOND)]), track('t2', [videoClip('b', 9 * SECOND, SECOND)])])
+    const dropped = dropMedia(busy, drop({ start: 2 * SECOND }))
+    expect(clipIds(dropped)).toEqual([['a'], ['dropped'], ['b']])
     expect(dropped.tracks[1]).toMatchObject({ id: 'new-track', name: 'Track', locked: false })
     reopened(dropped)
+    for (const flag of ['muted', 'hidden', 'locked'] as const) {
+      const set = projectOf([track('t1', [videoClip('a', 0, 4 * SECOND)]), track('t2', [], { [flag]: true })])
+      expect(clipIds(dropMedia(set, drop({ start: 2 * SECOND })))).toEqual([['a'], ['dropped'], []])
+    }
   })
 
   it('creates a track on top when dropped above all tracks, and never drops onto a locked track', () => {
@@ -148,9 +157,9 @@ describe('dropMedia', () => {
       reopened(dropped)
     })
 
-    it('moves them all to one new track when any of them would overlap', () => {
+    it('moves them all to the track above when any of them would overlap', () => {
       const dropped = dropMedia(occupied, { media: [sound, video], start: 2 * SECOND, trackIndex: 0, newTrack: NEW_TRACK })
-      expect(clipIds(dropped)).toEqual([['a'], ['second', 'first'], []])
+      expect(clipIds(dropped)).toEqual([['a'], ['second', 'first']])
     })
 
     it('takes the canvas of an empty project from the first picture, not from sound', () => {

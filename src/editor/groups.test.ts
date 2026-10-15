@@ -79,9 +79,9 @@ describe('groupClips', () => {
   })
 
   it('goes on a new track above when other clips are in the way', () => {
-    const crowded = projectOf([track('t1', [videoClip('a', 0, SECOND), videoClip('between', SECOND, SECOND), videoClip('c', 2 * SECOND, SECOND)]), track('t2', [])])
+    const crowded = projectOf([track('t1', [videoClip('a', 0, SECOND), videoClip('between', SECOND, SECOND), videoClip('c', 2 * SECOND, SECOND)]), track('t2', [videoClip('far', 9 * SECOND, SECOND)])])
     const together = groupClips(crowded, { clipIds: ['a', 'c'], groupId: 'group', newTrack: NEW_TRACK })
-    expect(clipIds(together)).toEqual([['between'], ['group'], []])
+    expect(clipIds(together)).toEqual([['between'], ['group'], ['far']])
     expect(together.tracks[1]).toMatchObject(NEW_TRACK)
   })
 

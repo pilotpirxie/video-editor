@@ -177,11 +177,10 @@ function EntryTile({ entry }: { entry: Entry }): ReactElement {
 
 type EntryListProps = {
   noun: string
-  hint: string
   entries: readonly Entry[]
 }
 
-function EntryList({ noun, hint, entries }: EntryListProps): ReactElement {
+function EntryList({ noun, entries }: EntryListProps): ReactElement {
   const [query, setQuery] = useState('')
   const [view, setView] = useLibraryView()
   const wanted = query.trim().toLowerCase()
@@ -189,7 +188,6 @@ function EntryList({ noun, hint, entries }: EntryListProps): ReactElement {
   return (
     <div className="library-tab">
       <LibraryTools noun={noun} query={query} onQuery={setQuery} view={view} onView={setView} />
-      <p className="hint library-hint">{hint}</p>
       <ul className={view === 'grid' ? 'library-list grid' : 'library-list'} aria-label={noun}>
         {shown.map((entry) => (
           <EntryTile key={entry.testId} entry={entry} />
@@ -209,7 +207,7 @@ export function EffectsTab(): ReactElement {
     preview: EFFECT_PREVIEWS[effect],
     onChoose: () => actions.addEffect(effect),
   }))
-  return <EntryList noun="effects" hint="Drag one onto a clip on the canvas or the timeline." entries={entries} />
+  return <EntryList noun="effects" entries={entries} />
 }
 
 export function TransitionsTab(): ReactElement {
@@ -221,7 +219,7 @@ export function TransitionsTab(): ReactElement {
     preview: TRANSITION_PREVIEWS[transition],
     onChoose: () => actions.addTransition(transition),
   }))
-  return <EntryList noun="transitions" hint="Drag one onto the start or the end of a clip, or onto the cut between two clips." entries={entries} />
+  return <EntryList noun="transitions" entries={entries} />
 }
 
 export function AnnotationsTab(): ReactElement {
@@ -233,5 +231,5 @@ export function AnnotationsTab(): ReactElement {
     preview: ANNOTATION_PREVIEWS[annotation],
     onChoose: () => actions.addAnnotation(annotation),
   }))
-  return <EntryList noun="annotations" hint="Drag one onto the canvas, where it lands at the playhead, or onto the timeline." entries={entries} />
+  return <EntryList noun="annotations" entries={entries} />
 }

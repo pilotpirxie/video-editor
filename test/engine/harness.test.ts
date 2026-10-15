@@ -1,37 +1,14 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { HAS_SAMPLES, lastJsonLine, projectPath, runApp, scratchDirectory } from '../helpers.js'
+import { HAS_SAMPLES, projectPath, runApp, scratchDirectory, selfTestReport, type SelfTestReport } from '../helpers.js'
 
 const scratch = scratchDirectory('harness')
 const MAX_PAUSED_FRAME_MS = 500
 const MAX_TYPICAL_MEMORY_MB = 700
 
-type Report = {
-  status: string
-  timecodeAtStart: string
-  timecodeWhilePlaying: string
-  timecodeAfterPause: string
-  timecodeStillPaused: string
-  timecodeAfterScrub: string
-  droppedFrames: number
-  playsOnSpace: boolean
-  actualSize: { cssWidth: number; pixelWidth: number }
-  fullQualityMilliseconds: { firstFrame: number; afterScrub: number; atActualSize: number }
-  export?: { existedDuringExport: boolean; existsAfterCancel: boolean; outcome: string; existsAfterFinish: boolean }
-  peakMemoryMegabytes?: number
-}
-
-function isReport(value: unknown): value is Report {
-  return typeof value === 'object' && value !== null && 'status' in value && 'droppedFrames' in value
-}
-
-async function selfTest(project: string, extraArgs: readonly string[]): Promise<Report> {
-  const result = await runApp(['--selftest', projectPath(project), ...extraArgs], 600_000)
-  if (result.exitCode !== 0) throw new Error(`The self-test failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`)
-  const report = lastJsonLine(result.stdout)
-  if (!isReport(report)) throw new Error(`Unexpected self-test report: ${result.stdout}`)
-  return report
+function selfTest(project: string, extraArgs: readonly string[]): Promise<SelfTestReport> {
+  return selfTestReport(projectPath(project), extraArgs)
 }
 
 function framesOf(timecode: string): number {

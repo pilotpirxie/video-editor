@@ -182,6 +182,10 @@ export function cachedAudioReader(read: AudioReader, maxBytes: number): AudioRea
     if (cached !== undefined) return cached
     const fetched = read(mediaId, chunkIndex * AUDIO_CHUNK_SAMPLES, AUDIO_CHUNK_SAMPLES, stretch)
     chunks.set(key, fetched, AUDIO_CHUNK_SAMPLES * BYTES_PER_STEREO_SAMPLE)
+    // A read that failed, for example while the media process was restarted, is asked for again next time. The caller still gets the failure.
+    fetched.catch(() => {
+      if (chunks.get(key) === fetched) chunks.delete(key)
+    })
     return fetched
   }
 

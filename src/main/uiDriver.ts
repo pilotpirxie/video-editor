@@ -33,6 +33,8 @@ export type UiTestOptions = {
   scenario: string
   outputDirectory: string | undefined
   mediaDirectory: string | undefined
+  seconds: number | undefined
+  seed: number | undefined
   answers: DialogAnswers
 }
 
@@ -320,7 +322,8 @@ export async function attachedDriver(window: BrowserWindow, options: UiTestOptio
   window.webContents.debugger.attach()
   await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
   const driver = driverOf(window, options)
-  await driver.until(`${selector('editor')} !== null`, 'the editor to appear')
+  // The first picture may be of the empty project that shows while the project is opened.
+  await driver.until(`${selector('editor')}?.getAttribute('aria-busy') === 'false'`, 'the editor to open its project')
   return driver
 }
 
@@ -379,4 +382,54 @@ export function percentile(values: readonly number[], fraction: number): number 
 
 export function numbersIn(value: unknown): number[] {
   return Array.isArray(value) ? value.filter((entry): entry is number => typeof entry === 'number') : []
+}
+
+export type Shown = 'any frame' | 'another timecode'
+
+// What of the timecode changes with each kind of picture: its frame count with every picture drawn, its text when the playhead is somewhere else.
+export const TIMECODE_CHANGES: Record<Shown, string> = {
+  'any frame': `{ attributes: true, attributeFilter: ['data-frames'] }`,
+  'another timecode': `{ childList: true, characterData: true, subtree: true }`,
+}
+
+type DelayStart = {
+  // Timing starts at the first event of this kind in the page; left out, it starts at once.
+  event?: string
+  shown: Shown
+}
+
+// Milliseconds from the start to the first picture the preview shows after it: any picture, or one with another timecode.
+export async function delayUntilShown(driver: Driver, start: DelayStart, act: () => Promise<void> | void): Promise<number> {
+  const startsAt = start.event === undefined ? 'performance.now()' : 'undefined'
+  const listen = start.event === undefined ? '' : `addEventListener('${start.event}', () => { startedAt ??= performance.now() }, true)`
+  await driver.page.evaluate(`(() => {
+    let startedAt = ${startsAt}
+    ${listen}
+    window.delayUntilShown = new Promise((resolve, reject) => {
+      const observer = new MutationObserver(() => {
+        if (startedAt === undefined) return
+        observer.disconnect()
+        resolve(performance.now() - startedAt)
+      })
+      observer.observe(${selector('timecode')}, ${TIMECODE_CHANGES[start.shown]})
+      setTimeout(() => {
+        observer.disconnect()
+        reject(new Error('The preview showed no ${start.shown} within ${STEP_TIMEOUT_MS} ms'))
+      }, ${STEP_TIMEOUT_MS})
+    })
+    return true
+  })()`)
+  await act()
+  return Number(await driver.page.evaluate('window.delayUntilShown'))
+}
+
+// Every task that held the page for more than 50 ms since it loaded, in milliseconds.
+export async function watchLongTasks(driver: Driver): Promise<{ read(): Promise<number[]> }> {
+  await driver.page.evaluate(`(() => {
+    window.longTasks = []
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) window.longTasks.push(Math.round(entry.duration))
+    }).observe({ type: 'longtask', buffered: true })
+  })()`)
+  return { read: async () => numbersIn(await driver.page.evaluate('window.longTasks')) }
 }

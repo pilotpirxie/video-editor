@@ -129,9 +129,9 @@ describe('timeLeft', () => {
 
 describe('durationText', () => {
   it('is as exact as the length calls for', () => {
-    expect(durationText(0)).toBe('0 s')
-    expect(durationText(44_600)).toBe('45 s')
-    expect(durationText(125_000)).toBe('2 min 5 s')
-    expect(durationText(3_780_000)).toBe('1 h 3 min')
+    expect(durationText(0)).toBe('0s')
+    expect(durationText(44_600)).toBe('45s')
+    expect(durationText(125_000)).toBe('2m 5s')
+    expect(durationText(3_780_000)).toBe('1h 3m')
   })
 })

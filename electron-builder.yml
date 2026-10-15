@@ -21,6 +21,7 @@ mac:
     - target: dmg
       arch: arm64
   category: public.app-category.video
+  icon: build/icon.png
   minimumSystemVersion: "15.0"
   identity: "-"
   hardenedRuntime: false

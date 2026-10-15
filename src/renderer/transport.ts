@@ -1,4 +1,4 @@
-import { describeError } from '../shared/log.js'
+import { describeError, describeErrorAsSentence } from '../shared/log.js'
 import { TICKS_PER_SECOND, frameAt } from '../shared/time.js'
 import { createAudioOutput, type AudioOutput } from './audioOutput.js'
 import type { EngineHost } from './engineHost.js'
@@ -97,7 +97,7 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
       await audio.resume()
       engine.send({ type: 'play', outputLatency: audio.latency() })
     } catch (error) {
-      onError(`The sound output could not be started: ${describeError(error)}`)
+      onError(`The sound output could not be started: ${describeErrorAsSentence(error)} Check the sound output in System Settings, then play again.`)
     }
   }
 

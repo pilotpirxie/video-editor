@@ -1,7 +1,7 @@
 import { createEngine, type Engine, type EngineEvent } from '../engine/engine.js'
 import { describeError } from '../shared/log.js'
 import type { HeadlessJob, JobEvent, LoadedProject } from '../shared/mediaProtocol.js'
-import { createMediaClient } from './mediaClient.js'
+import { createMediaClient, type MediaConnection } from './mediaClient.js'
 
 export type WorkerCommand =
   | { type: 'init'; canvas: OffscreenCanvas | undefined }
@@ -15,6 +15,7 @@ export type WorkerCommand =
   | { type: 'play'; outputLatency: number }
   | { type: 'pause' }
   | { type: 'job'; job: HeadlessJob }
+  | { type: 'memory-pressure'; isUnderPressure: boolean }
 
 export type WorkerEvent = EngineEvent | { type: 'job'; event: JobEvent }
 
@@ -26,21 +27,21 @@ function post(event: WorkerEvent): void {
 
 type Startup = {
   canvas: Promise<OffscreenCanvas>
-  mediaPort: Promise<MessagePort>
+  media: Promise<MediaConnection>
   provideCanvas(canvas: OffscreenCanvas): void
-  provideMediaPort(port: MessagePort): void
+  provideMedia(media: MediaConnection): void
 }
 
 function createStartup(): Startup {
   let provideCanvas: (canvas: OffscreenCanvas) => void = () => {}
-  let provideMediaPort: (port: MessagePort) => void = () => {}
+  let provideMedia: (media: MediaConnection) => void = () => {}
   const canvas = new Promise<OffscreenCanvas>((resolve) => {
     provideCanvas = resolve
   })
-  const mediaPort = new Promise<MessagePort>((resolve) => {
-    provideMediaPort = resolve
+  const media = new Promise<MediaConnection>((resolve) => {
+    provideMedia = resolve
   })
-  return { canvas, mediaPort, provideCanvas, provideMediaPort }
+  return { canvas, media, provideCanvas, provideMedia }
 }
 
 async function runJob(engine: Engine, job: HeadlessJob): Promise<void> {
@@ -76,17 +77,26 @@ async function handle(engine: Engine, command: WorkerCommand, ports: readonly Me
   } else if (command.type === 'audio-port') {
     const port = ports[0]
     if (port !== undefined) engine.attachAudio(port)
+  } else if (command.type === 'memory-pressure') {
+    engine.setUnderPressure(command.isUnderPressure)
   }
 }
 
 async function createEngineWhenReady(startup: Startup): Promise<Engine> {
-  const [canvas, mediaPort] = await Promise.all([startup.canvas, startup.mediaPort])
-  return createEngine(createMediaClient(mediaPort), canvas, post)
+  const [canvas, media] = await Promise.all([startup.canvas, startup.media])
+  return createEngine(media, canvas, post)
 }
 
 function start(): void {
   const startup = createStartup()
   const engineReady = createEngineWhenReady(startup)
+  let media: MediaConnection | undefined
+
+  // Background work of the engine that fails without a handler is told, not lost.
+  addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+    event.preventDefault()
+    post({ type: 'error', message: describeError(event.reason) })
+  })
 
   async function dispatch(command: WorkerCommand, ports: readonly MessagePort[]): Promise<void> {
     try {
@@ -102,7 +112,14 @@ function start(): void {
       startup.provideCanvas(command.canvas ?? new OffscreenCanvas(HEADLESS_SURFACE_SIZE, HEADLESS_SURFACE_SIZE))
     } else if (command.type === 'media-port') {
       const port = event.ports[0]
-      if (port !== undefined) startup.provideMediaPort(port)
+      if (port === undefined) return
+      // The first port starts the engine; a later one is that of a media process that was started again.
+      if (media === undefined) {
+        media = createMediaClient(port)
+        startup.provideMedia(media)
+      } else {
+        media.reconnect(port)
+      }
     } else {
       void dispatch(command, event.ports)
     }

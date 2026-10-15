@@ -32,7 +32,7 @@ import { groupFrameAt, type MediaStates } from '../engine/resolve.js'
 import { arrowSize } from '../engine/annotations.js'
 import { measureText } from '../engine/text.js'
 import type { Size } from '../shared/exportPresets.js'
-import { describeError, logError } from '../shared/log.js'
+import { describeErrorAsSentence, logError } from '../shared/log.js'
 import {
   ANIMATION_TYPES,
   ARROW_HEADS,
@@ -476,7 +476,7 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
       if (isShownRef.current) setInstalled(families)
     } catch (error) {
       logError('Could not list the installed fonts', error)
-      if (isAskedByUser) store.notify(`The installed fonts could not be listed: ${describeError(error)}`)
+      if (isAskedByUser) store.notify(`The installed fonts could not be listed: ${describeErrorAsSentence(error)} Only the fonts the project already uses can be chosen.`)
     }
   }
 
@@ -1214,28 +1214,40 @@ type KeyframeButtonsProps = {
   testId: string
 }
 
+function clipsUnder(clips: readonly Clip[], time: number): Clip[] {
+  return clips.filter((clip) => time >= clip.start && time < clip.start + clip.duration)
+}
+
 // The keyframe of a field's set at the playhead, and the way to the keyframes before and after it.
 // Only the clips the playhead is over are keyed: anywhere else the keyframe would land on the clip's edge.
 function KeyframeButtons({ clips, set, testId }: KeyframeButtonsProps): ReactElement {
   const { store, transport } = useSession()
-  const time = usePosition((position) => position.time)
   const frameTicks = useEditorState((state) => frameDuration(state.project.canvas.frameRate))
+  // Each is read on its own, so the buttons draw again only when what they show changes, not on every frame the playhead moves.
+  const isOverClip = usePosition((position) => clipsUnder(clips, position.time).length > 0)
+  const isKeyed = usePosition((position) => {
+    const underPlayhead = clipsUnder(clips, position.time)
+    return underPlayhead.length > 0 && underPlayhead.every((clip) => hasKeyframesAt(clip, set, position.time, frameTicks))
+  })
+  const previous = usePosition((position) => nearestKeyframe(clips, set, position.time, -1, frameTicks))
+  const next = usePosition((position) => nearestKeyframe(clips, set, position.time, 1, frameTicks))
   const name = KEYFRAME_NAMES[set]
   const lowerName = name.toLowerCase()
-  const underPlayhead = clips.filter((clip) => time >= clip.start && time < clip.start + clip.duration)
-  const ids = underPlayhead.map((clip) => clip.id)
-  const isKeyed = underPlayhead.length > 0 && underPlayhead.every((clip) => hasKeyframesAt(clip, set, time, frameTicks))
-  const previous = nearestKeyframe(clips, set, time, -1, frameTicks)
-  const next = nearestKeyframe(clips, set, time, 1, frameTicks)
 
   let label = `Add a ${lowerName} keyframe at the playhead`
   if (isKeyed) label = `Remove the ${lowerName} keyframe at the playhead`
-  else if (underPlayhead.length === 0) label = `Move the playhead over the clip to key its ${lowerName}`
+  else if (!isOverClip) label = `Move the playhead over the clip to key its ${lowerName}`
 
   function jumpTo(target: number | undefined): void {
     if (target === undefined) return
     transport.pause()
     transport.seek(target)
+  }
+
+  function toggleKeyframe(): void {
+    const { time } = transport.position()
+    const ids = clipsUnder(clips, time).map((clip) => clip.id)
+    store.apply(isKeyed ? `Remove ${name} Keyframe` : `Add ${name} Keyframe`, (project) => setKeyframesAt(project, ids, set, time, !isKeyed))
   }
 
   return (
@@ -1246,8 +1258,8 @@ function KeyframeButtons({ clips, set, testId }: KeyframeButtonsProps): ReactEle
         label={label}
         testId={`${testId}-keyframe`}
         isPressed={isKeyed}
-        isDisabled={underPlayhead.length === 0}
-        onClick={() => store.apply(isKeyed ? `Remove ${name} Keyframe` : `Add ${name} Keyframe`, (project) => setKeyframesAt(project, ids, set, time, !isKeyed))}
+        isDisabled={!isOverClip}
+        onClick={toggleKeyframe}
       />
       <IconButton icon="chevronRight" label={`Next ${lowerName} keyframe`} testId={`${testId}-next-keyframe`} isDisabled={next === undefined} onClick={() => jumpTo(next)} />
     </>
@@ -1257,7 +1269,9 @@ function KeyframeButtons({ clips, set, testId }: KeyframeButtonsProps): ReactEle
 function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const mediaStates = useEditorState((state) => state.mediaStates)
   const canvas = useEditorState((state) => state.project.canvas)
-  const time = usePosition((position) => position.time)
+  // Without keyframes every value is the same at any moment, so the fields do not draw again as the playhead moves.
+  const isAnimated = clips.some((clip) => clip.keyframes !== undefined)
+  const time = usePosition((position) => (isAnimated ? position.time : 0))
   const [keepsAspect, setKeepsAspect] = useState(true)
   const ids = useMemo(() => clips.map((clip) => clip.id), [clips])
   const frameTicks = frameDuration(canvas.frameRate)

@@ -1,4 +1,4 @@
-import type { AddedMedia, LoadedProject, MediaClient, MediaMessage, MediaReply, MediaRequest, Preparation, RawFrame, RelinkedMedia, WaveformLevel } from '../shared/mediaProtocol.js'
+import type { AddedMedia, LoadedProject, MediaClient, MediaMessage, MediaReply, MediaRequest, MediaState, Preparation, RawFrame, RelinkedMedia, WaveformLevel } from '../shared/mediaProtocol.js'
 
 type Pending = {
   resolve(answer: unknown): void
@@ -34,6 +34,10 @@ function isRelinkedMedia(value: unknown): value is RelinkedMedia[] {
   return Array.isArray(value) && value.every((item) => isAddedMedia(item) && 'path' in item && typeof item.path === 'string')
 }
 
+function isMediaStates(value: unknown): value is Record<string, MediaState> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function isPreparationRecord(value: unknown): value is Record<string, Preparation> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -46,11 +50,24 @@ function unexpectedAnswer(request: MediaRequest): MediaRequestError {
   return new MediaRequestError(`The media process gave an unexpected answer to ${request.method}`)
 }
 
-export function createMediaClient(port: MessagePort): MediaClient {
+// A save that takes longer than this has met a media process that hangs; the window is told, so closing it never waits forever.
+const SAVE_TIMEOUT_MS = 30_000
+
+export type MediaConnection = MediaClient & {
+  // Goes on through the port of a media process that was started again.
+  reconnect(port: MessagePort): void
+  // Heard when the media process stops; every request until the next port fails at once.
+  onClose(listener: () => void): () => void
+}
+
+export function createMediaClient(firstPort: MessagePort): MediaConnection {
   const pending = new Map<number, Pending>()
+  const closeListeners = new Set<() => void>()
+  // Undefined once the media process has stopped, until a port of the next one arrives.
+  let port: MessagePort | undefined
   let nextId = 1
 
-  port.onmessage = (event: MessageEvent<unknown>): void => {
+  function onReply(event: MessageEvent<unknown>): void {
     const reply = event.data
     if (!isReply(reply)) return
     const waiting = pending.get(reply.id)
@@ -63,11 +80,20 @@ export function createMediaClient(port: MessagePort): MediaClient {
     }
   }
 
-  // Without this a request made just before the media process dies would wait forever, and so would Save.
-  port.addEventListener('close', () => {
-    for (const waiting of pending.values()) waiting.reject(new MediaRequestError('The media process stopped.'))
-    pending.clear()
-  })
+  function attach(next: MessagePort): void {
+    port = next
+    next.onmessage = onReply
+    // Without this a request made just before the media process dies would wait forever, and so would Save.
+    next.addEventListener('close', () => {
+      if (port !== next) return
+      port = undefined
+      for (const waiting of pending.values()) waiting.reject(new MediaRequestError('The media process stopped.'))
+      pending.clear()
+      for (const listener of closeListeners) listener()
+    })
+  }
+
+  attach(firstPort)
 
   function call(request: MediaRequest, signal?: AbortSignal): Promise<unknown> {
     const id = nextId
@@ -77,20 +103,37 @@ export function createMediaClient(port: MessagePort): MediaClient {
         reject(new DOMException('The request was cancelled', 'AbortError'))
         return
       }
+      const sendTo = port
+      if (sendTo === undefined) {
+        reject(new MediaRequestError('The media process stopped.'))
+        return
+      }
       pending.set(id, { resolve, reject })
       signal?.addEventListener(
         'abort',
         () => {
           if (!pending.delete(id)) return
           const abort: MediaMessage = { abort: id }
-          port.postMessage(abort)
+          port?.postMessage(abort)
           reject(new DOMException('The request was cancelled', 'AbortError'))
         },
         { once: true },
       )
       const message: MediaMessage = { id, request }
-      port.postMessage(message)
+      sendTo.postMessage(message)
     })
+  }
+
+  async function callWithin(request: MediaRequest, timeoutMs: number): Promise<unknown> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new MediaRequestError('The media process did not answer.')), timeoutMs)
+    })
+    try {
+      return await Promise.race([call(request), timedOut])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   async function callForNothing(request: MediaRequest): Promise<void> {
@@ -169,7 +212,20 @@ export function createMediaClient(port: MessagePort): MediaClient {
       if (answer !== undefined && !isWaveform(answer)) throw unexpectedAnswer(request)
       return answer
     },
-    saveProject: (path, project) => callForNothing({ method: 'saveProject', path, project }),
+    async saveProject(path, project) {
+      await callWithin({ method: 'saveProject', path, project }, SAVE_TIMEOUT_MS)
+    },
     want: (wanted) => callForNothing({ method: 'want', wanted }),
+    async openMedia(media, projectPath) {
+      const request: MediaRequest = { method: 'openMedia', media: [...media], projectPath }
+      const answer = await call(request)
+      if (!isMediaStates(answer)) throw unexpectedAnswer(request)
+      return answer
+    },
+    reconnect: attach,
+    onClose(listener) {
+      closeListeners.add(listener)
+      return () => closeListeners.delete(listener)
+    },
   }
 }

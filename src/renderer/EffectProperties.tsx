@@ -1,6 +1,6 @@
 import { useMemo, type ReactElement } from 'react'
 import { EFFECT_NAMES, moveEffect, removeEffect, setEffect, setEffectOff, takesEffects } from '../editor/effects.js'
-import { describeError, logError } from '../shared/log.js'
+import { describeErrorAsSentence, logError } from '../shared/log.js'
 import type { Effect } from '../shared/project.js'
 import { useEditorState, useSession } from './context.js'
 import { IconButton } from './icons.js'
@@ -57,8 +57,10 @@ function numberSettings(effect: Effect): NumberSetting[] {
       adjustmentOf('Contrast', 'contrast', effect.contrast, (contrast) => ({ ...effect, contrast })),
       adjustmentOf('Saturation', 'saturation', effect.saturation, (saturation) => ({ ...effect, saturation })),
     ]
-  } else if (effect.type === 'blackAndWhite') {
+  } else if (effect.type === 'blackAndWhite' || effect.type === 'sepia' || effect.type === 'invert' || effect.type === 'tint') {
     return [amountOf('Amount', 'amount', effect.amount, (amount) => ({ ...effect, amount }))]
+  } else if (effect.type === 'vignette') {
+    return [amountOf('Amount', 'amount', effect.amount, (amount) => ({ ...effect, amount })), amountOf('Size', 'size', effect.size, (size) => ({ ...effect, size }))]
   } else if (effect.type === 'dropShadow') {
     return [
       { ...lengthOf('Offset X', 'offsetX', effect.offsetX, (offsetX) => ({ ...effect, offsetX })), min: -MAX_LENGTH },
@@ -105,7 +107,7 @@ function EffectGroup({ clipId, effect, isFirst, isLast }: EffectGroupProps): Rea
       // Escape closes the picker without a colour; that is not a failure.
       if (error instanceof DOMException && error.name === 'AbortError') return
       logError('Could not pick a colour from the screen', error)
-      store.notify(`The colour could not be picked: ${describeError(error)}`)
+      store.notify(`The colour could not be picked: ${describeErrorAsSentence(error)} Choose it in the Key colour field instead.`)
     }
   }
 
@@ -120,7 +122,7 @@ function EffectGroup({ clipId, effect, isFirst, isLast }: EffectGroupProps): Rea
 
   return (
     <Group title={name} icon="wand" actions={actions}>
-      {(effect.type === 'dropShadow' || effect.type === 'border' || effect.type === 'chromaKey') && (
+      {(effect.type === 'dropShadow' || effect.type === 'border' || effect.type === 'chromaKey' || effect.type === 'tint') && (
         <ColorField label={effect.type === 'chromaKey' ? 'Key colour' : 'Colour'} testId={`effect-${type}-color`} command="Change Effect" value={effect.color} edit={(color) => withSettings({ ...effect, color })} />
       )}
       {effect.type === 'chromaKey' && (

@@ -114,7 +114,7 @@ The window follows the layout Camtasia users know. A left sidebar holds media, e
 
 **Visual design**
 
-Dark grey with a slight blue cast, white text, and one fresh (not neon) green accent reserved for primary actions, selection and active states. Dark theme only in v1; a light theme is a nice-to-have.
+Dark grey with a slight blue cast, white text, and one fresh lime accent reserved for primary actions, selection and active states. Dark theme only in v1; a light theme is a nice-to-have.
 
 | Role | Hex | Used for |
 | --- | --- | --- |
@@ -124,8 +124,8 @@ Dark grey with a slight blue cast, white text, and one fresh (not neon) green ac
 | Hover surface | #2E3440 | Hovered rows and buttons |
 | Divider | #363D4A | Panel edges, separators |
 | Text primary / secondary / disabled | #FFFFFF / #A7B0C0 / #687183 | Labels and values / hints / unavailable |
-| Primary green (normal / hover / pressed) | #3DBA74 / #4BC882 / #33A064 | Primary buttons, selection, playhead, active tab, focus ring |
-| Text on green | #0D1A13 | Labels on green buttons (white fails contrast there) |
+| Primary lime (normal / hover / pressed) | #AED836 / #BEE25A / #9AC22A | Primary buttons, selection, playhead, active tab, focus ring |
+| Text on lime | #121A04 | Labels on lime buttons (white fails contrast there) |
 | Snap guide | #E65FD3 | Snap lines, distinct from footage and accent |
 | Danger / warning | #E5484D / #F2A93B | Errors, missing media / preparing |
 | Clip bodies | Video #3C5A88, Audio #2C6C80, Image #5E4F8C, Annotation #8A6A3A, Blur #5B6474 | Muted, so green selection stands out |
@@ -517,11 +517,11 @@ Six risks get a spike in the first two weeks, before the editor is built on top 
 • T-84 Visual polish pass — every screen follows tokens, spacing and icons; hover, pressed, focus and disabled states complete; product owner signs off.
 • T-85 Empty, loading and error states — designed empty state for every panel; all badges and errors plain and actionable.
 • T-86 Accessibility basics — keyboard reach to all panels and dialogs, visible focus, VoiceOver labels, AA contrast, reduced motion; checked with VoiceOver.
-• T-87 Sample projects and first run — two or three bundled samples (tutorial, marketing promo) offered on first launch.
+• T-87 Sample projects and first run — skipped (2026-10-14).
 • T-88 Stability testing — 8-hour automated session and broken-media set pass with zero crashes; failures write a local crash log.
 • T-89 Extremes test — 120p and 4K projects, 8K sources, 100× speed, 4,096 clips and a 20-hour timeline all meet §12.
 • T-90 Release DMG — drag-to-Applications DMG, app icon, About with versions; installs and runs offline on a clean macOS 15 M1.
-• T-91 Offline help — shortcut sheet and short help pages inside the app.
+• T-91 Offline help — skipped (2026-10-14).
 6. Nice-to-haves
 • T-92 Light theme — full light palette switchable in Settings; AA contrast throughout.
 • T-93 Export to target file size — output lands within 5% of the size entered.

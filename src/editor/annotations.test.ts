@@ -37,8 +37,8 @@ describe('adding annotations', () => {
   })
 
   it('goes on a new track above the chosen one when its place there is taken', () => {
-    const project = projectOf([track('t1', [videoClip('a', 0, 10 * SECOND)]), track('t2', [])])
-    expect(clipIds(addAnnotation(project, 'blur', { clipId: 'note', start: SECOND, trackIndex: 0, newTrack: NEW_TRACK }))).toEqual([['a'], ['note'], []])
+    const project = projectOf([track('t1', [videoClip('a', 0, 10 * SECOND)]), track('t2', [videoClip('b', 20 * SECOND, SECOND)])])
+    expect(clipIds(addAnnotation(project, 'blur', { clipId: 'note', start: SECOND, trackIndex: 0, newTrack: NEW_TRACK }))).toEqual([['a'], ['note'], ['b']])
   })
 })
 

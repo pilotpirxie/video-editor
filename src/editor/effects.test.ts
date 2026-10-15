@@ -80,6 +80,28 @@ describe('changing effects', () => {
     expect(setEffect(project, ['a'], { type: 'clipBlur', strength: 3 })).toBe(project)
   })
 
+  it('keeps the amounts, the size and the colour of the colour effects inside what the file accepts', () => {
+    const toned = sample([
+      { type: 'sepia', amount: 1 },
+      { type: 'invert', amount: 1 },
+      { type: 'tint', color: '#3d7be6', amount: 0.5 },
+      { type: 'vignette', amount: 0.6, size: 0.5 },
+    ])
+    let changed = setEffect(toned, ['a'], { type: 'sepia', amount: 3 })
+    changed = setEffect(changed, ['a'], { type: 'invert', amount: -1 })
+    changed = setEffect(changed, ['a'], { type: 'tint', color: 'blue', amount: 2 })
+    changed = setEffect(changed, ['a'], { type: 'vignette', amount: -0.5, size: 1.5 })
+    expect(clipOf(changed, 'a')).toMatchObject({
+      effects: [
+        { type: 'sepia', amount: 1 },
+        { type: 'invert', amount: 0 },
+        { type: 'tint', color: '#3d7be6', amount: 1 },
+        { type: 'vignette', amount: 0, size: 1 },
+      ],
+    })
+    expect(reopened(changed)).toEqual(changed)
+  })
+
   it('keeps an effect switched off while its settings change', () => {
     const off = setEffectOff(project, ['a'], 'border', true)
     const changed = setEffect(off, ['a'], { type: 'border', width: 12, color: '#00ff00' })

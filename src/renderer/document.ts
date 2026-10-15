@@ -4,19 +4,22 @@ import { mediaFileName, mediaUses, relinkedMedia, unlinkedMedia, withMedia } fro
 import { menuShortcutsOf, parseBindings, type Bindings } from '../editor/shortcuts.js'
 import { missingFonts } from '../editor/text.js'
 import type { MediaStates } from '../engine/resolve.js'
-import { describeError, logError } from '../shared/log.js'
-import type { DocumentInfo, DocumentState, HostCommand, JobEvent, MediaClient, MenuAction, Preparation } from '../shared/mediaProtocol.js'
+import { describeError, describeErrorAsSentence, logError } from '../shared/log.js'
+import type { AddedMedia, DocumentInfo, DocumentState, HostCommand, JobEvent, MenuAction, Preparation } from '../shared/mediaProtocol.js'
 import { projectDuration, type Project } from '../shared/project.js'
 import { frameDuration } from '../shared/time.js'
 import { createActions, type Actions } from './actions.js'
-import type { EngineHost } from './engineHost.js'
+import type { EngineHost, MediaPorts } from './engineHost.js'
 import { installedFontFamilies } from './fonts.js'
+import type { MediaConnection } from './mediaClient.js'
 import { createEditorStore, type EditorStore } from './store.js'
 import { createThumbnails, type Thumbnails } from './thumbnails.js'
 import { createTransport, isModalOpen, isTypingTarget, type Transport } from './transport.js'
 
 const AUTOSAVE_INTERVAL_MS = 10_000
 const PREPARATION_POLL_MS = 500
+// Chromium gives the preview back within a second or two of starting a new GPU process.
+const PREVIEW_RETURN_MS = 5_000
 
 type PreparationStates = Readonly<Record<string, Preparation>>
 
@@ -52,6 +55,8 @@ type Shortcuts = {
 }
 
 const SHORTCUTS_KEY = 'shortcuts'
+// Sent on the window for the menu's Select All, before the clips are selected.
+export const SELECT_ALL_EVENT = 'editor-select-all'
 
 // The keys are kept per Mac, for every window: a change in one window reaches the others through the storage they share.
 function createShortcuts(): Shortcuts {
@@ -111,7 +116,7 @@ async function missingFontsNotice(project: Project): Promise<string | undefined>
   return `The fonts ${names} are not installed on this Mac. Their words are shown in the system font until they are.`
 }
 
-export function createSession(engine: EngineHost, media: MediaClient, info: DocumentInfo): Session {
+export function createSession(engine: EngineHost, media: MediaConnection, info: DocumentInfo): Session {
   const store = createEditorStore()
   const transport = createTransport(engine, store.notify)
   const actions = createActions(store, transport)
@@ -123,9 +128,15 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
   let sent: SentProject | undefined
   let isSendScheduled = false
   let reportedState = ''
-  let recovered = store.getState().wholeProject
+  let recovered: Project | undefined = store.getState().wholeProject
   let recoveryWork: Promise<void> = Promise.resolve()
   let hasRecoveryFailed = false
+  let isMediaConnected = true
+  // Set until the project has been read: one whose reading the media process did not live to finish is read again by the next one.
+  let isOpenNeeded = info.loadFrom !== undefined
+  // Settles once a restarted media process knows the project's files; a file added before that would be forgotten by it.
+  let mediaReopened: Promise<void> = Promise.resolve()
+  let previewLostTimer: number | undefined
 
   // Preparation is only asked about while something is still being prepared, so an idle editor does no work.
   async function pollPreparation(): Promise<void> {
@@ -146,23 +157,52 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
   }
 
   engine.onEvent((event) => {
-    if (event.type === 'wanted') watchPreparation()
+    if (event.type === 'wanted') {
+      watchPreparation()
+    } else if (event.type === 'preview-lost') {
+      previewLostTimer ??= window.setTimeout(() => void reloadWithoutPreview(), PREVIEW_RETURN_MS)
+    } else if (event.type === 'preview-restored') {
+      window.clearTimeout(previewLostTimer)
+      previewLostTimer = undefined
+    }
   })
 
+  // A preview that does not come back after the GPU process stopped comes back with the page, which reopens from the recovery file written here.
+  async function reloadWithoutPreview(): Promise<void> {
+    logError('The preview did not come back after the GPU process stopped; the window is loaded again', new Error(`waited ${PREVIEW_RETURN_MS} ms`))
+    autosave()
+    await recoveryWork
+    location.reload()
+  }
+
+  // An answer that is waited for in order is caught at once, so a later file that fails first is not reported as unhandled.
+  async function settledAddition(path: string): Promise<PromiseSettledResult<AddedMedia>> {
+    try {
+      return { status: 'fulfilled', value: await media.addMedia(path) }
+    } catch (reason) {
+      return { status: 'rejected', reason }
+    }
+  }
+
+  // Every file is asked for at once, so the media process looks at several side by side; they join the project in the order given.
   async function importFiles(paths: readonly string[]): Promise<void> {
+    await mediaReopened
     const known = new Set(store.getState().project.media.map((reference) => reference.path))
     const fresh = [...new Set(paths)].filter((path) => !known.has(path))
+    const additions = fresh.map(settledAddition)
     const failures: string[] = []
     for (const [index, path] of fresh.entries()) {
       store.setPendingImports(fresh.slice(index))
-      try {
-        const added = await media.addMedia(path)
-        store.setMediaState(added.id, { info: added.info })
-        store.apply('Import Media', (project) => withMedia(project, { id: added.id, path, relativePath: '' }))
-        watchPreparation()
-      } catch (error) {
-        failures.push(describeError(error))
+      const addition = await additions[index]
+      if (addition === undefined) continue
+      if (addition.status === 'rejected') {
+        failures.push(describeError(addition.reason))
+        continue
       }
+      const added = addition.value
+      store.setMediaState(added.id, { info: added.info })
+      store.apply('Import Media', (project) => withMedia(project, { id: added.id, path, relativePath: '' }))
+      watchPreparation()
     }
     store.setPendingImports([])
     if (failures.length > 0) store.notify(failures.join(' '))
@@ -181,6 +221,7 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
     if (path === undefined) return
 
     const others = unlinkedMedia(project, mediaStates).filter((unlinked) => unlinked.reference.id !== mediaId)
+    await mediaReopened
     try {
       const found = await media.relinkMedia(path, { reference, uses: mediaUses(project, mediaId) }, others)
       for (const item of found) store.setMediaState(item.id, { info: item.info })
@@ -232,13 +273,17 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
       await media.saveProject(info.recoveryPath, project)
       hasRecoveryFailed = false
     } catch (error) {
+      // Written again at the next tick, even if nothing changes meanwhile.
+      if (recovered === project) recovered = undefined
       logError('Could not write the recovery file', error, { recoveryPath: info.recoveryPath })
-      if (!hasRecoveryFailed) store.notify(`Autosave is not working: ${describeError(error)}`)
+      if (!hasRecoveryFailed) store.notify(`Autosave is not working: ${describeErrorAsSentence(error)} Save with ⌘S to keep your work.`)
       hasRecoveryFailed = true
     }
   }
 
+  // While the media process is being restarted there is nothing to write with; the restart writes as soon as it is back.
   function autosave(): void {
+    if (!isMediaConnected) return
     const project = store.committedProject()
     if (project === recovered) return
     recovered = project
@@ -287,7 +332,7 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
     try {
       await media.saveProject(info.exportSnapshotPath, snapshot)
     } catch (error) {
-      store.notify(`The export could not start: ${describeError(error)}`)
+      store.notify(`The export could not start: ${describeErrorAsSentence(error)} Check that the disk has room, then export again.`)
       return
     }
     // A PNG shows the frame under the playhead, which inside an open group is counted from the group's start.
@@ -345,9 +390,10 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
   }
 
   // Like Undo, the menu's Select All also arrives while a text field has focus, where it must select the text.
+  // A panel with a selection of its own cancels the event while it is the one in use, and then the clips stay as they are.
   function selectAll(): void {
     if (isTypingTarget(document.activeElement)) document.execCommand('selectAll')
-    else actions.selectAll()
+    else if (window.dispatchEvent(new Event(SELECT_ALL_EVENT, { cancelable: true }))) actions.selectAll()
   }
 
   // A menu command, chosen in the menu or with its keys.
@@ -379,6 +425,11 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
       onExportEvent(command.event)
       return
     }
+    if (command.type === 'memory-pressure') {
+      engine.send({ type: 'memory-pressure', isUnderPressure: command.isUnderPressure })
+      thumbnails.setUnderPressure(command.isUnderPressure)
+      return
+    }
     if (command.type !== 'menu') return
     // Under an open dialog the project can still be saved and the window closed; every other command waits for the dialog to go.
     const isForUnderADialog = command.action === 'save' || command.action === 'save-as' || command.action === 'close'
@@ -392,8 +443,10 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
 
   async function open(): Promise<void> {
     if (info.loadFrom === undefined) return
+    store.setOpening(info.path === undefined ? 'Untitled' : fileNameOf(info.path))
     try {
       const loaded = await media.loadProject(info.loadFrom, true)
+      isOpenNeeded = false
       const isRecovered = info.loadFrom !== info.path
       store.open(loaded, info.path, !isRecovered)
       recovered = loaded.project
@@ -405,10 +458,53 @@ export function createSession(engine: EngineHost, media: MediaClient, info: Docu
       if (fonts !== undefined) notices.push(fonts)
       if (notices.length > 0) store.notify(notices.join(' '))
     } catch (error) {
+      // The media process stopped while reading: the notice says so, and the restarted one reads the project again.
+      if (!isMediaConnected) return
+      isOpenNeeded = false
       // The path is not kept: Save must ask where to write instead of replacing a file that could not be read.
       store.notify(describeError(error))
+    } finally {
+      store.setOpening(undefined)
     }
   }
+
+  media.onClose(() => {
+    isMediaConnected = false
+    transport.pause()
+    store.notify('The media process stopped. It is being restarted; your work is safe.')
+  })
+
+  // A restarted media process knows nothing of this window. It is told the project's files before the engine asks it for frames, and the engine is then given the project again so it asks for what it lost.
+  async function reconnect(ports: MediaPorts): Promise<void> {
+    media.reconnect(ports.ui)
+    isMediaConnected = true
+    if (isOpenNeeded) {
+      await open()
+    } else {
+      await reopenMedia()
+    }
+    engine.send({ type: 'media-port' }, [ports.engine])
+    sent = undefined
+    sendToEngine()
+    autosave()
+  }
+
+  async function reopenMedia(): Promise<void> {
+    const { wholeProject } = store.getState()
+    try {
+      store.setMediaStates(await media.openMedia(wholeProject.media, info.loadFrom))
+    } catch (error) {
+      if (!isMediaConnected) return
+      logError('Could not open the media again in the restarted media process', error)
+      store.notify(`The media process was restarted, but the media could not be opened again: ${describeErrorAsSentence(error)} Save with ⌘S and open the project again.`)
+      return
+    }
+    store.notify('The media process was restarted. Nothing was lost.')
+  }
+
+  engine.onReconnect((ports) => {
+    mediaReopened = reconnect(ports)
+  })
 
   return {
     store,

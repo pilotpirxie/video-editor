@@ -15,6 +15,8 @@ import {
   fitZoom,
   hitClip,
   hitZoom,
+  keyframeDiamondAt,
+  keyframeDiamonds,
   rulerStep,
   timeToX,
   trackIndexAt,
@@ -226,6 +228,46 @@ describe('fade handles', () => {
   })
 })
 
+
+describe('keyframe diamonds', () => {
+  const flat = { pixelsPerSecond: 100, scrollX: 0, scrollY: 0 }
+  const rowTop = TRACKS_TOP
+  const keyed = videoClip('a', SECOND, 4 * SECOND, {
+    keyframes: {
+      x: [
+        { time: -SECOND, value: 0, easing: 'linear' },
+        { time: 0, value: 0, easing: 'linear' },
+        { time: 2 * SECOND, value: 1, easing: 'linear' },
+      ],
+      y: [{ time: 2 * SECOND, value: 1, easing: 'linear' }],
+      opacity: [{ time: 4 * SECOND, value: 0, easing: 'linear' }],
+      volume: [{ time: SECOND, value: 0.5, easing: 'linear' }],
+    },
+  })
+
+  it('mark each moment inside the clip that keys its picture once, along the bottom of the picture', () => {
+    const picture = clipBands(keyed, true, rowTop).picture
+    const y = rowTop + CLIP_INSET + 31 - 6
+    expect(keyframeDiamonds(keyed, picture, flat)).toEqual([
+      { time: 0, x: 100, y },
+      { time: 2 * SECOND, x: 300, y },
+      { time: 4 * SECOND, x: 500, y },
+    ])
+  })
+
+  it('are left out of a clip without a picture or without keyframes', () => {
+    expect(keyframeDiamonds(videoClip('b', 0, SECOND), clipBands(videoClip('b', 0, SECOND), false, rowTop).picture, flat)).toEqual([])
+    const sound = audioClip('music', 0, SECOND, { keyframes: { volume: [{ time: 0, value: 1, easing: 'linear' }] } })
+    expect(keyframeDiamonds(sound, clipBands(sound, true, rowTop).picture, flat)).toEqual([])
+  })
+
+  it('are found within reach of the diamond', () => {
+    const diamonds = keyframeDiamonds(keyed, clipBands(keyed, false, rowTop).picture, flat)
+    const y = rowTop + CLIP_INSET + TRACK_HEIGHT - 2 * CLIP_INSET - 6
+    expect(keyframeDiamondAt(diamonds, 303, y + 2)?.time).toBe(2 * SECOND)
+    expect(keyframeDiamondAt(diamonds, 300, rowTop + TRACK_HEIGHT / 2)).toBeUndefined()
+  })
+})
 
 describe('transition bands', () => {
   const flat = { pixelsPerSecond: 100, scrollX: 0, scrollY: 0 }

@@ -139,6 +139,117 @@ function Wipe({ arriving, edge, chevron }: { arriving: Box; edge: string; chevro
   )
 }
 
+type Point = {
+  x: number
+  y: number
+}
+
+// Halfway through a slide or a push the way it goes: the part of each picture still in view and where it is, the edge between them and a chevron that points the way.
+type Halfway = {
+  leaving: Box
+  leavingAt: Point
+  arriving: Box
+  arrivingAt: Point
+  edge: string
+  chevron: string
+}
+
+type Way = 'left' | 'right' | 'up' | 'down'
+
+const HALFWAY: Record<Way, Halfway> = {
+  left: {
+    leaving: { x: 36, y: 0, width: 28, height: 36 },
+    leavingAt: { x: 0, y: 0 },
+    arriving: { x: 0, y: 0, width: 36, height: 36 },
+    arrivingAt: { x: 28, y: 0 },
+    edge: 'M28 0V36',
+    chevron: 'M24 15L21 18L24 21',
+  },
+  right: {
+    leaving: { x: 0, y: 0, width: 28, height: 36 },
+    leavingAt: { x: 36, y: 0 },
+    arriving: { x: 28, y: 0, width: 36, height: 36 },
+    arrivingAt: { x: 0, y: 0 },
+    edge: 'M36 0V36',
+    chevron: 'M40 15L43 18L40 21',
+  },
+  up: {
+    leaving: { x: 0, y: 20, width: 64, height: 16 },
+    leavingAt: { x: 0, y: 0 },
+    arriving: { x: 0, y: 0, width: 64, height: 20 },
+    arrivingAt: { x: 0, y: 16 },
+    edge: 'M0 16H64',
+    chevron: 'M29 12L32 9L35 12',
+  },
+  down: {
+    leaving: { x: 0, y: 0, width: 64, height: 16 },
+    leavingAt: { x: 0, y: 20 },
+    arriving: { x: 0, y: 16, width: 64, height: 20 },
+    arrivingAt: { x: 0, y: 0 },
+    edge: 'M0 20H64',
+    chevron: 'M29 24L32 27L35 24',
+  },
+}
+
+// The arriving picture comes in over the one that stays.
+function Slide({ way }: { way: Way }): ReactElement {
+  const halfway = HALFWAY[way]
+  return (
+    <Picture>
+      <Scene />
+      <g className="look-shadow">
+        <Part view={halfway.arriving} at={halfway.arrivingAt}>
+          <NextScene />
+        </Part>
+      </g>
+      <path className="ink-chevron" d={halfway.chevron} />
+    </Picture>
+  )
+}
+
+// The arriving picture comes in and pushes the other one out.
+function Push({ way }: { way: Way }): ReactElement {
+  const halfway = HALFWAY[way]
+  return (
+    <Picture>
+      <Part view={halfway.leaving} at={halfway.leavingAt}>
+        <Scene />
+      </Part>
+      <Part view={halfway.arriving} at={halfway.arrivingAt}>
+        <NextScene />
+      </Part>
+      <path className="ink-divider" d={halfway.edge} />
+      <path className="ink-chevron" d={halfway.chevron} />
+    </Picture>
+  )
+}
+
+// Halfway through a wipe from a corner: the arriving picture covers the triangle `arriving`, and the edge moves the way the chevron points.
+function CornerWipe({ arriving, edge, chevron }: { arriving: string; edge: string; chevron: string }): ReactElement {
+  return (
+    <Picture>
+      <Scene />
+      <path className="ink-other" d={arriving} />
+      <path className="ink-divider" d={edge} />
+      <path className="ink-chevron" d={chevron} />
+    </Picture>
+  )
+}
+
+// The leaving picture made small over the arriving one, turned by `turn` degrees.
+function Shrinking({ turn }: { turn: number }): ReactElement {
+  return (
+    <Picture>
+      <NextScene />
+      <g className="look-shadow" transform={`rotate(${turn} 32 18)`}>
+        <Shrunk box={{ x: 20, y: 11.25, width: 24, height: 13.5 }}>
+          <Scene />
+        </Shrunk>
+      </g>
+    </Picture>
+  )
+}
+
 function OnScene({ children }: { children: ReactNode }): ReactElement {
   return (
     <Picture>
@@ -165,6 +276,15 @@ function PixelBlocks(): ReactElement {
 export const EFFECT_PREVIEWS: Record<EffectType, ReactElement> = {
   colorAdjust: <Compared look="look-vivid" />,
   blackAndWhite: <Compared look="look-grey" />,
+  sepia: <Compared look="look-sepia" />,
+  tint: <Compared look="look-tint" />,
+  invert: <Compared look="look-invert" />,
+  // The corners and edges darken softly towards the frame.
+  vignette: (
+    <OnScene>
+      <path className="ink-shade look-soft" fillRule="evenodd" d="M0 0H64V36H0ZM6 18A26 16 0 1 0 58 18A26 16 0 1 0 6 18Z" />
+    </OnScene>
+  ),
   dropShadow: <OnBackdrop isShadowed />,
   border: (
     <OnBackdrop>
@@ -214,31 +334,18 @@ export const TRANSITION_PREVIEWS: Record<TransitionType, ReactElement> = {
   wipeRight: <Wipe arriving={LEFT_HALF} edge="M32 0V36" chevron="M35 15L38 18L35 21" />,
   wipeUp: <Wipe arriving={BOTTOM_HALF} edge="M0 18H64" chevron="M29 15L32 12L35 15" />,
   wipeDown: <Wipe arriving={TOP_HALF} edge="M0 18H64" chevron="M29 21L32 24L35 21" />,
-  // The arriving picture comes in from the right over the one that stays.
-  slide: (
-    <Picture>
-      <Scene />
-      <g className="look-shadow">
-        <Part view={{ x: 0, y: 0, width: 36, height: 36 }} at={{ x: 28, y: 0 }}>
-          <NextScene />
-        </Part>
-      </g>
-      <path className="ink-chevron" d="M24 15L21 18L24 21" />
-    </Picture>
-  ),
-  // The arriving picture comes in from the right and pushes the other one out to the left.
-  push: (
-    <Picture>
-      <Part view={{ x: 36, y: 0, width: 28, height: 36 }} at={{ x: 0, y: 0 }}>
-        <Scene />
-      </Part>
-      <Part view={{ x: 0, y: 0, width: 36, height: 36 }} at={{ x: 28, y: 0 }}>
-        <NextScene />
-      </Part>
-      <path className="ink-divider" d="M28 0V36" />
-      <path className="ink-chevron" d="M24 15L21 18L24 21" />
-    </Picture>
-  ),
+  wipeUpLeft: <CornerWipe arriving="M50 0H64V36H14Z" edge="M50 0L14 36" chevron="M30 12H26V16" />,
+  wipeUpRight: <CornerWipe arriving="M0 0H14L50 36H0Z" edge="M14 0L50 36" chevron="M34 12H38V16" />,
+  wipeDownLeft: <CornerWipe arriving="M14 0H64V36H50Z" edge="M14 0L50 36" chevron="M26 20V24H30" />,
+  wipeDownRight: <CornerWipe arriving="M0 0H50L14 36H0Z" edge="M50 0L14 36" chevron="M40 20V24H36" />,
+  slide: <Slide way="left" />,
+  slideRight: <Slide way="right" />,
+  slideUp: <Slide way="up" />,
+  slideDown: <Slide way="down" />,
+  push: <Push way="left" />,
+  pushRight: <Push way="right" />,
+  pushUp: <Push way="up" />,
+  pushDown: <Push way="down" />,
   zoom: (
     <Picture>
       <Scene />
@@ -249,11 +356,21 @@ export const TRANSITION_PREVIEWS: Record<TransitionType, ReactElement> = {
       </g>
     </Picture>
   ),
+  shrink: <Shrinking turn={0} />,
+  spin: <Shrinking turn={-20} />,
   circleReveal: (
     <Picture>
       <Scene />
       <circle className="ink-other" cx="32" cy="18" r="13" />
       <rect className="ink-card" x="24" y="13" width="16" height="10" rx="2" />
+    </Picture>
+  ),
+  // The circle that still shows the leaving picture closes on the middle.
+  circleClose: (
+    <Picture>
+      <NextScene />
+      <circle className="ink-sky" cx="32" cy="18" r="11" />
+      <circle className="ink-sun" cx="36" cy="14" r="3" />
     </Picture>
   ),
 }

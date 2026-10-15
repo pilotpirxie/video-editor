@@ -34,6 +34,8 @@ export type FrameProvider = {
   prepare(layers: readonly Layer[], outputScale: number): Promise<void>
   // Asks the streams for the frames of the next export frame now, so they are decoded while this one is drawn and written.
   prefetchStreams(layers: readonly Layer[]): void
+  // Keeps this part of the usual cache of pictures; what no longer fits is freed by the next `collect`.
+  setCacheShare(share: number): void
   collect(): void
   closeStreams(): Promise<void>
   clear(): void
@@ -166,8 +168,7 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     const ahead = stream.ahead
     stream.ahead = undefined
     const frame = ahead?.frame === layer.frame ? await ahead.raw : await media.streamFrame(await stream.id, layer.frame)
-    if (stream.shown !== undefined) retired.push(stream.shown)
-    stream.shown = compositor.uploadPixels(frame)
+    stream.shown = stream.shown === undefined ? compositor.uploadPixels(frame) : compositor.refillPixels(stream.shown, frame)
     return { texture: stream.shown, naturalWidth: layer.video.width, naturalHeight: layer.video.height, hasAlphaBelow: false }
   }
 
@@ -270,6 +271,10 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     retired.length = 0
   }
 
+  function setCacheShare(share: number): void {
+    pictures.setLimit(TEXTURE_CACHE_BYTES * share)
+  }
+
   async function closeStreams(): Promise<void> {
     await closeEndedStreams([])
   }
@@ -280,5 +285,5 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     collect()
   }
 
-  return { itemsFor, itemsNow, prepare, prefetchStreams, collect, closeStreams, clear }
+  return { itemsFor, itemsNow, prepare, prefetchStreams, setCacheShare, collect, closeStreams, clear }
 }

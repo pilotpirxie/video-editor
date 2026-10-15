@@ -12,6 +12,7 @@ const MEDIA_DIRECTORY = join(ROOT, 'test', 'media', 'generated')
 
 const scratch = scratchDirectory('features')
 const FRAMES_PER_SECOND = 30
+const FRAME = SECOND / FRAMES_PER_SECOND
 
 // "00:00:01:15" as a number of frames, for a 30 fps project.
 function framesOf(timecode: unknown): number {
@@ -59,8 +60,9 @@ describe('text clips', () => {
     const report = await uiTest('text', ['--out', join(scratch, 'text')])
     expect(report.typingToFrameP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
 
+    // The title goes onto the first of the six tracks a new project starts with.
     const typed = projectIn(report, 'typed')
-    expect(typed.tracks).toHaveLength(1)
+    expect(typed.tracks).toHaveLength(6)
     expect(typed.tracks[0]?.clips[0]).toMatchObject({
       type: 'text',
       text: 'Hello',
@@ -154,25 +156,25 @@ describe('arranging by dragging', () => {
     // The Media tab says how long or how large a file is, and no longer what kind it is or whether it is used.
     expect(report.mediaDetails).toEqual(['0:02', '0:02', '320 × 180'])
 
-    // Held over the timeline, the video shows where it would land while nothing is added, and the outline keeps up with the pointer.
-    expect(report.heldOverEmpty).toEqual({ start: SECOND, trackIndex: 0, isNewTrack: true })
-    expect(report.whileHeld).toEqual({ tracks: 0, undoLabel: 'unchanged' })
+    // Held over the first of the six empty tracks, the video shows where it would land while nothing is added, and the outline keeps up with the pointer.
+    expect(report.heldOverEmpty).toEqual({ start: SECOND, trackIndex: 0, isNewTrack: false })
+    expect(report.whileHeld).toEqual({ tracks: 6, undoLabel: 'unchanged' })
     expect(report.heldFrames).toBeGreaterThan(60)
     expect(report.heldFrameP95).toBeLessThanOrEqual(MAX_FRAME_INTERVAL_MS)
     // Escape abandons the drag; let go on the timeline, the clip is where the outline was.
-    expect(report.afterEscape).toEqual({ tracks: 0, undoLabel: 'unchanged' })
-    expect(arrangement(projectIn(report, 'placed'))).toEqual([['video 1']])
+    expect(report.afterEscape).toEqual({ tracks: 6, undoLabel: 'unchanged' })
+    expect(arrangement(projectIn(report, 'placed'))).toEqual([['video 1'], [], [], [], [], []])
 
-    // Over the video the outline promised a track of its own, and playback went on while the sound was held there.
-    expect(report.heldOverTaken).toEqual({ start: 1.5 * SECOND, trackIndex: 1, isNewTrack: true })
+    // Over the video the outline showed the empty track above, and playback went on while the sound was held there.
+    expect(report.heldOverTaken).toEqual({ start: 1.5 * SECOND, trackIndex: 1, isNewTrack: false })
     expect(report.isPlayingWhileHeld).toBe(true)
-    expect(arrangement(projectIn(report, 'stacked'))).toEqual([['video 1'], ['audio 1.5']])
+    expect(arrangement(projectIn(report, 'stacked'))).toEqual([['video 1'], ['audio 1.5'], [], [], [], []])
 
-    // The two clips went a second later and a track up together, the upper one onto a new track; then down again; then stayed, with no track below.
-    expect(arrangement(projectIn(report, 'lifted'))).toEqual([[], ['video 2'], ['audio 2.5']])
+    // The two clips went a second later and a track up together, the upper one onto the empty track above; then down again; then stayed, with no track below.
+    expect(arrangement(projectIn(report, 'lifted'))).toEqual([[], ['video 2'], ['audio 2.5'], [], [], []])
     expect(report.groupSamples).toBeGreaterThan(4)
     expect(report.groupToFrameP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
-    expect(arrangement(projectIn(report, 'lowered'))).toEqual([['video 2'], ['audio 2.5'], []])
+    expect(arrangement(projectIn(report, 'lowered'))).toEqual([['video 2'], ['audio 2.5'], [], [], [], []])
     expect(projectIn(report, 'kept').tracks).toEqual(projectIn(report, 'lowered').tracks)
 
     // A hundred pixels cropped off the left of the 320-wide picture: the centre moved right by fifty, so what is left did not move.
@@ -180,7 +182,7 @@ describe('arranging by dragging', () => {
     expect(projectIn(report, 'cropped').tracks[0]?.clips[0]).toMatchObject({ crop: { left: 100, top: 0, right: 0, bottom: 0 }, transform: { x: 210, y: 90 } })
     expect(report.widthAfterCrop).toBe('220.0')
 
-    // A click and a Cmd-click picked two files; dragged together they showed one outline and landed one after the other on the empty top track.
+    // A click and a Cmd-click picked two files; dragged together they showed one outline and landed one after the other on an empty track.
     expect(report.selectedFiles).toEqual(['media-audio.wav', 'media-image.jpg'])
     expect(report.focusAfterClicks).not.toBe('option')
     expect(report.heldTogether).toEqual({ start: 0.5 * SECOND, trackIndex: 2, isNewTrack: false })
@@ -189,13 +191,13 @@ describe('arranging by dragging', () => {
     expect(together[0]?.start).toBe(0.5 * SECOND)
     expect(together[1]?.start).toBe((together[0]?.start ?? 0) + (together[0]?.duration ?? 0))
 
-    // With the keys alone: Right picked the sound, Shift-Right added the picture, and Return laid both at the playhead on a new top track.
+    // With the keys alone: Right picked the sound, Shift-Right added the picture, and Return laid both at the playhead on the empty track above the others.
     expect(report.listRole).toBe('listbox true')
     expect(report.pickedByKeys).toEqual(['media-audio.wav', 'media-image.jpg'])
     expect(report.focusAfterKeys).toBe('media-image.jpg')
     expect(report.timecodeAfterKeys).toBe(report.timecodeBeforeKeys)
     const byKeys = projectIn(report, 'addedByKeys')
-    expect(byKeys.tracks).toHaveLength(4)
+    expect(byKeys.tracks).toHaveLength(6)
     const typed = byKeys.tracks[3]?.clips ?? []
     expect(typed.map((clip) => clip.type)).toEqual(['audio', 'image'])
     expect(typed[0]?.start).toBe(framesOf(report.timecodeBeforeKeys) * (SECOND / FRAMES_PER_SECOND))
@@ -593,6 +595,13 @@ describe('keyframes and the motion path', () => {
     const removed = keyframesAt('removed')
     expect(removed.x?.map((keyframe) => keyframe.time)).toEqual([0, SECOND])
     expect(removed.y?.map((keyframe) => keyframe.time)).toEqual([0, SECOND])
+
+    // A click on a keyframe's diamond went to it; the ruler pulled the playhead onto the keyframe and the clip's end, except with ⌘ held.
+    // The clip ends the project, and the playhead stops on the project's last frame.
+    expect(report.jumpedTo).toBe(SECOND)
+    expect(report.snappedToKeyframe).toBe(SECOND)
+    expect(report.snappedToEnd).toBe(2 * SECOND - FRAME)
+    expect(report.freeOfSnapping).toBeGreaterThan(SECOND)
   })
 })
 
@@ -709,7 +718,7 @@ describe('export dialog', () => {
 
     // The 640 x 360 project starts at its own size; nothing is selected yet, so there is no range to choose.
     expect(report.defaultPreset).toBe('360p')
-    expect(report.summaryAtOpen).toBe('MP4, 640 × 360, 3 s long.')
+    expect(report.summaryAtOpen).toBe('MP4, 640×360, 3s long')
     expect(report.canChooseSelection).toBe(false)
 
     // Tab reaches every control and stays inside the dialog.
@@ -753,7 +762,7 @@ describe('export dialog', () => {
     expect(sound.video).toEqual({})
     expect(sound.audio).toMatchObject({ codec_name: 'pcm_s16le', sample_rate: '48000', channels: '2' })
     expect(Math.abs(sound.duration - 3)).toBeLessThan(0.01)
-    expect(report.stillSummary).toMatch(/^PNG, 640 × 360, the frame at /)
+    expect(report.stillSummary).toMatch(/^PNG, 640×360, the frame at /)
     expect((await probeExport(String(report.still))).video).toMatchObject({ codec_name: 'png', width: '640', height: '360' })
 
     const low = await probeExport(String(report.low))
@@ -765,3 +774,41 @@ describe('export dialog', () => {
   })
 })
 
+describe('quick edits', () => {
+  it('starts with six tracks, picks files by box and Select All, picks the part after a cut, sets the speed from the clip menu and grabs a clip off the canvas', async () => {
+    const report = await uiTest('quick-edits', ['--media', MEDIA_DIRECTORY, '--out', join(scratch, 'quick-edits')])
+
+    expect(report.startingTracks).toBe(6)
+    expect(report.pickedByBox).toEqual(['media-h264.mp4', 'media-audio.wav', 'media-image.jpg'])
+    expect(report.pickedBySelectAll).toEqual(['media-h264.mp4', 'media-audio.wav', 'media-image.jpg'])
+    // Dropped together on the first of the six tracks, end to end in the order of the list.
+    expect(arrangement(projectIn(report, 'dropped'))).toEqual([['video 0', 'audio 2', 'image 4'], [], [], [], [], []])
+    // Select All after a press on the timeline picked the clips and left the files as they were.
+    expect(report.filesAfterClipSelectAll).toEqual(['media-h264.mp4', 'media-audio.wav', 'media-image.jpg'])
+
+    expect(report.startAfterSplit).toBe('1.000')
+    expect(report.speedShown).toBe('100')
+    const typed = projectIn(report, 'typedSpeed').tracks[0]?.clips[1]
+    expect(typed).toMatchObject({ type: 'video', start: SECOND, speedPercent: 200, duration: SECOND / 2 })
+    // Escape leaves the speed as it was.
+    expect(report.speedShownAgain).toBe('200')
+    expect(report.undoAfterEscape).toBe('Undo Change Speed')
+    expect(projectIn(report, 'escapedSpeed').tracks[0]?.clips[1]).toMatchObject({ start: SECOND, speedPercent: 200 })
+
+    expect(report.outlinedOutside).toBe('1')
+    expect(report.xDraggedBack).toBe('160.0')
+    expect(report.outlinedAfter).toBe('0')
+  })
+})
+
+describe('accessibility', () => {
+  // Between them these hold every kind of clip, so Properties is looked at for each.
+  it.each(['17-callouts-arrows', '15-blur-highlight', '05-fades', '20-groups', '09-text'])('names every control and reaches every panel and dialog by keyboard with a visible focus ring, on %s', async (project) => {
+    const report = await uiTest('accessibility', ['--project', projectPath(project), '--out', join(scratch, `accessibility-${project}`)])
+    expect(report.unnamed).toEqual([])
+    expect(report.withoutRing).toEqual([])
+    expect(report.windowRegions).toEqual(expect.arrayContaining(['Canvas', 'Library', 'Properties', 'Timeline']))
+    expect(report.exportRegions).toEqual(['dialog'])
+    expect(report.settingsRegions).toEqual(['dialog'])
+  })
+})

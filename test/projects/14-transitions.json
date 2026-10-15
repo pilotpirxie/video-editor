@@ -268,6 +268,289 @@
             "type": "circleReveal"
           },
           "type": "image"
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-12",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 12000000,
+          "speedPercent": 100,
+          "start": 336000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-13",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 360000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "wipeUpLeft"
+          },
+          "type": "image"
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-14",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 12000000,
+          "speedPercent": 100,
+          "start": 384000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "wipeUpRight"
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-15",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 408000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "wipeDownLeft"
+          },
+          "type": "image"
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-16",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 12000000,
+          "speedPercent": 100,
+          "start": 432000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "wipeDownRight"
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-17",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 456000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "slideRight"
+          },
+          "type": "image"
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-18",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 12000000,
+          "speedPercent": 100,
+          "start": 480000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "slideUp"
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-19",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 504000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "slideDown"
+          },
+          "type": "image"
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-20",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 12000000,
+          "speedPercent": 100,
+          "start": 528000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "pushRight"
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-21",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 552000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "pushUp"
+          },
+          "type": "image"
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-22",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 12000000,
+          "speedPercent": 100,
+          "start": 576000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "pushDown"
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-23",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 600000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "shrink"
+          },
+          "type": "image"
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-24",
+          "mediaId": "h264",
+          "opacity": 1,
+          "sourceStart": 12000000,
+          "speedPercent": 100,
+          "start": 624000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "spin"
+          },
+          "type": "video",
+          "volume": 1
+        },
+        {
+          "duration": 24000000,
+          "id": "clip-25",
+          "mediaId": "image-green-screen",
+          "opacity": 1,
+          "start": 648000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "transitionIn": {
+            "duration": 16000000,
+            "type": "circleClose"
+          },
+          "type": "image"
         }
       ],
       "hidden": false,

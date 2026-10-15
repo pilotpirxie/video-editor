@@ -132,6 +132,14 @@ export function nextTrackName(project: Project): string {
   return `Track ${project.tracks.length + 1}`
 }
 
+// Where something added above everything else goes: the empty track just above the highest clip, so the empty tracks a new project starts with are filled before new ones are made.
+// A locked or hidden track there would swallow it, so a new track on top is used instead (an index past the last track).
+export function trackAboveAll(project: Project): number {
+  const index = project.tracks.findLastIndex((track) => track.clips.length > 0) + 1
+  const track = project.tracks[index]
+  return track === undefined || track.locked || track.hidden ? project.tracks.length : index
+}
+
 export function shiftedKeyframes(keyframes: Keyframes | undefined, delta: number): Keyframes | undefined {
   if (keyframes === undefined || delta === 0) return keyframes
   const shifted: Keyframes = {}
@@ -186,14 +194,20 @@ export type Placement = {
 }
 
 // One rule for every drop: clips land on the row they were dropped on when it is free, otherwise on a new track directly above it.
+// An empty track already directly above is drawn at the very place in the stack a new one would be, so it is used instead, unless it would hide, silence or lock the clips.
 export function placeOnTrack(project: Project, placement: Placement): Project {
   const { clips, newTrack } = placement
   const trackIndex = Math.max(0, placement.trackIndex)
   const target = project.tracks[trackIndex]
   const ignoredIds = new Set(clips.map((clip) => clip.id))
   const fits = target !== undefined && clips.every((clip) => isFree(target, clip.start, endOf(clip), ignoredIds))
-  if (target !== undefined && fits) {
-    const tracks = project.tracks.map((track) => (track === target ? { ...track, clips: [...track.clips, ...clips] } : track))
+  const above = project.tracks[trackIndex + 1]
+  const isAboveUsable = target !== undefined && above !== undefined && above.clips.length === 0 && !above.locked && !above.hidden && !above.muted
+  let receiving: Track | undefined
+  if (target !== undefined && fits) receiving = target
+  else if (isAboveUsable) receiving = above
+  if (receiving !== undefined) {
+    const tracks = project.tracks.map((track) => (track === receiving ? { ...track, clips: [...track.clips, ...clips] } : track))
     return { ...project, tracks }
   }
   const insertAt = Math.min(trackIndex + 1, project.tracks.length)

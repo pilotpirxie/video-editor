@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MEDIA_STATES, SECOND, audioClip, projectOf, track, videoClip } from '../../test/fixtures.js'
-import { hasLinkedAudio, makesSound, nearestEdit } from './clips.js'
+import { hasLinkedAudio, makesSound, nearestEdit, trackAboveAll } from './clips.js'
 
 describe('nearestEdit', () => {
   const project = projectOf([track('t1', [videoClip('a', SECOND, 2 * SECOND)]), track('t2', [audioClip('b', 4 * SECOND, SECOND)])])
@@ -42,3 +42,20 @@ describe('hasLinkedAudio and makesSound', () => {
   })
 })
 
+
+describe('trackAboveAll', () => {
+  it('fills the empty track just above the highest clip', () => {
+    expect(trackAboveAll(projectOf([track('t1', []), track('t2', []), track('t3', [])]))).toBe(0)
+    expect(trackAboveAll(projectOf([track('t1', [videoClip('a', 0, SECOND)]), track('t2', []), track('t3', [])]))).toBe(1)
+  })
+
+  it('makes a new track on top when none is free above the highest clip', () => {
+    expect(trackAboveAll(projectOf([]))).toBe(0)
+    expect(trackAboveAll(projectOf([track('t1', []), track('t2', [videoClip('a', 0, SECOND)])]))).toBe(2)
+  })
+
+  it('does not put anything on a locked or hidden track', () => {
+    expect(trackAboveAll(projectOf([track('t1', [], { locked: true }), track('t2', [])]))).toBe(2)
+    expect(trackAboveAll(projectOf([track('t1', [], { hidden: true }), track('t2', [])]))).toBe(2)
+  })
+})

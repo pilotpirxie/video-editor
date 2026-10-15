@@ -73,19 +73,29 @@ describe('transition arithmetic', () => {
 })
 
 describe('transition golden images', () => {
-  // The reference project has one transition on each of its eleven cuts, a second apart, and a clip on its own with one at each end.
-  const cutFrames = TRANSITION_TYPES.map((_type, index) => (index + 1) * CUT_FRAME)
+  // The reference project has one transition on each of its cuts, a second apart: eleven, then a clip on its own with one at each end, then the rest.
+  const FIRST_CUTS: TransitionType[] = ['crossDissolve', 'fadeBlack', 'fadeWhite', 'wipeLeft', 'wipeRight', 'wipeUp', 'wipeDown', 'slide', 'push', 'zoom', 'circleReveal']
+  const LATER_CUTS: TransitionType[] = ['wipeUpLeft', 'wipeUpRight', 'wipeDownLeft', 'wipeDownRight', 'slideRight', 'slideUp', 'slideDown', 'pushRight', 'pushUp', 'pushDown', 'shrink', 'spin', 'circleClose']
+  const FIRST_LATER_CUT = 450
+  const cuts = [
+    ...FIRST_CUTS.map((type, index) => ({ type, frame: (index + 1) * CUT_FRAME })),
+    ...LATER_CUTS.map((type, index) => ({ type, frame: FIRST_LATER_CUT + index * CUT_FRAME })),
+  ]
   const ALONE_FRAMES = [370, 410]
 
+  it('has a cut for every transition', () => {
+    expect(cuts.map((cut) => cut.type).sort()).toEqual([...TRANSITION_TYPES].sort())
+  })
+
   it('matches the golden image of every transition at its middle', async () => {
-    const pictures = await renderFrames('14-transitions', { via: 'paused', frames: [...cutFrames, ...ALONE_FRAMES] })
-    for (const [index, type] of TRANSITION_TYPES.entries()) await expectGolden(ffmpeg, `transition-${type}`, pictureAt(pictures, index))
-    await expectGolden(ffmpeg, 'transition-zoom-in-alone', pictureAt(pictures, cutFrames.length))
-    await expectGolden(ffmpeg, 'transition-slide-out-alone', pictureAt(pictures, cutFrames.length + 1))
+    const pictures = await renderFrames('14-transitions', { via: 'paused', frames: [...cuts.map((cut) => cut.frame), ...ALONE_FRAMES] })
+    for (const [index, cut] of cuts.entries()) await expectGolden(ffmpeg, `transition-${cut.type}`, pictureAt(pictures, index))
+    await expectGolden(ffmpeg, 'transition-zoom-in-alone', pictureAt(pictures, cuts.length))
+    await expectGolden(ffmpeg, 'transition-slide-out-alone', pictureAt(pictures, cuts.length + 1))
   })
 
   it('draws a frame the same whether it comes first or after other frames', async () => {
-    const zoomFrame = cutFrames.at(-2) ?? 0
+    const zoomFrame = (FIRST_CUTS.indexOf('zoom') + 1) * CUT_FRAME
     const alone = await renderFrames('14-transitions', { via: 'paused', frames: [zoomFrame] })
     const afterOthers = await renderFrames('14-transitions', { via: 'paused', frames: [11, CUT_FRAME, zoomFrame] })
     expect(sameBytes(pictureAt(alone, 0), pictureAt(afterOthers, 2))).toBe(true)

@@ -117,6 +117,8 @@ export type TimeRange = {
 
 export type MediaClient = {
   loadProject(path: string, forPreview: boolean): Promise<LoadedProject>
+  // Opens again the media of the project a window shows, in a media process that was started anew. Relative paths are read beside `projectPath`.
+  openMedia(media: readonly MediaRef[], projectPath: string | undefined): Promise<Record<string, MediaState>>
   whenPrepared(): Promise<void>
   readImage(mediaId: string): Promise<ArrayBuffer>
   previewFrame(mediaId: string, frame: number): Promise<ArrayBuffer | undefined>
@@ -144,6 +146,7 @@ export type MediaClient = {
 
 export type MediaRequest =
   | { method: 'loadProject'; path: string; forPreview: boolean }
+  | { method: 'openMedia'; media: MediaRef[]; projectPath: string | undefined }
   | { method: 'whenPrepared' }
   | { method: 'readImage'; mediaId: string }
   | { method: 'previewFrame'; mediaId: string; frame: number }
@@ -243,6 +246,8 @@ export type HostCommand =
   | { type: 'run-job'; job: HeadlessJob }
   | { type: 'export-event'; event: JobEvent }
   | { type: 'menu'; action: MenuAction }
+  // macOS reports that memory is short (or no longer is): the caches of the window shrink, or grow back.
+  | { type: 'memory-pressure'; isUnderPressure: boolean }
 
 // `loadFrom` is the file to read (the project, or its recovery file after a crash); `path` is where Save writes.
 export type DocumentInfo = {

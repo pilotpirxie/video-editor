@@ -1,7 +1,7 @@
 // The programs the compositor draws with. Positions are output pixels with the first row at the top; `vLocal` is the place inside the box being drawn, measured from its centre.
 
-// How many effects one draw can apply. A clip has each kind at most once, and two of the seven kinds are not applied here.
-export const MAX_OPS = 8
+// How many effects one draw can apply. A clip has each kind at most once, two of the eleven kinds are not applied here, and a group adds its own effects to those of its members.
+export const MAX_OPS = 12
 // Samples on each side of the centre of a blur.
 export const BLUR_TAPS = 7
 
@@ -10,6 +10,10 @@ export const OP_BLACK_AND_WHITE = 2
 export const OP_CHROMA_KEY = 3
 export const OP_ROUNDED_CORNERS = 4
 export const OP_BORDER = 5
+export const OP_SEPIA = 6
+export const OP_INVERT = 7
+export const OP_TINT = 8
+export const OP_VIGNETTE = 9
 
 export const SOURCE_PICTURE = 0
 export const SOURCE_ALPHA_BELOW = 1
@@ -47,6 +51,8 @@ const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 // How far apart two colours may be, in the plane of their colour without their brightness, at full tolerance and at full softness.
 const float TOLERANCE_REACH = 0.5;
 const float SOFTNESS_REACH = 0.25;
+// How far beyond the clear middle a vignette takes to reach its full darkness, as a share of the way to the corners.
+const float VIGNETTE_FALLOFF = 0.5;
 uniform sampler2D uTexture;
 uniform int uSource;
 uniform vec2 uHalfSize;
@@ -131,6 +137,17 @@ void main() {
       float inner = roundedBox(uHalfSize - a.w, max(radius - a.w, 0.0));
       color = mix(color, vec4(a.rgb, 1.0) * outer, 1.0 - inner);
       coverage = 1.0;
+    } else if (kind == ${OP_SEPIA}) {
+      vec3 sepia = vec3(dot(color.rgb, vec3(0.393, 0.769, 0.189)), dot(color.rgb, vec3(0.349, 0.686, 0.168)), dot(color.rgb, vec3(0.272, 0.534, 0.131)));
+      color.rgb = mix(color.rgb, min(sepia, vec3(color.a)), a.x);
+    } else if (kind == ${OP_INVERT}) {
+      color.rgb = mix(color.rgb, vec3(color.a) - color.rgb, a.x);
+    } else if (kind == ${OP_TINT}) {
+      color.rgb = mix(color.rgb, a.rgb * dot(color.rgb, LUMA), a.w);
+    } else if (kind == ${OP_VIGNETTE}) {
+      // 0 in the middle of the box, 1 in its corners.
+      float away = length(vLocal / uHalfSize) * 0.70710678;
+      color.rgb *= 1.0 - a.x * smoothstep(a.y, a.y + VIGNETTE_FALLOFF, away);
     }
   }
 

@@ -27,6 +27,8 @@ function perform(session: MediaSession, request: MediaRequest, signal: AbortSign
   switch (request.method) {
     case 'loadProject':
       return session.loadProject(request.path, request.forPreview)
+    case 'openMedia':
+      return session.openMedia(request.media, request.projectPath)
     case 'whenPrepared':
       return session.whenPrepared()
     case 'readImage':
@@ -140,6 +142,9 @@ async function reportVersions(ffmpeg: FfmpegRunner): Promise<void> {
 function start(): void {
   let ffmpeg: FfmpegRunner | undefined
   let cache: DiskCache | undefined
+
+  // Background work that fails without a handler is a bug to log, not a reason to stop the media of every window. An uncaught exception still ends the process; the main process records its last words.
+  process.on('unhandledRejection', (reason) => logError('A media task failed and nothing handled it', reason))
 
   process.parentPort.on('message', (event) => {
     const command: unknown = event.data

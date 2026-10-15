@@ -4,6 +4,7 @@ import { frameDuration, timecode } from '../shared/time.js'
 import { CameraTool } from './CameraTool.js'
 import { CanvasOverlay } from './CanvasOverlay.js'
 import { useEditorState, usePosition, useSession, useShortcutHint } from './context.js'
+import type { EditorState } from './store.js'
 import { IconButton } from './icons.js'
 import { Picker } from './Picker.js'
 import { keepPreviewSized, type PreviewZoom } from './previewLayout.js'
@@ -39,6 +40,17 @@ function zoomChoices(zoom: PreviewZoom): { value: string; label: string }[] {
   return [...ZOOM_CHOICES, { value: key, label: `${key}%` }]
 }
 
+// A project that opens within this time shows no words, so they never flash by.
+const OPENING_HINT_DELAY_MS = 200
+
+// What the canvas says while it has nothing to show: that a project is on its way, or how to put something on it.
+function canvasHintOf(state: EditorState): string | undefined {
+  if (state.openingName !== undefined) return `Opening "${state.openingName}"…`
+  if (projectDuration(state.wholeProject) > 0) return undefined
+  if (state.wholeProject.media.length === 0) return 'Drop video, audio or images here from the Finder, or use Import in the library.'
+  return 'Drag media here from the library to start.'
+}
+
 type CanvasPanelProps = {
   // Created once outside React: its drawing surface is handed to the engine worker and cannot be handed over twice.
   preview: HTMLCanvasElement
@@ -54,6 +66,9 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
   const frameCount = usePosition((position) => position.sequence)
   const fullQualityMs = usePosition((position) => position.fullQualityMs)
   const isPreviewing = useEditorState((state) => state.isPreviewing)
+  const hint = useEditorState(canvasHintOf)
+  const isOpening = useEditorState((state) => state.openingName !== undefined)
+  const [isOpeningSlowly, setIsOpeningSlowly] = useState(false)
   const stepBackKeys = useShortcutHint('step-back')
   const playKeys = useShortcutHint('play-pause')
   const stepForwardKeys = useShortcutHint('step-forward')
@@ -69,6 +84,13 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
   const isGroupOpen = useEditorState((state) => state.openGroups.length > 0)
   const isZooming = isZoomToolOn && !isGroupOpen
   const isBusy = isPlaying || shuttleRate !== 0
+
+  useEffect(() => {
+    setIsOpeningSlowly(false)
+    if (!isOpening) return
+    const timer = window.setTimeout(() => setIsOpeningSlowly(true), OPENING_HINT_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [isOpening])
 
   // While the zoom tool is used the paused picture is the whole canvas, so any part of it can be framed.
   useEffect(() => engine.send({ type: 'whole-canvas', isShown: isZooming }), [engine, isZooming])
@@ -115,7 +137,7 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
     area.scrollTop += shown.top + anchor.shareY * shown.height - anchor.clientY
   }, [preview, zoom])
 
-  // Media dropped on the canvas starts at the playhead, on a new layer above everything else; several files follow one another there.
+  // Media dropped on the canvas starts at the playhead, on the layer above everything else; several files follow one another there.
   useEffect(() => {
     const stage = stageRef.current
     if (stage === null) return
@@ -133,9 +155,14 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
       <div className={zoom === 'fit' ? 'canvas-area' : 'canvas-area scrollable'} ref={areaRef}>
         <div className="preview-fit" ref={stageRef}>
           <div className="preview-frame" ref={frameRef}>
-            {!isPreviewing && (isZooming ? <CameraTool /> : <CanvasOverlay isCropping={isCropping} />)}
+            {!isPreviewing && (isZooming ? <CameraTool /> : <CanvasOverlay isCropping={isCropping} areaRef={areaRef} />)}
           </div>
         </div>
+        {hint !== undefined && !isPreviewing && (!isOpening || isOpeningSlowly) && (
+          <p className="canvas-hint" data-testid="canvas-hint">
+            {hint}
+          </p>
+        )}
       </div>
       <footer className="canvas-footer">
         <IconButton icon="stepBack" label="Previous frame" testId="step-back" shortcut={stepBackKeys} onClick={() => actions.stepFrames(-1)} />

@@ -12,7 +12,11 @@ import {
   OP_BORDER,
   OP_CHROMA_KEY,
   OP_COLOR_ADJUST,
+  OP_INVERT,
   OP_ROUNDED_CORNERS,
+  OP_SEPIA,
+  OP_TINT,
+  OP_VIGNETTE,
   SHAPE_BLUR,
   SHAPE_HIGHLIGHT,
   SHAPE_PIXELATE,
@@ -75,6 +79,8 @@ export type DrawItem = PictureItem | BlurLayer | HighlightLayer
 
 export type Compositor = {
   uploadPixels(frame: RawFrame): GpuTexture
+  // Puts the frame into a texture it was made for when the sizes match, or else into a new one; the old one is then released.
+  refillPixels(texture: GpuTexture, frame: RawFrame): GpuTexture
   uploadImage(image: ImageBitmap | OffscreenCanvas): GpuTexture
   release(texture: GpuTexture): void
   render(canvas: Size, output: Size, view: View, items: readonly DrawItem[]): void
@@ -425,6 +431,19 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
         const color = rgbOf(effect.color)
         kinds[count] = OP_BORDER
         first.set([color.red, color.green, color.blue, effect.width * mapping.scale], base)
+      } else if (effect.type === 'sepia') {
+        kinds[count] = OP_SEPIA
+        first.set([effect.amount], base)
+      } else if (effect.type === 'invert') {
+        kinds[count] = OP_INVERT
+        first.set([effect.amount], base)
+      } else if (effect.type === 'tint') {
+        const color = rgbOf(effect.color)
+        kinds[count] = OP_TINT
+        first.set([color.red, color.green, color.blue, effect.amount], base)
+      } else if (effect.type === 'vignette') {
+        kinds[count] = OP_VIGNETTE
+        first.set([effect.amount, effect.size], base)
       } else {
         continue
       }
@@ -633,6 +652,19 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     return finishTexture(handle, pixels.width, pixels.height)
   }
 
+  // A stream shows a frame of the same size each time; writing it into the texture it has spares the GPU a new 4K texture, and its freeing, per frame.
+  function refillPixels(texture: GpuTexture, pixels: RawFrame): GpuTexture {
+    if (texture.width !== pixels.width || texture.height !== pixels.height) {
+      release(texture)
+      return uploadPixels(pixels)
+    }
+    gl.bindTexture(gl.TEXTURE_2D, texture.handle)
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false)
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, pixels.width, pixels.height, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(pixels.data))
+    gl.generateMipmap(gl.TEXTURE_2D)
+    return texture
+  }
+
   function uploadImage(image: ImageBitmap | OffscreenCanvas): GpuTexture {
     const handle = gl.createTexture()
     gl.bindTexture(gl.TEXTURE_2D, handle)
@@ -646,6 +678,8 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
   }
 
   function render(canvas: Size, outputSize: Size, view: View, items: readonly DrawItem[]): void {
+    // Drawing on a lost context does nothing and would read back black pictures, so an export stops here instead.
+    if (gl.isContextLost()) throw new CompositorError('The graphics processor stopped; export again once the preview is back.')
     output = outputSize
     mapping = outputMapping(canvas, output, view)
     sized(frame)
@@ -756,5 +790,5 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     }
   }
 
-  return { uploadPixels, uploadImage, release, render, present, readPixels, startReadback }
+  return { uploadPixels, refillPixels, uploadImage, release, render, present, readPixels, startReadback }
 }

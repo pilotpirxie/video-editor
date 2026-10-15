@@ -86,6 +86,7 @@ type ClipTiming = {
   keyframes?: Keyframes
 }
 
+// A wipe, a slide and a push are named after the way they move; 'slide' and 'push' move to the left.
 export type TransitionType =
   | 'crossDissolve'
   | 'fadeBlack'
@@ -94,10 +95,23 @@ export type TransitionType =
   | 'wipeRight'
   | 'wipeUp'
   | 'wipeDown'
+  | 'wipeUpLeft'
+  | 'wipeUpRight'
+  | 'wipeDownLeft'
+  | 'wipeDownRight'
   | 'slide'
+  | 'slideRight'
+  | 'slideUp'
+  | 'slideDown'
   | 'push'
+  | 'pushRight'
+  | 'pushUp'
+  | 'pushDown'
   | 'zoom'
+  | 'shrink'
+  | 'spin'
   | 'circleReveal'
+  | 'circleClose'
 
 export type Transition = {
   type: TransitionType
@@ -138,6 +152,11 @@ export type Effect =
   | (EffectSwitch & { type: 'roundedCorners'; radius: number })
   | (EffectSwitch & { type: 'clipBlur'; strength: number })
   | (EffectSwitch & { type: 'chromaKey'; color: string; tolerance: number; softness: number; spill: number })
+  | (EffectSwitch & { type: 'sepia'; amount: number })
+  | (EffectSwitch & { type: 'invert'; amount: number })
+  | (EffectSwitch & { type: 'tint'; color: string; amount: number })
+  // `size` is the share of the way from the middle of the clip to its corners that stays clear.
+  | (EffectSwitch & { type: 'vignette'; amount: number; size: number })
 
 export type EffectType = Effect['type']
 
@@ -352,12 +371,37 @@ export const TRANSITION_TYPES: readonly TransitionType[] = [
   'wipeRight',
   'wipeUp',
   'wipeDown',
+  'wipeUpLeft',
+  'wipeUpRight',
+  'wipeDownLeft',
+  'wipeDownRight',
   'slide',
+  'slideRight',
+  'slideUp',
+  'slideDown',
   'push',
+  'pushRight',
+  'pushUp',
+  'pushDown',
   'zoom',
+  'shrink',
+  'spin',
   'circleReveal',
+  'circleClose',
 ]
-export const EFFECT_TYPES: readonly EffectType[] = ['colorAdjust', 'blackAndWhite', 'dropShadow', 'border', 'roundedCorners', 'clipBlur', 'chromaKey']
+export const EFFECT_TYPES: readonly EffectType[] = [
+  'colorAdjust',
+  'blackAndWhite',
+  'sepia',
+  'tint',
+  'invert',
+  'vignette',
+  'dropShadow',
+  'border',
+  'roundedCorners',
+  'clipBlur',
+  'chromaKey',
+]
 const SHAPES: readonly Shape[] = ['rectangle', 'ellipse']
 export const ANIMATION_TYPES: readonly AnimationType[] = ['fade', 'pop', 'slideLeft', 'slideRight', 'slideUp', 'slideDown', 'zoom', 'typewriter']
 export const CALLOUT_SHAPES: readonly CalloutShape[] = ['rectangle', 'roundedBox', 'ellipse', 'speechBubble', 'thoughtBubble', 'arrowBox', 'banner', 'burst']
@@ -594,12 +638,16 @@ const EFFECT_KEYS: Record<EffectType, readonly string[]> = {
   roundedCorners: ['radius'],
   clipBlur: ['strength'],
   chromaKey: ['color', 'tolerance', 'softness', 'spill'],
+  sepia: ['amount'],
+  invert: ['amount'],
+  tint: ['color', 'amount'],
+  vignette: ['amount', 'size'],
 }
 
 function effectSettings(type: EffectType, fields: Fields): Effect {
   if (type === 'colorAdjust') {
     return { type, brightness: fields.number('brightness', ADJUSTMENT), contrast: fields.number('contrast', ADJUSTMENT), saturation: fields.number('saturation', ADJUSTMENT) }
-  } else if (type === 'blackAndWhite') {
+  } else if (type === 'blackAndWhite' || type === 'sepia' || type === 'invert') {
     return { type, amount: fields.number('amount', AMOUNT) }
   } else if (type === 'dropShadow') {
     return {
@@ -616,6 +664,10 @@ function effectSettings(type: EffectType, fields: Fields): Effect {
     return { type, radius: fields.number('radius', { above: 0 }) }
   } else if (type === 'clipBlur') {
     return { type, strength: fields.number('strength', { above: 0 }) }
+  } else if (type === 'tint') {
+    return { type, color: fields.opaqueColor('color'), amount: fields.number('amount', AMOUNT) }
+  } else if (type === 'vignette') {
+    return { type, amount: fields.number('amount', AMOUNT), size: fields.number('size', AMOUNT) }
   } else {
     return { type, color: fields.opaqueColor('color'), tolerance: fields.number('tolerance', AMOUNT), softness: fields.number('softness', AMOUNT), spill: fields.number('spill', AMOUNT) }
   }

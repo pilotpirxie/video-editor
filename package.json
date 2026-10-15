@@ -16,6 +16,8 @@
     "test:engine": "npm run build && vitest run test/engine --no-file-parallelism",
     "test:editor": "npm run build && vitest run test/editor --no-file-parallelism",
     "test:acceptance": "npm run build && vitest run test/acceptance --no-file-parallelism",
+    "test:stability": "npm run build && vitest run test/stability --no-file-parallelism",
+    "test:extremes": "npm run build && vitest run test/extremes --no-file-parallelism",
     "test": "npm run typecheck && npm run lint && npm run test:unit && npm run build && vitest run test/engine test/editor --no-file-parallelism",
     "dist": "npm run build && electron-builder --mac dmg --arm64"
   },

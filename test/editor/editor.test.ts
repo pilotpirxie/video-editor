@@ -2,13 +2,16 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { serializeProject, type Clip, type Project, type Track } from '../../src/shared/project.js'
-import { ROOT, projectIn, projectPath, runApp, scratchDirectory, uiTest } from '../helpers.js'
+import { MEDIA_DIRECTORY, largeProject, projectIn, projectPath, runApp, scratchDirectory, uiTest } from '../helpers.js'
 
 const SECOND = 24_000_000
-const FRAME = SECOND / 30
-const MEDIA_DIRECTORY = join(ROOT, 'test', 'media', 'generated')
 const MAX_POSTER_MS = 1000
 const POINTER_TOLERANCE = 1.5
+// §12: the window comes back in the same state within 3 s when the UI, GPU or media process dies.
+const MAX_RETURN_SECONDS = 3
+// §3: undo and redo, and any single task that holds the window.
+const MAX_UNDO_MS = 50
+const MAX_TASK_MS = 50
 
 const scratch = scratchDirectory('editor')
 
@@ -54,21 +57,21 @@ describe('editing', () => {
     const placed = projectIn(report, 'placed')
     expect(placed.canvas).toEqual({ width: 320, height: 180, frameRate: { num: 30, den: 1 } })
     expect(placed.media.map((reference) => reference.path)).toEqual(['h264.mp4', 'audio.wav', 'image.jpg'].map((name) => join(MEDIA_DIRECTORY, name)))
-    expect(outline(placed)).toEqual(['video 0+2, image 3+5', 'audio 0.5+2'])
-    expect(placed.tracks.map((track) => track.name)).toEqual(['Track 1', 'Track 2'])
+    expect(outline(placed)).toEqual(['video 0+2, image 3+5', 'audio 0.5+2', '', '', '', ''])
+    expect(placed.tracks.map((track) => track.name)).toEqual(['Track 1', 'Track 2', 'Track 3', 'Track 4', 'Track 5', 'Track 6'])
 
-    expect(outline(projectIn(report, 'movedAndTrimmed'))).toEqual(['video 0+2, image 2+3', 'audio 0.5+2'])
+    expect(outline(projectIn(report, 'movedAndTrimmed'))).toEqual(['video 0+2, image 2+3', 'audio 0.5+2', '', '', '', ''])
 
     const split = projectIn(report, 'split')
-    expect(outline(split)).toEqual(['video 0+1, video 1+1, image 2+3', 'audio 0.5+2'])
+    expect(outline(split)).toEqual(['video 0+1, video 1+1, image 2+3', 'audio 0.5+2', '', '', '', ''])
     expect(split.tracks[0]?.clips[1]).toMatchObject({ sourceStart: SECOND })
 
     expect(report.redoLabel).toBe('Redo Split Clip')
-    expect(outline(projectIn(report, 'afterUndo'))).toEqual(['video 0+2, image 2+3', 'audio 0.5+2'])
-    expect(outline(projectIn(report, 'pasted'))).toEqual(['video 0+1, video 1+1, image 2+3', 'video 1+1', 'audio 0.5+2'])
+    expect(outline(projectIn(report, 'afterUndo'))).toEqual(['video 0+2, image 2+3', 'audio 0.5+2', '', '', '', ''])
+    expect(outline(projectIn(report, 'pasted'))).toEqual(['video 0+1, video 1+1, image 2+3', 'video 1+1', 'audio 0.5+2', '', '', '', ''])
 
     const final = projectIn(report, 'final')
-    expect(outline(final)).toEqual(['video 0+1, image 1+3', '', 'audio 0.5+2'])
+    expect(outline(final)).toEqual(['video 0+1, image 1+3', '', 'audio 0.5+2', '', '', '', ''])
     expect(final.tracks[0]?.clips[0]).toMatchObject({ sourceStart: SECOND })
   })
 
@@ -162,49 +165,40 @@ describe('documents', () => {
     expect(report).toMatchObject({ title: 'Untitled', isEdited: true, windows: 2, widths: ['1280', '800'] })
     expect(projectIn(report, 'saved').canvas.width).toBe(Number(report.width))
   })
+
+  it('brings the window back with its work within 3 s when its page dies, keeps it as it is when the GPU process dies, and logs both', async () => {
+    const report = await uiTest('page-crash')
+    expect(report.afterPageCrash).toBeLessThanOrEqual(MAX_RETURN_SECONDS)
+    expect(report.afterGpuCrash).toBeLessThanOrEqual(MAX_RETURN_SECONDS)
+    expect(report).toMatchObject({ reloadsAfterGpuCrash: 0, widthAfterGpuCrash: '1000', undoLabelAfterGpuCrash: 'Undo Change Canvas Size' })
+    expect(report.crashLog).toEqual([expect.objectContaining({ process: 'renderer' }), expect.objectContaining({ process: 'GPU' })])
+  })
+
+  it('keeps the window, its work and its undo when the media process dies, decodes with the new one within 3 s, and logs it', async () => {
+    const report = await uiTest('media-crash', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'media-crash')])
+    expect(report.secondsToRestart).toBeLessThanOrEqual(MAX_RETURN_SECONDS)
+    expect(report).toMatchObject({ reloads: 0, width: '1280', undoLabel: 'Undo Change Canvas Size', undoLabelAfter: 'Undo Change Canvas Size' })
+    expect(projectIn(report, 'saved').canvas.width).toBe(1280)
+    expect(report.crashLog).toEqual([expect.objectContaining({ process: 'media' })])
+  })
 })
 
-// 4,096 clips on four tracks, spread over just under twenty hours.
-function largeProject(): Project {
-  const clipsPerTrack = 1024
-  const spacing = 2109 * FRAME
-  const tracks: Track[] = []
-  for (let trackIndex = 0; trackIndex < 4; trackIndex++) {
-    const clips: Clip[] = []
-    for (let index = 0; index < clipsPerTrack; index++) {
-      clips.push({
-        id: `clip-${trackIndex}-${index}`,
-        type: 'video',
-        mediaId: 'video',
-        start: index * spacing,
-        duration: 2100 * FRAME,
-        sourceStart: 0,
-        speedPercent: 100,
-        transform: { x: 160 + 320 * (trackIndex % 2), y: 90 + 180 * Math.floor(trackIndex / 2), scaleX: 1, scaleY: 1, rotation: 0 },
-        opacity: 1,
-        volume: 1,
-      })
-    }
-    tracks.push({ id: `track-${trackIndex}`, name: `Track ${trackIndex + 1}`, hidden: false, locked: false, muted: false, clips })
-  }
-  return {
-    version: 1,
-    canvas: { width: 640, height: 360, frameRate: { num: 30, den: 1 } },
-    media: [{ id: 'video', path: join(MEDIA_DIRECTORY, 'h264.mp4'), relativePath: '' }],
-    tracks,
-  }
+function numbersOf(value: unknown): number[] {
+  return Array.isArray(value) ? value.filter((entry): entry is number => typeof entry === 'number') : []
 }
 
 describe('responsiveness with 4,096 clips on a 20-hour timeline', () => {
   const MAX_OPEN_SECONDS = 3
   const MAX_FRAME_INTERVAL_MS = 1000 / 60 + 4
   const MAX_DRAG_TO_FRAME_MS = 33
-  const MAX_UNDO_MS = 50
+  const MAX_PREPARED_SEEK_MS = 150
+  // §12: what the editor uses while a long project is edited, all its processes together.
+  const MAX_TYPICAL_MEMORY_MB = 700
 
-  it('opens within 3 s, scrolls and zooms at 60 fps, follows a drag within 33 ms and undoes within 50 ms', async () => {
+  it('opens within 3 s, scrolls and zooms at 60 fps, follows a drag within 33 ms, undoes and redoes within 50 ms, seeks within 150 ms, never blocks for more than 50 ms and stays within 700 MB', async () => {
     const path = join(scratch, 'large.json')
     writeFileSync(path, serializeProject(largeProject()))
-    const report = await uiTest('budgets', ['--project', path])
+    const report = await uiTest('budgets', ['--project', path, '--report-memory'])
     console.info(`4,096 clips: ${JSON.stringify(report)}`)
 
     expect(report.openSeconds).toBeLessThanOrEqual(MAX_OPEN_SECONDS)
@@ -213,5 +207,53 @@ describe('responsiveness with 4,096 clips on a 20-hour timeline', () => {
     expect(report.dragSamples).toBeGreaterThan(8)
     expect(report.dragToFrameP95).toBeLessThanOrEqual(MAX_DRAG_TO_FRAME_MS)
     expect(report.undoMilliseconds).toBeLessThanOrEqual(MAX_UNDO_MS)
+    expect(report.redoMilliseconds).toBeLessThanOrEqual(MAX_UNDO_MS)
+    expect(report.seekP95).toBeLessThanOrEqual(MAX_PREPARED_SEEK_MS)
+    expect(Math.max(0, ...numbersOf(report.longTasks))).toBeLessThanOrEqual(MAX_TASK_MS)
+    expect(report.peakMemoryMegabytes).toBeLessThanOrEqual(MAX_TYPICAL_MEMORY_MB)
+  })
+})
+
+// A short 1080p clip, then ten minutes of 1080p from the tenth second on.
+function longRecordingProject(): Project {
+  const placed = { sourceStart: 0, speedPercent: 100, transform: { x: 960, y: 540, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, volume: 1 }
+  const clips: Clip[] = [
+    { id: 'short', type: 'video', mediaId: 'short', start: 0, duration: 5 * SECOND, ...placed },
+    { id: 'long', type: 'video', mediaId: 'long', start: 10 * SECOND, duration: 600 * SECOND, ...placed },
+  ]
+  return {
+    version: 1,
+    canvas: { width: 1920, height: 1080, frameRate: { num: 30, den: 1 } },
+    media: [
+      { id: 'short', path: join(MEDIA_DIRECTORY, '1080p.mp4'), relativePath: '' },
+      { id: 'long', path: join(MEDIA_DIRECTORY, 'timelapse-1080p.mp4'), relativePath: '' },
+    ],
+    tracks: [{ id: 'track-0', name: 'Track 1', hidden: false, locked: false, muted: false, clips }],
+  }
+}
+
+describe('responsiveness on a profile without a cache', () => {
+  const MAX_LAUNCH_SECONDS = 3
+  const MAX_UNCACHED_SEEK_MS = 150
+  const MAX_CACHED_SEEK_MS = 50
+  const MAX_SPACE_TO_MOTION_MS = 100
+  // The next display frame of a 60 Hz screen, and a little room for the timing itself.
+  const MAX_DRAG_TO_FRAME_END_MS = 1000 / 60 + 4
+
+  it('meets the §3 budgets for launch, scrubbing, Space, timeline drags, undo, redo and blocking tasks', async () => {
+    const path = join(scratch, 'long-recording.json')
+    writeFileSync(path, serializeProject(longRecordingProject()))
+    const report = await uiTest('responsiveness', ['--project', path])
+    console.info(`responsiveness: ${JSON.stringify(report)}`)
+
+    expect(report.launchSeconds).toBeLessThanOrEqual(MAX_LAUNCH_SECONDS)
+    expect(report.uncachedSeekP95).toBeLessThanOrEqual(MAX_UNCACHED_SEEK_MS)
+    expect(report.cachedSeekP95).toBeLessThanOrEqual(MAX_CACHED_SEEK_MS)
+    expect(report.spaceToMotionP95).toBeLessThanOrEqual(MAX_SPACE_TO_MOTION_MS)
+    expect(report.timelineDragSamples).toBeGreaterThan(20)
+    expect(report.timelineDragP95).toBeLessThanOrEqual(MAX_DRAG_TO_FRAME_END_MS)
+    expect(report.undoMilliseconds).toBeLessThanOrEqual(MAX_UNDO_MS)
+    expect(report.redoMilliseconds).toBeLessThanOrEqual(MAX_UNDO_MS)
+    expect(report.longestTaskMs).toBeLessThanOrEqual(MAX_TASK_MS)
   })
 })

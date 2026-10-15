@@ -39,8 +39,10 @@ const PATH_DOT_PIXELS = 8
 const ROTATE_HANDLE_OFFSET_PIXELS = 26
 const ROTATE_HANDLE_MAX_REACH = 0.35
 const MIN_BOX_PIXELS = 6
-// The overlay reaches this far past the picture on every side, so the handles of a clip that fills the canvas are whole and can be grabbed. Must match the CSS.
+// The overlay reaches at least this far past the picture on every side, so the handles of a clip that fills the canvas are whole and can be grabbed. Must match the CSS.
 export const MARGIN_PIXELS = 14
+// A box this close to the edge of the picture, in canvas pixels, still counts as inside it: a clip that fills the canvas is not outlined as one that leaves it.
+const EDGE_TOLERANCE = 0.5
 
 const CORNERS = ['nw', 'ne', 'se', 'sw'] as const
 const TRANSFORM_KEYS = ['x', 'y', 'scaleX', 'scaleY', 'rotation'] as const
@@ -192,11 +194,63 @@ export function usePictureWidth(svgRef: RefObject<SVGSVGElement | null>): number
   return pictureWidth
 }
 
-// The point of the canvas under a place in the window, when the picture shows `frame` of the canvas.
-export function pointOnCanvas(place: { clientX: number; clientY: number }, overlay: Element, frame: ZoomFrame, pictureWidth: number): Point {
+// How far the overlay reaches past each side of the picture, in CSS pixels.
+type Reach = {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+const HANDLE_REACH: Reach = { left: MARGIN_PIXELS, top: MARGIN_PIXELS, right: MARGIN_PIXELS, bottom: MARGIN_PIXELS }
+
+// The overlay reaches to the edges of the canvas panel, so a clip moved off the canvas still shows its outline there and can be grabbed back, as in Camtasia.
+// Where the picture is larger than the panel it reaches only as far as the handles need, inside the panel's padding, so it never adds to what the panel scrolls.
+function useOverlayReach(svgRef: RefObject<SVGSVGElement | null>, areaRef: RefObject<HTMLElement | null>): { reach: Reach; pictureWidth: number } {
+  const [layout, setLayout] = useState({ reach: HANDLE_REACH, pictureWidth: 1 })
+
+  useEffect(() => {
+    const picture = svgRef.current?.parentElement ?? null
+    const area = areaRef.current
+    if (picture === null || area === null) return
+    const measure = (): void => {
+      const shown = picture.getBoundingClientRect()
+      const panel = area.getBoundingClientRect()
+      // The client box leaves out a scroll bar, which the overlay must not reach under.
+      const panelLeft = panel.left + area.clientLeft
+      const panelTop = panel.top + area.clientTop
+      setLayout({
+        pictureWidth: Math.max(1, shown.width),
+        reach: {
+          left: Math.max(MARGIN_PIXELS, shown.left - panelLeft),
+          top: Math.max(MARGIN_PIXELS, shown.top - panelTop),
+          right: Math.max(MARGIN_PIXELS, panelLeft + area.clientWidth - shown.right),
+          bottom: Math.max(MARGIN_PIXELS, panelTop + area.clientHeight - shown.bottom),
+        },
+      })
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(area)
+    observer.observe(picture)
+    return () => observer.disconnect()
+  }, [svgRef, areaRef])
+
+  return layout
+}
+
+// The point of the canvas under a place in the window, when the picture shows `frame` of the canvas and starts `offset` CSS pixels into the overlay.
+export function pointOnCanvas(place: { clientX: number; clientY: number }, overlay: Element, frame: ZoomFrame, pictureWidth: number, offset: Point = { x: MARGIN_PIXELS, y: MARGIN_PIXELS }): Point {
   const box = overlay.getBoundingClientRect()
   const canvasPerPixel = frame.width / pictureWidth
-  return { x: frame.left + (place.clientX - box.left - MARGIN_PIXELS) * canvasPerPixel, y: frame.top + (place.clientY - box.top - MARGIN_PIXELS) * canvasPerPixel }
+  return { x: frame.left + (place.clientX - box.left - offset.x) * canvasPerPixel, y: frame.top + (place.clientY - box.top - offset.y) * canvasPerPixel }
+}
+
+// A clip that reaches past what the picture shows, so part or all of it would be out of sight without its outline.
+function isPastFrame(box: Box, frame: ZoomFrame): boolean {
+  const bounds = boundsOf(box)
+  const isPastSide = bounds.left < frame.left - EDGE_TOLERANCE || bounds.right > frame.left + frame.width + EDGE_TOLERANCE
+  return isPastSide || bounds.top < frame.top - EDGE_TOLERANCE || bounds.bottom > frame.top + frame.height + EDGE_TOLERANCE
 }
 
 function lockedClipIds(project: Project): Set<string> {
@@ -253,7 +307,7 @@ export function valuesInOpenTracks(openGroups: readonly string[], openFrame: Gro
 }
 
 // Selection outlines and handles over the preview. It is a layer of its own above the picture, so nothing here can end up in an export.
-export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactElement {
+export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; areaRef: RefObject<HTMLElement | null> }): ReactElement {
   const { store, actions } = useSession()
   const project = useEditorState((state) => state.project)
   const wholeProject = useEditorState((state) => state.wholeProject)
@@ -266,7 +320,7 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
   const time = usePosition((position) => position.time)
   const svgRef = useRef<SVGSVGElement>(null)
   const gestureRef = useRef<Gesture | undefined>(undefined)
-  const pictureWidth = usePictureWidth(svgRef)
+  const { reach, pictureWidth } = useOverlayReach(svgRef, areaRef)
   const [guides, setGuides] = useState<Guides>(NO_GUIDES)
   const [dropTargetId, setDropTargetId] = useState<string | undefined>(undefined)
   const { canvas } = project
@@ -279,6 +333,9 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
 
   const shown = isPlaying ? [] : shownClips(wholeProject, mediaStates, wholeTime, { project, time, groups: openGroups, frame: openFrame })
   const selected = shown.filter((item) => selection.includes(item.clipId))
+  const locked = lockedClipIds(project)
+  const outside = shown.filter((item) => !selection.includes(item.clipId) && !locked.has(item.clipId) && isPastFrame(item.box, frame))
+  const pictureOffset = { x: reach.left, y: reach.top }
   const [only] = selected.length === 1 ? selected : []
   const editing = editingTextId === undefined ? undefined : locateClip(project, editingTextId)?.clip
   const editedText = editing?.type === 'text' || editing?.type === 'callout' ? editing : undefined
@@ -299,11 +356,10 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
   }
 
   function pointOf(event: MouseEvent<SVGSVGElement>): Point {
-    return pointOnCanvas(event, event.currentTarget, frame, pictureWidth)
+    return pointOnCanvas(event, event.currentTarget, frame, pictureWidth, pictureOffset)
   }
 
   function topmostAt(point: Point): Shown | undefined {
-    const locked = lockedClipIds(project)
     return shown.findLast((item) => !locked.has(item.clipId) && item.hitBoxes.some((box) => containsPoint(box, point)))
   }
 
@@ -311,8 +367,7 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
   function effectTargetAt(detail: LibraryDragDetail): Shown | undefined {
     const svg = svgRef.current
     if (svg === null || detail.item.kind !== 'effect') return undefined
-    const point = pointOnCanvas(detail, svg, frame, pictureWidth)
-    const locked = lockedClipIds(project)
+    const point = pointOnCanvas(detail, svg, frame, pictureWidth, pictureOffset)
     return shown.findLast((item) => item.kind !== 'shape' && !locked.has(item.clipId) && item.hitBoxes.some((box) => containsPoint(box, point)))
   }
 
@@ -329,7 +384,7 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
     const { item } = event.detail
     // An annotation lands where it was dropped, at the playhead; inside an open group the place is worked out in the group's own space.
     if (item.kind === 'annotation' && svg !== null) {
-      const point = pointOnCanvas(event.detail, svg, frame, pictureWidth)
+      const point = pointOnCanvas(event.detail, svg, frame, pictureWidth, pictureOffset)
       const inside = intoGroup(openFrame, { x: point.x, y: point.y, scaleX: 1, scaleY: 1, rotation: 0 })
       actions.addAnnotation(item.annotation, { x: Math.round(inside.x), y: Math.round(inside.y) })
       return
@@ -505,7 +560,6 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
 
   const handleSize = HANDLE_PIXELS * canvasPerPixel
   const minBox = MIN_BOX_PIXELS * canvasPerPixel
-  const margin = MARGIN_PIXELS * canvasPerPixel
   const dropTarget = shown.find((item) => item.clipId === dropTargetId)
   const shownLine = path?.line.map(shownOnPath)
   const shownDots = path?.dots.map((dot) => shownOnPath(dot.point)) ?? []
@@ -514,10 +568,12 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
     <svg
       ref={svgRef}
       className="canvas-overlay"
-      viewBox={`${frame.left - margin} ${frame.top - margin} ${frame.width + 2 * margin} ${frame.height + 2 * margin}`}
+      viewBox={`${frame.left - reach.left * canvasPerPixel} ${frame.top - reach.top * canvasPerPixel} ${frame.width + (reach.left + reach.right) * canvasPerPixel} ${frame.height + (reach.top + reach.bottom) * canvasPerPixel}`}
       preserveAspectRatio="none"
+      style={{ left: -reach.left, top: -reach.top, width: `calc(100% + ${reach.left + reach.right}px)`, height: `calc(100% + ${reach.top + reach.bottom}px)` }}
       data-testid="canvas-overlay"
       data-selected={selected.length}
+      data-outside={outside.length}
       data-drop-target={dropTargetId}
       onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}
@@ -533,6 +589,11 @@ export function CanvasOverlay({ isCropping }: { isCropping: boolean }): ReactEle
           <rect className="selection-box" x={-dropTarget.box.width / 2} y={-dropTarget.box.height / 2} width={dropTarget.box.width} height={dropTarget.box.height} />
         </g>
       )}
+      {outside.map((item) => (
+        <g key={item.clipId} transform={`translate(${item.box.centerX} ${item.box.centerY}) rotate(${item.box.rotation})`}>
+          <rect className="outside-box" x={-item.box.width / 2} y={-item.box.height / 2} width={item.box.width} height={item.box.height} />
+        </g>
+      ))}
       {shownLine !== undefined && (
         <g data-testid="motion-path" data-dots={shownDots.length}>
           <polyline className="motion-path" points={shownLine.map((at) => `${at.x},${at.y}`).join(' ')} />

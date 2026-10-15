@@ -30,13 +30,17 @@ export const EFFECT_NAMES: Record<EffectType, string> = {
   roundedCorners: 'Rounded corners',
   clipBlur: 'Clip blur',
   chromaKey: 'Chroma key',
+  sepia: 'Sepia',
+  invert: 'Invert colours',
+  tint: 'Colour tint',
+  vignette: 'Vignette',
 }
 
 export function defaultEffect(type: EffectType, canvas: Size): Effect {
   const sized = (length: number): number => Math.max(1, Math.round((length * canvas.height) / REFERENCE_HEIGHT))
   if (type === 'colorAdjust') {
     return { type, brightness: 0, contrast: 0, saturation: 0 }
-  } else if (type === 'blackAndWhite') {
+  } else if (type === 'blackAndWhite' || type === 'sepia' || type === 'invert') {
     return { type, amount: 1 }
   } else if (type === 'dropShadow') {
     return { type, offsetX: sized(12), offsetY: sized(12), softness: sized(12), color: '#000000', opacity: 0.5 }
@@ -46,6 +50,10 @@ export function defaultEffect(type: EffectType, canvas: Size): Effect {
     return { type, radius: sized(30) }
   } else if (type === 'clipBlur') {
     return { type, strength: sized(10) }
+  } else if (type === 'tint') {
+    return { type, color: '#3d7be6', amount: 0.5 }
+  } else if (type === 'vignette') {
+    return { type, amount: 0.6, size: 0.5 }
   } else {
     return { type, color: '#00b140', tolerance: 0.4, softness: 0.1, spill: 0.5 }
   }
@@ -55,7 +63,7 @@ export function defaultEffect(type: EffectType, canvas: Size): Effect {
 function withinLimits(effect: Effect, before: Effect): Effect {
   if (effect.type === 'colorAdjust') {
     return { ...effect, brightness: between(effect.brightness, -1, 1), contrast: between(effect.contrast, -1, 1), saturation: between(effect.saturation, -1, 1) }
-  } else if (effect.type === 'blackAndWhite') {
+  } else if (effect.type === 'blackAndWhite' || effect.type === 'sepia' || effect.type === 'invert') {
     return { ...effect, amount: between(effect.amount, 0, 1) }
   } else if (effect.type === 'dropShadow') {
     const color = colorOr(effect.color, before.type === 'dropShadow' ? before.color : '#000000')
@@ -66,6 +74,10 @@ function withinLimits(effect: Effect, before: Effect): Effect {
     return { ...effect, radius: Math.max(SMALLEST_LENGTH, effect.radius) }
   } else if (effect.type === 'clipBlur') {
     return { ...effect, strength: Math.max(SMALLEST_LENGTH, effect.strength) }
+  } else if (effect.type === 'tint') {
+    return { ...effect, color: colorOr(effect.color, before.type === 'tint' ? before.color : '#3d7be6'), amount: between(effect.amount, 0, 1) }
+  } else if (effect.type === 'vignette') {
+    return { ...effect, amount: between(effect.amount, 0, 1), size: between(effect.size, 0, 1) }
   } else {
     const color = colorOr(effect.color, before.type === 'chromaKey' ? before.color : '#00b140')
     return { ...effect, color, tolerance: between(effect.tolerance, 0, 1), softness: between(effect.softness, 0, 1), spill: between(effect.spill, 0, 1) }

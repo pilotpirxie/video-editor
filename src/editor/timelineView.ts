@@ -17,6 +17,7 @@ const HANDLE_REACH = 8
 const MIN_WIDTH_FOR_FADES = 4 * FADE_HANDLE_INSET
 const MAX_VOLUME = 2
 const VOLUME_LINE_REACH = 4
+const DIAMOND_INSET = 6
 const ZOOM_REACH = 6
 const ZOOM_START_REACH = 2 * ZOOM_REACH
 const MIN_WIDTH_FOR_ZOOM_START = 2 * ZOOM_START_REACH
@@ -295,6 +296,33 @@ export function volumePoints(clip: Clip, makesSound: boolean, view: TimelineView
 
 export function volumePointAt(points: readonly VolumePoint[], x: number, y: number): VolumePoint | undefined {
   return points[nearestInReach(points, x, y)]
+}
+
+// A moment of a clip that has a keyframe of its picture, where its diamond is drawn. `time` is measured from the start of the clip.
+export type KeyframeDiamond = {
+  time: number
+  x: number
+  y: number
+}
+
+// One diamond for each moment inside the clip that keys its place, size, turn, opacity or crop, along the bottom of its picture.
+// Volume keyframes have dots of their own on the volume line, and keyframes outside the clip, kept by a split, are not seen.
+export function keyframeDiamonds(clip: Clip, picture: Band | undefined, view: TimelineView): KeyframeDiamond[] {
+  if (picture === undefined || clip.keyframes === undefined) return []
+  const times = new Set<number>()
+  for (const [property, keyframes] of Object.entries(clip.keyframes)) {
+    if (property === 'volume' || keyframes === undefined) continue
+    for (const keyframe of keyframes) {
+      if (keyframe.time >= 0 && keyframe.time <= clip.duration) times.add(keyframe.time)
+    }
+  }
+  const y = picture.top + picture.height - DIAMOND_INSET
+  const sorted = [...times].sort((a, b) => a - b)
+  return sorted.map((time) => ({ time, x: timeToX(clip.start + time, view), y }))
+}
+
+export function keyframeDiamondAt(diamonds: readonly KeyframeDiamond[], x: number, y: number): KeyframeDiamond | undefined {
+  return diamonds[nearestInReach(diamonds, x, y)]
 }
 
 // How much the volume changes when the line is dragged from one height to another.

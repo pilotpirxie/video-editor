@@ -54,6 +54,7 @@ const PATHS = {
   spreadAcross: 'M2 2v12M14 2v12M6.5 4.5h3v7h-3z',
   spreadDown: 'M2 2h12M2 14h12M4.5 6.5h7v3h-7z',
   preview: 'M2 3h12v10H2zM6.5 5.5l4 2.5-4 2.5z',
+  export: 'M8 10V2.5M5 5.5l3-3 3 3M3 9v4.5h10V9',
 } as const
 
 export type IconName = keyof typeof PATHS

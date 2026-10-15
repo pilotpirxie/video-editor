@@ -1,8 +1,9 @@
+import { emptyTrack } from '../editor/clips.js'
 import { scopeOf, scopedProject, withScopedProject, type Scope } from '../editor/groups.js'
 import { EMPTY_HISTORY, record, redo, undo, type History } from '../editor/history.js'
 import type { MediaStates } from '../engine/resolve.js'
 import type { LoadedProject, MediaState } from '../shared/mediaProtocol.js'
-import type { Project } from '../shared/project.js'
+import type { Project, Track } from '../shared/project.js'
 
 export type Edit = (project: Project) => Project
 
@@ -42,6 +43,8 @@ export type EditorState = {
   openCount: number
   // The text clip whose words are being typed on the canvas.
   editingTextId: string | undefined
+  // The name of the project file being read, while the window waits for it.
+  openingName: string | undefined
 }
 
 export type EditorStore = {
@@ -66,6 +69,8 @@ export type EditorStore = {
   closeGroups(depth: number): void
   selectZoom(index: number | undefined): void
   setMediaState(mediaId: string, state: MediaState): void
+  // Replaces what is known of every file, as a media process that was started again reports it.
+  setMediaStates(states: MediaStates): void
   markSaved(project: Project, documentPath: string): void
   notify(notice: string | undefined): void
   showExportDialog(isOpen: boolean): void
@@ -75,6 +80,7 @@ export type EditorStore = {
   setPreviewing(isPreviewing: boolean): void
   showSettings(isOpen: boolean): void
   editText(clipId: string | undefined): void
+  setOpening(name: string | undefined): void
 }
 
 // Carries an open undo step on, or opens one when there is none.
@@ -94,11 +100,13 @@ type Gesture = {
 
 const NO_SELECTION: readonly string[] = []
 
-const EMPTY_PROJECT: Project = {
-  version: 1,
-  canvas: { width: 1920, height: 1080, frameRate: { num: 30, den: 1 } },
-  media: [],
-  tracks: [],
+const STARTING_TRACKS = 6
+
+// What a new window starts with: empty tracks to drop onto, so the first clips need no track of their own.
+function blankProject(): Project {
+  const tracks: Track[] = []
+  for (let index = 0; index < STARTING_TRACKS; index++) tracks.push(emptyTrack({ id: crypto.randomUUID(), name: `Track ${index + 1}` }))
+  return { version: 1, canvas: { width: 1920, height: 1080, frameRate: { num: 30, den: 1 } }, media: [], tracks }
 }
 
 function withoutMissingClips(selection: readonly string[], project: Project): readonly string[] {
@@ -112,16 +120,18 @@ function withoutMissingClips(selection: readonly string[], project: Project): re
 }
 
 export function createEditorStore(): EditorStore {
+  // Also the saved project of a window that has not been saved, so the untouched blank project counts as unchanged.
+  const blank = blankProject()
   let state: EditorState = {
-    project: EMPTY_PROJECT,
-    wholeProject: EMPTY_PROJECT,
+    project: blank,
+    wholeProject: blank,
     openGroups: NO_SELECTION,
     scope: undefined,
     mediaStates: {},
     selection: NO_SELECTION,
     selectedZoom: undefined,
     history: EMPTY_HISTORY,
-    savedProject: EMPTY_PROJECT,
+    savedProject: blank,
     documentPath: undefined,
     notice: undefined,
     isExportDialogOpen: false,
@@ -132,6 +142,7 @@ export function createEditorStore(): EditorStore {
     isSettingsOpen: false,
     openCount: 0,
     editingTextId: undefined,
+    openingName: undefined,
   }
   let gesture: Gesture | undefined
   const listeners = new Set<() => void>()
@@ -225,7 +236,7 @@ export function createEditorStore(): EditorStore {
         selection: NO_SELECTION,
         selectedZoom: undefined,
         history: EMPTY_HISTORY,
-        savedProject: isSaved ? loaded.project : EMPTY_PROJECT,
+        savedProject: isSaved ? loaded.project : blank,
         documentPath,
         openCount: state.openCount + 1,
         editingTextId: undefined,
@@ -251,6 +262,7 @@ export function createEditorStore(): EditorStore {
     },
     selectZoom: (selectedZoom) => setState({ selectedZoom, selection: selectedZoom === undefined ? state.selection : NO_SELECTION }),
     setMediaState: (mediaId, mediaState) => setState({ mediaStates: { ...state.mediaStates, [mediaId]: mediaState } }),
+    setMediaStates: (mediaStates) => setState({ mediaStates }),
     markSaved: (project, documentPath) => setState({ savedProject: project, documentPath }),
     notify: (notice) => setState({ notice }),
     // An export is of the whole project, so the dialog is opened on that.
@@ -264,5 +276,6 @@ export function createEditorStore(): EditorStore {
     setPreviewing: (isPreviewing) => setState({ isPreviewing }),
     showSettings: (isSettingsOpen) => setState({ isSettingsOpen }),
     editText: (editingTextId) => setState({ editingTextId }),
+    setOpening: (openingName) => setState({ openingName }),
   }
 }

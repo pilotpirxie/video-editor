@@ -4,6 +4,7 @@ import type { Clip, Project } from '../shared/project.js'
 import {
   changeKeyframe,
   hasKeyframesAt,
+  keyframeFrame,
   motionPath,
   nearestKeyframe,
   propertyAt,
@@ -337,6 +338,15 @@ describe('nearestKeyframe', () => {
     expect(nearestKeyframe(clips, 'position', 7 * SECOND, 1, FRAME)).toBeUndefined()
     // The keyframe before the clip starts is not one the playhead can stand on.
     expect(nearestKeyframe(clips, 'position', 0, -1, FRAME)).toBeUndefined()
+  })
+})
+
+describe('keyframeFrame', () => {
+  it('finds the frame a keyframe is reached on, and the last frame of the clip for one at its end', () => {
+    const clip = videoClip('a', SECOND, 2 * SECOND)
+    expect(keyframeFrame(clip, 0, FRAME)).toBe(30)
+    expect(keyframeFrame(clip, SECOND + 100, FRAME)).toBe(60)
+    expect(keyframeFrame(clip, 2 * SECOND, FRAME)).toBe(89)
   })
 })
 

@@ -4,8 +4,8 @@ import { endOf, hasVolume, locateClip, makesSound, nextTrackName, type NewTrack 
 import { addEffect, takesEffects } from '../editor/effects.js'
 import { moveClips, trimClip } from '../editor/moveTrim.js'
 import { dropMedia, mediaFileName, placeableMedia } from '../editor/place.js'
-import { changeKeyframe, setFade, setKeyframesAt, setProperties, type Fade } from '../editor/properties.js'
-import { snapDelta, timelineTargets } from '../editor/snapping.js'
+import { changeKeyframe, keyframeFrame, setFade, setKeyframesAt, setProperties, type Fade } from '../editor/properties.js'
+import { nearestWithin, snapDelta, timelineTargets } from '../editor/snapping.js'
 import {
   RULER_HEIGHT,
   TRACKS_TOP,
@@ -18,6 +18,8 @@ import {
   fitZoom,
   hitClip,
   hitZoom,
+  keyframeDiamondAt,
+  keyframeDiamonds,
   timeToX,
   trackIndexAt,
   trackTop,
@@ -102,8 +104,9 @@ type HeldDrop =
   | { kind: 'effect'; clipIds: readonly string[]; effect: EffectType; shown: DropTarget }
 
 type Gesture =
-  | { kind: 'scrub' }
-  | { kind: 'press'; hit: ClipHit; at: Point; wasSelected: boolean; hasModifier: boolean }
+  | { kind: 'scrub'; targets: number[] }
+  // `keyframeTime` is the keyframe whose diamond was pressed, measured from the clip's start; a click there goes to it.
+  | { kind: 'press'; hit: ClipHit; at: Point; wasSelected: boolean; hasModifier: boolean; keyframeTime: number | undefined }
   | { kind: 'zoom-press'; hit: ZoomHit; at: Point; time: number }
   | { kind: 'zoom'; hit: ZoomHit; edgeTime: number; zoomTime: number; grabOffset: number; targets: number[] }
   | { kind: 'transition'; target: TransitionTarget; type: TransitionType; anchor: number; isOnCut: boolean; grabOffset: number; targets: number[] }
@@ -136,7 +139,8 @@ export type TimelineElements = {
 
 export type TimelineController = {
   zoomBy(factor: number): void
-  zoomToFit(): void
+  // A timeline shown for the first time also scrolls to its lowest tracks, where Track 1 and the main footage are.
+  zoomToFit(isNewTimeline?: boolean): void
   dispose(): void
 }
 
@@ -181,6 +185,8 @@ export function createTimelineController(elements: TimelineElements, session: Se
   let isOverlayStale = true
   let isFrameRequested = false
   let isFitWanted = false
+  let isLowestWanted = false
+  let drawnTrackCount: number | undefined
   let wasPlaying = false
   let namedMedia: readonly MediaRef[] | undefined
   let mediaNames = new Map<string, string>()
@@ -214,7 +220,12 @@ export function createTimelineController(elements: TimelineElements, session: Se
 
     if (isContentStale) {
       isContentStale = false
-      view = withScrollInRange(view, state.project)
+      // Tracks stack upwards from Track 1, so a view scrolled down holds on to the bottom: a track added or removed moves the rows above it, not Track 1.
+      // A view at the very top stays there, so a track added on top is seen.
+      const trackCount = state.project.tracks.length
+      const addedRows = drawnTrackCount === undefined || view.scrollY === 0 ? 0 : trackCount - drawnTrackCount
+      drawnTrackCount = trackCount
+      view = withScrollInRange({ ...view, scrollY: view.scrollY + addedRows * TRACK_HEIGHT }, state.project)
       if (namedMedia !== state.project.media) {
         namedMedia = state.project.media
         mediaNames = new Map(namedMedia.map((reference) => [reference.id, mediaFileName(reference)]))
@@ -483,6 +494,13 @@ export function createTimelineController(elements: TimelineElements, session: Se
     return transitionBandAt(bandsOf(hit.track, hit.clip, rowTop), point.x, point.y)
   }
 
+  function keyframeDiamondOn(hit: ClipHit, point: Point): number | undefined {
+    const { project, mediaStates } = store.getState()
+    const rowTop = trackTop(hit.trackIndex, project.tracks.length, view)
+    const picture = clipBands(hit.clip, makesSound(hit.clip, mediaStates), rowTop).picture
+    return keyframeDiamondAt(keyframeDiamonds(hit.clip, picture, view), point.x, point.y)?.time
+  }
+
   function fadeHandleOn(hit: ClipHit, point: Point): FadeHandle | undefined {
     const { project, mediaStates } = store.getState()
     const rowTop = trackTop(hit.trackIndex, project.tracks.length, view)
@@ -516,11 +534,15 @@ export function createTimelineController(elements: TimelineElements, session: Se
   }
 
   // Before the timeline has a width there is nothing to fit into, so the request waits for the first layout.
-  function zoomToFit(): void {
+  function zoomToFit(isNewTimeline = false): void {
+    isLowestWanted ||= isNewTimeline
     isFitWanted = size.width === 0
     if (isFitWanted) return
     const { project } = store.getState()
-    setView({ pixelsPerSecond: fitZoom(zoomLimits(project)), scrollX: 0, scrollY: view.scrollY })
+    // The scroll is kept within the tracks, so the largest number is the bottom.
+    const scrollY = isLowestWanted ? Number.MAX_SAFE_INTEGER : view.scrollY
+    isLowestWanted = false
+    setView({ pixelsPerSecond: fitZoom(zoomLimits(project)), scrollX: 0, scrollY })
   }
 
   function pointOf(event: MouseEvent): Point {
@@ -541,8 +563,11 @@ export function createTimelineController(elements: TimelineElements, session: Se
     return store.getState().isSnapping && !event.metaKey
   }
 
-  function seekTo(point: Point): void {
-    transport.seek(Math.max(0, xToTime(point.x, view)))
+  // The playhead is pulled onto a clip edge or a keyframe in snapping range, as a dragged clip edge is.
+  function seekTo(point: Point, event: PointerEvent, targets: readonly number[]): void {
+    const time = Math.max(0, xToTime(point.x, view))
+    const snapped = isSnapping(event) ? nearestWithin(time, targets, snapRange()) : undefined
+    transport.seek(snapped ?? time)
   }
 
   function startDrag(press: Extract<Gesture, { kind: 'press' }>): Gesture {
@@ -742,8 +767,10 @@ export function createTimelineController(elements: TimelineElements, session: Se
     overlay.setPointerCapture(event.pointerId)
     const at = pointOf(event)
     if (at.y < RULER_HEIGHT) {
-      gesture = { kind: 'scrub' }
-      seekTo(at)
+      // Worked out once for the whole scrub: a long project has thousands of clips.
+      const targets = timelineTargets(store.getState().project, new Set(), 0)
+      gesture = { kind: 'scrub', targets }
+      seekTo(at, event, targets)
       return
     }
     if (at.y < TRACKS_TOP) {
@@ -793,7 +820,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
     }
     const wasSelected = selection.includes(hit.clip.id)
     selectOnPress(hit, event)
-    gesture = { kind: 'press', hit, at, wasSelected, hasModifier }
+    gesture = { kind: 'press', hit, at, wasSelected, hasModifier, keyframeTime: keyframeDiamondOn(hit, at) }
   }
 
   // The cursor says what a press here would do, and the clip under it shows its fade handles.
@@ -809,6 +836,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
     else if (hit !== undefined && point !== undefined && volumePointOn(hit, point) !== undefined) cursor = 'grab'
     else if (hit !== undefined && point !== undefined && fadeHandleOn(hit, point) !== undefined) cursor = 'grab'
     else if (hit !== undefined && point !== undefined && volumeLineOn(hit, point) !== undefined) cursor = 'ns-resize'
+    else if (hit !== undefined && point !== undefined && keyframeDiamondOn(hit, point) !== undefined) cursor = 'pointer'
     else if (hit?.edge !== undefined) cursor = 'ew-resize'
     overlay.style.cursor = cursor
 
@@ -835,7 +863,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
       if (gesture === undefined) return
     }
     if (gesture.kind === 'scrub') {
-      seekTo(point)
+      seekTo(point, event, gesture.targets)
     } else if (gesture.kind === 'zoom') {
       updateZoom(gesture, event, point)
     } else if (gesture.kind === 'transition') {
@@ -874,6 +902,12 @@ export function createTimelineController(elements: TimelineElements, session: Se
     // A plain click on one clip of a larger selection narrows the selection to that clip.
     const isPlainClick = ended.kind === 'press' && ended.wasSelected && !ended.hasModifier && finish === 'commit'
     if (isPlainClick) store.select([ended.hit.clip.id])
+    // A click on a keyframe's diamond goes to that keyframe, where Properties shows it and changes it.
+    if (ended.kind === 'press' && ended.keyframeTime !== undefined && finish === 'commit') {
+      const ticks = frameTicks()
+      transport.pause()
+      transport.seek(keyframeFrame(ended.hit.clip, ended.keyframeTime, ticks) * ticks)
+    }
     invalidate('overlay')
   }
 
@@ -1006,6 +1040,9 @@ export function createTimelineController(elements: TimelineElements, session: Se
   window.addEventListener(LIBRARY_DRAG_EVENT, onLibraryDrag)
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('blur', onWindowBlur)
+  // A canvas the GPU process drew comes back blank, and without its scale, once that process has been restarted.
+  content.addEventListener('contextrestored', resize)
+  overlay.addEventListener('contextrestored', resize)
 
   return {
     zoomBy(factor) {
@@ -1030,6 +1067,8 @@ export function createTimelineController(elements: TimelineElements, session: Se
       window.removeEventListener(LIBRARY_DRAG_EVENT, onLibraryDrag)
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('blur', onWindowBlur)
+      content.removeEventListener('contextrestored', resize)
+      overlay.removeEventListener('contextrestored', resize)
     },
   }
 }

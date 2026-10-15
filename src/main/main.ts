@@ -12,10 +12,10 @@ import {
   type MenuItemConstructorOptions,
   type UtilityProcess,
 } from 'electron'
-import { existsSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { totalmem } from 'node:os'
-import { basename, extname, join, normalize, resolve } from 'node:path'
+import { basename, dirname, extname, join, normalize, resolve } from 'node:path'
 import { EXPORT_FORMATS, EXPORT_PRESETS, isExportEncoder, isExportFormat, isExportPreset, isExportQuality, type ExportFormat } from '../shared/exportPresets.js'
 import { describeError, logError } from '../shared/log.js'
 import type {
@@ -33,8 +33,8 @@ import type {
   UnsavedChoice,
 } from '../shared/mediaProtocol.js'
 import { DEFAULT_BINDINGS, MENU_SHORTCUT_ACTIONS, menuShortcutsOf } from '../editor/shortcuts.js'
-import { startMemoryMonitor, type MemoryMonitor } from './memory.js'
-import { isProjectFrameRate } from '../shared/time.js'
+import { isMemoryUnderPressure, startMemoryMonitor, type MemoryMonitor } from './memory.js'
+import { SAMPLE_RATE, isProjectFrameRate } from '../shared/time.js'
 import {
   discardExportSnapshot,
   discardRecoveredWork,
@@ -67,11 +67,17 @@ const CONTENT_TYPES: Record<string, string> = {
   '.png': 'image/png',
 }
 
-const CLI_FLAGS = ['project', 'export', 'frames', 'out', 'preset', 'encoder', 'via', 'at', 'size', 'selftest', 'uitest', 'media', 'seconds', 'report-memory']
+const CLI_FLAGS = ['project', 'export', 'frames', 'out', 'preset', 'encoder', 'via', 'at', 'size', 'selftest', 'uitest', 'media', 'seconds', 'seed', 'report-memory']
 const DEFAULT_SELFTEST_SECONDS = 2
 const BYTES_PER_MEGABYTE = 1024 * 1024
 const SIZE_PATTERN = /^(?<width>\d+)x(?<height>\d+)$/
+// A media process that stops sooner than this after starting is started again after a wait that doubles each time, up to the longest one.
 const MEDIA_PROCESS_MIN_UPTIME_MS = 5000
+const MEDIA_RESTART_FIRST_WAIT_MS = 1000
+const MEDIA_RESTART_LONGEST_WAIT_MS = 30_000
+// The end of what the media process wrote to its error output, which says why it died.
+const MEDIA_OUTPUT_TAIL_CHARS = 4096
+const MEMORY_PRESSURE_POLL_MS = 5000
 const UNTITLED = 'Untitled'
 const CLEAN_DOCUMENT: DocumentState = { isDirty: false, undoLabel: undefined, redoLabel: undefined }
 const PROJECT_FILTERS = [{ name: 'Project', extensions: ['json'] }]
@@ -83,6 +89,8 @@ const MEDIA_EXTENSIONS = [
 const UNSAVED_CHOICES: readonly UnsavedChoice[] = ['save', 'discard', 'cancel']
 // A new window opens this far below and to the right of the one in front, so both can be seen.
 const CASCADE_PIXELS = 22
+// A window whose page dies again this soon after it was brought back is left as it is: reloading it once more would loop.
+const RESTART_GUARD_MS = 10_000
 
 type WindowMode = 'editor' | 'harness' | 'headless'
 
@@ -91,10 +99,16 @@ type Editor = {
   document: DocumentInfo
   documentState: DocumentState
   isCloseConfirmed: boolean
+  // When the window was last reloaded after its page died.
+  restartedAt: number | undefined
 }
 
 type AppState = {
+  // Undefined while a media process that stopped is waiting to be started again.
   mediaProcess: UtilityProcess | undefined
+  // How many times in a row the media process stopped soon after it started.
+  mediaQuickExits: number
+  isUnderMemoryPressure: boolean
   // One project per window.
   editors: Editor[]
   // The window used last, which the menu belongs to and which a menu command goes to when no window has the focus.
@@ -264,9 +278,9 @@ function showVersionsInAboutPanel(report: MediaProcessReport): string[] {
   return versions
 }
 
-function startMediaProcess(onVersions: (versions: string[]) => void, onStopped: (uptimeMs: number) => void): UtilityProcess {
+function launchMediaProcess(state: AppState): UtilityProcess {
   const startedAt = Date.now()
-  const child = utilityProcess.fork(MEDIA_SERVICE_PATH, [], { serviceName: 'Media' })
+  const child = utilityProcess.fork(MEDIA_SERVICE_PATH, [], { serviceName: 'Media', stdio: ['ignore', 'inherit', 'pipe'] })
   const setup: MediaProcessCommand = {
     type: 'setup',
     setup: {
@@ -277,35 +291,122 @@ function startMediaProcess(onVersions: (versions: string[]) => void, onStopped: 
   }
   child.postMessage(setup)
   child.on('message', (message: unknown) => {
-    if (isVersionReport(message)) onVersions(showVersionsInAboutPanel(message))
+    if (isVersionReport(message)) state.versions = showVersionsInAboutPanel(message)
+  })
+  // Its error output goes on to the app's own, through the console, which does not fail when nothing reads it any more. Its end is kept for the crash log.
+  let errorOutputTail = ''
+  child.stderr?.on('data', (chunk: Buffer) => {
+    const text = chunk.toString()
+    console.error(text.trimEnd())
+    errorOutputTail = `${errorOutputTail}${text}`.slice(-MEDIA_OUTPUT_TAIL_CHARS)
   })
   child.on('exit', (code) => {
-    if (code !== 0) logError('The media process stopped', new Error(`exit code ${code}`))
-    onStopped(Date.now() - startedAt)
+    if (state.isQuitting) return
+    if (code !== 0) {
+      logError('The media process stopped', new Error(`exit code ${code}`))
+      writeCrashLog({ process: 'media', exitCode: code, errorOutput: errorOutputTail })
+    }
+    restartMediaProcess(state, Date.now() - startedAt)
   })
   return child
 }
 
-function launchMediaProcess(state: AppState): UtilityProcess {
-  return startMediaProcess(
-    (versions) => {
-      state.versions = versions
-    },
-    (uptimeMs) => restartMediaProcess(state, uptimeMs),
-  )
+// Work is never lost with the media process: a new one is started and every window connects to it as it is.
+function restartMediaProcess(state: AppState, uptimeMs: number): void {
+  state.mediaProcess = undefined
+  state.mediaQuickExits = uptimeMs < MEDIA_PROCESS_MIN_UPTIME_MS ? state.mediaQuickExits + 1 : 0
+  const waitMs = state.mediaQuickExits === 0 ? 0 : Math.min(MEDIA_RESTART_LONGEST_WAIT_MS, MEDIA_RESTART_FIRST_WAIT_MS * 2 ** (state.mediaQuickExits - 1))
+  if (waitMs > 0) logError('The media process keeps stopping', new Error(`it ran for ${uptimeMs} ms`), { restartsInMs: waitMs })
+  setTimeout(() => {
+    if (state.isQuitting) return
+    state.mediaProcess = launchMediaProcess(state)
+    for (const editor of state.editors) {
+      if (editor.window.isDestroyed()) continue
+      const page = editor.window.webContents
+      // A page that is loading, or that died and is loaded again, connects once it has loaded.
+      if (page.isLoading() || page.isCrashed()) continue
+      connectToMedia(state, editor.window)
+    }
+  }, waitMs)
 }
 
-// Work is never lost with the media process: a new one is started and the editor reopens from its recovery file.
-function restartMediaProcess(state: AppState, uptimeMs: number): void {
-  if (state.isQuitting) return
-  if (uptimeMs < MEDIA_PROCESS_MIN_UPTIME_MS) {
-    logError('The media process keeps stopping and was not restarted', new Error(`it ran for ${uptimeMs} ms`))
+function crashLogPath(): string {
+  return join(app.getPath('userData'), 'logs', 'crash.log')
+}
+
+// One line for each process that died, kept on this Mac only. Written at once, as the process may be about to end.
+function writeCrashLog(entry: Record<string, unknown>): void {
+  try {
+    const path = crashLogPath()
+    mkdirSync(dirname(path), { recursive: true })
+    appendFileSync(path, `${JSON.stringify({ time: new Date().toISOString(), ...entry })}\n`)
+  } catch (error) {
+    logError('Could not write the crash log', error, entry)
+  }
+}
+
+// The page loads again from its recovery file, so at most the last ten seconds of work are lost.
+function restartEditor(editor: Editor, cause: string): void {
+  if (editor.window.isDestroyed()) return
+  const now = Date.now()
+  if (editor.restartedAt !== undefined && now - editor.restartedAt < RESTART_GUARD_MS) {
+    writeCrashLog({ process: 'editor', event: 'not restarted again', cause })
     return
   }
-  state.mediaProcess = launchMediaProcess(state)
-  for (const editor of state.editors) {
-    if (!editor.window.isDestroyed()) editor.window.webContents.reload()
+  editor.restartedAt = now
+  editor.window.webContents.reload()
+}
+
+function watchForCrashes(state: AppState): void {
+  process.on('uncaughtExceptionMonitor', (error, origin) => {
+    writeCrashLog({ process: 'main', reason: origin, error: describeError(error), stack: error.stack })
+  })
+  app.on('render-process-gone', (_event, webContents, details) => {
+    if (state.isQuitting || details.reason === 'clean-exit') return
+    writeCrashLog({ process: 'renderer', reason: details.reason, exitCode: details.exitCode, url: webContents.getURL() })
+    const editor = state.editors.find((each) => each.window.webContents === webContents)
+    if (editor !== undefined) restartEditor(editor, `its page ${details.reason}`)
+  })
+  // A GPU process that dies takes the drawing of every window with it; Chromium starts a new one, and each page draws again on it by itself.
+  app.on('child-process-gone', (_event, details) => {
+    if (state.isQuitting || details.reason === 'clean-exit') return
+    // The media process has an entry of its own, with the end of its error output.
+    if (details.type === 'Utility' && details.name === 'Media') return
+    writeCrashLog({ process: details.type, name: details.name ?? details.serviceName, reason: details.reason, exitCode: details.exitCode })
+  })
+}
+
+// Every window keeps smaller caches while macOS is short of memory. A window opened meanwhile hears it at the next check.
+function watchMemoryPressure(state: AppState): void {
+  let hasCheckFailed = false
+  async function check(): Promise<void> {
+    let isUnderPressure: boolean
+    try {
+      isUnderPressure = await isMemoryUnderPressure()
+    } catch (error) {
+      if (!hasCheckFailed) logError('Could not read the memory pressure', error)
+      hasCheckFailed = true
+      return
+    }
+    const hasChanged = isUnderPressure !== state.isUnderMemoryPressure
+    state.isUnderMemoryPressure = isUnderPressure
+    if (!isUnderPressure && !hasChanged) return
+    const command: HostCommand = { type: 'memory-pressure', isUnderPressure }
+    for (const editor of state.editors) send(editor.window, command)
+    if (state.exportWindow !== undefined) send(state.exportWindow, command)
   }
+  setInterval(() => void check(), MEMORY_PRESSURE_POLL_MS)
+}
+
+// Every load gets fresh ports: a reloaded page has lost the old ones, and closing them ends the old media session. A page that loads while the media process is being restarted gets its ports when the new one runs.
+function connectToMedia(state: AppState, window: BrowserWindow): void {
+  const mediaProcess = state.mediaProcess
+  if (mediaProcess === undefined) return
+  const engine = new MessageChannelMain()
+  const ui = new MessageChannelMain()
+  const connect: MediaProcessCommand = { type: 'connect' }
+  mediaProcess.postMessage(connect, [engine.port1, ui.port1])
+  window.webContents.postMessage('media-port', undefined, [engine.port2, ui.port2])
 }
 
 function send(window: BrowserWindow, command: HostCommand): void {
@@ -347,14 +448,7 @@ function createWindow(state: AppState, options: WindowOptions): BrowserWindow {
   window.webContents.on('console-message', (details) => {
     if (details.level === 'error') logError('A window reported an error', new Error(details.message), { mode })
   })
-  // Every load gets fresh ports: a reloaded page has lost the old ones, and closing them ends the old media session.
-  window.webContents.on('did-finish-load', () => {
-    const engine = new MessageChannelMain()
-    const ui = new MessageChannelMain()
-    const connect: MediaProcessCommand = { type: 'connect' }
-    state.mediaProcess?.postMessage(connect, [engine.port1, ui.port1])
-    window.webContents.postMessage('media-port', undefined, [engine.port2, ui.port2])
-  })
+  window.webContents.on('did-finish-load', () => connectToMedia(state, window))
   void loadPage(window, mode)
   return window
 }
@@ -839,7 +933,7 @@ function openEditor(state: AppState, document: DocumentInfo): BrowserWindow {
     position = { x: left + CASCADE_PIXELS, y: top + CASCADE_PIXELS }
   }
   const window = createWindow(state, { mode: 'editor', isUnattended: state.isUnattended, position })
-  const editor: Editor = { window, document, documentState: CLEAN_DOCUMENT, isCloseConfirmed: false }
+  const editor: Editor = { window, document, documentState: CLEAN_DOCUMENT, isCloseConfirmed: false, restartedAt: undefined }
   state.editors.push(editor)
   state.activeEditor = editor
   // The window is named after its document, not after the page it shows.
@@ -876,27 +970,47 @@ function openEditor(state: AppState, document: DocumentInfo): BrowserWindow {
   return window
 }
 
+// Core Audio takes about 130 ms to set up the first sound output of the app, and the page that asks for it can do nothing else meanwhile.
+// A hidden page of its own asks first, so the editor's first Space does not stall its window; the outputs after the first open at once.
+async function prepareSoundOutput(): Promise<void> {
+  const window = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true } })
+  window.webContents.setAudioMuted(true)
+  try {
+    await window.loadURL('about:blank')
+    await window.webContents.executeJavaScript(`new AudioContext({ sampleRate: ${SAMPLE_RATE}, latencyHint: 'interactive' }).close()`)
+  } catch (error) {
+    logError('Could not prepare the sound output', error)
+  } finally {
+    window.destroy()
+  }
+}
+
 async function openFirstEditors(state: AppState, projectPath: string | undefined): Promise<BrowserWindow> {
   const [first, ...others] = await firstDocuments(state, projectPath)
   const firstWindow = openEditor(state, first ?? documentFor(state, projectPath))
   for (const document of others) openEditor(state, document)
+  // Started once a window is open: the hidden page closing must not look like the last window closing.
+  void prepareSoundOutput()
   return firstWindow
 }
 
-type UiTestPaths = {
+type UiTestInputs = {
   projectPath: string | undefined
   outputDirectory: string | undefined
   mediaDirectory: string | undefined
+  // How long a scenario that runs for a while goes on, and the seed of one that acts at random.
+  seconds: number | undefined
+  seed: number | undefined
 }
 
-async function runCliUiTest(state: AppState, scenario: string, paths: UiTestPaths): Promise<void> {
+async function runCliUiTest(state: AppState, scenario: string, inputs: UiTestInputs): Promise<void> {
   try {
     // A recovery file can only be there because the test left one on purpose, so it is restored without asking.
     state.dialogAnswers.restore = true
     state.isUnattended = true
-    const window = await openFirstEditors(state, paths.projectPath)
-    const { outputDirectory, mediaDirectory } = paths
-    const report = await runUiTest(window, { scenario, outputDirectory, mediaDirectory, answers: state.dialogAnswers })
+    const window = await openFirstEditors(state, inputs.projectPath)
+    const { outputDirectory, mediaDirectory, seconds, seed } = inputs
+    const report = await runUiTest(window, { scenario, outputDirectory, mediaDirectory, seconds, seed, answers: state.dialogAnswers })
     await finish(state, report)
   } catch (error) {
     process.stderr.write(`${describeError(error)}\n`)
@@ -919,6 +1033,8 @@ async function main(): Promise<void> {
   const uiTestScenario = options.get('uitest')
   const playSeconds = Number(options.get('seconds') ?? DEFAULT_SELFTEST_SECONDS)
   if (!(playSeconds > 0)) throw new UsageError('--seconds must be a positive number')
+  const seed = options.has('seed') ? Number(options.get('seed')) : undefined
+  if (seed !== undefined && !Number.isSafeInteger(seed)) throw new UsageError('--seed must be a whole number')
   // A UI test restores recovery files without asking and changes stored settings, so it must never run on the profile that holds someone's real work.
   const hasOwnProfile = app.commandLine.hasSwitch('user-data-dir')
   if (uiTestScenario !== undefined && !hasOwnProfile) throw new UsageError('--uitest needs a profile of its own: add --user-data-dir=<empty folder>')
@@ -941,6 +1057,8 @@ async function main(): Promise<void> {
   serveRenderer()
   const state: AppState = {
     mediaProcess: undefined,
+    mediaQuickExits: 0,
+    isUnderMemoryPressure: false,
     editors: [],
     activeEditor: undefined,
     harnessWindow: undefined,
@@ -959,8 +1077,10 @@ async function main(): Promise<void> {
     menuShortcuts: menuShortcutsOf(DEFAULT_BINDINGS),
   }
   started = state
+  watchForCrashes(state)
   if (!isInteractive) exitWhenOutputCloses(state)
   state.mediaProcess = launchMediaProcess(state)
+  watchMemoryPressure(state)
   registerIpc(state)
   registerDocumentIpc(state)
   app.on('before-quit', () => {
@@ -980,7 +1100,13 @@ async function main(): Promise<void> {
   }
   const projectPath = resolved(options.get('project')) ?? fileToOpen
   if (uiTestScenario !== undefined) {
-    await runCliUiTest(state, uiTestScenario, { projectPath, outputDirectory: resolved(options.get('out')), mediaDirectory: resolved(options.get('media')) })
+    await runCliUiTest(state, uiTestScenario, {
+      projectPath,
+      outputDirectory: resolved(options.get('out')),
+      mediaDirectory: resolved(options.get('media')),
+      seconds: options.has('seconds') ? playSeconds : undefined,
+      seed,
+    })
     return
   }
   await openFirstEditors(state, projectPath)

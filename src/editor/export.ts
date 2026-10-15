@@ -156,7 +156,7 @@ export function durationText(milliseconds: number): string {
   const totalSeconds = Math.max(0, Math.round(milliseconds / MS_PER_SECOND))
   const totalMinutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE)
   const hours = Math.floor(totalMinutes / MINUTES_PER_HOUR)
-  if (hours > 0) return `${hours} h ${totalMinutes % MINUTES_PER_HOUR} min`
-  if (totalMinutes > 0) return `${totalMinutes} min ${totalSeconds % SECONDS_PER_MINUTE} s`
-  return `${totalSeconds} s`
+  if (hours > 0) return `${hours}h ${totalMinutes % MINUTES_PER_HOUR}m`
+  if (totalMinutes > 0) return `${totalMinutes}m ${totalSeconds % SECONDS_PER_MINUTE}s`
+  return `${totalSeconds}s`
 }

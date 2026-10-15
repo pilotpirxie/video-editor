@@ -16,7 +16,13 @@ function runHeadless(): void {
   })
   window.host.onCommand((command) => {
     if (command.type === 'run-job') engine.send({ type: 'job', job: command.job })
+    if (command.type === 'memory-pressure') engine.send({ type: 'memory-pressure', isUnderPressure: command.isUnderPressure })
   })
+}
+
+// An error that no panel caught has emptied the window; the log says what it was.
+function logUncaughtError(error: unknown, info: { componentStack?: string }): void {
+  logError('The window stopped drawing', error, { componentStack: info.componentStack })
 }
 
 function rootContainer(): HTMLElement {
@@ -36,7 +42,7 @@ async function runEditor(): Promise<void> {
   engine.onEvent((event) => {
     if (event.type === 'error') session.store.notify(event.message)
   })
-  createRoot(rootContainer()).render(<Editor session={session} preview={preview} />)
+  createRoot(rootContainer(), { onUncaughtError: logUncaughtError }).render(<Editor session={session} preview={preview} />)
   await session.open()
 }
 

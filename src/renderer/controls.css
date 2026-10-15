@@ -57,6 +57,10 @@ body {
   background: var(--hover-surface);
 }
 
+.button:active:not(:disabled) {
+  background: var(--divider);
+}
+
 .button:disabled,
 .field:disabled {
   color: var(--text-disabled);
@@ -87,6 +91,14 @@ body {
 .button.primary:disabled {
   border-color: var(--divider);
   background: var(--raised-surface);
+  color: var(--text-disabled);
+}
+
+/* A labelled button with its icon before the words. */
+.button.with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .button.icon {
@@ -107,6 +119,15 @@ body {
 
 .button.icon[aria-pressed='true'] {
   color: var(--primary);
+}
+
+.button.icon:active:not(:disabled) {
+  background: var(--hover-surface);
+}
+
+/* Written after the icon colours, which would otherwise make a disabled icon look usable. */
+.button.icon:disabled {
+  color: var(--text-disabled);
 }
 
 .field {
@@ -169,6 +190,10 @@ body {
 
 .tab:hover {
   color: var(--text-primary);
+}
+
+.tab:active {
+  background: var(--hover-surface);
 }
 
 .tab[aria-selected='true'] {
@@ -243,6 +268,11 @@ body {
   font-size: var(--text-small);
 }
 
+.menu-item:active:not(:disabled),
+.option:active {
+  background: var(--divider);
+}
+
 .menu-item:disabled {
   color: var(--text-disabled);
 }
@@ -315,6 +345,14 @@ legend.field-label {
   color: var(--text-primary);
 }
 
+.field-arrow:active:not(:disabled) {
+  color: var(--primary);
+}
+
+.field-arrow:disabled {
+  color: var(--text-disabled);
+}
+
 .picker {
   display: flex;
   align-items: center;
@@ -364,6 +402,14 @@ legend.field-label {
 
 .group-toggle:focus-visible {
   outline-offset: -2px;
+}
+
+.group-toggle:hover .icon {
+  color: var(--text-primary);
+}
+
+.group-toggle:active {
+  background: var(--hover-surface);
 }
 
 .group-toggle .icon {
@@ -476,6 +522,10 @@ legend.field-label {
 
 .dialog.settings {
   width: 560px;
+}
+
+.dialog.speed-dialog {
+  width: 360px;
 }
 
 .shortcut-list {

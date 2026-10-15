@@ -9,6 +9,26 @@
   height: 100%;
 }
 
+.panel-failed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--panel-background);
+  color: var(--text-secondary);
+  font-size: var(--text-body);
+}
+
+/* The canvas and the dialogs sit straight in the window's grid; what replaces them takes the canvas's place. */
+.editor > .panel-failed {
+  grid-area: canvas;
+}
+
+.panel-failed p {
+  margin: 0;
+}
+
 /* Floats over the top of the canvas; only the message itself takes the pointer. */
 .notice-area {
   grid-area: canvas;
@@ -121,6 +141,7 @@
 
 /* A fitted picture never needs scrolling, and a scrollable area would change size while the picture is refitted to it. */
 .canvas-area {
+  position: relative;
   flex: 1;
   min-height: 0;
   padding: var(--space-4);
@@ -129,6 +150,23 @@
 
 .canvas-area.scrollable {
   overflow: auto;
+}
+
+/* Said over the middle of the canvas and of the tracks (below the ruler and the camera lane) while they are empty. Drops pass through to what is beneath. */
+.canvas-hint,
+.timeline-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-body);
+  line-height: 1.4;
+  text-align: center;
+  pointer-events: none;
 }
 
 .preview-fit {
@@ -219,18 +257,18 @@
   background: var(--panel-background);
 }
 
-/* The name of the camera lane. It stays in place while the track headers scroll under it. */
+/* The name of the camera lane. It stays in place while the track headers scroll under it, and covers the strip beside the ruler above it too. */
 .camera-lane-header {
   position: absolute;
-  top: 24px;
+  top: 0;
   left: 0;
   right: 0;
   z-index: 1;
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  height: 22px;
-  padding: 0 var(--space-2);
+  height: 46px;
+  padding: 24px var(--space-2) 0;
   border-bottom: 1px solid var(--divider);
   background: var(--panel-background);
   color: var(--text-secondary);
@@ -283,6 +321,14 @@
   min-height: 100%;
 }
 
+/* The box drawn over the Media tab to pick every file it crosses. */
+.select-box {
+  position: fixed;
+  border: 1px solid var(--primary);
+  background: color-mix(in srgb, var(--primary) 15%, transparent);
+  pointer-events: none;
+}
+
 .library-tools {
   display: flex;
   gap: var(--space-1);
@@ -296,10 +342,6 @@
 
 .library-tools .button {
   flex: none;
-}
-
-.library-hint {
-  padding: 0 var(--space-2) var(--space-2);
 }
 
 .library-list {
@@ -548,6 +590,18 @@
   filter: saturate(1.8) brightness(1.1);
 }
 
+.look-sepia {
+  filter: sepia(1);
+}
+
+.look-tint {
+  filter: grayscale(1) sepia(1) saturate(4) hue-rotate(180deg);
+}
+
+.look-invert {
+  filter: invert(1);
+}
+
 .look-soft {
   filter: blur(1.2px);
 }
@@ -579,6 +633,15 @@
   fill: none;
   stroke: var(--primary);
   stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+/* A clip that reaches past the picture: its outline shows where it is, also in the space around the canvas. */
+.outside-box {
+  fill: none;
+  stroke: var(--text-secondary);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
   vector-effect: non-scaling-stroke;
 }
 

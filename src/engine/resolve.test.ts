@@ -317,8 +317,10 @@ describe('transitionChange', () => {
 
   it.each(TRANSITION_TYPES)('%s leaves the arriving picture whole at its end and the leaving one whole at its start', (type) => {
     for (const whole of [change(type, 1, true), change(type, 0, false)]) {
-      expect(whole).toMatchObject({ opacity: 1, offsetY: 0, scale: 1 })
+      expect(whole).toMatchObject({ opacity: 1, scale: 1 })
       expect(Math.abs(whole.offsetX)).toBe(0)
+      expect(Math.abs(whole.offsetY)).toBe(0)
+      expect(Math.abs(whole.rotation)).toBe(0)
       expect(whole.tint?.amount ?? 0).toBe(0)
     }
   })
@@ -365,6 +367,59 @@ describe('transitionChange', () => {
     expect(change('circleReveal', 0, true).reveal).toEqual({ kind: 'circle', x: 960, y: 540, radius: 0, isInside: true })
     expect(change('circleReveal', 1, false).reveal).toEqual({ kind: 'circle', x: 960, y: 540, radius: Math.hypot(960, 540), isInside: false })
   })
+
+  it('closes a circle on the leaving picture, with the arriving one around it', () => {
+    expect(change('circleClose', 0, true).reveal).toEqual({ kind: 'circle', x: 960, y: 540, radius: Math.hypot(960, 540), isInside: false })
+    expect(change('circleClose', 0.5, false).reveal).toEqual({ kind: 'circle', x: 960, y: 540, radius: Math.hypot(960, 540) / 2, isInside: true })
+  })
+
+  it.each<{ type: TransitionType; corner: { x: number; y: number } }>([
+    { type: 'wipeUpLeft', corner: { x: 1920, y: 1080 } },
+    { type: 'wipeUpRight', corner: { x: 0, y: 1080 } },
+    { type: 'wipeDownLeft', corner: { x: 1920, y: 0 } },
+    { type: 'wipeDownRight', corner: { x: 0, y: 0 } },
+  ])('sweeps the edge of $type from its corner through the middle to the opposite corner', ({ type, corner }) => {
+    // How far a point is past the edge, towards the side the arriving picture is on.
+    function past(reveal: ReturnType<typeof change>['reveal'], x: number, y: number): number {
+      if (reveal?.kind !== 'line') throw new Error('Expected a wipe')
+      return (x - reveal.x) * reveal.normalX + (y - reveal.y) * reveal.normalY
+    }
+    const opposite = { x: 1920 - corner.x, y: 1080 - corner.y }
+    expect(past(change(type, 0, true).reveal, corner.x, corner.y)).toBeCloseTo(0, 9)
+    expect(past(change(type, 0.5, true).reveal, 960, 540)).toBeCloseTo(0, 9)
+    expect(past(change(type, 1, true).reveal, opposite.x, opposite.y)).toBeCloseTo(0, 9)
+    expect(past(change(type, 0.5, true).reveal, corner.x, corner.y)).toBeGreaterThan(0)
+    expect(past(change(type, 0.5, false).reveal, opposite.x, opposite.y)).toBeGreaterThan(0)
+  })
+
+  it.each<{ type: TransitionType; arrivingFrom: { x: number; y: number } }>([
+    { type: 'slideRight', arrivingFrom: { x: -1920, y: 0 } },
+    { type: 'slideUp', arrivingFrom: { x: 0, y: 1080 } },
+    { type: 'slideDown', arrivingFrom: { x: 0, y: -1080 } },
+    { type: 'pushRight', arrivingFrom: { x: -1920, y: 0 } },
+    { type: 'pushUp', arrivingFrom: { x: 0, y: 1080 } },
+    { type: 'pushDown', arrivingFrom: { x: 0, y: -1080 } },
+  ])('brings the new picture of $type in from a canvas away', ({ type, arrivingFrom }) => {
+    const start = change(type, 0, true)
+    expect(start.offsetX).toBeCloseTo(arrivingFrom.x, 9)
+    expect(start.offsetY).toBeCloseTo(arrivingFrom.y, 9)
+    const halfway = change(type, 0.5, false)
+    const isPush = type.startsWith('push')
+    expect(halfway.offsetX).toBeCloseTo(isPush ? -arrivingFrom.x / 2 : 0, 9)
+    expect(halfway.offsetY).toBeCloseTo(isPush ? -arrivingFrom.y / 2 : 0, 9)
+  })
+
+  it('shrinks the leaving picture of a shrink away over the arriving one, which grows in on its own', () => {
+    expect(change('shrink', 0.5, false)).toMatchObject({ opacity: 1, scale: 0.5, rotation: 0 })
+    expect(change('shrink', 0.5, true)).toMatchObject({ opacity: 1, scale: 1 })
+    expect(change('shrink', 0.5, true, false)).toMatchObject({ opacity: 1, scale: 0.5 })
+  })
+
+  it('turns the leaving picture of a spin once while it shrinks, and fades the arriving one in beneath it', () => {
+    expect(change('spin', 0.5, false)).toMatchObject({ opacity: 1, scale: 0.5, rotation: 180 })
+    expect(change('spin', 0.5, true)).toMatchObject({ opacity: 0.5, scale: 1, rotation: 0 })
+    expect(change('spin', 0, true, false)).toMatchObject({ scale: 0, rotation: -360 })
+  })
 })
 
 describe('transitions on a track', () => {
@@ -406,6 +461,17 @@ describe('transitions on a track', () => {
   it.each<TransitionType>(['slide', 'push', 'fadeBlack', 'fadeWhite'])('draws the layers of a %s one over the other', (type) => {
     const layers = layersAt(cut(type), 2 * SECOND)
     expect(layers.map((layer) => layer.transition?.mixKey)).toEqual([undefined, undefined])
+  })
+
+  it.each<TransitionType>(['shrink', 'spin'])('draws the leaving picture of a %s over the arriving one', (type) => {
+    expect(idsAt(cut(type), 2 * SECOND)).toEqual(['second', 'first'])
+  })
+
+  it('turns the leaving picture of a spin about the middle of the canvas', () => {
+    const [, leaving] = layersAt(cut('spin', { transform: { x: 1460, y: 540, scaleX: 1, scaleY: 1, rotation: 10 } }), 2 * SECOND)
+    expect(leaving?.placed?.x).toBeCloseTo(960 - 250, 9)
+    expect(leaving?.placed?.y).toBeCloseTo(540, 9)
+    expect(leaving?.placed).toMatchObject({ scaleX: 0.5, scaleY: 0.5, rotation: 190 })
   })
 
   it('moves the picture of a slide and leaves the place of the clip as it is', () => {

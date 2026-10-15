@@ -290,18 +290,22 @@ export function hasKeyframesAt(clip: Clip, set: KeyframeSet, time: number, frame
   return properties.length > 0 && properties.every((property) => clip.keyframes?.[property]?.some((keyframe) => keyframe.time === local) === true)
 }
 
+// The frame on which a keyframe of a clip is reached: one where the clip is drawn, so a keyframe at the very end of a clip is reached on its last frame.
+export function keyframeFrame(clip: Clip, localTime: number, frameTicks: number): number {
+  const firstFrame = Math.ceil(clip.start / frameTicks)
+  const lastFrame = Math.ceil((clip.start + clip.duration) / frameTicks) - 1
+  return Math.min(lastFrame, Math.max(firstFrame, frameAt(clip.start + localTime, frameTicks)))
+}
+
 // The start of the nearest frame before or after the playhead's that holds a keyframe of the set on one of the clips.
-// A keyframe is reached on a frame where its clip is drawn, so one at the very end of a clip is reached on its last frame.
 export function nearestKeyframe(clips: readonly Clip[], set: KeyframeSet, time: number, direction: 1 | -1, frameTicks: number): number | undefined {
   const current = frameAt(time, frameTicks)
   let nearest: number | undefined
   for (const clip of clips) {
-    const firstFrame = Math.ceil(clip.start / frameTicks)
-    const lastFrame = Math.ceil((clip.start + clip.duration) / frameTicks) - 1
     for (const property of KEYFRAME_SETS[set]) {
       for (const keyframe of clip.keyframes?.[property] ?? []) {
         if (keyframe.time < 0 || keyframe.time > clip.duration) continue
-        const frame = Math.min(lastFrame, Math.max(firstFrame, frameAt(clip.start + keyframe.time, frameTicks)))
+        const frame = keyframeFrame(clip, keyframe.time, frameTicks)
         const isOnThatSide = direction === 1 ? frame > current : frame < current
         const isCloser = nearest === undefined || Math.abs(frame - current) < Math.abs(nearest - current)
         if (isOnThatSide && isCloser) nearest = frame

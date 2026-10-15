@@ -8,6 +8,7 @@ import {
   TRACKS_TOP,
   TRACK_HEIGHT,
   clipBands,
+  keyframeDiamonds,
   rulerStep,
   timeToX,
   trackTop,
@@ -62,6 +63,7 @@ const GRIP_HEIGHT = 16
 const ZOOM_BAR_HEIGHT = 6
 const ZOOM_BAR_OPACITY = 0.5
 const ZOOM_DIAMOND = 5
+const KEYFRAME_DIAMOND = 4
 const VOLUME_LINE_WIDTH = 1.5
 const VOLUME_POINT_RADIUS = 3
 const OUTSIDE_GROUP_OPACITY = 0.6
@@ -434,6 +436,27 @@ function drawClipDetails(context: CanvasRenderingContext2D, shape: ClipShape, sc
   context.restore()
 }
 
+function traceDiamond(context: CanvasRenderingContext2D, x: number, y: number, size: number): void {
+  context.beginPath()
+  context.moveTo(x, y - size)
+  context.lineTo(x + size, y)
+  context.lineTo(x, y + size)
+  context.lineTo(x - size, y)
+  context.closePath()
+}
+
+// A diamond for each moment the clip's picture is keyed. They are drawn whole, also where one sits on the clip's edge.
+function drawKeyframeDiamonds(context: CanvasRenderingContext2D, shape: ClipShape, scene: ContentScene): void {
+  context.fillStyle = scene.colors.textPrimary
+  context.strokeStyle = scene.colors.background
+  context.lineWidth = 1
+  for (const diamond of keyframeDiamonds(shape.clip, shape.picture, scene.view)) {
+    traceDiamond(context, diamond.x, diamond.y, KEYFRAME_DIAMOND)
+    context.fill()
+    context.stroke()
+  }
+}
+
 function drawSelection(context: CanvasRenderingContext2D, shape: ClipShape, scene: ContentScene): void {
   context.strokeStyle = scene.colors.primary
   context.lineWidth = SELECTION_WIDTH
@@ -482,6 +505,8 @@ function drawTrack(context: CanvasRenderingContext2D, track: Track, scene: Conte
     if (scene.selection.has(shape.clip.id)) drawSelection(context, shape, scene)
   }
   for (const band of bands) drawTransitionBand(context, band, rowTop, scene)
+  // Over the shade of a transition too, so no keyframe goes unseen.
+  for (const shape of shapes) drawKeyframeDiamonds(context, shape, scene)
   context.globalAlpha = 1
 }
 
@@ -502,12 +527,7 @@ function drawCameraLane(context: CanvasRenderingContext2D, scene: ContentScene):
     context.globalAlpha = ZOOM_BAR_OPACITY
     context.fillRect(left, middle - ZOOM_BAR_HEIGHT / 2, right - left, ZOOM_BAR_HEIGHT)
     context.globalAlpha = 1
-    context.beginPath()
-    context.moveTo(right, middle - ZOOM_DIAMOND)
-    context.lineTo(right + ZOOM_DIAMOND, middle)
-    context.lineTo(right, middle + ZOOM_DIAMOND)
-    context.lineTo(right - ZOOM_DIAMOND, middle)
-    context.closePath()
+    traceDiamond(context, right, middle, ZOOM_DIAMOND)
     context.fill()
   }
 }

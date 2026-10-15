@@ -5,11 +5,13 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { afterAll, expect, onTestFinished } from 'vitest'
 import { allClips } from '../src/editor/clips.js'
 import { createFfmpegRunner, writeAll, type FfmpegRunner } from '../src/media/ffmpeg.js'
-import { parseProject, serializeProject, type CameraKeyframe, type Clip, type MediaRef, type Project, type Transform, type VideoClip } from '../src/shared/project.js'
-import { SECOND } from './fixtures.js'
+import type { ExportEncoder } from '../src/shared/exportPresets.js'
+import { parseProject, serializeProject, type CameraKeyframe, type Clip, type MediaRef, type Project, type Track, type Transform, type VideoClip } from '../src/shared/project.js'
+import { FRAME, SECOND } from './fixtures.js'
 import { BARCODE_BITS, BARCODE_HEIGHT_FRACTION, barcodeSource, type VideoPattern } from './media/generate.js'
 
 export const ROOT = join(import.meta.dirname, '..')
+export const MEDIA_DIRECTORY = join(ROOT, 'test', 'media', 'generated')
 export const HAS_SAMPLES = existsSync(join(ROOT, 'samples', 'kangaroo1920.mp4'))
 const FFMPEG_DIR = join(ROOT, 'vendor', 'ffmpeg')
 
@@ -29,7 +31,7 @@ export function scratchDirectory(name: string): string {
   return directory
 }
 
-export function lastJsonLine(output: string): unknown {
+function lastJsonLine(output: string): unknown {
   const lastLine = output.trim().split('\n').at(-1) ?? ''
   try {
     return JSON.parse(lastLine)
@@ -415,6 +417,93 @@ export function halved(picture: Picture): Picture {
     }
   }
   return { width, height, data }
+}
+
+const SELF_TEST_TIMEOUT_MS = 600_000
+const EXPORT_TIMEOUT_MS = 600_000
+
+export type SelfTestReport = {
+  status: string
+  timecodeAtStart: string
+  timecodeWhilePlaying: string
+  timecodeAfterPause: string
+  timecodeStillPaused: string
+  timecodeAfterScrub: string
+  droppedFrames: number
+  playsOnSpace: boolean
+  actualSize: { cssWidth: number; pixelWidth: number }
+  fullQualityMilliseconds: { firstFrame: number; afterScrub: number; atActualSize: number }
+  export?: { existedDuringExport: boolean; existsAfterCancel: boolean; outcome: string; existsAfterFinish: boolean }
+  peakMemoryMegabytes?: number
+}
+
+function isSelfTestReport(value: unknown): value is SelfTestReport {
+  return typeof value === 'object' && value !== null && 'status' in value && 'droppedFrames' in value
+}
+
+// The dev harness plays, pauses, scrubs and exports the project by itself, then reports what it saw.
+export async function selfTestReport(path: string, extraArgs: readonly string[]): Promise<SelfTestReport> {
+  const result = await runApp(['--selftest', path, ...extraArgs], SELF_TEST_TIMEOUT_MS)
+  if (result.exitCode !== 0) throw new Error(`The self-test failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`)
+  const report = lastJsonLine(result.stdout)
+  if (!isSelfTestReport(report)) throw new Error(`Unexpected self-test report: ${result.stdout}`)
+  return report
+}
+
+export type ExportReport = {
+  peakMemoryMegabytes: number
+  realTimeRatio: number
+  progressLines: string[]
+  elapsedMs: number
+}
+
+function isExportSummary(value: unknown): value is { peakMemoryMegabytes: number; realTimeRatio: number } {
+  if (typeof value !== 'object' || value === null) return false
+  if (!('peakMemoryMegabytes' in value) || !('realTimeRatio' in value)) return false
+  return typeof value.peakMemoryMegabytes === 'number' && typeof value.realTimeRatio === 'number'
+}
+
+export async function exportWithReport(path: string, outputPath: string, preset: string, encoder: ExportEncoder): Promise<ExportReport> {
+  const startedAt = performance.now()
+  const result = await runApp(['--export', path, '--out', outputPath, '--preset', preset, '--encoder', encoder, '--report-memory'], EXPORT_TIMEOUT_MS)
+  if (result.exitCode !== 0) throw new Error(`Export failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`)
+  const summary = lastJsonLine(result.stdout)
+  if (!isExportSummary(summary)) throw new Error(`The export did not report its memory and speed: ${result.stdout}`)
+  const elapsedMs = performance.now() - startedAt
+  console.info(`export ${path} at ${preset} by ${encoder}: peak memory ${summary.peakMemoryMegabytes} MB, ${summary.realTimeRatio}× real time, ${(elapsedMs / 1000).toFixed(1)} s`)
+  const progressLines = result.stdout.split('\n').filter((line) => line.startsWith('progress '))
+  return { peakMemoryMegabytes: summary.peakMemoryMegabytes, realTimeRatio: summary.realTimeRatio, progressLines, elapsedMs }
+}
+
+// 4,096 clips on four tracks, spread over just under twenty hours.
+export function largeProject(): Project {
+  const clipsPerTrack = 1024
+  const spacing = 2109 * FRAME
+  const tracks: Track[] = []
+  for (let trackIndex = 0; trackIndex < 4; trackIndex++) {
+    const clips: Clip[] = []
+    for (let index = 0; index < clipsPerTrack; index++) {
+      clips.push({
+        id: `clip-${trackIndex}-${index}`,
+        type: 'video',
+        mediaId: 'video',
+        start: index * spacing,
+        duration: 2100 * FRAME,
+        sourceStart: 0,
+        speedPercent: 100,
+        transform: { x: 160 + 320 * (trackIndex % 2), y: 90 + 180 * Math.floor(trackIndex / 2), scaleX: 1, scaleY: 1, rotation: 0 },
+        opacity: 1,
+        volume: 1,
+      })
+    }
+    tracks.push({ id: `track-${trackIndex}`, name: `Track ${trackIndex + 1}`, hidden: false, locked: false, muted: false, clips })
+  }
+  return {
+    version: 1,
+    canvas: { width: 640, height: 360, frameRate: { num: 30, den: 1 } },
+    media: [{ id: 'video', path: join(MEDIA_DIRECTORY, 'h264.mp4'), relativePath: '' }],
+    tracks,
+  }
 }
 
 const UI_TEST_TIMEOUT_MS = 300_000

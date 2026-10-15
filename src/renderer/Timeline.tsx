@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
 import { deleteZoom, setZoom } from '../editor/camera.js'
-import { locateClip } from '../editor/clips.js'
-import { changeKeyframe, removeKeyframe } from '../editor/properties.js'
+import { hasSource, locateClip } from '../editor/clips.js'
+import { changeKeyframe, removeKeyframe, setSpeed, sharedValue } from '../editor/properties.js'
 import { actionFor } from '../editor/shortcuts.js'
-import { TRACK_HEIGHT } from '../editor/timelineView.js'
+import { CAMERA_LANE_HEIGHT, RULER_HEIGHT, TRACK_HEIGHT } from '../editor/timelineView.js'
 import { addTrack, deleteTrack, moveTrack, renameTrack, setTrackFlag, type TrackFlag } from '../editor/tracks.js'
-import { projectDuration, type Easing, type Track } from '../shared/project.js'
-import { frameDuration } from '../shared/time.js'
+import { projectDuration, type Easing, type Project, type Track } from '../shared/project.js'
+import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, frameDuration } from '../shared/time.js'
 import { useEditorState, useSession, useShortcutHint } from './context.js'
 import { Icon, IconButton, type IconName } from './icons.js'
 import { PopupMenu, type MenuItem } from './Menu.js'
@@ -127,6 +127,93 @@ function TrackHeader({ track, index }: { track: Track; index: number }): ReactEl
   )
 }
 
+// The selected clips whose speed can change: those that play a file.
+function clipsWithSpeed(project: Project, selection: readonly string[]): string[] {
+  return selection.filter((clipId) => {
+    const clip = locateClip(project, clipId)?.clip
+    return clip !== undefined && hasSource(clip)
+  })
+}
+
+// A quicker way to the speed than Properties, from the menu of a clip: type the number and press Return.
+function SpeedDialog({ clipIds, onClose }: { clipIds: readonly string[]; onClose(): void }): ReactElement {
+  const { store } = useSession()
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [draft, setDraft] = useState(() => {
+    const { project } = store.getState()
+    const speeds: number[] = []
+    for (const clipId of clipIds) {
+      const clip = locateClip(project, clipId)?.clip
+      if (clip !== undefined && hasSource(clip)) speeds.push(clip.speedPercent)
+    }
+    return String(sharedValue(speeds) ?? '')
+  })
+  const typed = Number(draft)
+  const isTypedValid = draft.trim() !== '' && Number.isFinite(typed)
+
+  useEffect(() => {
+    dialogRef.current?.showModal()
+    // Typing replaces the speed shown, so a new one is just its digits and Return.
+    inputRef.current?.select()
+  }, [])
+
+  function apply(percent: number): void {
+    store.apply('Change Speed', (project) => setSpeed(project, clipIds, percent))
+    dialogRef.current?.close()
+  }
+
+  function onSubmit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault()
+    if (isTypedValid) apply(typed)
+  }
+
+  // Return is handled on the key itself: a form submits only on the character Return types, which not every source of keys sends.
+  function onKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    if (isTypedValid) apply(typed)
+  }
+
+  return (
+    <dialog ref={dialogRef} className="dialog speed-dialog" aria-labelledby="speed-title" data-testid="speed-dialog" onClose={onClose}>
+      <form className="dialog-form" onSubmit={onSubmit}>
+        <h2 className="dialog-title" id="speed-title">
+          Speed
+        </h2>
+        <div className="labelled">
+          <label className="field-label" htmlFor="speed-value">
+            Speed %
+          </label>
+          <input
+            ref={inputRef}
+            id="speed-value"
+            className="field"
+            type="text"
+            inputMode="decimal"
+            data-testid="speed-value"
+            placeholder="Mixed"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={onKeyDown}
+          />
+        </div>
+        <p className="dialog-summary">
+          From {MIN_SPEED_PERCENT}% to {MAX_SPEED_PERCENT}%.
+        </p>
+        <div className="dialog-buttons">
+          <button type="button" className="button" data-testid="speed-cancel" onClick={() => dialogRef.current?.close()}>
+            Cancel
+          </button>
+          <button type="submit" className="button primary" data-testid="speed-apply" disabled={!isTypedValid}>
+            Apply
+          </button>
+        </div>
+      </form>
+    </dialog>
+  )
+}
+
 // The way into the open group, from the project down. Each step before the last closes the groups after it.
 function GroupPath({ openGroups }: { openGroups: readonly string[] }): ReactElement {
   const { store } = useSession()
@@ -164,12 +251,16 @@ export function Timeline(): ReactElement {
   const zoomFitKeys = useShortcutHint('timeline-zoom-fit')
   const zoomInKeys = useShortcutHint('timeline-zoom-in')
   const splitKeys = useShortcutHint('split')
+  const exportKeys = useShortcutHint('export')
   const tracks = useEditorState((state) => state.project.tracks)
   const isSnapping = useEditorState((state) => state.isSnapping)
   const hasSelection = useEditorState((state) => state.selection.length > 0)
   const openCount = useEditorState((state) => state.openCount)
   const openGroups = useEditorState((state) => state.openGroups)
   const hasContent = useEditorState((state) => projectDuration(state.wholeProject) > 0)
+  const isOpening = useEditorState((state) => state.openingName !== undefined)
+  let exportTooltip = 'Add something to the timeline first'
+  if (hasContent) exportTooltip = exportKeys === undefined ? 'Export' : `Export (${exportKeys})`
   const hostRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
@@ -177,6 +268,7 @@ export function Timeline(): ReactElement {
   const controllerRef = useRef<TimelineController | undefined>(undefined)
   const [menu, setMenu] = useState<OpenMenu | undefined>(undefined)
   const closeMenu = useCallback(() => setMenu(undefined), [])
+  const [speedClipIds, setSpeedClipIds] = useState<readonly string[] | undefined>(undefined)
 
   useEffect(() => {
     const host = hostRef.current
@@ -189,8 +281,8 @@ export function Timeline(): ReactElement {
     return () => controller.dispose()
   }, [session])
 
-  // A new document and another group are another timeline, which is shown whole.
-  useEffect(() => controllerRef.current?.zoomToFit(), [openCount, openGroups])
+  // A new document and another group are another timeline, which is shown whole, from its lowest tracks.
+  useEffect(() => controllerRef.current?.zoomToFit(true), [openCount, openGroups])
 
   useEffect(() => {
     function onKeyDown(event: globalThis.KeyboardEvent): void {
@@ -208,8 +300,10 @@ export function Timeline(): ReactElement {
 
   // Worked out only while the menu is open: it looks at every selected clip.
   const canSeparateAudio = menu !== undefined && actions.canSeparateAudio()
+  const withSpeed = menu === undefined ? [] : clipsWithSpeed(store.getState().project, store.getState().selection)
   const clipMenu: MenuItem[] = [
     { label: 'Split at Playhead', testId: 'menu-split', onSelect: actions.split },
+    { label: 'Speed…', testId: 'menu-speed', isDisabled: withSpeed.length === 0, onSelect: () => setSpeedClipIds(withSpeed) },
     { label: 'Separate Video and Audio', testId: 'menu-separate-audio', isDisabled: !canSeparateAudio, onSelect: actions.separateAudio },
     { label: 'Group', testId: 'menu-group', isDisabled: !hasSelection, onSelect: actions.group },
     { label: 'Ungroup', testId: 'menu-ungroup', isDisabled: !hasSelection, onSelect: actions.ungroup },
@@ -250,13 +344,14 @@ export function Timeline(): ReactElement {
         <IconButton icon="plus" label="Zoom in" testId="timeline-zoom-in" shortcut={zoomInKeys} onClick={() => controllerRef.current?.zoomBy(ZOOM_STEP)} />
         <button
           type="button"
-          className="button primary"
+          className="button primary with-icon"
           data-testid="export"
-          data-tooltip={hasContent ? 'Export (⌘E)' : 'Add something to the timeline first'}
+          data-tooltip={exportTooltip}
           disabled={!hasContent}
           onClick={() => store.showExportDialog(true)}
         >
-          Export…
+          <Icon name="export" />
+          Export
         </button>
       </div>
       <div className="timeline-body">
@@ -272,9 +367,15 @@ export function Timeline(): ReactElement {
         <div className="timeline-canvases" ref={hostRef} data-testid="timeline">
           <canvas ref={contentRef} aria-hidden="true" />
           <canvas ref={overlayRef} aria-label="Timeline" />
+          {!hasContent && !isOpening && (
+            <p className="timeline-hint" style={{ top: RULER_HEIGHT + CAMERA_LANE_HEIGHT }}>
+              Drag media or annotations here to start.
+            </p>
+          )}
         </div>
       </div>
       {menu !== undefined && <PopupMenu label={target === undefined ? 'Clip' : menuLabel} items={target === undefined ? clipMenu : targetMenu} at={menu.at} onClose={closeMenu} />}
+      {speedClipIds !== undefined && <SpeedDialog clipIds={speedClipIds} onClose={() => setSpeedClipIds(undefined)} />}
     </div>
   )
 }

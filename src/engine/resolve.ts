@@ -32,7 +32,23 @@ const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 }
 const ZOOM_IN_FROM = 0.5
 const ZOOM_OUT_TO = 2
 // Transitions whose two pictures are added up. Drawn one over the other, each at part strength, they would let what is beneath show through halfway.
-const SUMMED: readonly TransitionType[] = ['crossDissolve', 'wipeLeft', 'wipeRight', 'wipeUp', 'wipeDown', 'zoom', 'circleReveal']
+const SUMMED: readonly TransitionType[] = [
+  'crossDissolve',
+  'wipeLeft',
+  'wipeRight',
+  'wipeUp',
+  'wipeDown',
+  'wipeUpLeft',
+  'wipeUpRight',
+  'wipeDownLeft',
+  'wipeDownRight',
+  'zoom',
+  'circleReveal',
+  'circleClose',
+]
+// Transitions on a cut whose leaving picture moves away over the arriving one, which waits beneath it.
+const LEAVING_ON_TOP: readonly TransitionType[] = ['shrink', 'spin']
+const FULL_TURN = 360
 const DEGREES_TO_RADIANS = Math.PI / 180
 
 type Tint = {
@@ -241,29 +257,58 @@ export type TransitionPart = {
   isOnCut: boolean
 }
 
-// How a transition changes a layer: its opacity is multiplied, its place moved and scaled about the middle of the canvas.
+// How a transition changes a layer: its opacity is multiplied, its place moved, scaled and turned (in degrees) about the middle of the canvas.
 export type TransitionChange = {
   opacity: number
   offsetX: number
   offsetY: number
   scale: number
+  rotation: number
   tint?: Tint
   reveal?: Reveal
 }
 
-type Wipe = 'wipeLeft' | 'wipeRight' | 'wipeUp' | 'wipeDown'
+// The side of the canvas a wipe, a slide or a push comes from, in canvas widths and heights: a wipe to the left comes from the right.
+type Side = {
+  x: number
+  y: number
+}
 
-// Where the edge of a wipe is once it has come `moved` of its way, and the side the arriving picture is on.
-function wipeEdge(type: Wipe, moved: number, canvas: Size): { x: number; y: number; normalX: number; normalY: number } {
-  if (type === 'wipeLeft') {
-    return { x: canvas.width * (1 - moved), y: 0, normalX: 1, normalY: 0 }
-  } else if (type === 'wipeRight') {
-    return { x: canvas.width * moved, y: 0, normalX: -1, normalY: 0 }
-  } else if (type === 'wipeUp') {
-    return { x: 0, y: canvas.height * (1 - moved), normalX: 0, normalY: 1 }
-  } else {
-    return { x: 0, y: canvas.height * moved, normalX: 0, normalY: -1 }
-  }
+const WIPE_FROM: Partial<Record<TransitionType, Side>> = {
+  wipeLeft: { x: 1, y: 0 },
+  wipeRight: { x: -1, y: 0 },
+  wipeUp: { x: 0, y: 1 },
+  wipeDown: { x: 0, y: -1 },
+  wipeUpLeft: { x: 1, y: 1 },
+  wipeUpRight: { x: -1, y: 1 },
+  wipeDownLeft: { x: 1, y: -1 },
+  wipeDownRight: { x: -1, y: -1 },
+}
+
+const SLIDE_FROM: Partial<Record<TransitionType, Side>> = {
+  slide: { x: 1, y: 0 },
+  slideRight: { x: -1, y: 0 },
+  slideUp: { x: 0, y: 1 },
+  slideDown: { x: 0, y: -1 },
+}
+
+const PUSH_FROM: Partial<Record<TransitionType, Side>> = {
+  push: { x: 1, y: 0 },
+  pushRight: { x: -1, y: 0 },
+  pushUp: { x: 0, y: 1 },
+  pushDown: { x: 0, y: -1 },
+}
+
+// The edge of a wipe once it has come `moved` of its way. It starts on the side or corner the wipe comes from and sweeps the whole canvas; the arriving picture is on the side it has passed.
+function wipeReveal(from: Side, moved: number, isArriving: boolean, canvas: Size): Reveal {
+  const length = Math.hypot(from.x, from.y)
+  const normalX = from.x / length
+  const normalY = from.y / length
+  const sweep = (Math.abs(normalX) * canvas.width + Math.abs(normalY) * canvas.height) * moved
+  const startX = from.x > 0 ? canvas.width : 0
+  const startY = from.y > 0 ? canvas.height : 0
+  const side = isArriving ? 1 : -1
+  return { kind: 'line', x: startX - normalX * sweep, y: startY - normalY * sweep, normalX: normalX * side, normalY: normalY * side }
 }
 
 // Everything is measured on the canvas, so the camera looks at a transition as at anything else.
@@ -272,7 +317,10 @@ export function transitionChange(part: TransitionPart, canvas: Size): Transition
   // How much of the layer is there: the arriving one grows from nothing, the leaving one shrinks to nothing.
   const presence = isArriving ? progress : 1 - progress
   const moved = ease('easeInOut', progress)
-  const still = { opacity: 1, offsetX: 0, offsetY: 0, scale: 1 }
+  const still = { opacity: 1, offsetX: 0, offsetY: 0, scale: 1, rotation: 0 }
+  const wipeFrom = WIPE_FROM[type]
+  const slideFrom = SLIDE_FROM[type]
+  const movesFrom = slideFrom ?? PUSH_FROM[type]
 
   if (type === 'crossDissolve') {
     return { ...still, opacity: presence }
@@ -280,31 +328,43 @@ export function transitionChange(part: TransitionPart, canvas: Size): Transition
     // One half of the time goes between the picture and the colour, the other between the colour and nothing.
     const tint: Tint = { color: type === 'fadeBlack' ? 'black' : 'white', amount: Math.min(1, 2 * (1 - presence)) }
     return { ...still, opacity: Math.min(1, 2 * presence), tint }
-  } else if (type === 'slide' || type === 'push') {
-    if (isArriving) return { ...still, offsetX: canvas.width * (1 - moved) }
+  } else if (movesFrom !== undefined) {
+    if (isArriving) return { ...still, offsetX: movesFrom.x * canvas.width * (1 - moved), offsetY: movesFrom.y * canvas.height * (1 - moved) }
     // On a cut the new picture slides over the old one, which stays where it is.
-    const staysPut = type === 'slide' && part.isOnCut
-    return staysPut ? still : { ...still, offsetX: -canvas.width * moved }
+    const staysPut = slideFrom !== undefined && part.isOnCut
+    return staysPut ? still : { ...still, offsetX: -movesFrom.x * canvas.width * moved, offsetY: -movesFrom.y * canvas.height * moved }
   } else if (type === 'zoom') {
     const scale = isArriving ? ZOOM_IN_FROM + (1 - ZOOM_IN_FROM) * moved : 1 + (ZOOM_OUT_TO - 1) * moved
     return { ...still, opacity: presence, scale }
-  } else if (type === 'circleReveal') {
-    const radius = (Math.hypot(canvas.width, canvas.height) / 2) * moved
-    return { ...still, reveal: { kind: 'circle', x: canvas.width / 2, y: canvas.height / 2, radius, isInside: isArriving } }
-  } else {
-    const edge = wipeEdge(type, moved, canvas)
-    const side = isArriving ? 1 : -1
-    return { ...still, reveal: { kind: 'line', x: edge.x, y: edge.y, normalX: edge.normalX * side, normalY: edge.normalY * side } }
+  } else if (type === 'shrink' || type === 'spin') {
+    const turn = type === 'spin' ? FULL_TURN : 0
+    if (!isArriving) return { ...still, scale: 1 - moved, rotation: turn * moved }
+    // On its own an arriving picture grows in, or spins in. On a cut it waits beneath the leaving one, and a spin fades it in meanwhile.
+    if (!part.isOnCut) return { ...still, scale: moved, rotation: turn * (moved - 1) }
+    return type === 'spin' ? { ...still, opacity: presence } : still
+  } else if (type === 'circleReveal' || type === 'circleClose') {
+    // A reveal opens a circle on the arriving picture; a close shuts one on the leaving picture.
+    const isOpening = type === 'circleReveal'
+    const radius = (Math.hypot(canvas.width, canvas.height) / 2) * (isOpening ? moved : 1 - moved)
+    return { ...still, reveal: { kind: 'circle', x: canvas.width / 2, y: canvas.height / 2, radius, isInside: isArriving === isOpening } }
+  } else if (wipeFrom !== undefined) {
+    return { ...still, reveal: wipeReveal(wipeFrom, moved, isArriving, canvas) }
   }
+  return still
 }
 
 function movedBy(transform: Transform, change: TransitionChange, canvas: Size): Transform {
+  const angle = change.rotation * DEGREES_TO_RADIANS
+  const cosine = Math.cos(angle)
+  const sine = Math.sin(angle)
+  const fromMiddleX = (transform.x - canvas.width / 2) * change.scale
+  const fromMiddleY = (transform.y - canvas.height / 2) * change.scale
   return {
-    x: canvas.width / 2 + (transform.x - canvas.width / 2) * change.scale + change.offsetX,
-    y: canvas.height / 2 + (transform.y - canvas.height / 2) * change.scale + change.offsetY,
+    x: canvas.width / 2 + fromMiddleX * cosine - fromMiddleY * sine + change.offsetX,
+    y: canvas.height / 2 + fromMiddleX * sine + fromMiddleY * cosine + change.offsetY,
     scaleX: transform.scaleX * change.scale,
     scaleY: transform.scaleY * change.scale,
-    rotation: transform.rotation,
+    rotation: transform.rotation + change.rotation,
   }
 }
 
@@ -546,7 +606,8 @@ function cutLayers(leaving: VisualClip, arriving: VisualClip, transition: Transi
   const isSummed = SUMMED.includes(transition.type) && hasPicture(leaving) && hasPicture(arriving)
   const mixKey = isSummed ? arriving.id : undefined
   const layers: Layer[] = []
-  for (const clip of [leaving, arriving]) {
+  const inDrawingOrder = LEAVING_ON_TOP.includes(transition.type) ? [arriving, leaving] : [leaving, arriving]
+  for (const clip of inDrawingOrder) {
     const part: TransitionPart = { type: transition.type, progress, isArriving: clip === arriving, isOnCut: true }
     layers.push(...layersOf(clip, track, drawing, frame, time, { part, mixKey }))
   }

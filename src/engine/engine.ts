@@ -1,5 +1,5 @@
 import { fitCanvas, type Size } from '../shared/exportPresets.js'
-import { AUDIO_CACHE_BYTES, AUDIO_QUEUE_SECONDS, READ_AHEAD_FRAMES } from '../shared/limits.js'
+import { AUDIO_CACHE_BYTES, AUDIO_QUEUE_SECONDS, READ_AHEAD_FRAMES, UNDER_PRESSURE_SHARE } from '../shared/limits.js'
 import { describeError } from '../shared/log.js'
 import type { ExportJob, FramesJob, LoadedProject, MediaClient } from '../shared/mediaProtocol.js'
 import { projectDuration, type Canvas } from '../shared/project.js'
@@ -9,7 +9,7 @@ import { createPlaybackClock, type PlaybackClock } from './clock.js'
 import { CompositorError, createCompositor, type DrawItem } from './compositor.js'
 import { exportMedia, renderFrames, type JobSummary, type ProgressListener, type RenderContext } from './exporter.js'
 import { createFrameProvider } from './frameProvider.js'
-import { cachedAudioReader, mix, soundRanges } from './mixer.js'
+import { cachedAudioReader, mix, soundRanges, type AudioReader } from './mixer.js'
 import { pictureRanges, resolveFrame, type Layer } from './resolve.js'
 
 const AUDIO_BLOCK_SAMPLES = 2048
@@ -32,6 +32,9 @@ export type EngineEvent =
   | { type: 'prepared' }
   // The media process was told what the timeline needs now; how far that is prepared may have changed.
   | { type: 'wanted' }
+  // The GPU state of the preview is gone (the GPU process stopped) and is being made again.
+  | { type: 'preview-lost' }
+  | { type: 'preview-restored' }
   | { type: 'error'; message: string }
 
 type OutputCommand = { type: 'start' } | { type: 'samples'; samples: Float32Array } | { type: 'stop' }
@@ -44,6 +47,8 @@ export type Engine = {
   // While the zoom tool is used, the paused picture shows the whole canvas, so any part of it can be framed. Playing always goes through the camera.
   showWholeCanvasWhenPaused(isShown: boolean): void
   attachAudio(port: MessagePort): void
+  // Under memory pressure the caches of pictures and sound keep a quarter of their usual size.
+  setUnderPressure(isUnderPressure: boolean): void
   seek(time: number): void
   play(outputLatencySeconds: number): void
   pause(): void
@@ -74,9 +79,15 @@ class EngineError extends Error {
 export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit: (event: EngineEvent) => void): Engine {
   const gl = surface.getContext('webgl2', { alpha: false, antialias: false, premultipliedAlpha: true })
   if (gl === null) throw new CompositorError('WebGL2 is not available on this machine')
-  const compositor = createCompositor(gl)
-  const provider = createFrameProvider(media, compositor)
-  const readAudio = cachedAudioReader((mediaId, firstSample, sampleCount, stretch) => media.audio(mediaId, firstSample, sampleCount, stretch), AUDIO_CACHE_BYTES)
+  // Made again when the GPU process has been restarted: the textures and programs of the old one are gone.
+  let compositor = createCompositor(gl)
+  let provider = createFrameProvider(media, compositor)
+  const readFromMedia: AudioReader = (mediaId, firstSample, sampleCount, stretch) => media.audio(mediaId, firstSample, sampleCount, stretch)
+  let readAudio = cachedAudioReader(readFromMedia, AUDIO_CACHE_BYTES)
+  let isUnderPressure = false
+  let isContextLost = false
+  // Paused pictures still being put together; textures let go meanwhile are freed after they have been drawn.
+  let pausedRenders = 0
 
   let loaded: LoadedProject | undefined
   let output: Size = { width: surface.width, height: surface.height }
@@ -108,6 +119,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
   }
 
   function draw(project: LoadedProject, view: View, items: readonly DrawItem[]): void {
+    if (isContextLost) return
     compositor.render(project.project.canvas, output, view, items)
     compositor.present()
     provider.collect()
@@ -151,7 +163,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
 
   async function showPaused(): Promise<void> {
     const project = loaded
-    if (project === undefined) return
+    if (project === undefined || isContextLost) return
     generation += 1
     const shown = generation
     const layers = layersAt(project, time)
@@ -167,6 +179,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     }
     const controller = refining
     const startedAt = performance.now()
+    pausedRenders += 1
     try {
       const quick = await provider.itemsFor(layers, 'preview', scale, controller.signal)
       if (shown !== generation) return
@@ -180,6 +193,8 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     } catch (error) {
       if (controller.signal.aborted) return
       emit({ type: 'error', message: describeError(error) })
+    } finally {
+      pausedRenders -= 1
     }
   }
 
@@ -225,19 +240,31 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     }
 
     const frame = frameAt(position, frameTicks)
+    // The display may refresh several times per frame of the project; the frames ahead are asked for once per frame.
     if (frame !== playing.drawnFrame) {
-      const skipped = playing.drawnFrame === undefined ? 0 : frame - playing.drawnFrame - 1
-      const view = cameraAt(project, frame * frameTicks)
-      const { items, lateLayers } = provider.itemsNow(layersAt(project, frame * frameTicks), textScale(project, view))
-      droppedFrames += Math.max(0, skipped) + (lateLayers > 0 ? 1 : 0)
-      playing.drawnFrame = frame
-      time = frame * frameTicks
-      draw(project, view, items)
-      emitPosition(undefined)
-      updateWanted()
+      try {
+        drawPlaying(project, playing, frame, frameTicks)
+      } catch (error) {
+        // A frame that cannot be drawn stops playback, so the sound does not go on under a picture that stands still.
+        pause()
+        emit({ type: 'error', message: describeError(error) })
+        return
+      }
+      void prepareAhead(project, frame + 1, frameTicks)
     }
-    void prepareAhead(project, frame + 1, frameTicks)
     requestAnimationFrame(() => tick(project, playing))
+  }
+
+  function drawPlaying(project: LoadedProject, playing: Playback, frame: number, frameTicks: number): void {
+    const skipped = playing.drawnFrame === undefined ? 0 : frame - playing.drawnFrame - 1
+    const view = cameraAt(project, frame * frameTicks)
+    const { items, lateLayers } = provider.itemsNow(layersAt(project, frame * frameTicks), textScale(project, view))
+    droppedFrames += Math.max(0, skipped) + (lateLayers > 0 ? 1 : 0)
+    playing.drawnFrame = frame
+    time = frame * frameTicks
+    draw(project, view, items)
+    emitPosition(undefined)
+    updateWanted()
   }
 
   function stopPlayback(): void {
@@ -328,6 +355,37 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     if (playback === undefined) void showPaused()
   }
 
+  function setUnderPressure(isNowUnderPressure: boolean): void {
+    if (isNowUnderPressure === isUnderPressure) return
+    isUnderPressure = isNowUnderPressure
+    const share = isUnderPressure ? UNDER_PRESSURE_SHARE : 1
+    provider.setCacheShare(share)
+    // While paused nothing is drawn that would free the textures let go, so they are freed now, unless a picture being put together still uses them.
+    if (playback === undefined && pausedRenders === 0) provider.collect()
+    // The sound already read is let go with the old cache; what plays next is read again from the media process.
+    readAudio = cachedAudioReader(readFromMedia, AUDIO_CACHE_BYTES * share)
+  }
+
+  // Chromium loses the WebGL context when the GPU process stops, and gives it back once a new one runs. Everything the GPU held is made again.
+  surface.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault()
+    isContextLost = true
+    stopPlayback()
+    generation += 1
+    refining?.abort()
+    emitPosition(undefined)
+    emit({ type: 'preview-lost' })
+  })
+  surface.addEventListener('webglcontextrestored', () => {
+    compositor = createCompositor(gl)
+    provider = createFrameProvider(media, compositor)
+    provider.setCacheShare(isUnderPressure ? UNDER_PRESSURE_SHARE : 1)
+    isContextLost = false
+    emit({ type: 'preview-restored' })
+    emitPosition(undefined)
+    void showPaused()
+  })
+
   function showWholeCanvasWhenPaused(isShown: boolean): void {
     if (isShown === isWholeCanvasShownWhenPaused) return
     isWholeCanvasShownWhenPaused = isShown
@@ -385,6 +443,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     setOutputSize,
     showWholeCanvasWhenPaused,
     attachAudio,
+    setUnderPressure,
     seek,
     play,
     pause,

@@ -47,7 +47,7 @@ describe('a ten-minute tutorial', () => {
       const project = projectIn(report, 'project')
       expect(project.canvas).toEqual({ width: 1920, height: 1080, frameRate: { num: 30, den: 1 } })
       const kinds = project.tracks.map((track) => track.clips.map((clip) => clip.type).join('+'))
-      expect(kinds).toEqual(['video+video', 'audio', 'audio', 'text', 'image'])
+      expect(kinds).toEqual(['video+video', 'audio', 'audio', 'text', 'image', ''])
       expect(project.tracks[2]?.clips[0]).toMatchObject({ volume: 0.3, volumeFadeOut: 3 * SECOND })
       expect(project.tracks[3]?.clips[0]).toMatchObject({ text: 'How to export a video', fadeOut: SECOND })
 

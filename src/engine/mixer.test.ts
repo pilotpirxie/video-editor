@@ -334,6 +334,22 @@ describe('cachedAudioReader', () => {
     expect(requests).toEqual(['voice@0+48000', 'voice@48000+48000'])
   })
 
+  it('asks again for a chunk whose read failed', async () => {
+    let failures = 1
+    const flaky: AudioReader = async (mediaId, firstSample, sampleCount) => {
+      if (failures > 0) {
+        failures -= 1
+        throw new Error('The media process stopped.')
+      }
+      return readSource(mediaId, firstSample, sampleCount)
+    }
+    const cached = cachedAudioReader(flaky, 4 * 48_000 * 8)
+    await expect(cached('voice', 0, 100)).rejects.toThrow('The media process stopped.')
+    const retried = await cached('voice', 0, 100)
+    const direct = await readSource('voice', 0, 100)
+    expect(retried !== undefined && direct !== undefined && sameBits(retried, direct)).toBe(true)
+  })
+
   it('passes on that a media file has no sound', async () => {
     const cached = cachedAudioReader(async () => undefined, 1024)
     expect(await cached('voice', 0, 10)).toBeUndefined()

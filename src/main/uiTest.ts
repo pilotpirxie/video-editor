@@ -14,6 +14,8 @@ import {
   attachedDriver,
   canvasPoint,
   centerOf,
+  delayUntilShown,
+  watchLongTasks,
   dragMedia,
   driverOfNewWindow,
   editorWindows,
@@ -28,9 +30,12 @@ import {
   type UiTestReport,
   untilWindowCount,
 } from './uiDriver.js'
-import { FEATURE_SCENARIOS } from './uiScenarios.js'
+import { FEATURE_SCENARIOS, framesShown, seekDelays, splitFirstTrackAtOneSecond, untilPrepared } from './uiScenarios.js'
 
 const AUTOSAVE_TIMEOUT_MS = 20_000
+const MS_PER_SECOND = 1000
+// Long enough for a window that would load again to have done so.
+const RELOAD_WAIT_MS = 6000
 
 async function panelSizes(driver: Driver): Promise<Record<string, number>> {
   const left = await driver.rect('left-sidebar')
@@ -86,32 +91,27 @@ async function testEdit(driver: Driver): Promise<UiTestReport> {
   const importNotice = await driver.page.text('notice')
   const hasBrokenItem = (await driver.page.evaluate(`${selector('media-broken-garbage.mp4')} !== null`)) === true
 
-  await dragMedia(driver, 'h264.mp4', await driver.timelinePoint(0, 0, 1))
-  await driver.until(`${selector('track-0')} !== null`, 'the first track')
-  await dragMedia(driver, 'audio.wav', await driver.timelinePoint(second / 2, 0, 1))
-  await driver.until(`${selector('track-1')} !== null`, 'a second track for the clip dropped on occupied space')
-  await dragMedia(driver, 'image.jpg', await driver.timelinePoint(3 * second, 0, 2))
+  // A new project has six empty tracks. The sound, dropped on occupied space, goes onto the empty track above.
+  await dragMedia(driver, 'h264.mp4', await driver.timelinePoint(0, 0, 6))
   await driver.untilUndoLabel('Undo Add Clip')
+  await dragMedia(driver, 'audio.wav', await driver.timelinePoint(second / 2, 0, 6))
+  await driver.until(`${selector('duration')}.textContent.includes('00:00:02:15')`, 'the sound to make the project longer')
+  await dragMedia(driver, 'image.jpg', await driver.timelinePoint(3 * second, 0, 6))
+  await driver.until(`${selector('duration')}.textContent.includes('00:00:08:00')`, 'the image to make the project longer')
   const placed = await driver.savedProject('placed.json')
 
   // The image clip is dragged a little short of the end of the video clip and snaps onto it.
-  const grab = await driver.timelinePoint(4 * second, 0, 2)
-  const nearVideoEnd = await driver.timelinePoint(3 * second, 0, 2)
+  const grab = await driver.timelinePoint(4 * second, 0, 6)
+  const nearVideoEnd = await driver.timelinePoint(3 * second, 0, 6)
   await driver.drag(grab, { x: nearVideoEnd.x + 5, y: grab.y })
   await driver.untilUndoLabel('Undo Move Clip')
-  const imageEnd = await driver.timelinePoint(7 * second, 0, 2)
-  const trimTo = await driver.timelinePoint(5 * second, 0, 2)
+  const imageEnd = await driver.timelinePoint(7 * second, 0, 6)
+  const trimTo = await driver.timelinePoint(5 * second, 0, 6)
   await driver.drag({ x: imageEnd.x - 2, y: imageEnd.y }, trimTo)
   await driver.untilUndoLabel('Undo Trim Clip')
   const movedAndTrimmed = await driver.savedProject('moved.json')
 
-  const ruler = await driver.rect('timeline')
-  const oneSecond = await driver.timelinePoint(second, 0, 2)
-  await driver.clickAt({ x: oneSecond.x, y: ruler.y + RULER_HEIGHT / 2 })
-  await driver.until(`${selector('timecode')}.textContent === '00:00:01:00'`, 'the playhead at one second')
-  await driver.clickAt(await driver.timelinePoint(second / 2, 0, 2))
-  await driver.page.click('split')
-  await driver.untilUndoLabel('Undo Split Clip')
+  await splitFirstTrackAtOneSecond(driver, 6)
   const split = await driver.savedProject('split.json')
 
   driver.menu('undo')
@@ -121,7 +121,7 @@ async function testEdit(driver: Driver): Promise<UiTestReport> {
   driver.menu('redo')
   await driver.untilUndoLabel('Undo Split Clip')
 
-  await driver.clickAt(await driver.timelinePoint(second / 2, 0, 2))
+  await driver.clickAt(await driver.timelinePoint(second / 2, 0, 6))
   driver.window.webContents.copy()
   await sleep(POLL_INTERVAL_MS)
   driver.window.webContents.paste()
@@ -130,8 +130,8 @@ async function testEdit(driver: Driver): Promise<UiTestReport> {
 
   await driver.press('Backspace')
   await driver.untilUndoLabel('Undo Delete Clip')
-  // The paste landed on occupied space, so it made a third track; that track stays when its clip is deleted.
-  await driver.clickAt(await driver.timelinePoint(second / 2, 0, 3))
+  // The paste landed on occupied space below the sound, so it made a seventh track; that track stays when its clip is deleted.
+  await driver.clickAt(await driver.timelinePoint(second / 2, 0, 7))
   await driver.press('Backspace', ['meta'])
   await driver.untilUndoLabel('Undo Ripple Delete Clip')
   const final = await driver.savedProject('final.json')
@@ -319,6 +319,16 @@ function recoveryDirectory(): string {
   return join(app.getPath('userData'), 'recovery')
 }
 
+async function untilRecoveryFiles(count: number): Promise<void> {
+  const deadline = Date.now() + AUTOSAVE_TIMEOUT_MS
+  for (;;) {
+    const files = existsSync(recoveryDirectory()) ? await readdir(recoveryDirectory()) : []
+    if (files.filter((name) => name.endsWith('.json')).length === count) return
+    if (Date.now() > deadline) throw new PageError('Timed out waiting for the autosave')
+    await sleep(POLL_INTERVAL_MS)
+  }
+}
+
 // Makes an edit, waits for the autosave and then dies the hard way, as a crash or a power cut would.
 async function testCrash(driver: Driver): Promise<UiTestReport> {
   await driver.typeInto('canvas-width', '1280')
@@ -328,15 +338,95 @@ async function testCrash(driver: Driver): Promise<UiTestReport> {
   const other = await driverOfNewWindow(driver, [driver.window])
   await other.typeInto('canvas-width', '800')
   await untilEdited(other, true)
-  const deadline = Date.now() + AUTOSAVE_TIMEOUT_MS
-  for (;;) {
-    const files = existsSync(recoveryDirectory()) ? await readdir(recoveryDirectory()) : []
-    if (files.filter((name) => name.endsWith('.json')).length === 2) break
-    if (Date.now() > deadline) throw new PageError('Timed out waiting for the autosave')
-    await sleep(POLL_INTERVAL_MS)
-  }
+  await untilRecoveryFiles(2)
   process.kill(process.pid, 'SIGKILL')
   return {}
+}
+
+async function crashLogEntries(): Promise<unknown[]> {
+  const path = join(app.getPath('userData'), 'logs', 'crash.log')
+  if (!existsSync(path)) return []
+  const lines = (await readFile(path, 'utf8')).trim().split('\n')
+  return lines.map((line): unknown => JSON.parse(line))
+}
+
+// Seconds from a crash until the window shows the autosaved work again.
+// A promise to a page that died is never kept, so the page is not asked anything until the window has loaded it again.
+async function secondsToReturn(driver: Driver, crash: () => void): Promise<number> {
+  const crashedAt = Date.now()
+  const reloaded = new Promise<void>((resolve) => driver.window.webContents.once('did-finish-load', () => resolve()))
+  crash()
+  const isReloaded = await Promise.race([reloaded.then(() => true), sleep(STEP_TIMEOUT_MS).then(() => false)])
+  if (!isReloaded) throw new PageError('The window did not load its page again after the crash')
+  await driver.until(`${selector('canvas-width')}?.value === '1280'`, 'the window to come back with its work')
+  return (Date.now() - crashedAt) / MS_PER_SECOND
+}
+
+function killProcess(type: string, name?: string): void {
+  const found = app.getAppMetrics().find((metric) => metric.type === type && (name === undefined || metric.name === name))
+  if (found === undefined) throw new PageError(`There is no ${name ?? type} process to stop`)
+  process.kill(found.pid, 'SIGKILL')
+}
+
+function countReloads(driver: Driver): () => number {
+  let reloads = 0
+  driver.window.webContents.on('did-finish-load', () => {
+    reloads += 1
+  })
+  return () => reloads
+}
+
+// The page dies, then the GPU process does. After the page, the window loads again with the work of its last autosave; after the GPU process, it stays as it is, with its undo, and draws again. The crash log says what happened.
+async function testPageCrash(driver: Driver): Promise<UiTestReport> {
+  await driver.typeInto('canvas-width', '1280')
+  await untilEdited(driver, true)
+  await untilRecoveryFiles(1)
+  const afterPageCrash = await secondsToReturn(driver, () => driver.window.webContents.forcefullyCrashRenderer())
+  await driver.typeInto('canvas-width', '1000')
+  await driver.untilUndoLabel('Undo Change Canvas Size')
+  const reloads = countReloads(driver)
+  const sinceFrames = await framesShown(driver)
+  const crashedAt = Date.now()
+  killProcess('GPU')
+  await fullQualityFrame(driver, sinceFrames)
+  const afterGpuCrash = (Date.now() - crashedAt) / MS_PER_SECOND
+  await sleep(RELOAD_WAIT_MS)
+  return {
+    afterPageCrash,
+    afterGpuCrash,
+    reloadsAfterGpuCrash: reloads(),
+    widthAfterGpuCrash: await driver.value('canvas-width'),
+    undoLabelAfterGpuCrash: driver.menuLabel('undo'),
+    crashLog: await crashLogEntries(),
+  }
+}
+
+// The media process dies under a window with unsaved work. The window is not loaded again: it keeps its work and its undo, a new media process decodes for it, and it saves.
+async function testMediaCrash(driver: Driver): Promise<UiTestReport> {
+  await fullQualityFrame(driver, 0)
+  await driver.typeInto('canvas-width', '1280')
+  await untilEdited(driver, true)
+  const undoLabel = driver.menuLabel('undo')
+  const reloads = countReloads(driver)
+  const crashedAt = Date.now()
+  killProcess('Utility', 'Media')
+  await driver.until(`${selector('notice')}?.textContent.includes('Nothing was lost') === true`, 'the media process to be restarted')
+  const secondsToRestart = (Date.now() - crashedAt) / MS_PER_SECOND
+  // A frame no cache holds yet, so only the new media process can have decoded it.
+  const sinceFrames = await framesShown(driver)
+  const timeline = await driver.rect('timeline')
+  await driver.clickAt({ x: timeline.x + timeline.width / 2, y: timeline.y + RULER_HEIGHT / 2 })
+  await fullQualityFrame(driver, sinceFrames)
+  await sleep(RELOAD_WAIT_MS)
+  return {
+    secondsToRestart,
+    reloads: reloads(),
+    width: await driver.value('canvas-width'),
+    undoLabel,
+    undoLabelAfter: driver.menuLabel('undo'),
+    saved: await driver.savedProject('after-media-crash.json'),
+    crashLog: await crashLogEntries(),
+  }
 }
 
 // Every window that had unsaved work comes back with it.
@@ -350,9 +440,15 @@ async function testRestore(driver: Driver): Promise<UiTestReport> {
 }
 
 // Measures the §3 budgets on whatever project is open; the test opens a 20-hour project with 4,096 clips.
+// Hours into the 4,096-clip project, each far from the last.
+const PREPARED_SEEK_HOURS = [3, 17, 9, 14, 1, 19]
+const SECONDS_PER_HOUR = 3600
+const PROJECT_HOURS = 20
+
 async function testBudgets(driver: Driver): Promise<UiTestReport> {
   await driver.until(`Number(${selector('timecode')}?.dataset.frames ?? 0) > 0 && ${selector('timeline')}?.dataset.view !== undefined`, 'the project to be shown')
   const openSeconds = process.uptime()
+  const longTasks = await watchLongTasks(driver)
   await fullQualityFrame(driver, 0)
 
   // Frame pacing while the timeline is zoomed and scrolled with the trackpad.
@@ -382,23 +478,24 @@ async function testBudgets(driver: Driver): Promise<UiTestReport> {
       movedAt = undefined
     }).observe(${selector('timecode')}, { attributes: true, attributeFilter: ['data-frames'] })
   })()`)
-  const overlay = await driver.rect('canvas-overlay')
-  const grab = { x: overlay.x + overlay.width * 0.3, y: overlay.y + overlay.height * 0.3 }
+  // On the picture itself: the overlay also covers the space around it.
+  const picture = await driver.rect('preview')
+  const grab = { x: picture.x + picture.width * 0.3, y: picture.y + picture.height * 0.3 }
   await driver.clickAt(grab)
   for (let pass = 0; pass < 4; pass++) await driver.drag(grab, { x: grab.x + 120, y: grab.y + 60 })
   await driver.untilUndoLabel('Undo Move Clip')
   const dragDelays = numbersIn(await driver.page.evaluate('window.dragDelays'))
 
   // Time from Undo to the frame that shows the project as it was.
-  const undoDelay = driver.page.evaluate(`new Promise((resolve) => {
-    const startedAt = performance.now()
-    new MutationObserver((_changes, observer) => {
-      observer.disconnect()
-      resolve(performance.now() - startedAt)
-    }).observe(${selector('timecode')}, { attributes: true, attributeFilter: ['data-frames'] })
-  })`)
-  driver.menu('undo')
-  const undoMilliseconds = await undoDelay
+  const undoMilliseconds = await delayUntilShown(driver, { shown: 'any frame' }, () => driver.menu('undo'))
+  const redoMilliseconds = await delayUntilShown(driver, { shown: 'any frame' }, () => driver.menu('redo'))
+
+  // §12: seeking anywhere in the twenty hours, once the media is prepared.
+  await driver.page.click('timeline-zoom-fit')
+  const timelineWidth = (await driver.rect('timeline')).width
+  await driver.until(`JSON.parse(${selector('timeline')}.dataset.view).pixelsPerSecond * ${PROJECT_HOURS * SECONDS_PER_HOUR} < ${timelineWidth + 1}`, 'the timeline to fit the whole project')
+  await untilPrepared(driver)
+  const seeks = await seekDelays(driver, PREPARED_SEEK_HOURS.map((hours) => hours * SECONDS_PER_HOUR))
 
   return {
     openSeconds,
@@ -407,6 +504,9 @@ async function testBudgets(driver: Driver): Promise<UiTestReport> {
     dragSamples: dragDelays.length,
     dragToFrameP95: percentile(dragDelays, P95),
     undoMilliseconds,
+    redoMilliseconds,
+    seekP95: percentile(seeks, P95),
+    longTasks: await longTasks.read(),
   }
 }
 
@@ -425,6 +525,8 @@ const SCENARIOS: Record<string, Scenario> = {
   tracks: testTracks,
   documents: testDocuments,
   crash: testCrash,
+  'page-crash': testPageCrash,
+  'media-crash': testMediaCrash,
   restore: testRestore,
   budgets: testBudgets,
   'open-and-save': testOpenAndSave,

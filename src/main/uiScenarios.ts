@@ -1,17 +1,22 @@
 import { existsSync } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { describeError } from '../shared/log.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
+import { cpuSecondsOf, footprintNow } from './memory.js'
 import { PageError, selector } from './page.js'
 import {
   CAMERA_LANE_HEIGHT,
   P95,
   POLL_INTERVAL_MS,
   RULER_HEIGHT,
+  TRACK_HEIGHT,
   canvasPoint,
   centerOf,
+  delayUntilShown,
   dragMedia,
+  watchLongTasks,
   driverOfNewWindow,
   editorWindows,
   fullQualityFrame,
@@ -20,7 +25,9 @@ import {
   percentile,
   type Driver,
   type Point,
+  TIMECODE_CHANGES,
   type Scenario,
+  type Shown,
   type UiTestReport,
 } from './uiDriver.js'
 
@@ -35,6 +42,10 @@ const CLEAR_OF_VOLUME_LINE = 10
 // A short pinch outwards, which the page sees as a wheel delta of -20: the zoom grows by e^0.2, about a fifth. Electron's wheel input counts the other way.
 const PINCH_DELTA = 20
 const HANDLE_FROM_ROW_MIDDLE = 19
+// On a clip with sound the diamonds of its keyframes sit this far above the middle of its row, along the bottom of its picture.
+const DIAMOND_FROM_ROW_MIDDLE = 1
+// Within snapping range of a clip edge or a keyframe, which is 8 pixels.
+const NEAR_SNAP_PIXELS = 7
 const DIALOG_TAB_STOPS = 14
 const CANCEL_SETTLE_MS = 1500
 const LONG_EXPORT_TIMEOUT_MS = 30 * 60 * 1000
@@ -48,13 +59,10 @@ const HELD_PASSES = 4
 const HELD_FRAMES = 240
 const SECONDS_PER_HOUR = 3600
 
-type Shown = 'any frame' | 'another timecode'
-
 // Starts timing from each event of one kind until the preview shows the result; `read` gives the delays collected so far.
 // "Any frame" counts every picture drawn; "another timecode" waits for the playhead to be somewhere else.
 async function watchDelays(driver: Driver, eventType: string, shown: Shown): Promise<{ read(): Promise<number[]> }> {
   const store = `delays_${eventType}`
-  const watched = shown === 'any frame' ? `{ attributes: true, attributeFilter: ['data-frames'] }` : `{ childList: true, characterData: true, subtree: true }`
   await driver.page.evaluate(`(() => {
     window.${store} = []
     let startedAt
@@ -63,13 +71,13 @@ async function watchDelays(driver: Driver, eventType: string, shown: Shown): Pro
       if (startedAt === undefined) return
       window.${store}.push(performance.now() - startedAt)
       startedAt = undefined
-    }).observe(${selector('timecode')}, ${watched})
+    }).observe(${selector('timecode')}, ${TIMECODE_CHANGES[shown]})
   })()`)
   return { read: async () => numbersIn(await driver.page.evaluate(`window.${store}`)) }
 }
 
 // Prepared media answers from its preview copy, which is what the "cached" budgets are about.
-async function untilPrepared(driver: Driver): Promise<void> {
+export async function untilPrepared(driver: Driver): Promise<void> {
   await driver.until(`document.querySelector('.library-item[data-testid^="media-"]') !== null && document.querySelector('.library-item .badge.warning') === null`, 'the media to be prepared')
 }
 
@@ -193,13 +201,17 @@ function isListOpen(testId: string): string {
 // A panel that scrolls to bring a control into view tells the page so with its next frame. A person could not press sooner, and a list that opened sooner would take the scroll for a reason to close.
 const ONCE_THE_SCROLL_IS_HEARD = `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`
 
-// A real press in the middle of a control, which is first brought into view if its panel has scrolled it away.
-async function clickOn(driver: Driver, testId: string): Promise<void> {
+// The middle of a control, which is first brought into view if its panel has scrolled it away.
+async function centerInView(driver: Driver, testId: string): Promise<Point> {
   await driver.page.evaluate(`(() => {
     ${selector(testId)}.scrollIntoView({ block: 'nearest' })
     return ${ONCE_THE_SCROLL_IS_HEARD}
   })()`)
-  await driver.clickAt(centerOf(await driver.rect(testId)))
+  return centerOf(await driver.rect(testId))
+}
+
+async function clickOn(driver: Driver, testId: string): Promise<void> {
+  await driver.clickAt(await centerInView(driver, testId))
 }
 
 // A press on a drop-down, or on the arrow of a number field, opens its list.
@@ -332,12 +344,12 @@ async function testAnimated(driver: Driver): Promise<UiTestReport> {
   await driver.page.click('import')
   await driver.until(`${selector('media-animated.gif')} !== null`, 'the animated image in the Media tab')
 
-  await dragMedia(driver, 'animated.gif', await driver.timelinePoint(0, 0, 1))
+  await dragMedia(driver, 'animated.gif', await driver.timelinePoint(0, 0, 6))
   await driver.untilUndoLabel('Undo Add Clip')
   const placed = await driver.savedProject('placed.json')
 
-  const end = await driver.timelinePoint(5 * second, 0, 1)
-  const later = await driver.timelinePoint(8 * second, 0, 1)
+  const end = await driver.timelinePoint(5 * second, 0, 6)
+  const later = await driver.timelinePoint(8 * second, 0, 6)
   await driver.drag({ x: end.x - 2, y: end.y }, later)
   await driver.untilUndoLabel('Undo Trim Clip')
   const stretched = await driver.savedProject('stretched.json')
@@ -711,7 +723,7 @@ async function noticeShown(driver: Driver): Promise<string> {
 // Builds a ten-minute tutorial the way its maker would: a screen recording, a voice track and music, a title and a logo, one cut, then an export at full size.
 async function testTutorial(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
-  // Five tracks need a taller timeline than the window starts with.
+  // Six tracks need a taller timeline than the window starts with.
   const splitter = centerOf(await driver.rect('split-timeline'))
   await driver.drag(splitter, { x: splitter.x, y: splitter.y - TALLER_TIMELINE })
   const names = ['screen.mp4', 'voice.m4a', 'music.mp3', 'logo.png']
@@ -719,16 +731,19 @@ async function testTutorial(driver: Driver): Promise<UiTestReport> {
   await driver.page.click('import')
   await driver.until(names.map((name) => `${selector(`media-${name}`)} !== null`).join(' && '), 'the four files in the Media tab')
 
-  await dragMedia(driver, 'screen.mp4', await driver.timelinePoint(0, 0, 1))
-  await driver.until(`${selector('track-0')} !== null`, 'the recording on the timeline')
-  await dragMedia(driver, 'voice.m4a', await driver.timelinePoint(0, 0, 1))
-  await driver.until(`${selector('track-1')} !== null`, 'the voice on a track of its own')
-  await dragMedia(driver, 'music.mp3', await driver.timelinePoint(0, 1, 2))
-  await driver.until(`${selector('track-2')} !== null`, 'the music on a track of its own')
+  // A new project has six empty tracks. Each sound, dropped on occupied space, goes onto the empty track above; a dropped clip is selected, so its Volume field shows it landed.
+  await dragMedia(driver, 'screen.mp4', await driver.timelinePoint(0, 0, 6))
+  await driver.untilUndoLabel('Undo Add Clip')
+  for (const [name, row] of [['voice.m4a', 0], ['music.mp3', 1]] as const) {
+    await driver.press('Escape')
+    await driver.until(`${selector('clip-volume')} === null`, 'nothing selected')
+    await dragMedia(driver, name, await driver.timelinePoint(0, row, 6))
+    await driver.until(`${selector('clip-volume')} !== null`, `${name} on the track above`)
+  }
   await driver.page.click('timeline-zoom-fit')
 
   // The music plays quietly under the voice and fades out at the end.
-  await driver.clickAt(await driver.timelinePoint(300 * second, 2, 3))
+  await driver.clickAt(await driver.timelinePoint(300 * second, 2, 6))
   await driver.until(`${selector('clip-volume')} !== null`, 'the music to be selected')
   await driver.typeInto('clip-volume', '30')
   await driver.typeInto('clip-volumeFadeOut', '3')
@@ -758,19 +773,19 @@ async function testTutorial(driver: Driver): Promise<UiTestReport> {
 
   // Ten seconds in the middle of the recording are cut out, and what follows closes the gap.
   const ruler = await driver.rect('timeline')
-  const middle = await driver.timelinePoint(300 * second, 0, 5)
+  const middle = await driver.timelinePoint(300 * second, 0, 6)
   await driver.clickAt({ x: middle.x, y: ruler.y + RULER_HEIGHT / 2 })
   await driver.until(`${selector('timecode')}.textContent.startsWith('00:0')  && ${selector('timecode')}.textContent !== '00:00:00:00'`, 'the playhead in the middle')
   const cutStart = await playheadTime(driver)
-  await driver.clickAt(await driver.timelinePoint(100 * second, 0, 5))
+  await driver.clickAt(await driver.timelinePoint(100 * second, 0, 6))
   await driver.page.click('split')
   await driver.untilUndoLabel('Undo Split Clip')
   const cutEnd = cutStart + CUT_SECONDS * second
   for (let jump = 0; jump < (CUT_SECONDS * FRAMES_PER_SECOND) / JUMP_FRAMES; jump++) await driver.press('.', ['control', 'shift'])
   await untilPlayhead(driver, cutEnd)
-  await driver.clickAt(await driver.timelinePoint(cutEnd + 100 * second, 0, 5))
+  await driver.clickAt(await driver.timelinePoint(cutEnd + 100 * second, 0, 6))
   await driver.page.click('split')
-  await driver.clickAt(await driver.timelinePoint((cutStart + cutEnd) / 2, 0, 5))
+  await driver.clickAt(await driver.timelinePoint((cutStart + cutEnd) / 2, 0, 6))
   await driver.press('Backspace', ['meta'])
   await driver.untilUndoLabel('Undo Ripple Delete Clip')
   const noticeBeforeExport = await noticeShown(driver)
@@ -845,7 +860,7 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('media-h264.mp4')}.getBoundingClientRect().top === ${selector('media-audio.wav')}.getBoundingClientRect().top`, 'the media to be shown as tiles again')
 
   // A tile is dragged to the timeline like a row.
-  await dragMedia(driver, 'h264.mp4', await driver.timelinePoint(0, 0, 1))
+  await dragMedia(driver, 'h264.mp4', await driver.timelinePoint(0, 0, 6))
   await driver.untilUndoLabel('Undo Add Clip')
   await driver.until(`${selector('clip-x')} !== null`, 'the properties of the new clip')
 
@@ -1028,19 +1043,24 @@ function clearOfVolumeLine(point: Point): Point {
 }
 
 // Builds a small project by dragging: looks at where held media would land before it is let go, moves two clips across tracks together, and crops by typing.
-async function testArrange(driver: Driver): Promise<UiTestReport> {
-  const second = TICKS_PER_SECOND
+// Imports a video, a sound and a picture, and waits until they are ready to be dragged out.
+async function importThreeFiles(driver: Driver): Promise<void> {
   const names = ['h264.mp4', 'audio.wav', 'image.jpg']
   driver.options.answers.importMedia = names.map((name) => mediaFile(driver, name))
   await driver.page.click('import')
   await driver.until(names.map((name) => `${selector(`media-${name}`)} !== null`).join(' && '), 'the three files in the Media tab')
   await untilPrepared(driver)
+}
+
+async function testArrange(driver: Driver): Promise<UiTestReport> {
+  const second = TICKS_PER_SECOND
+  await importThreeFiles(driver)
   const mediaDetails = await driver.page.evaluate(`[...document.querySelectorAll('.library-item .library-details')].map((details) => details.textContent)`)
 
-  // Held over the empty timeline, the video shows where it would land while nothing has been added. The pointer is then moved about, to see that the outline keeps up.
+  // Held over the empty first track, the video shows where it would land while nothing has been added. The pointer is then moved about, to see that the outline keeps up.
   const video = centerOf(await driver.rect('media-h264.mp4'))
-  const oneSecond = await driver.timelinePoint(second, 0, 1)
-  const fourSeconds = await driver.timelinePoint(4 * second, 0, 1)
+  const oneSecond = await driver.timelinePoint(second, 0, 6)
+  const fourSeconds = await driver.timelinePoint(4 * second, 0, 6)
   const undoBefore = driver.menuLabel('undo')
   driver.holdAt(video)
   await driver.dragOn(video, oneSecond)
@@ -1082,47 +1102,48 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Add Clip')
   const placed = await driver.savedProject('placed.json')
 
-  // Over a spot that is taken the outline says the drop makes a track of its own. Playback goes on while the sound is held there: holding is not an edit.
+  // Over a spot that is taken the outline shows the empty track above. Playback goes on while the sound is held there: holding is not an edit.
   await driver.press('Return', ['meta'])
   await driver.press('Space')
   await driver.until(`${selector('play')}.getAttribute('aria-label') === 'Pause'`, 'playback to start')
   const sound = centerOf(await driver.rect('media-audio.wav'))
-  const onTheVideo = await driver.timelinePoint(1.5 * second, 0, 1)
+  const onTheVideo = await driver.timelinePoint(1.5 * second, 0, 6)
   driver.holdAt(sound)
   await driver.dragOn(sound, onTheVideo)
   const heldOverTaken = await untilLanding(driver)
   const isPlayingWhileHeld = await isPlaying(driver)
   await driver.picture('arrange-new-track')
   await driver.releaseAt(onTheVideo)
-  await driver.until(`${selector('track-1')} !== null`, 'the sound on a track of its own')
+  // The dropped sound is selected in place of the video, so the fields of a picture go.
+  await driver.until(`${selector('clip-x')} === null && ${selector('clip-volume')} !== null`, 'the sound on the track above')
   const stacked = await driver.savedProject('stacked.json')
   const ruler = await driver.rect('timeline')
   await driver.clickAt({ x: ruler.x + 8, y: ruler.y + RULER_HEIGHT / 2 })
 
-  // Selected together, the two clips go a second later and up a track together: the video takes the track of the sound and the sound gets a new one.
-  await driver.clickAt(await driver.timelinePoint(1.25 * second, 0, 2))
-  const onTheSound = clearOfVolumeLine(await driver.timelinePoint(2.5 * second, 1, 2))
-  const aboveTheTop = clearOfVolumeLine(await driver.timelinePoint(3.5 * second, 2, 2))
+  // Selected together, the two clips go a second later and up a track together: the video takes the track of the sound and the sound the empty one above.
+  await driver.clickAt(await driver.timelinePoint(1.25 * second, 0, 6))
+  const onTheSound = clearOfVolumeLine(await driver.timelinePoint(2.5 * second, 1, 6))
+  const aboveTheSound = clearOfVolumeLine(await driver.timelinePoint(3.5 * second, 2, 6))
   await driver.clickAt(onTheSound, ['shift'])
   const moveDelays = await watchDelays(driver, 'pointermove', 'any frame')
   driver.holdAt(onTheSound)
-  await driver.dragOn(onTheSound, aboveTheTop)
+  await driver.dragOn(onTheSound, aboveTheSound)
   await driver.picture('arrange-group')
-  await driver.releaseAt(aboveTheTop)
+  await driver.releaseAt(aboveTheSound)
   await driver.untilUndoLabel('Undo Move Clips')
   const groupDelays = await moveDelays.read()
   const lifted = await driver.savedProject('lifted.json')
 
   // One track down they are back on their tracks; one more down there is no track, so they stay.
-  await driver.drag(clearOfVolumeLine(await driver.timelinePoint(3.5 * second, 2, 3)), clearOfVolumeLine(await driver.timelinePoint(3.5 * second, 1, 3)))
+  await driver.drag(clearOfVolumeLine(await driver.timelinePoint(3.5 * second, 2, 6)), clearOfVolumeLine(await driver.timelinePoint(3.5 * second, 1, 6)))
   await sleep(POLL_INTERVAL_MS)
   const lowered = await driver.savedProject('lowered.json')
-  await driver.drag(clearOfVolumeLine(await driver.timelinePoint(3.5 * second, 1, 3)), clearOfVolumeLine(await driver.timelinePoint(3.5 * second, 0, 3)))
+  await driver.drag(clearOfVolumeLine(await driver.timelinePoint(3.5 * second, 1, 6)), clearOfVolumeLine(await driver.timelinePoint(3.5 * second, 0, 6)))
   await sleep(POLL_INTERVAL_MS)
   const kept = await driver.savedProject('kept.json')
 
   // A crop typed in the properties panel hides that side of the picture; the rest stays where it is, so the centre moves by half of what went.
-  const inTheVideo = await driver.timelinePoint(2.25 * second, 0, 3)
+  const inTheVideo = await driver.timelinePoint(2.25 * second, 0, 6)
   await driver.clickAt({ x: inTheVideo.x, y: ruler.y + RULER_HEIGHT / 2 })
   await driver.clickAt(inTheVideo)
   await driver.until(`${selector('clip-crop-left')} !== null && ${selector('clip-start')}?.value === '2.000'`, 'the video alone to be selected')
@@ -1136,7 +1157,7 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   await sleep(PICTURES_SETTLE_MS)
   await driver.picture('arrange-cropped')
 
-  // Picked with a click and a Cmd-click, two files are dragged as one: held over the empty top track they show one outline,
+  // Picked with a click and a Cmd-click, two files are dragged as one: held over an empty track they show one outline,
   // and let go they lie one after the other there, in the order of the list, in one undo step.
   await driver.clickAt(centerOf(await driver.rect('media-audio.wav')))
   await driver.clickAt(centerOf(await driver.rect('media-image.jpg')), ['meta'])
@@ -1144,7 +1165,7 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   const focusAfterClicks = await driver.page.evaluate(`document.activeElement?.getAttribute('role') ?? 'none'`)
   const selectedFiles = await driver.page.evaluate(`[...document.querySelectorAll('.library-item.selected')].map((item) => item.dataset.testid)`)
   const image = centerOf(await driver.rect('media-image.jpg'))
-  const onTheTopTrack = await driver.timelinePoint(0.5 * second, 2, 3)
+  const onTheTopTrack = await driver.timelinePoint(0.5 * second, 2, 6)
   driver.holdAt(image)
   await driver.dragOn(image, onTheTopTrack)
   const heldTogether = await untilLanding(driver)
@@ -1154,7 +1175,7 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   const droppedTogether = await driver.savedProject('dropped-together.json')
 
   // Without the mouse: in the list of files the arrows pick the next file, Shift adds the run to it, and Return places the picked files at the playhead,
-  // one after the other on a new top track. The keys stay in the list: the playhead does not move.
+  // one after the other on the empty track above the others. The keys stay in the list: the playhead does not move.
   const listRole = await driver.page.evaluate(`(() => { const list = document.querySelector('ul[aria-label="Media"]'); return list.getAttribute('role') + ' ' + list.getAttribute('aria-multiselectable') })()`)
   const timecodeBeforeKeys = await driver.page.text('timecode')
   await driver.page.evaluate(`${selector('media-h264.mp4')}.focus()`)
@@ -1329,7 +1350,7 @@ async function testEffects(driver: Driver): Promise<UiTestReport> {
   await driver.clickAt(await driver.timelinePoint(second / 2, 0, 4))
   await driver.clickAt(await driver.timelinePoint(second / 2, 1, 4), ['shift'])
   const undoBeforeClick = driver.menuLabel('undo')
-  await driver.clickAt(centerOf(await driver.rect('effect-border')))
+  await driver.clickAt(await centerInView(driver, 'effect-border'))
   await sleep(POLL_INTERVAL_MS)
   const isUnchangedByClick = driver.menuLabel('undo') === undoBeforeClick
   await driver.page.click('effect-border')
@@ -1338,7 +1359,7 @@ async function testEffects(driver: Driver): Promise<UiTestReport> {
   const bordered = await driver.savedProject('bordered.json')
 
   // Held over a clip on the timeline, the effect marks that clip and changes nothing yet.
-  const shadow = centerOf(await driver.rect('effect-dropShadow'))
+  const shadow = await centerInView(driver, 'effect-dropShadow')
   const onThird = await driver.timelinePoint(second, 2, 4)
   driver.holdAt(shadow)
   await driver.dragOn(shadow, onThird)
@@ -1423,9 +1444,9 @@ async function testTransitions(driver: Driver): Promise<UiTestReport> {
   const shortened = await driver.savedProject('shortened.json')
 
   // The free ends take a transition each, as long as the clip has room left beside the one on the cut.
-  await driver.drag(centerOf(await driver.rect('transition-zoom')), await driver.timelinePoint(0.2 * second, 0, 1))
+  await driver.drag(await centerInView(driver, 'transition-zoom'), await driver.timelinePoint(0.2 * second, 0, 1))
   await untilField(driver, 'transition-in', 'zoom')
-  await driver.drag(centerOf(await driver.rect('transition-push')), await driver.timelinePoint(1.8 * second, 0, 1))
+  await driver.drag(await centerInView(driver, 'transition-push'), await driver.timelinePoint(1.8 * second, 0, 1))
   await untilField(driver, 'transition-out', 'push')
   const withEnds = await driver.savedProject('ends.json')
   await sleep(PICTURES_SETTLE_MS)
@@ -1897,10 +1918,703 @@ async function testKeyframes(driver: Driver): Promise<UiTestReport> {
   const typed = await driver.savedProject('typed.json')
   await clickOn(driver, 'clip-x-keyframe')
   await driver.untilUndoLabel('Undo Remove Position Keyframe')
-  return { keyed, isXPressed, moved, dotMoved, sizePressed, sized, typed, removed: await driver.savedProject('removed.json') }
+  const removed = await driver.savedProject('removed.json')
+
+  // A click on the diamond of the keyframes at 1 s goes there.
+  await seekOnRuler(driver, second / 2, '00:00:00:15')
+  const diamond = await driver.timelinePoint(second, 0, 1)
+  await driver.clickAt({ x: diamond.x, y: diamond.y - DIAMOND_FROM_ROW_MIDDLE })
+  await untilTimecode(driver, '00:00:01:00')
+  const jumpedTo = await playheadTime(driver)
+
+  // Dragged along the ruler to a few pixels past the keyframes, or short of the clip's end, the playhead lands on them; with ⌘ held it does not.
+  const ruler = (await driver.rect('timeline')).y + RULER_HEIGHT / 2
+  async function scrubNear(time: number, pixels: number, modifiers: readonly ('meta' | 'shift')[] = []): Promise<number> {
+    await seekOnRuler(driver, second / 2, '00:00:00:15')
+    const from = await driver.timelinePoint(second / 2, 0, 1)
+    const to = await driver.timelinePoint(time, 0, 1)
+    await driver.drag({ x: from.x, y: ruler }, { x: to.x + pixels, y: ruler }, modifiers)
+    await driver.until(`${selector('timecode')}.textContent !== '00:00:00:15'`, 'the playhead to move')
+    return playheadTime(driver)
+  }
+  const snappedToKeyframe = await scrubNear(second, NEAR_SNAP_PIXELS)
+  const snappedToEnd = await scrubNear(2 * second, -NEAR_SNAP_PIXELS)
+  const freeOfSnapping = await scrubNear(second, NEAR_SNAP_PIXELS, ['meta'])
+  return { keyed, isXPressed, moved, dotMoved, sizePressed, sized, typed, removed, jumpedTo, snappedToKeyframe, snappedToEnd, freeOfSnapping }
+}
+
+// Positions far into the long recording, each away from the last one and from what was prepared around it.
+const FAR_SEEK_SECONDS = [200, 350, 500, 120, 420]
+// Positions inside the short clip at the start of the project, once it is prepared.
+const NEAR_SEEK_SECONDS = [1, 3, 4, 2, 1.5, 3.5, 0.5]
+const SPACE_PASSES = 5
+const PLAY_WATCH_MS = 300
+const DRAG_PASSES = 4
+const DRAG_PIXELS = 150
+const LONG_CLIP_START_SECONDS = 10
+const PREPARE_TIMEOUT_MS = 120_000
+
+export async function framesShown(driver: Driver): Promise<number> {
+  return Number(await driver.page.evaluate(`${selector('timecode')}.dataset.frames`))
+}
+
+// Clicks on the ruler at each position and times the first picture of it.
+export async function seekDelays(driver: Driver, positions: readonly number[]): Promise<number[]> {
+  const ruler = await driver.rect('timeline')
+  const delays: number[] = []
+  for (const seconds of positions) {
+    const at = await driver.timelinePoint(seconds * TICKS_PER_SECOND, 0, 1)
+    const sinceFrames = await framesShown(driver)
+    delays.push(await delayUntilShown(driver, { event: 'pointerdown', shown: 'any frame' }, () => driver.clickAt({ x: at.x, y: ruler.y + RULER_HEIGHT / 2 })))
+    await fullQualityFrame(driver, sinceFrames)
+  }
+  return delays
+}
+
+// From a pointer move over the timeline while a button is held to the end of the next frame, which is the one that draws it.
+async function watchTimelineDrags(driver: Driver): Promise<{ read(): Promise<number[]> }> {
+  await driver.page.evaluate(`(() => {
+    window.timelineDelays = []
+    let movedAt
+    ${selector('timeline')}.addEventListener('pointermove', (event) => {
+      if (event.buttons === 0 || movedAt !== undefined) return
+      movedAt = performance.now()
+      requestAnimationFrame(() => {
+        const channel = new MessageChannel()
+        channel.port1.onmessage = () => {
+          window.timelineDelays.push(performance.now() - movedAt)
+          movedAt = undefined
+        }
+        channel.port2.postMessage(undefined)
+      })
+    }, true)
+  })()`)
+  return { read: async () => numbersIn(await driver.page.evaluate('window.timelineDelays')) }
+}
+
+// The §3 budgets that the 4,096-clip test does not cover, on a project of a short 1080p clip followed by ten minutes of 1080p, opened on a profile without a cache.
+async function testResponsiveness(driver: Driver): Promise<UiTestReport> {
+  await driver.until(`Number(${selector('timecode')}?.dataset.frames ?? 0) > 0 && ${selector('timeline')}?.dataset.view !== undefined`, 'the project to be shown')
+  const launchSeconds = process.uptime()
+  const longTasks = await watchLongTasks(driver)
+  await fullQualityFrame(driver, 0)
+
+  // Nothing of the long recording is prepared yet, so these pictures come from the original file.
+  const uncachedSeeks = await seekDelays(driver, FAR_SEEK_SECONDS)
+  await driver.until(`${selector('media-1080p.mp4')}?.querySelector('.badge.warning') === null`, 'the short clip to be prepared', PREPARE_TIMEOUT_MS)
+  const cachedSeeks = await seekDelays(driver, NEAR_SEEK_SECONDS)
+
+  const spaceDelays: number[] = []
+  for (let pass = 0; pass < SPACE_PASSES; pass++) {
+    spaceDelays.push(await delayUntilShown(driver, { event: 'keydown', shown: 'another timecode' }, () => driver.press('Space')))
+    await sleep(PLAY_WATCH_MS)
+    const sinceFrames = await framesShown(driver)
+    await driver.press('Space')
+    await driver.until(`${selector('play')}.getAttribute('aria-label') === 'Play'`, 'Space to pause')
+    await fullQualityFrame(driver, sinceFrames)
+  }
+
+  // The start of the long recording, ten seconds in, is trimmed; then the whole of it is moved. The playhead stays in the short clip.
+  const drags = await watchTimelineDrags(driver)
+  const start = await driver.timelinePoint(LONG_CLIP_START_SECONDS * TICKS_PER_SECOND, 0, 1)
+  await driver.drag({ x: start.x + 2, y: start.y }, { x: start.x + DRAG_PIXELS, y: start.y })
+  await driver.untilUndoLabel('Undo Trim Clip')
+  const grab = await driver.timelinePoint(300 * TICKS_PER_SECOND, 0, 1)
+  for (let pass = 0; pass < DRAG_PASSES; pass++) {
+    const from = { x: grab.x + pass * DRAG_PIXELS, y: grab.y }
+    await driver.drag(from, { x: from.x + DRAG_PIXELS, y: from.y })
+    await driver.untilUndoLabel('Undo Move Clip')
+  }
+  const timelineDelays = await drags.read()
+
+  const undoMilliseconds = await delayUntilShown(driver, { shown: 'any frame' }, () => driver.menu('undo'))
+  await driver.untilRedoLabel('Redo Move Clip')
+  const redoMilliseconds = await delayUntilShown(driver, { shown: 'any frame' }, () => driver.menu('redo'))
+
+  const tasks = await longTasks.read()
+  return {
+    launchSeconds,
+    uncachedSeekP95: percentile(uncachedSeeks, P95),
+    cachedSeekP95: percentile(cachedSeeks, P95),
+    spaceToMotionP95: percentile(spaceDelays, P95),
+    timelineDragSamples: timelineDelays.length,
+    timelineDragP95: percentile(timelineDelays, P95),
+    undoMilliseconds,
+    redoMilliseconds,
+    longestTaskMs: Math.max(0, ...tasks),
+  }
+}
+
+const IDLE_SETTLE_MS = 3000
+const IDLE_WATCH_SECONDS = 10
+const PERCENT = 100
+
+// §12: the processor time the app uses while a prepared project sits paused, as a share of one core.
+async function testIdle(driver: Driver): Promise<UiTestReport> {
+  await fullQualityFrame(driver, 0)
+  await untilPrepared(driver)
+  await sleep(IDLE_SETTLE_MS)
+  const secondsBefore = await cpuSecondsOf(process.pid)
+  await sleep(IDLE_WATCH_SECONDS * MS_PER_SECOND)
+  const secondsAfter = await cpuSecondsOf(process.pid)
+  return { cpuPercent: ((secondsAfter - secondsBefore) / IDLE_WATCH_SECONDS) * PERCENT }
+}
+
+// Roles a person can operate; each must have a name VoiceOver can read.
+const OPERABLE_ROLES = new Set(['button', 'checkbox', 'radio', 'textbox', 'searchbox', 'combobox', 'slider', 'spinbutton', 'tab', 'option', 'menuitem', 'listbox', 'switch', 'separator'])
+const MAX_TAB_STOPS = 400
+
+type AxValue = { value?: unknown }
+type AxProperty = { name: string; value: AxValue }
+type AxNode = { ignored: boolean; role?: AxValue; name?: AxValue; properties?: AxProperty[]; backendDOMNodeId?: number }
+
+function isAxNode(value: unknown): value is AxNode {
+  return typeof value === 'object' && value !== null && 'ignored' in value
+}
+
+function axNodesOf(answer: unknown): AxNode[] {
+  if (typeof answer !== 'object' || answer === null || !('nodes' in answer) || !Array.isArray(answer.nodes)) return []
+  return answer.nodes.filter(isAxNode)
+}
+
+// A separator is operable only when it takes the focus, as the panel splitters do.
+function isOperable(node: AxNode): boolean {
+  const role = String(node.role?.value ?? '')
+  if (!OPERABLE_ROLES.has(role)) return false
+  if (role !== 'separator') return true
+  return node.properties?.some((property) => property.name === 'focusable' && property.value.value === true) === true
+}
+
+// How a control is found in the page, for the report: its test id, or else its tag and class.
+async function describeNode(driver: Driver, backendNodeId: number | undefined): Promise<string> {
+  if (backendNodeId === undefined) return 'a node outside the page'
+  const described: unknown = await driver.window.webContents.debugger.sendCommand('DOM.describeNode', { backendNodeId })
+  const node = typeof described === 'object' && described !== null && 'node' in described ? described.node : undefined
+  if (typeof node !== 'object' || node === null || !('attributes' in node) || !Array.isArray(node.attributes)) return 'an unknown node'
+  const attributes = node.attributes.map(String)
+  const valueOf = (name: string): string | undefined => {
+    const index = attributes.indexOf(name)
+    return index === -1 ? undefined : attributes[index + 1]
+  }
+  const name = 'localName' in node ? String(node.localName) : 'element'
+  return valueOf('data-testid') ?? `${name}.${valueOf('class') ?? ''}`
+}
+
+// The controls that VoiceOver would announce without a name, read from Chromium's accessibility tree.
+async function unnamedControls(driver: Driver): Promise<string[]> {
+  const cdp = driver.window.webContents.debugger
+  await cdp.sendCommand('DOM.enable')
+  await cdp.sendCommand('Accessibility.enable')
+  const unnamed: string[] = []
+  for (const node of axNodesOf(await cdp.sendCommand('Accessibility.getFullAXTree'))) {
+    if (node.ignored || !isOperable(node)) continue
+    if (String(node.name?.value ?? '').trim() !== '') continue
+    unnamed.push(`${String(node.role?.value)} ${await describeNode(driver, node.backendDOMNodeId)}`)
+  }
+  return unnamed
+}
+
+type TabStop = {
+  id: string
+  region: string
+  hasRing: boolean
+}
+
+function isTabStop(value: unknown): value is TabStop {
+  return typeof value === 'object' && value !== null && 'id' in value && 'region' in value && 'hasRing' in value
+}
+
+// Presses Tab until the focus comes back to where it started, and says where each stop was and whether it showed the focus ring.
+async function tabStops(driver: Driver): Promise<TabStop[]> {
+  const stops: TabStop[] = []
+  for (let press = 0; press < MAX_TAB_STOPS; press++) {
+    await driver.press('Tab')
+    const stop: unknown = await driver.page.evaluate(`(() => {
+      const element = document.activeElement
+      if (element === null || element === document.body) return { id: 'body', region: '', hasRing: false }
+      const style = getComputedStyle(element)
+      const hasOutline = style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0
+      const label = element.dataset.testid ?? element.getAttribute('aria-label') ?? element.textContent?.trim().slice(0, 30) ?? element.localName
+      const panel = element.closest('aside, main, [data-testid="timeline-panel"]')
+      const region = element.closest('dialog') === null ? panel?.getAttribute('aria-label') ?? 'window' : 'dialog'
+      return { id: label, region, hasRing: hasOutline || style.boxShadow !== 'none' }
+    })()`)
+    if (!isTabStop(stop)) throw new PageError('Could not read where the focus is')
+    if (stops.length > 0 && stop.id === stops[0]?.id && stop.region === stops[0]?.region) return stops
+    stops.push(stop)
+  }
+  return stops
+}
+
+function regionsOf(stops: readonly TabStop[]): string[] {
+  return [...new Set(stops.map((stop) => stop.region))].sort()
+}
+
+function withoutRing(stops: readonly TabStop[]): string[] {
+  return stops.filter((stop) => !stop.hasRing).map((stop) => `${stop.region}: ${stop.id}`)
+}
+
+// T-86: every control has a name, and the keyboard reaches every panel and every control of the dialogs with a visible focus ring.
+// Each track's first clip is selected in turn, so the properties of every kind of clip in the project are looked at.
+async function testAccessibility(driver: Driver): Promise<UiTestReport> {
+  await fullQualityFrame(driver, 0)
+  const unnamed = new Set(await unnamedControls(driver))
+  const project = await driver.savedProject('accessibility.json')
+  const tracks = isProjectLike(project) ? project.tracks : []
+  const seenKinds = new Set<string>()
+  for (const [index, track] of tracks.entries()) {
+    const clip = track.clips[0]
+    if (clip === undefined || seenKinds.has(clip.type)) continue
+    seenKinds.add(clip.type)
+    await driver.press('Escape')
+    await driver.until(`${selector('canvas-width')} !== null`, 'the selection to be let go')
+    await driver.clickAt(await rowInView(driver, clip.start + clip.duration / 2, index, tracks.length))
+    // With a clip selected, Properties shows it in place of the project settings; a sound clip has nothing on the canvas to count.
+    await driver.until(`${selector('canvas-width')} === null`, `the ${clip.type} clip on track ${index + 1} to be selected`)
+    for (const control of await unnamedControls(driver)) unnamed.add(control)
+  }
+
+  const windowStops = await tabStops(driver)
+
+  driver.menu('export')
+  await driver.until(`document.querySelector('dialog[open]') !== null`, 'the Export dialog')
+  for (const control of await unnamedControls(driver)) unnamed.add(control)
+  const exportStops = await tabStops(driver)
+  await driver.press('Escape')
+  await driver.until(`document.querySelector('dialog[open]') === null`, 'Escape to close the Export dialog')
+
+  driver.menu('settings')
+  await driver.until(`document.querySelector('dialog[open]') !== null`, 'the Settings dialog')
+  for (const control of await unnamedControls(driver)) unnamed.add(control)
+  const settingsStops = await tabStops(driver)
+  await driver.press('Escape')
+  await driver.until(`document.querySelector('dialog[open]') === null`, 'Escape to close Settings')
+
+  return {
+    unnamed: [...unnamed].sort(),
+    windowRegions: regionsOf(windowStops),
+    windowStopCount: windowStops.length,
+    exportRegions: regionsOf(exportStops),
+    settingsRegions: regionsOf(settingsStops),
+    withoutRing: [...withoutRing(windowStops), ...withoutRing(exportStops), ...withoutRing(settingsStops)],
+  }
+}
+
+type ClipPlace = { type: string; start: number; duration: number }
+
+const ROW_SCROLL_PIXELS = 40
+const MAX_ROW_SCROLLS = 50
+
+// Scrolls the tracks until the row of a track is in sight, and gives the place of a moment on it.
+async function rowInView(driver: Driver, time: number, trackIndex: number, trackCount: number): Promise<Point> {
+  const area = await driver.rect('timeline')
+  const lowest = area.y + RULER_HEIGHT + CAMERA_LANE_HEIGHT + TRACK_HEIGHT / 2
+  const highest = area.y + area.height - TRACK_HEIGHT / 2
+  for (let scroll = 0; scroll < MAX_ROW_SCROLLS; scroll++) {
+    const point = await driver.timelinePoint(time, trackIndex, trackCount)
+    if (point.y >= lowest && point.y <= highest) return point
+    // Electron's wheel input counts the other way from the page: a negative delta scrolls the tracks up.
+    await driver.scrollAt(centerOf(area), 0, point.y > highest ? -ROW_SCROLL_PIXELS : ROW_SCROLL_PIXELS, false)
+  }
+  throw new PageError(`Track ${trackIndex + 1} could not be scrolled into view`)
+}
+
+function isProjectLike(value: unknown): value is { tracks: { clips: ClipPlace[] }[] } {
+  return typeof value === 'object' && value !== null && 'tracks' in value && Array.isArray(value.tracks)
+}
+
+const LONG_STEP_TIMEOUT_MS = 120_000
+
+// T-88: every broken file of the media folder is imported at once. Each is refused with a message or listed with a badge, and afterwards the editor still imports, places and plays a good file.
+async function testBrokenMedia(driver: Driver): Promise<UiTestReport> {
+  const { mediaDirectory } = driver.options
+  if (mediaDirectory === undefined) throw new PageError('This UI test needs --media <directory>')
+  const names = (await readdir(mediaDirectory)).filter((name) => name.startsWith('broken-')).sort()
+  driver.options.answers.importMedia = names.map((name) => mediaFile(driver, name))
+  await driver.page.click('import')
+  await driver.until(`${selector('notice')} !== null && ${selector('media-pending')} === null`, 'every broken file to be read', LONG_STEP_TIMEOUT_MS)
+  const notice = await driver.page.text('notice')
+  const listed = names.filter((name) => notice.includes(`"${name}"`) === false)
+  const listedShown: unknown = await driver.page.evaluate(`${JSON.stringify(listed)}.filter((name) => document.querySelector('[data-testid="media-' + name + '"]') !== null)`)
+
+  driver.options.answers.importMedia = [mediaFile(driver, 'h264.mp4')]
+  await driver.page.click('import')
+  await driver.until(`Boolean(${selector('media-h264.mp4')}?.querySelector('.library-poster'))`, 'the good file after the broken ones')
+  await dragMedia(driver, 'h264.mp4', await driver.timelinePoint(0, 0, 6))
+  await driver.untilUndoLabel('Undo Add Clip')
+  await driver.press('Space')
+  await sleep(MS_PER_SECOND)
+  await driver.press('Space')
+  await driver.until(`${selector('play')}.getAttribute('aria-label') === 'Play'`, 'playback to pause')
+  return { names, notice, listed, listedShown, timecodeAfterPlaying: await driver.page.text('timecode') }
+}
+
+const SOAK_MEDIA = ['h264.mp4', '1080p.mp4', 'audio.wav', 'audio.mp3', 'image.jpg', 'animated.gif']
+// Each name as often as it should be picked.
+const SOAK_ACTIONS = ['place', 'place', 'move', 'move', 'trim', 'split', 'text', 'opacity', 'undo', 'undo', 'redo', 'play', 'scrub', 'save'] as const
+const SOAK_TIMELINE_SECONDS = 20
+const SOAK_MAX_CLIPS = 40
+const SOAK_SAMPLE_INTERVAL_MS = 60_000
+const SOAK_EXPORT_INTERVAL_MS = 20 * 60_000
+const SOAK_EXPORT_TIMEOUT_MS = 10 * 60_000
+// A step that takes longer than this has hung the editor.
+const SOAK_STEP_LIMIT_MS = 15 * 60_000
+const SOAK_LOG_LENGTH = 200
+const SOAK_PLAY_MS = 2000
+const SOAK_SETTLE_MS = 100
+const MAX_UNDO_RUN = 5
+const MAX_DRAG_PIXELS = 120
+const MIN_TRIM_PIXELS = 10
+const MAX_TRIM_PIXELS = 60
+const MIN_OPACITY = 10
+const BYTES_PER_MEGABYTE = 1024 * 1024
+const MS_PER_MINUTE = 60_000
+
+type SoakAction = (typeof SOAK_ACTIONS)[number]
+
+type SoakClip = ClipPlace & { trackIndex: number }
+
+// A small, fast generator of numbers from 0 to 1 that gives the same run again for the same seed (mulberry32).
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state)
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 2 ** 32
+  }
+}
+
+async function withinTime<T>(work: Promise<T>, limitMs: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const limit = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new PageError(`${what} took longer than ${limitMs / MS_PER_SECOND} s`)), limitMs)
+  })
+  try {
+    return await Promise.race([work, limit])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+type Soak = {
+  driver: Driver
+  random(): number
+}
+
+function pickOf<T>(soak: Soak, items: readonly T[]): T | undefined {
+  return items[Math.floor(soak.random() * items.length)]
+}
+
+// The clips as the project holds them now; reading them saves the project, which is one of the things the session does.
+async function soakClips(soak: Soak): Promise<{ clips: SoakClip[]; trackCount: number }> {
+  const project = await soak.driver.savedProject('soak.json')
+  if (!isProjectLike(project)) throw new PageError('The saved project has no tracks')
+  const clips: SoakClip[] = []
+  for (const [trackIndex, track] of project.tracks.entries()) {
+    for (const clip of track.clips) clips.push({ ...clip, trackIndex })
+  }
+  return { clips, trackCount: project.tracks.length }
+}
+
+async function soakClipPoint(soak: Soak, clip: SoakClip, trackCount: number, share: number): Promise<Point> {
+  const point = await rowInView(soak.driver, clip.start + clip.duration * share, clip.trackIndex, trackCount)
+  return clearOfVolumeLine(point)
+}
+
+async function soakPlace(soak: Soak): Promise<void> {
+  const { driver } = soak
+  await driver.page.click('tab-media')
+  const tracks = Number(await trackCount(driver))
+  const time = soak.random() * SOAK_TIMELINE_SECONDS * TICKS_PER_SECOND
+  const target = tracks === 0 ? centerOf(await driver.rect('timeline')) : await rowInView(driver, time, Math.floor(soak.random() * tracks), tracks)
+  await dragMedia(driver, pickOf(soak, SOAK_MEDIA) ?? 'h264.mp4', target)
+}
+
+async function soakMove(soak: Soak): Promise<void> {
+  const { clips, trackCount: tracks } = await soakClips(soak)
+  const clip = pickOf(soak, clips)
+  if (clip === undefined) return
+  const from = await soakClipPoint(soak, clip, tracks, 0.5)
+  await soak.driver.drag(from, { x: from.x + (soak.random() * 2 - 1) * MAX_DRAG_PIXELS, y: from.y })
+}
+
+async function soakTrim(soak: Soak): Promise<void> {
+  const { clips, trackCount: tracks } = await soakClips(soak)
+  const clip = pickOf(soak, clips)
+  if (clip === undefined) return
+  const end = await soakClipPoint(soak, clip, tracks, 1)
+  const pixels = MIN_TRIM_PIXELS + soak.random() * (MAX_TRIM_PIXELS - MIN_TRIM_PIXELS)
+  await soak.driver.drag({ x: end.x - 2, y: end.y }, { x: end.x - pixels, y: end.y })
+}
+
+async function soakSelect(soak: Soak, clip: SoakClip, trackCount: number): Promise<void> {
+  await soak.driver.clickAt(await soakClipPoint(soak, clip, trackCount, 0.5))
+}
+
+async function soakSplit(soak: Soak): Promise<void> {
+  const { clips, trackCount: tracks } = await soakClips(soak)
+  const clip = pickOf(soak, clips)
+  if (clip === undefined) return
+  await soakScrubTo(soak, clip.start + clip.duration * (0.2 + soak.random() * 0.6))
+  await soakSelect(soak, clip, tracks)
+  soak.driver.menu('split')
+}
+
+async function soakText(soak: Soak): Promise<void> {
+  const { driver } = soak
+  await driver.page.click('tab-annotations')
+  // On the picture itself: the overlay also covers the space around it.
+  const picture = await driver.rect('preview')
+  const drop = { x: picture.x + picture.width * (0.2 + soak.random() * 0.6), y: picture.y + picture.height * (0.2 + soak.random() * 0.6) }
+  await driver.drag(centerOf(await driver.rect('annotation-text')), drop)
+  await untilTextEditor(driver, true)
+  await driver.typeKeys('Soak')
+  await driver.press('Escape')
+  await untilTextEditor(driver, false)
+  await driver.page.click('tab-media')
+}
+
+async function soakOpacity(soak: Soak): Promise<void> {
+  const { clips, trackCount: tracks } = await soakClips(soak)
+  const clip = pickOf(soak, clips.filter((each) => each.type !== 'audio'))
+  if (clip === undefined) return
+  await soakSelect(soak, clip, tracks)
+  await soak.driver.until(`${selector('clip-opacity')} !== null`, 'the opacity of the clip')
+  await soak.driver.typeInto('clip-opacity', String(Math.round(MIN_OPACITY + soak.random() * (100 - MIN_OPACITY))))
+}
+
+async function soakHistory(soak: Soak, action: 'undo' | 'redo'): Promise<void> {
+  const steps = 1 + Math.floor(soak.random() * MAX_UNDO_RUN)
+  for (let step = 0; step < steps; step++) {
+    soak.driver.menu(action)
+    await sleep(SOAK_SETTLE_MS)
+  }
+}
+
+async function soakPlay(soak: Soak): Promise<void> {
+  const { driver } = soak
+  if (!(await isPlaying(driver))) await driver.press('Space')
+  await sleep(SOAK_PLAY_MS)
+  if (await isPlaying(driver)) await driver.press('Space')
+  await driver.until(`${selector('play')}.getAttribute('aria-label') === 'Play'`, 'playback to pause')
+}
+
+async function soakScrubTo(soak: Soak, time: number): Promise<void> {
+  const ruler = await soak.driver.rect('timeline')
+  const at = await soak.driver.timelinePoint(time, 0, 1)
+  await soak.driver.clickAt({ x: at.x, y: ruler.y + RULER_HEIGHT / 2 })
+}
+
+async function soakExport(soak: Soak): Promise<void> {
+  const { driver } = soak
+  if ((await driver.page.evaluate(`${selector('export')}.disabled`)) === true) return
+  await openExportDialog(driver)
+  await startExport(driver, { fileName: 'soak.mp4', preset: '120p', quality: 'low', hasAudio: true })
+  await untilExported(driver, 'soak.mp4', SOAK_EXPORT_TIMEOUT_MS)
+}
+
+// Too many clips would slow every step down: past the limit everything is deleted and the session starts filling the timeline again.
+async function soakTrimProject(soak: Soak): Promise<void> {
+  const { clips } = await soakClips(soak)
+  if (clips.length <= SOAK_MAX_CLIPS) return
+  soak.driver.menu('select-all')
+  await sleep(SOAK_SETTLE_MS)
+  await soak.driver.press('Backspace')
+}
+
+async function runSoakAction(soak: Soak, action: SoakAction): Promise<void> {
+  switch (action) {
+    case 'place':
+      return soakPlace(soak)
+    case 'move':
+      return soakMove(soak)
+    case 'trim':
+      return soakTrim(soak)
+    case 'split':
+      return soakSplit(soak)
+    case 'text':
+      return soakText(soak)
+    case 'opacity':
+      return soakOpacity(soak)
+    case 'undo':
+    case 'redo':
+      return soakHistory(soak, action)
+    case 'play':
+      return soakPlay(soak)
+    case 'scrub':
+      return soakScrubTo(soak, soak.random() * SOAK_TIMELINE_SECONDS * TICKS_PER_SECOND)
+    case 'save':
+      await soakClips(soak)
+  }
+}
+
+// Nothing is left half done between steps: no text open for typing, no list or dialog open, the whole project in view.
+async function settleSoak(soak: Soak): Promise<void> {
+  const { driver } = soak
+  if ((await driver.page.evaluate(`${selector('text-editor')} !== null || document.querySelector('dialog[open], .options') !== null`)) === true) await driver.press('Escape')
+  await driver.page.click('timeline-zoom-fit')
+  await sleep(SOAK_SETTLE_MS)
+}
+
+// T-88: random edits, playback, undo, saving and exporting for `--seconds`, from `--seed` or a seed of its own. The memory of the whole app is sampled each minute.
+async function testSoak(driver: Driver): Promise<UiTestReport> {
+  const seconds = driver.options.seconds
+  if (seconds === undefined) throw new PageError('This UI test needs --seconds <how long to run>')
+  const seed = driver.options.seed ?? Date.now() % 2 ** 31
+  const soak: Soak = { driver, random: seededRandom(seed) }
+  driver.options.answers.importMedia = SOAK_MEDIA.map((name) => mediaFile(driver, name))
+  await driver.page.click('import')
+  await driver.until(SOAK_MEDIA.map((name) => `Boolean(${selector(`media-${name}`)}?.querySelector('.library-poster, .icon'))`).join(' && '), 'the media of the session')
+
+  const startedAt = Date.now()
+  const endsAt = startedAt + seconds * MS_PER_SECOND
+  const memory: { minute: number; megabytes: number }[] = []
+  const counts: Record<string, number> = {}
+  const log: string[] = []
+  let sampledAt = 0
+  let exportedAt = startedAt
+  try {
+    while (Date.now() < endsAt) {
+      const now = Date.now()
+      let action: SoakAction | 'export' = pickOf(soak, SOAK_ACTIONS) ?? 'save'
+      if (now - exportedAt >= SOAK_EXPORT_INTERVAL_MS) {
+        action = 'export'
+        exportedAt = now
+      }
+      log.push(`${Math.round((now - startedAt) / MS_PER_SECOND)} s ${action}`)
+      if (log.length > SOAK_LOG_LENGTH) log.shift()
+      counts[action] = (counts[action] ?? 0) + 1
+      await withinTime(action === 'export' ? soakExport(soak) : runSoakAction(soak, action), SOAK_STEP_LIMIT_MS, action)
+      await withinTime(settleSoak(soak), SOAK_STEP_LIMIT_MS, 'settling')
+      await withinTime(soakTrimProject(soak), SOAK_STEP_LIMIT_MS, 'clearing the timeline')
+      if (now - sampledAt >= SOAK_SAMPLE_INTERVAL_MS) {
+        sampledAt = now
+        memory.push({ minute: Math.round((now - startedAt) / MS_PER_MINUTE), megabytes: Math.round((await footprintNow(process.pid)) / BYTES_PER_MEGABYTE) })
+      }
+    }
+  } catch (error) {
+    throw new PageError(`The session failed after ${Math.round((Date.now() - startedAt) / MS_PER_SECOND)} s (seed ${seed}): ${describeError(error)}\nLast steps:\n${log.join('\n')}`)
+  }
+  return { seed, seconds, counts, memory }
+}
+
+// Puts the playhead at one second from the ruler, selects the clip of the first track half a second in, and splits it.
+export async function splitFirstTrackAtOneSecond(driver: Driver, trackCount: number): Promise<void> {
+  const second = TICKS_PER_SECOND
+  const ruler = await driver.rect('timeline')
+  const oneSecond = await driver.timelinePoint(second, 0, trackCount)
+  await driver.clickAt({ x: oneSecond.x, y: ruler.y + RULER_HEIGHT / 2 })
+  await driver.until(`${selector('timecode')}.textContent === '00:00:01:00'`, 'the playhead at one second')
+  await driver.clickAt(await driver.timelinePoint(second / 2, 0, trackCount))
+  await driver.page.click('split')
+  await driver.untilUndoLabel('Undo Split Clip')
+}
+
+function selectedFiles(driver: Driver): Promise<unknown> {
+  return driver.page.evaluate(`[...document.querySelectorAll('.library-item.selected')].map((item) => item.dataset.testid)`)
+}
+
+// From a new window: its six tracks, files picked with a box and with Select All and dropped together, the part after a cut picked,
+// the speed set from the clip menu, and a clip off the canvas outlined and grabbed in the space around the picture.
+async function testQuickEdits(driver: Driver): Promise<UiTestReport> {
+  const second = TICKS_PER_SECOND
+  const startingTracks = await driver.page.evaluate(`document.querySelectorAll('[data-testid^="track-name-"]').length`)
+  await importThreeFiles(driver)
+
+  // A box drawn from the empty part of the tab up over the first file picks every file it crosses.
+  const library = await driver.rect('left-sidebar')
+  const firstFile = await driver.rect('media-h264.mp4')
+  await driver.drag({ x: library.x + library.width - 6, y: library.y + library.height - 12 }, { x: firstFile.x + 2, y: firstFile.y + 2 })
+  const pickedByBox = await selectedFiles(driver)
+
+  // Select All picks every file while the Media tab was pressed last, and every clip once the timeline was.
+  await driver.clickAt(centerOf(await driver.rect('media-audio.wav')))
+  driver.menu('select-all')
+  await driver.until(`document.querySelectorAll('.library-item.selected').length === 3`, 'Select All to pick every file')
+  const pickedBySelectAll = await selectedFiles(driver)
+
+  const onTrackOne = await driver.timelinePoint(0, 0, 6)
+  await driver.drag(centerOf(await driver.rect('media-audio.wav')), onTrackOne)
+  await driver.untilUndoLabel('Undo Add 3 Clips')
+  const dropped = await driver.savedProject('quick-dropped.json')
+  await driver.clickAt(await driver.timelinePoint(30 * second, 3, 6))
+  driver.menu('select-all')
+  await driver.until(`${selector('canvas-overlay')}.dataset.selected === '1'`, 'Select All to pick the clips')
+  const filesAfterClipSelectAll = await selectedFiles(driver)
+
+  // The video, cut at one second, hands its selection to the part after the cut.
+  await splitFirstTrackAtOneSecond(driver, 6)
+  const startAfterSplit = await driver.value('clip-start')
+
+  // The clip menu opens the speed: a number typed and Return, or Escape to leave it as it is.
+  await driver.rightClickAt(await driver.timelinePoint(1.5 * second, 0, 6))
+  await driver.until(`${selector('menu-speed')} !== null`, 'the clip menu')
+  await driver.page.click('menu-speed')
+  await driver.until(`${selector('speed-dialog')}?.open === true`, 'the speed dialog')
+  const speedShown = await driver.value('speed-value')
+  await driver.typeInto('speed-value', '200')
+  await driver.untilUndoLabel('Undo Change Speed')
+  await driver.until(`${selector('speed-dialog')} === null`, 'the speed dialog to close')
+  const typedSpeed = await driver.savedProject('quick-speed-typed.json')
+  await driver.rightClickAt(await driver.timelinePoint(1.2 * second, 0, 6))
+  await driver.until(`${selector('menu-speed')} !== null`, 'the clip menu')
+  await driver.page.click('menu-speed')
+  await driver.until(`${selector('speed-dialog')}?.open === true`, 'the speed dialog')
+  const speedShownAgain = await driver.value('speed-value')
+  await driver.page.evaluate(`${selector('speed-value')}.select()`)
+  await driver.typeKeys('50')
+  await driver.press('Escape')
+  await driver.until(`${selector('speed-dialog')} === null`, 'the speed dialog to close')
+  const undoAfterEscape = driver.menuLabel('undo')
+  const escapedSpeed = await driver.savedProject('quick-speed-escaped.json')
+
+  // At 50 % there is room around the picture. The part before the cut, moved mostly off the canvas, keeps an outline there,
+  // and a press on that outline picks it and drags it back.
+  const canvasWidth = 320
+  await pick(driver, 'canvas-zoom', '50')
+  const ruler = await driver.rect('timeline')
+  await driver.clickAt({ x: (await driver.timelinePoint(second / 2, 0, 6)).x, y: ruler.y + RULER_HEIGHT / 2 })
+  await driver.until(`${selector('timecode')}.textContent === '00:00:00:15'`, 'the playhead at half a second')
+  await driver.clickAt(await driver.timelinePoint(second / 2, 0, 6))
+  await driver.typeInto('clip-x', '-100')
+  await driver.untilUndoLabel('Undo Move Clip')
+  await driver.press('Escape')
+  await driver.until(`${selector('canvas-overlay')}.dataset.selected === '0'`, 'nothing selected')
+  const outlinedOutside = await driver.page.evaluate(`${selector('canvas-overlay')}.dataset.outside`)
+  await driver.picture('quick-edits-outside')
+  const offCanvas = await canvasPoint(driver, canvasWidth, { x: -200, y: 90 })
+  await driver.clickAt(offCanvas)
+  await driver.until(`${selector('canvas-overlay')}.dataset.selected === '1'`, 'the clip off the canvas to be picked')
+  await driver.drag(offCanvas, await canvasPoint(driver, canvasWidth, { x: 60, y: 90 }))
+  await driver.untilUndoLabel('Undo Move Clip')
+  const xDraggedBack = await driver.value('clip-x')
+  const outlinedAfter = await driver.page.evaluate(`${selector('canvas-overlay')}.dataset.outside`)
+  return {
+    startingTracks,
+    pickedByBox,
+    pickedBySelectAll,
+    dropped,
+    filesAfterClipSelectAll,
+    startAfterSplit,
+    speedShown,
+    typedSpeed,
+    speedShownAgain,
+    undoAfterEscape,
+    escapedSpeed,
+    outlinedOutside,
+    xDraggedBack,
+    outlinedAfter,
+  }
 }
 
 export const FEATURE_SCENARIOS: Record<string, Scenario> = {
+  'quick-edits': testQuickEdits,
+  'broken-media': testBrokenMedia,
+  soak: testSoak,
+  accessibility: testAccessibility,
+  responsiveness: testResponsiveness,
+  idle: testIdle,
   annotations: testAnnotations,
   'text-style': testTextStyle,
   'missing-font': testMissingFont,

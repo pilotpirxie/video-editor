@@ -44,6 +44,8 @@ const ALLOWED_FAILURES = 1
 // Beyond this share of the cache's limit only what is needed now is prepared.
 const LATER_PREPARATION_SHARE = 0.8
 const MEDIA_KINDS = ['video', 'audio', 'image']
+// Opening or importing many files runs this many ffprobes side by side.
+const PROBES_AT_ONCE = 4
 
 export class MediaError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -137,6 +139,7 @@ export class MediaSession implements MediaClient {
   private readonly streams = new Map<number, FrameStream>()
   private readonly exports = new Map<number, Encoder>()
   private readonly frameDecodes = createWeightLimiter(FRAME_DECODE_PIXEL_BUDGET)
+  private readonly probes = createWeightLimiter(PROBES_AT_ONCE)
   private readonly previews: PreviewReader
   private nextId = 1
   private wanted: Wanted | undefined
@@ -166,32 +169,12 @@ export class MediaSession implements MediaClient {
     }
     const parsed = parseProject(text)
     if (!parsed.ok) throw new MediaError(parsed.message)
+    const media = await this.open(parsed.project.media, path, forPreview)
+    return { project: parsed.project, media }
+  }
 
-    await this.closeProject()
-    const media = new Map<string, MediaEntry>()
-    const states: Record<string, MediaState> = {}
-    for (const reference of parsed.project.media) {
-      const found = existingPath(reference, dirname(path))
-      if (found === undefined) {
-        states[reference.id] = { error: `"${fileNameOf(reference)}" was not found.`, isMissing: true }
-        continue
-      }
-      try {
-        const entry = await this.openFile(found)
-        media.set(reference.id, entry)
-        states[reference.id] = { info: entry.info }
-      } catch (error) {
-        if (!(error instanceof ProbeError) && !(error instanceof MediaError)) throw error
-        states[reference.id] = { error: error.message, isMissing: false }
-      }
-    }
-
-    const lifetime = new AbortController()
-    this.project = { media, directory: dirname(path), lifetime }
-    this.wanted = undefined
-    this.replan()
-    if (forPreview) this.startPreparing(this.project)
-    return { project: parsed.project, media: states }
+  openMedia(media: readonly MediaRef[], projectPath: string | undefined): Promise<Record<string, MediaState>> {
+    return this.open(media, projectPath, true)
   }
 
   // Resolves once everything the timeline needs now is prepared, or has failed.
@@ -383,6 +366,40 @@ export class MediaSession implements MediaClient {
     this.settleWaiters()
   }
 
+  // The files are looked at side by side; ffprobe runs for at most a few of them at a time, and those it already knows answer from the cache.
+  private async open(references: readonly MediaRef[], projectPath: string | undefined, forPreview: boolean): Promise<Record<string, MediaState>> {
+    await this.closeProject()
+    const directory = projectPath === undefined ? undefined : dirname(projectPath)
+    const opened = await Promise.all(references.map((reference) => this.openReference(reference, directory)))
+    const media = new Map<string, MediaEntry>()
+    const states: Record<string, MediaState> = {}
+    for (const [index, reference] of references.entries()) {
+      const result = opened[index]
+      if (result === undefined) continue
+      states[reference.id] = result.state
+      if (result.entry !== undefined) media.set(reference.id, result.entry)
+    }
+
+    const lifetime = new AbortController()
+    this.project = { media, directory, lifetime }
+    this.wanted = undefined
+    this.replan()
+    if (forPreview) this.startPreparing(this.project)
+    return states
+  }
+
+  private async openReference(reference: MediaRef, directory: string | undefined): Promise<{ state: MediaState; entry?: MediaEntry }> {
+    const found = existingPath(reference, directory)
+    if (found === undefined) return { state: { error: `"${fileNameOf(reference)}" was not found.`, isMissing: true } }
+    try {
+      const entry = await this.openFile(found)
+      return { state: { info: entry.info }, entry }
+    } catch (error) {
+      if (!(error instanceof ProbeError) && !(error instanceof MediaError)) throw error
+      return { state: { error: error.message, isMissing: false } }
+    }
+  }
+
   // A project that was never loaded, such as a new one, starts preparing with its first file.
   private register(project: OpenProject, id: string, entry: MediaEntry): void {
     project.media.set(id, entry)
@@ -423,7 +440,7 @@ export class MediaSession implements MediaClient {
       }
       if (isMediaInfo(cached)) return cached
     }
-    const info = await probeMedia(this.ffmpeg, path)
+    const info = await this.probes.run(1, () => probeMedia(this.ffmpeg, path))
     await writeFile(infoPath, JSON.stringify(info))
     await this.cache.added(infoPath)
     return info
@@ -682,10 +699,10 @@ function fileNameOf(reference: MediaRef): string {
 }
 
 // Where a project's media file is now: where it was, or where it is relative to the project file that may have moved with it.
-function existingPath(reference: MediaRef, projectDirectory: string): string | undefined {
+function existingPath(reference: MediaRef, projectDirectory: string | undefined): string | undefined {
   const candidates: string[] = []
   if (reference.path !== '') candidates.push(reference.path)
-  if (reference.relativePath !== '') candidates.push(resolve(projectDirectory, reference.relativePath))
+  if (reference.relativePath !== '' && projectDirectory !== undefined) candidates.push(resolve(projectDirectory, reference.relativePath))
   return candidates.find((candidate) => existsSync(candidate))
 }
 

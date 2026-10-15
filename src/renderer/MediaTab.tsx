@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
 import { mediaFileName } from '../editor/place.js'
 import type { MediaInfo, MediaState, Preparation } from '../shared/mediaProtocol.js'
 import type { MediaRef } from '../shared/project.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
 import { useEditorState, useSession } from './context.js'
+import { SELECT_ALL_EVENT } from './document.js'
 import { Icon } from './icons.js'
 import { LibraryTools, useLibraryDrag, useLibraryView } from './LibraryTabs.js'
 
@@ -25,9 +26,15 @@ function Poster({ picture }: { picture: ImageBitmap }): ReactElement {
   useEffect(() => {
     const canvas = canvasRef.current
     if (canvas === null) return
-    canvas.width = picture.width
-    canvas.height = picture.height
-    canvas.getContext('2d')?.drawImage(picture, 0, 0)
+    const draw = (): void => {
+      canvas.width = picture.width
+      canvas.height = picture.height
+      canvas.getContext('2d')?.drawImage(picture, 0, 0)
+    }
+    draw()
+    // The picture is drawn again on a canvas that came back blank after the GPU process was restarted.
+    canvas.addEventListener('contextrestored', draw)
+    return () => canvas.removeEventListener('contextrestored', draw)
   }, [picture])
   return <canvas ref={canvasRef} className="library-poster" aria-hidden="true" />
 }
@@ -85,7 +92,11 @@ function MediaItem({ reference, state, preparation, isSelected, isTabStop, dragg
         <span className="library-details">
           {info !== undefined && <span>{durationLabel(info)}</span>}
           {isPreparing && <span className="badge warning">preparing {Math.floor(preparation.progress * PERCENT)}%</span>}
-          {preparation?.hasFailed === true && <span className="badge danger">media error</span>}
+          {preparation?.hasFailed === true && (
+            <span className="badge danger" data-tooltip="Getting it ready for playback failed, so it may stutter or be silent while editing. Its clips can still be edited.">
+              media error
+            </span>
+          )}
           {problem !== undefined && (
             <span className="badge danger" data-tooltip={problem.error}>
               {problem.isMissing ? 'media missing' : 'media error'}
@@ -131,6 +142,44 @@ function movedTo(key: string, index: number, count: number, columns: number): nu
   return Math.min(count - 1, Math.max(0, target))
 }
 
+type Place = {
+  x: number
+  y: number
+}
+
+type Rect = {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+// A box drawn from a press on the empty part of the tab: the files it crosses are added to `base`.
+// The files are measured once as the box starts, so moving it reads no layout.
+type BoxSelect = {
+  from: Place
+  base: readonly string[]
+  files: readonly { mediaId: string; shown: Rect }[]
+}
+
+function rectBetween(from: Place, to: Place): Rect {
+  return { left: Math.min(from.x, to.x), top: Math.min(from.y, to.y), right: Math.max(from.x, to.x), bottom: Math.max(from.y, to.y) }
+}
+
+// Where each file of the list is on screen, in the order shown.
+function filesShownIn(list: HTMLElement): BoxSelect['files'] {
+  const files: { mediaId: string; shown: Rect }[] = []
+  for (const option of list.querySelectorAll<HTMLElement>('[data-media-id]')) {
+    const mediaId = option.dataset.mediaId
+    if (mediaId !== undefined) files.push({ mediaId, shown: option.getBoundingClientRect() })
+  }
+  return files
+}
+
+function crosses(first: Rect, second: Rect): boolean {
+  return first.left < second.right && first.right > second.left && first.top < second.bottom && first.bottom > second.top
+}
+
 // The files from `from` to `to`, both included, in the order shown.
 function run(shownIds: readonly string[], from: string, to: string): string[] {
   const start = shownIds.indexOf(from)
@@ -144,6 +193,7 @@ export function MediaTab(): ReactElement {
   const media = useEditorState((state) => state.project.media)
   const mediaStates = useEditorState((state) => state.mediaStates)
   const pending = useEditorState((state) => state.pendingImports)
+  const isOpening = useEditorState((state) => state.openingName !== undefined)
   const preparation = useSyncExternalStore(session.onPreparation, session.preparation)
   const [query, setQuery] = useState('')
   const [view, setView] = useLibraryView()
@@ -152,6 +202,12 @@ export function MediaTab(): ReactElement {
   const [anchorId, setAnchorId] = useState<string | undefined>(undefined)
   const [focusedId, setFocusedId] = useState<string | undefined>(undefined)
   const [, setPictureCount] = useState(0)
+  const [boxShown, setBoxShown] = useState<Rect | undefined>(undefined)
+  const boxRef = useRef<BoxSelect | undefined>(undefined)
+  const tabRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+  // Whether the last press in the window was in this tab: a click on a file leaves the focus with the editor, so the focus alone cannot tell.
+  const wasPressedLastRef = useRef(false)
 
   // Posters arrive after the row is first shown; each arrival draws the list again.
   useEffect(() => session.thumbnails.subscribe(() => setPictureCount((count) => count + 1)), [session])
@@ -226,22 +282,65 @@ export function MediaTab(): ReactElement {
     event.stopPropagation()
   }
 
-  // A press on the empty part of the tab picks nothing.
-  function pressOutside(event: PointerEvent<HTMLElement>): void {
+  // Select All picks every file listed while this tab is the one in use, instead of every clip.
+  const onSelectAll = useEffectEvent((event: Event) => {
+    const isInUse = wasPressedLastRef.current || tabRef.current?.contains(document.activeElement) === true
+    if (!isInUse) return
+    event.preventDefault()
+    setSelectedIds(shownIds)
+  })
+
+  useEffect(() => {
+    function onAnyPress(event: globalThis.PointerEvent): void {
+      wasPressedLastRef.current = event.target instanceof Node && tabRef.current?.contains(event.target) === true
+    }
+    window.addEventListener('pointerdown', onAnyPress, true)
+    window.addEventListener(SELECT_ALL_EVENT, onSelectAll)
+    return () => {
+      window.removeEventListener('pointerdown', onAnyPress, true)
+      window.removeEventListener(SELECT_ALL_EVENT, onSelectAll)
+    }
+  }, [])
+
+  // A press on the empty part of the tab picks nothing, or with Cmd or Shift keeps what is picked; dragging from it draws a box that picks every file it crosses.
+  function startBox(event: PointerEvent<HTMLElement>): void {
     const isOnFile = event.target instanceof Element && event.target.closest('.library-item, .library-tools') !== null
-    if (!isOnFile) setSelectedIds([])
+    const list = listRef.current
+    if (isOnFile || event.button !== 0 || list === null) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const base = hasModifier(event) ? selectedIds : []
+    boxRef.current = { from: { x: event.clientX, y: event.clientY }, base, files: filesShownIn(list) }
+    setSelectedIds(base)
+  }
+
+  function moveBox(event: PointerEvent<HTMLElement>): void {
+    const box = boxRef.current
+    if (box === undefined) return
+    const shownBox = rectBetween(box.from, { x: event.clientX, y: event.clientY })
+    setBoxShown(shownBox)
+    const picked = [...box.base]
+    for (const file of box.files) {
+      if (crosses(file.shown, shownBox) && !box.base.includes(file.mediaId)) picked.push(file.mediaId)
+    }
+    setSelectedIds(picked)
+  }
+
+  function endBox(): void {
+    boxRef.current = undefined
+    setBoxShown(undefined)
   }
 
   return (
-    <div className="library-tab" onPointerDown={pressOutside}>
+    <div ref={tabRef} className="library-tab" onPointerDown={startBox} onPointerMove={moveBox} onPointerUp={endBox} onPointerCancel={endBox} onLostPointerCapture={endBox}>
       <LibraryTools noun="media" query={query} onQuery={setQuery} view={view} onView={setView}>
         {/* Importing is the first thing to do in an empty project; after that the window's one primary action is Export. */}
         <button type="button" className={media.length === 0 ? 'button primary' : 'button'} data-testid="import" onClick={() => void session.chooseAndImport()}>
           Import
         </button>
       </LibraryTools>
-      {isEmpty && <p className="empty-state">Import video, audio or images, or drop files here.</p>}
-      <ul className={view === 'grid' ? 'library-list grid' : 'library-list'} role="listbox" aria-multiselectable="true" aria-label="Media" onKeyDown={onListKeyDown}>
+      {isEmpty && !isOpening && <p className="empty-state">Import video, audio or images, or drop files here.</p>}
+      {!isEmpty && shown.length === 0 && pending.length === 0 && <p className="empty-state">Nothing here is called that.</p>}
+      <ul ref={listRef} className={view === 'grid' ? 'library-list grid' : 'library-list'} role="listbox" aria-multiselectable="true" aria-label="Media" onKeyDown={onListKeyDown}>
         {shown.map((reference) => (
           <MediaItem
             key={reference.id}
@@ -265,6 +364,13 @@ export function MediaTab(): ReactElement {
           </li>
         ))}
       </ul>
+      {boxShown !== undefined && (
+        <div
+          className="select-box"
+          data-testid="media-select-box"
+          style={{ left: boxShown.left, top: boxShown.top, width: boxShown.right - boxShown.left, height: boxShown.bottom - boxShown.top }}
+        />
+      )}
     </div>
   )
 }

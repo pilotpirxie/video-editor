@@ -1,8 +1,8 @@
-import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
+import { Component, useEffect, useEffectEvent, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent, type ErrorInfo, type KeyboardEvent, type PointerEvent, type ReactElement, type ReactNode } from 'react'
 import { clampLayout, parseLayout, widestSidebar, type Layout } from '../editor/layout.js'
 import { actionFor, type ShortcutAction } from '../editor/shortcuts.js'
 import type { Size } from '../shared/exportPresets.js'
-import { logError } from '../shared/log.js'
+import { describeErrorAsSentence, logError } from '../shared/log.js'
 import { CanvasPanel } from './CanvasPanel.js'
 import { SessionContext, useEditorState, useSession } from './context.js'
 import { EffectProperties } from './EffectProperties.js'
@@ -166,6 +166,44 @@ function Sidebar(): ReactElement {
   )
 }
 
+type PanelBoundaryProps = {
+  // Names the panel in the log.
+  panel: string
+  children: ReactNode
+}
+
+type PanelBoundaryState = {
+  error: unknown
+  hasFailed: boolean
+}
+
+// A panel that fails to draw says so in its place, while the rest of the window and the project keep working.
+class PanelBoundary extends Component<PanelBoundaryProps, PanelBoundaryState> {
+  override state: PanelBoundaryState = { error: undefined, hasFailed: false }
+
+  static getDerivedStateFromError(error: unknown): PanelBoundaryState {
+    return { error, hasFailed: true }
+  }
+
+  override componentDidCatch(error: unknown, info: ErrorInfo): void {
+    logError('A panel stopped working', error, { panel: this.props.panel, componentStack: info.componentStack })
+  }
+
+  override render(): ReactNode {
+    if (!this.state.hasFailed) return this.props.children
+    return (
+      <div className="panel-failed" role="alert" data-testid="panel-failed">
+        <p>
+          This panel stopped working: {describeErrorAsSentence(this.state.error)} Your work is safe; save with ⌘S.
+        </p>
+        <button type="button" className="button" onClick={() => this.setState({ error: undefined, hasFailed: false })}>
+          Show Again
+        </button>
+      </div>
+    )
+  }
+}
+
 // A message floats over the top of the canvas until it is dismissed.
 function Notice(): ReactElement {
   const { store } = useSession()
@@ -311,6 +349,7 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
   const rootRef = useRef<HTMLDivElement>(null)
   // The session is provided below this component, so its store is read directly.
   const isPreviewing = useSyncExternalStore(session.store.subscribe, () => session.store.getState().isPreviewing)
+  const isOpening = useSyncExternalStore(session.store.subscribe, () => session.store.getState().openingName !== undefined)
   const [stored, setStored] = useState<Layout>(storedLayout)
   const [size, setSize] = useState<Size>(windowSize)
   const layout = clampLayout(stored, size)
@@ -368,24 +407,34 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
 
   return (
     <SessionContext value={session}>
-      <div className={isPreviewing ? 'editor previewing' : 'editor'} ref={rootRef} style={style} data-testid="editor" onDragOver={(event) => event.preventDefault()} onDrop={onFilesDropped}>
+      <div className={isPreviewing ? 'editor previewing' : 'editor'} ref={rootRef} style={style} aria-busy={isOpening} data-testid="editor" onDragOver={(event) => event.preventDefault()} onDrop={onFilesDropped}>
         <aside className="sidebar left" aria-label="Library" data-testid="left-sidebar" hidden={layout.isLeftCollapsed}>
-          <Sidebar />
+          <PanelBoundary panel="library">
+            <Sidebar />
+          </PanelBoundary>
         </aside>
         <Splitter label="Resize library panel" testId="split-left" sizeKey="leftWidth" size={layout.leftWidth} isHidden={layout.isLeftCollapsed} growth={1} onPreview={showSize} onResize={resize} />
-        <CanvasPanel preview={preview} />
+        <PanelBoundary panel="canvas">
+          <CanvasPanel preview={preview} />
+        </PanelBoundary>
         <Splitter label="Resize properties panel" testId="split-right" sizeKey="rightWidth" size={layout.rightWidth} isHidden={layout.isRightCollapsed} growth={-1} onPreview={showSize} onResize={resize} />
         <aside className="sidebar right" aria-label="Properties" data-testid="right-sidebar" hidden={layout.isRightCollapsed}>
-          <Properties />
-          <EffectProperties />
+          <PanelBoundary panel="properties">
+            <Properties />
+            <EffectProperties />
+          </PanelBoundary>
         </aside>
         <Splitter label="Resize timeline" testId="split-timeline" sizeKey="timelineHeight" size={layout.timelineHeight} isHidden={layout.isTimelineCollapsed} growth={-1} onPreview={showSize} onResize={resize} />
         <section className="timeline-panel" aria-label="Timeline" data-testid="timeline-panel" hidden={layout.isTimelineCollapsed}>
-          <Timeline />
+          <PanelBoundary panel="timeline">
+            <Timeline />
+          </PanelBoundary>
         </section>
         <Notice />
-        <ExportDialogWhenOpen />
-        <SettingsWhenOpen />
+        <PanelBoundary panel="dialog">
+          <ExportDialogWhenOpen />
+          <SettingsWhenOpen />
+        </PanelBoundary>
       </div>
     </SessionContext>
   )

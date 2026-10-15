@@ -97,7 +97,7 @@ export function ExportDialog(): ReactElement {
     const presets = EXPORT_PRESETS.filter((preset) => (shortSideOf(preset) !== undefined) === isShaped)
     return presets.map((preset, index) => {
       const pixels = exportSize(preset, canvas)
-      const label = `${PRESET_NAMES[preset]} · ${pixels.width} × ${pixels.height}`
+      const label = `${PRESET_NAMES[preset]} · ${pixels.width}×${pixels.height}`
       return index === 0 ? { value: preset, label, heading } : { value: preset, label }
     })
   }
@@ -121,10 +121,10 @@ export function ExportDialog(): ReactElement {
 
   function summary(): string {
     const name = SUMMARY_NAMES[format]
-    if (format === 'png') return `${name}, ${size.width} × ${size.height}, the frame at ${timecode(playheadTime, canvas.frameRate)}.`
-    const length = `${ticksText(range.end - range.start)} long.`
+    if (format === 'png') return `${name}, ${size.width}×${size.height}, the frame at ${timecode(playheadTime, canvas.frameRate)}`
+    const length = `${ticksText(range.end - range.start)} long`
     if (!isMovingPicture) return `${name}, ${length}`
-    return `${name}, ${size.width} × ${size.height}, ${length}`
+    return `${name}, ${size.width}×${size.height}, ${length}`
   }
 
   return (
@@ -233,14 +233,14 @@ export function ExportDialog(): ReactElement {
         )}
         <p className="dialog-summary" data-testid="export-summary">
           {summary()}
-          {missingCount > 0 && ` ${missingCount} media ${missingCount === 1 ? 'file is' : 'files are'} missing; clips that use ${missingCount === 1 ? 'it' : 'them'} will be left out.`}
+          {missingCount > 0 && `. ${missingCount} media ${missingCount === 1 ? 'file is' : 'files are'} missing; clips that use ${missingCount === 1 ? 'it' : 'them'} will be left out.`}
         </p>
         <div className="dialog-buttons">
           <button type="button" className="button" data-testid="export-cancel-dialog" onClick={() => dialogRef.current?.close()}>
             Cancel
           </button>
           <button type="submit" className="button primary" data-testid="export-start">
-            Export…
+            Export
           </button>
         </div>
       </form>

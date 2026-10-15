@@ -29,7 +29,15 @@ canvas zooms to 50, 100 and 200 % or by pinching, and preview mode leaves only t
 the transport (T-77); each project has a window of its own (T-78); a new canvas size scales
 everything on it to fit (T-79); and the keys can be changed in Settings (T-81). Packaging a
 project (T-80) is dropped: media stays where it is. The end-to-end run of T-47 with a new user
-on the 4 GB reference Mac is still to be done by hand.
+on the 4 GB reference Mac is still to be done by hand. From group 5 the §3 responsiveness budgets
+and the §12 memory targets are measured by the tests (T-82, T-83); every control has its hover,
+pressed, focus and disabled look, and the canvas, timeline and library say what to do when
+empty (T-84, T-85); every control has a name for VoiceOver and a focus ring, and Tab reaches
+every panel and dialog (T-86); a window reloads by itself after its page crashes and keeps its
+work and undo when the GPU or media process dies, and crashes go to a local log (T-88); and the
+app has its icon (T-90). Sample projects
+(T-87) and offline help (T-91) are skipped. The stability and extremes suites, the checks on the
+4 GB reference Mac and a pass with VoiceOver are run by hand.
 
 To see the new features at once, open `test/projects/demo-zoom-effects.json` with File, Open.
 
@@ -46,9 +54,11 @@ FFprobe binaries into `vendor/ffmpeg` and checks their SHA-256.
 | `npm run lint` | Unused files, exports and dependencies (knip) and duplicated code (jscpd); any finding fails |
 | `npm run test:unit` | Unit tests (time, project format, resolver, mixer, FFmpeg jobs, probe, decoding, caches, editing commands) |
 | `npm run test:engine` | Builds the app and tests it for real: golden images, preview/export parity, export to every format, export speed and memory, the harness window, split and hit-test parity, and pixels worked out by hand for the camera zoom, every transition, blur, pixelate, highlight, spotlight, each effect, callouts, arrows, styled text and groups |
-| `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents in several windows, crash recovery, transport keys, fades, text, animated images, relink, the export dialog and how it holds the window, arranging by dragging (landing outline, group moves across tracks, crop fields), annotations, callouts and arrows, text styling, animation presets, groups (made, edited from the inside, taken apart), volume keyframes, the volume line and the sound of fast clips, keyframes from Properties and the motion path, effects, transitions and zoom-and-pan (added, changed and removed by mouse, in Properties and from the lane's menu), the controls (drop-down lists, groups, media tiles, wide sidebars, timeline zoom-out), the Layout group, missing fonts, canvas zoom and preview mode, changing keys in Settings, two windows sharing media and the one export at a time, and the responsiveness budgets on a 4,096-clip project |
+| `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents in several windows, crash recovery, transport keys, fades, text, animated images, relink, the export dialog and how it holds the window, arranging by dragging (landing outline, group moves across tracks, crop fields), annotations, callouts and arrows, text styling, animation presets, groups (made, edited from the inside, taken apart), volume keyframes, the volume line and the sound of fast clips, keyframes from Properties and the motion path, effects, transitions and zoom-and-pan (added, changed and removed by mouse, in Properties and from the lane's menu), the controls (drop-down lists, groups, media tiles, wide sidebars, timeline zoom-out), the Layout group, missing fonts, canvas zoom and preview mode, changing keys in Settings, two windows sharing media and the one export at a time, names, focus rings and keyboard reach for VoiceOver, windows coming back after a crash, and the responsiveness budgets on a 4,096-clip project and on a profile without a cache |
 | `npm test` | All of the above |
 | `npm run test:acceptance` | Builds a ten-minute tutorial through the editor window and exports it at 1080p; takes several minutes and is not part of `npm test` |
+| `npm run test:stability` | An eight-hour random session of edits, playback, undo, saves and exports, and every broken test file imported; `STABILITY_HOURS` shortens it and `STABILITY_SEED` repeats a session a failure printed. Run by hand, not part of `npm test` |
+| `npm run test:extremes` | 120p and 4K projects, an 8K source, 100× speed, 4,096 clips over twenty hours, §12's heaviest playback, CPU at rest and the installed size (after `npm run dist`). Run by hand on the reference Mac, not part of `npm test` |
 | `npm run dist` | Builds `release/Video Editor-<version>-arm64.dmg` |
 
 `UPDATE_GOLDEN=1 npm run test:engine` rewrites the golden images in `test/golden`.
@@ -145,6 +155,9 @@ Preview copies, sound and waveforms are kept in `cache/v2` in the app's data fol
 copies and sound are cut into 30-second segments, built outward from the playhead; all windows
 share one 10 GB limit, and the segments used longest ago are removed first. Everything there
 can be deleted and is made again when needed.
+
+Crashes of the main process, a window's page, the GPU process or a helper process are written
+one JSON line each to `logs/crash.log` in the same data folder; nothing leaves the Mac.
 
 ## Test media
 

@@ -1,5 +1,5 @@
 import { createByteLru } from '../engine/byteLru.js'
-import { minimumHalvings } from '../shared/limits.js'
+import { minimumHalvings, UNDER_PRESSURE_SHARE } from '../shared/limits.js'
 import { logError } from '../shared/log.js'
 import type { MediaClient, MediaInfo, VideoInfo, WaveformLevel } from '../shared/mediaProtocol.js'
 
@@ -21,6 +21,7 @@ export type Thumbnails = {
   videoFrame(mediaId: string, video: VideoInfo, frame: number): ImageBitmap | undefined
   waveform(mediaId: string): readonly WaveformLevel[] | undefined
   subscribe(listener: () => void): () => void
+  setUnderPressure(isUnderPressure: boolean): void
 }
 
 export function createThumbnails(media: MediaClient, isPlaying: () => boolean): Thumbnails {
@@ -150,6 +151,9 @@ export function createThumbnails(media: MediaClient, isPlaying: () => boolean): 
     subscribe(listener) {
       listeners.add(listener)
       return () => listeners.delete(listener)
+    },
+    setUnderPressure(isUnderPressure) {
+      pictures.setLimit(isUnderPressure ? CACHE_BYTES * UNDER_PRESSURE_SHARE : CACHE_BYTES)
     },
   }
 }
