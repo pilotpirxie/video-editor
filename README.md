@@ -116,7 +116,8 @@ show the keys in use.
 
 ## Project files
 
-A project is one JSON file: a canvas, a media list and tracks of clips, bottom track first.
+A project is one JSON file saved as `.pbproj` (older `.json` projects still open): a canvas, a media list and tracks of clips, bottom track first.
+Double-clicking a `.pbproj` file in Finder opens it in the installed app.
 Times are whole ticks of 1/24,000,000 s; positions on the timeline are multiples of 100 ticks.
 `test/projects` holds the reference projects; `src/shared/project.ts` is the format.
 

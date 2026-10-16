@@ -85,7 +85,10 @@ const MEDIA_OUTPUT_TAIL_CHARS = 4096
 const MEMORY_PRESSURE_POLL_MS = 5000
 const UNTITLED = 'Untitled'
 const CLEAN_DOCUMENT: DocumentState = { isDirty: false, undoLabel: undefined, redoLabel: undefined }
-const PROJECT_FILTERS = [{ name: 'Project', extensions: ['json'] }]
+const PROJECT_EXTENSION = 'pbproj'
+const SAVE_PROJECT_FILTERS = [{ name: 'Project', extensions: [PROJECT_EXTENSION] }]
+// Projects saved before the .pbproj extension are .json files and must still open.
+const OPEN_PROJECT_FILTERS = [{ name: 'Project', extensions: [PROJECT_EXTENSION, 'json'] }]
 const MEDIA_EXTENSIONS = [
   'mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'flv', 'ts', 'mts', '3gp',
   'mp3', 'm4a', 'aac', 'wav', 'aiff', 'aif', 'flac', 'ogg', 'opus',
@@ -652,7 +655,7 @@ async function chooseAndOpen(state: AppState, from: Editor | undefined): Promise
     await openProject(state, answer, from)
     return
   }
-  const options = { properties: ['openFile' as const, 'multiSelections' as const], filters: PROJECT_FILTERS }
+  const options = { properties: ['openFile' as const, 'multiSelections' as const], filters: OPEN_PROJECT_FILTERS }
   const chosen = from === undefined ? await dialog.showOpenDialog(options) : await dialog.showOpenDialog(from.window, options)
   for (const path of chosen.filePaths) await openProject(state, path, from)
 }
@@ -702,7 +705,7 @@ function registerDocumentIpc(state: AppState): void {
     if (state.dialogAnswers.saveProject !== undefined) return state.dialogAnswers.saveProject
     const owner = BrowserWindow.fromWebContents(event.sender)
     if (owner === null) return undefined
-    const chosen = await dialog.showSaveDialog(owner, { defaultPath: `${UNTITLED}.json`, filters: PROJECT_FILTERS })
+    const chosen = await dialog.showSaveDialog(owner, { defaultPath: `${UNTITLED}.${PROJECT_EXTENSION}`, filters: SAVE_PROJECT_FILTERS })
     if (chosen.canceled || chosen.filePath === '') return undefined
     return chosen.filePath
   })
@@ -785,7 +788,7 @@ function registerIpc(state: AppState): void {
     if (state.dialogAnswers.openProject !== undefined) return state.dialogAnswers.openProject
     const owner = BrowserWindow.fromWebContents(event.sender)
     if (owner === null) return undefined
-    const chosen = await dialog.showOpenDialog(owner, { properties: ['openFile'], filters: PROJECT_FILTERS })
+    const chosen = await dialog.showOpenDialog(owner, { properties: ['openFile'], filters: OPEN_PROJECT_FILTERS })
     return chosen.filePaths[0]
   })
 

@@ -26,6 +26,11 @@ mac:
   identity: "-"
   hardenedRuntime: false
   gatekeeperAssess: false
+fileAssociations:
+  - ext: pbproj
+    name: Playback Project
+    role: Editor
+    rank: Owner
 dmg:
   writeUpdateInfo: false
 publish: null
