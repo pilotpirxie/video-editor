@@ -200,7 +200,7 @@ describe('timing', () => {
     const slower = setSpeed(sample(), ['a'], 50)
     expect(clipOf(slower, 'a')).toMatchObject({ speedPercent: 50, duration: 8 * SECOND })
     expect(clipOf(setSpeed(sample(), ['a'], 0), 'a')).toMatchObject({ speedPercent: 1 })
-    expect(clipOf(setSpeed(sample(), ['a'], 99_999), 'a')).toMatchObject({ speedPercent: 10_000 })
+    expect(clipOf(setSpeed(sample(), ['a'], 99_999), 'a')).toMatchObject({ speedPercent: 50_000 })
     reopened(faster)
     reopened(slower)
   })

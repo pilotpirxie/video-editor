@@ -30,6 +30,7 @@ import {
   type UiTestReport,
   untilWindowCount,
 } from './uiDriver.js'
+import { OUTPUT_SCENARIOS } from './uiOutputScenarios.js'
 import { FEATURE_SCENARIOS, framesShown, pick, seekDelays, splitFirstTrackAtOneSecond, untilPrepared } from './uiScenarios.js'
 
 const AUTOSAVE_TIMEOUT_MS = 20_000
@@ -531,6 +532,7 @@ const SCENARIOS: Record<string, Scenario> = {
   budgets: testBudgets,
   'open-and-save': testOpenAndSave,
   ...FEATURE_SCENARIOS,
+  ...OUTPUT_SCENARIOS,
 }
 
 // Properties starts with only Transform and Timing unfolded. The scenarios work in the other groups as someone would who unfolded them once;

@@ -1,0 +1,338 @@
+{
+  "camera": [
+    {
+      "duration": 24000000,
+      "easing": "easeInOut",
+      "scale": 10,
+      "time": 24000000,
+      "x": 330,
+      "y": 230
+    },
+    {
+      "duration": 12000000,
+      "easing": "easeInOut",
+      "scale": 1,
+      "time": 48000000,
+      "x": 320,
+      "y": 180
+    }
+  ],
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 30
+    },
+    "height": 360,
+    "width": 640
+  },
+  "media": [
+    {
+      "id": "clip",
+      "path": "",
+      "relativePath": "../media/generated/h264.mp4"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "align": "center",
+          "borderColor": "#000000",
+          "borderWidth": 0,
+          "color": "#FFFFFF",
+          "duration": 48000000,
+          "fill": "#3C5A88",
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 24
+          },
+          "height": 360,
+          "id": "ground",
+          "opacity": 1,
+          "shape": "rectangle",
+          "start": 0,
+          "text": "",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 320,
+            "y": 180
+          },
+          "type": "callout",
+          "width": 640
+        }
+      ],
+      "hidden": false,
+      "id": "ground",
+      "locked": false,
+      "muted": false,
+      "name": "ground"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "video-1",
+          "mediaId": "clip",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 160,
+            "y": 90
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "v1",
+      "locked": false,
+      "muted": false,
+      "name": "v1"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "video-2",
+          "mediaId": "clip",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 480,
+            "y": 90
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "v2",
+      "locked": false,
+      "muted": true,
+      "name": "v2"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "video-3",
+          "mediaId": "clip",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 160,
+            "y": 270
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "v3",
+      "locked": false,
+      "muted": true,
+      "name": "v3"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "video-4",
+          "mediaId": "clip",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 480,
+            "y": 270
+          },
+          "type": "video",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "v4",
+      "locked": false,
+      "muted": true,
+      "name": "v4"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "animationIn": {
+            "duration": 48000000,
+            "type": "typewriter"
+          },
+          "color": "#FFFFFF",
+          "duration": 48000000,
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 400,
+            "weight": 700
+          },
+          "id": "typed-1",
+          "opacity": 1,
+          "outline": {
+            "color": "#000000",
+            "width": 20
+          },
+          "start": 0,
+          "text": "Typed under a tenfold zoom\nletter by letter, line by line\nso every frame is a new picture",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.04,
+            "scaleY": 0.04,
+            "x": 300,
+            "y": 215
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "title-1",
+      "locked": false,
+      "muted": false,
+      "name": "title 1"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "animationIn": {
+            "duration": 48000000,
+            "type": "typewriter"
+          },
+          "color": "#FFFFFF",
+          "duration": 48000000,
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 400,
+            "weight": 700
+          },
+          "id": "typed-2",
+          "opacity": 1,
+          "outline": {
+            "color": "#000000",
+            "width": 20
+          },
+          "start": 0,
+          "text": "Typed under a tenfold zoom\nletter by letter, line by line\nso every frame is a new picture",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.04,
+            "scaleY": 0.04,
+            "x": 360,
+            "y": 215
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "title-2",
+      "locked": false,
+      "muted": false,
+      "name": "title 2"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "animationIn": {
+            "duration": 48000000,
+            "type": "typewriter"
+          },
+          "color": "#FFFFFF",
+          "duration": 48000000,
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 400,
+            "weight": 700
+          },
+          "id": "typed-3",
+          "opacity": 1,
+          "outline": {
+            "color": "#000000",
+            "width": 20
+          },
+          "start": 0,
+          "text": "Typed under a tenfold zoom\nletter by letter, line by line\nso every frame is a new picture",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.04,
+            "scaleY": 0.04,
+            "x": 300,
+            "y": 245
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "title-3",
+      "locked": false,
+      "muted": false,
+      "name": "title 3"
+    },
+    {
+      "clips": [
+        {
+          "align": "center",
+          "animationIn": {
+            "duration": 48000000,
+            "type": "typewriter"
+          },
+          "color": "#FFFFFF",
+          "duration": 48000000,
+          "font": {
+            "family": "Helvetica Neue",
+            "size": 400,
+            "weight": 700
+          },
+          "id": "typed-4",
+          "opacity": 1,
+          "outline": {
+            "color": "#000000",
+            "width": 20
+          },
+          "start": 0,
+          "text": "Typed under a tenfold zoom\nletter by letter, line by line\nso every frame is a new picture",
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.04,
+            "scaleY": 0.04,
+            "x": 360,
+            "y": 245
+          },
+          "type": "text"
+        }
+      ],
+      "hidden": false,
+      "id": "title-4",
+      "locked": false,
+      "muted": false,
+      "name": "title 4"
+    }
+  ],
+  "version": 1
+}

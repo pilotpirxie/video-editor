@@ -18,8 +18,9 @@ const INT8_PEAK = 127
 const INITIAL_BUCKET_CAPACITY = 4096
 const WAVEFORM_LEVEL_FACTOR = 8
 const SMALLEST_LEVEL_BUCKETS = 512
-// FFmpeg's tempo filter goes no slower than this in one step; slower speeds take several steps.
+// FFmpeg's tempo filter goes no slower or faster than these in one step; speeds beyond them take several steps.
 const SLOWEST_TEMPO_STEP = 0.5
+const FASTEST_TEMPO_STEP = 100
 // Decoding starts a second early: the first sound a decoder gives after a seek is not yet right.
 const PREROLL_SAMPLES = SAMPLE_RATE
 // A stretched segment is made from a little more sound than it needs on either side, so the tempo filter has settled where the segment starts and ends.
@@ -183,6 +184,10 @@ export function tempoFilter(stretch: AudioStretch): string {
   while (tempo < SLOWEST_TEMPO_STEP) {
     steps.push(`atempo=${SLOWEST_TEMPO_STEP}`)
     tempo /= SLOWEST_TEMPO_STEP
+  }
+  while (tempo > FASTEST_TEMPO_STEP) {
+    steps.push(`atempo=${FASTEST_TEMPO_STEP}`)
+    tempo /= FASTEST_TEMPO_STEP
   }
   steps.push(`atempo=${tempo}`)
   return steps.join(',')

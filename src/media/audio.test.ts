@@ -211,15 +211,16 @@ describe('sound at another speed', () => {
     return 0
   }
 
-  it('keeps the pitch with the tempo filter, in steps where one step cannot go that slow', () => {
+  it('keeps the pitch with the tempo filter, in steps where one step cannot go that slow or fast', () => {
     expect(tempoFilter({ speedPercent: 200, keepsPitch: true })).toBe('atempo=2')
     expect(tempoFilter({ speedPercent: 10_000, keepsPitch: true })).toBe('atempo=100')
+    expect(tempoFilter({ speedPercent: 50_000, keepsPitch: true })).toBe('atempo=100,atempo=5')
     expect(tempoFilter({ speedPercent: 25, keepsPitch: true })).toBe('atempo=0.5,atempo=0.5')
     expect(tempoFilter({ speedPercent: 150, keepsPitch: false })).toBe('asetrate=72000,aresample=48000')
   })
 
   it('refuses a speed that is none', () => {
-    for (const speedPercent of [100, 0, 10_001, 150.5, Number.NaN]) {
+    for (const speedPercent of [100, 0, 50_001, 150.5, Number.NaN]) {
       expect(() => tempoFilter({ speedPercent, keepsPitch: true }), String(speedPercent)).toThrow(/cannot be played/)
     }
   })

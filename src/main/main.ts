@@ -16,7 +16,7 @@ import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { cpus, totalmem } from 'node:os'
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path'
-import { EXPORT_FORMATS, EXPORT_PRESETS, isExportEncoder, isExportFormat, isExportPreset, isExportQuality, type ExportFormat } from '../shared/exportPresets.js'
+import { EXPORT_FORMATS, EXPORT_PRESETS, isExportEncoder, isExportFormat, isExportPreset, type ExportFormat } from '../shared/exportPresets.js'
 import { describeError, logError } from '../shared/log.js'
 import type {
   DebugSystemInfo,
@@ -33,10 +33,11 @@ import type {
   MenuShortcuts,
   UnsavedChoice,
 } from '../shared/mediaProtocol.js'
+import { isExportJob } from '../editor/export.js'
 import { DEFAULT_BINDINGS, MENU_SHORTCUT_ACTIONS, menuShortcutsOf } from '../editor/shortcuts.js'
 import { MAX_LOG_BYTES, MAX_SLOW_FRAMES_PER_RUN, appendLogLine, isSlowFrame, trimLogFile } from './logFiles.js'
 import { footprintNow, isMemoryUnderPressure, startMemoryMonitor, type MemoryMonitor } from './memory.js'
-import { SAMPLE_RATE, isProjectFrameRate } from '../shared/time.js'
+import { SAMPLE_RATE } from '../shared/time.js'
 import {
   discardExportSnapshot,
   discardRecoveredWork,
@@ -216,32 +217,6 @@ function framesJobFromCli(projectPath: string, options: Map<string, string>): Fr
   const size = SIZE_PATTERN.exec(options.get('size') ?? '')?.groups
   if (size !== undefined) job.size = { width: Number(size.width), height: Number(size.height) }
   return job
-}
-
-function isFrameRateChoice(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null || !('num' in value) || !('den' in value)) return false
-  return typeof value.num === 'number' && typeof value.den === 'number' && isProjectFrameRate({ num: value.num, den: value.den })
-}
-
-function isTimeRange(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null || !('start' in value) || !('end' in value)) return false
-  return typeof value.start === 'number' && typeof value.end === 'number' && value.start >= 0 && value.end > value.start
-}
-
-// A job arrives from a window, so every choice in it is checked before it is run.
-function isExportJob(value: unknown): value is ExportJob {
-  if (typeof value !== 'object' || value === null) return false
-  if (!('kind' in value) || value.kind !== 'export') return false
-  if (!('projectPath' in value) || typeof value.projectPath !== 'string') return false
-  if (!('outputPath' in value) || typeof value.outputPath !== 'string') return false
-  if (!('preset' in value) || typeof value.preset !== 'string' || !isExportPreset(value.preset)) return false
-  if ('frameRate' in value && value.frameRate !== undefined && !isFrameRateChoice(value.frameRate)) return false
-  if ('quality' in value && value.quality !== undefined && !(typeof value.quality === 'string' && isExportQuality(value.quality))) return false
-  if ('range' in value && value.range !== undefined && !isTimeRange(value.range)) return false
-  if ('format' in value && value.format !== undefined && !(typeof value.format === 'string' && isExportFormat(value.format))) return false
-  if ('encoder' in value && value.encoder !== undefined && !(typeof value.encoder === 'string' && isExportEncoder(value.encoder))) return false
-  if ('frame' in value && value.frame !== undefined && !(Number.isInteger(value.frame) && Number(value.frame) >= 0)) return false
-  return !('hasAudio' in value) || value.hasAudio === undefined || typeof value.hasAudio === 'boolean'
 }
 
 function isJobEvent(value: unknown): value is JobEvent {
@@ -811,7 +786,14 @@ function registerIpc(state: AppState): void {
 
   ipcMain.on('start-export', (event, job: unknown) => {
     const requester = BrowserWindow.fromWebContents(event.sender)
-    if (requester !== null && isExportJob(job)) startExportFor(state, requester, job)
+    if (requester === null) return
+    if (isExportJob(job)) {
+      startExportFor(state, requester, job)
+      return
+    }
+    // The dialog waits for an answer; a job it was never told was refused would leave it waiting for ever.
+    logError('Refused an export job from a window', new Error('a choice in it is not one the dialog offers'), { job })
+    send(requester, { type: 'export-event', event: { type: 'error', message: 'The export settings were not understood. Choose them again and export once more.' } })
   })
 
   ipcMain.on('cancel-export', () => state.exportWindow?.destroy())

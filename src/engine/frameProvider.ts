@@ -81,10 +81,45 @@ function itemOf(layer: PictureLayer, picture: Picture): DrawItem {
 
 export function createFrameProvider(media: MediaClient, compositor: Compositor): FrameProvider {
   const retired: GpuTexture[] = []
-  const pictures = createByteLru<Picture>(TEXTURE_CACHE_BYTES, (picture) => retired.push(picture.texture))
+  // What each clip last showed while playing. It outlives its place in the cache until the clip shows another picture or leaves,
+  // so a video or image that is late is drawn as it last was and is never left out of the frame.
+  const lastShown = new Map<string, Picture>()
+  const evictedWhileShown = new Set<GpuTexture>()
+  const pictures = createByteLru<Picture>(TEXTURE_CACHE_BYTES, (picture) => retire(picture.texture))
   const loading = new Map<string, Promise<Picture>>()
   const streams = new Map<string, OpenStream>()
-  const lastShown = new Map<string, string>()
+
+  function isShown(texture: GpuTexture): boolean {
+    for (const picture of lastShown.values()) {
+      if (picture.texture === texture) return true
+    }
+    return false
+  }
+
+  function retire(texture: GpuTexture): void {
+    if (isShown(texture)) evictedWhileShown.add(texture)
+    else retired.push(texture)
+  }
+
+  // A texture the cache let go of while it was shown is released once nothing shows it any more.
+  function releaseIfLetGo(texture: GpuTexture): void {
+    if (!evictedWhileShown.has(texture) || isShown(texture)) return
+    evictedWhileShown.delete(texture)
+    retired.push(texture)
+  }
+
+  function show(clipId: string, picture: Picture): void {
+    const previous = lastShown.get(clipId)
+    lastShown.set(clipId, picture)
+    if (previous !== undefined && previous.texture !== picture.texture) releaseIfLetGo(previous.texture)
+  }
+
+  function forgetShown(clipId: string): void {
+    const previous = lastShown.get(clipId)
+    if (previous === undefined) return
+    lastShown.delete(clipId)
+    releaseIfLetGo(previous.texture)
+  }
 
   async function cached(key: string, load: () => Promise<Picture>): Promise<Picture> {
     const ready = pictures.get(key)
@@ -118,7 +153,7 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     return { texture, naturalWidth: layer.width, naturalHeight: layer.height, hasAlphaBelow: false }
   }
 
-  function loadDrawn(layer: DrawnLayer, outputScale: number): Promise<Picture> {
+  function drawnPicture(layer: DrawnLayer, outputScale: number): Picture {
     const scaleX = layer.sharpScaleX * outputScale
     const scaleY = layer.sharpScaleY * outputScale
     let raster: Raster
@@ -126,7 +161,7 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     else if (layer.kind === 'callout') raster = rasterizeCallout(layer.look, scaleX, scaleY)
     else raster = rasterizeArrow(layer.look, scaleX, scaleY)
     const texture = compositor.uploadImage(raster.canvas)
-    return Promise.resolve({ texture, naturalWidth: raster.naturalWidth, naturalHeight: raster.naturalHeight, hasAlphaBelow: false })
+    return { texture, naturalWidth: raster.naturalWidth, naturalHeight: raster.naturalHeight, hasAlphaBelow: false }
   }
 
   async function loadFull(layer: VideoLayer, signal: AbortSignal | undefined): Promise<Picture> {
@@ -174,7 +209,7 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
 
   function pictureFor(layer: PictureLayer, quality: FrameQuality, outputScale: number, signal: AbortSignal | undefined): Promise<Picture> {
     if (layer.kind === 'image') return cached(`image:${layer.mediaId}`, () => loadImage(layer))
-    if (isDrawn(layer)) return cached(drawnKey(layer, outputScale), () => loadDrawn(layer, outputScale))
+    if (isDrawn(layer)) return cached(drawnKey(layer, outputScale), () => Promise.resolve(drawnPicture(layer, outputScale)))
     if (quality === 'stream') return nextStreamFrame(layer)
     if (quality === 'full') return cached(videoKey(layer, 'full'), () => loadFull(layer, signal))
     return previewOrFull(layer, signal)
@@ -246,22 +281,28 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
 
   function itemsNow(layers: readonly Layer[], outputScale: number): { items: DrawItem[]; lateLayers: number } {
     const items: DrawItem[] = []
+    const drawnClips = new Set<string>()
     let lateLayers = 0
     for (const layer of layers) {
       if (!hasPicture(layer)) {
         items.push(layer)
         continue
       }
+      drawnClips.add(layer.clipId)
       const key = playbackKey(layer, outputScale)
-      let picture = pictures.get(key)
-      if (picture === undefined) {
-        lateLayers += 1
-        const previousKey = lastShown.get(layer.clipId)
-        picture = previousKey === undefined ? undefined : pictures.get(previousKey)
-      } else {
-        lastShown.set(layer.clipId, key)
+      let ready = pictures.get(key)
+      // Words and shapes need no media, so one the read-ahead has not drawn in time is drawn now: exactly as exported, at worst a slow frame.
+      if (ready === undefined && isDrawn(layer)) {
+        ready = drawnPicture(layer, outputScale)
+        pictures.set(key, ready, ready.texture.bytes)
       }
+      if (ready === undefined) lateLayers += 1
+      else show(layer.clipId, ready)
+      const picture = ready ?? lastShown.get(layer.clipId)
       if (picture !== undefined) items.push(itemOf(layer, picture))
+    }
+    for (const clipId of [...lastShown.keys()]) {
+      if (!drawnClips.has(clipId)) forgetShown(clipId)
     }
     return { items, lateLayers }
   }
@@ -280,8 +321,10 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
   }
 
   function clear(): void {
-    pictures.clear()
     lastShown.clear()
+    pictures.clear()
+    retired.push(...evictedWhileShown)
+    evictedWhileShown.clear()
     collect()
   }
 

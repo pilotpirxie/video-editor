@@ -235,7 +235,7 @@ export async function pick(driver: Driver, testId: string, value: string): Promi
   await driver.until(`!(${isListOpen(testId)})`, `the list of ${testId} to close`)
 }
 
-async function untilTextEditor(driver: Driver, isOpen: boolean): Promise<void> {
+export async function untilTextEditor(driver: Driver, isOpen: boolean): Promise<void> {
   const state = isOpen ? 'document.activeElement?.dataset.testid === "text-editor"' : `${selector('text-editor')} === null`
   await driver.until(state, isOpen ? 'the text to open for typing' : 'the text to close')
 }
@@ -387,7 +387,7 @@ async function testRelink(driver: Driver): Promise<UiTestReport> {
   return { openNotice, missingAtOpen, refusal, missingAfterRefusal, foundNotice, relinked: await driver.savedProject('relinked.json') }
 }
 
-async function openExportDialog(driver: Driver): Promise<void> {
+export async function openExportDialog(driver: Driver): Promise<void> {
   await driver.page.click('export')
   await driver.until(`${selector('export-dialog')}?.open === true`, 'the export dialog')
 }
@@ -401,7 +401,7 @@ type ExportSetup = {
 
 // Fills in the open export dialog and starts the export with the Return key.
 // Starts the export as the dialog stands, saving it under `fileName` in the output folder.
-async function submitExport(driver: Driver, fileName: string): Promise<string> {
+export async function submitExport(driver: Driver, fileName: string): Promise<string> {
   if (driver.options.outputDirectory === undefined) throw new PageError('This UI test needs --out <directory>')
   // A save dialog only ever gives a folder that exists.
   await mkdir(driver.options.outputDirectory, { recursive: true })
@@ -413,7 +413,7 @@ async function submitExport(driver: Driver, fileName: string): Promise<string> {
   return path
 }
 
-async function startExport(driver: Driver, setup: ExportSetup): Promise<string> {
+export async function startExport(driver: Driver, setup: ExportSetup): Promise<string> {
   await pick(driver, 'export-format', 'mp4')
   await pick(driver, 'export-preset', setup.preset)
   await driver.page.click(`export-quality-${setup.quality}`)
@@ -429,8 +429,14 @@ async function shownExportFields(driver: Driver): Promise<unknown> {
 }
 
 // The dialog that held the window during the export says how it ended; it goes away with a real click on its button, as a person would close it.
-async function untilExported(driver: Driver, fileName: string, timeoutMs?: number): Promise<void> {
-  await driver.until(`${selector('export-done')} !== null`, `the export of ${fileName} to end`, timeoutMs)
+export async function untilExported(driver: Driver, fileName: string, timeoutMs?: number): Promise<void> {
+  try {
+    await driver.until(`${selector('export-done')} !== null`, `the export of ${fileName} to end`, timeoutMs)
+  } catch (error) {
+    // What the dialog showed when the wait ran out tells a hang from a slow export.
+    const shown = await driver.page.evaluate(`document.querySelector('dialog[open]')?.innerText ?? 'no dialog open'`)
+    throw new PageError(`${error instanceof Error ? error.message : String(error)}; the window showed: ${JSON.stringify(shown)}`)
+  }
   const result = await driver.page.text('export-title')
   if (result !== `Exported "${fileName}"`) throw new PageError(`${result}: ${String(await driver.page.evaluate(`${selector('export-problem')}?.textContent`))}`)
   await driver.clickAt(centerOf(await driver.rect('export-done')))
@@ -1047,7 +1053,7 @@ async function trackCount(driver: Driver): Promise<unknown> {
   return driver.page.evaluate(`document.querySelectorAll('.track-header').length`)
 }
 
-async function isPlaying(driver: Driver): Promise<boolean> {
+export async function isPlaying(driver: Driver): Promise<boolean> {
   return (await driver.page.evaluate(`${selector('play')}.getAttribute('aria-label')`)) === 'Pause'
 }
 

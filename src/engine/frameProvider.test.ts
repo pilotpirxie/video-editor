@@ -1,0 +1,177 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TEXTURE_CACHE_BYTES } from '../shared/limits.js'
+import type { MediaClient } from '../shared/mediaProtocol.js'
+import type { Compositor, DrawItem, GpuTexture } from './compositor.js'
+import { createFrameProvider, type FrameProvider } from './frameProvider.js'
+import type { ImageLayer } from './resolve.js'
+
+// Each picture takes 40% of the cache, so a third one pushes out the oldest.
+const PICTURE_BYTES = Math.ceil(TEXTURE_CACHE_BYTES * 0.4)
+const SCALE = 1
+
+function notUsed(): never {
+  throw new Error('The frame provider should not need this here')
+}
+
+function fakeMedia(): MediaClient {
+  return {
+    loadProject: notUsed,
+    openMedia: notUsed,
+    whenPrepared: notUsed,
+    readImage: () => Promise.resolve(new ArrayBuffer(1)),
+    previewFrame: notUsed,
+    fullFrame: notUsed,
+    keyframeThumbnail: notUsed,
+    openStream: notUsed,
+    streamFrame: notUsed,
+    closeStream: notUsed,
+    audio: notUsed,
+    exportStart: notUsed,
+    exportWrite: notUsed,
+    exportFinish: notUsed,
+    exportCancel: notUsed,
+    writeFile: notUsed,
+    addMedia: notUsed,
+    relinkMedia: notUsed,
+    preparation: notUsed,
+    want: notUsed,
+    waveform: notUsed,
+    saveProject: notUsed,
+    cacheUsage: notUsed,
+    clearCache: notUsed,
+  }
+}
+
+type FakeGpu = {
+  compositor: Compositor
+  uploaded: GpuTexture[]
+  released: GpuTexture[]
+}
+
+function fakeGpu(): FakeGpu {
+  const uploaded: GpuTexture[] = []
+  const released: GpuTexture[] = []
+  function upload(): GpuTexture {
+    const texture = { handle: {}, width: 1, height: 1, bytes: PICTURE_BYTES }
+    uploaded.push(texture)
+    return texture
+  }
+  const compositor: Compositor = {
+    uploadPixels: upload,
+    refillPixels: upload,
+    uploadImage: upload,
+    release: (texture) => released.push(texture),
+    render: notUsed,
+    present: notUsed,
+    readPixels: notUsed,
+    startReadback: notUsed,
+  }
+  return { compositor, uploaded, released }
+}
+
+function imageLayer(name: string): ImageLayer {
+  return {
+    kind: 'image',
+    clipId: `clip-${name}`,
+    mediaId: `media-${name}`,
+    width: 320,
+    height: 180,
+    crop: { left: 0, top: 0, right: 0, bottom: 0 },
+    transform: { x: 160, y: 90, scaleX: 1, scaleY: 1, rotation: 0 },
+    opacity: 1,
+  }
+}
+
+function texturesOf(items: readonly DrawItem[]): unknown[] {
+  return items.map((item) => (item.kind === 'picture' ? item.texture : item.kind))
+}
+
+const first = imageLayer('first')
+const second = imageLayer('second')
+const third = imageLayer('third')
+
+describe('pictures while playing', () => {
+  let gpu: FakeGpu
+  let provider: FrameProvider
+
+  beforeEach(() => {
+    vi.stubGlobal('createImageBitmap', () => Promise.resolve({ close: () => {} }))
+    gpu = fakeGpu()
+    provider = createFrameProvider(fakeMedia(), gpu.compositor)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // The first picture is shown, then the read-ahead loads two more and the cache lets the first go.
+  async function firstShownThenPushedOut(): Promise<GpuTexture> {
+    await provider.prepare([first], SCALE)
+    const shown = provider.itemsNow([first], SCALE)
+    expect(shown.lateLayers).toBe(0)
+    await provider.prepare([second, third], SCALE)
+    const texture = gpu.uploaded[0]
+    if (texture === undefined) throw new Error('Nothing was uploaded')
+    return texture
+  }
+
+  it('draws a picture the cache let go of as it was last shown, instead of leaving its layer out', async () => {
+    const texture = await firstShownThenPushedOut()
+    const now = provider.itemsNow([first, second, third], SCALE)
+    expect(now.lateLayers).toBe(1)
+    expect(texturesOf(now.items)).toEqual([texture, gpu.uploaded[1], gpu.uploaded[2]])
+  })
+
+  it('never releases a picture that is still shown, however often textures are collected', async () => {
+    const texture = await firstShownThenPushedOut()
+    for (let frame = 0; frame < 3; frame++) {
+      provider.itemsNow([first, second, third], SCALE)
+      provider.collect()
+    }
+    expect(gpu.released).not.toContain(texture)
+  })
+
+  it('releases it once its clip has left the frame', async () => {
+    const texture = await firstShownThenPushedOut()
+    provider.itemsNow([first, second, third], SCALE)
+    provider.itemsNow([second, third], SCALE)
+    provider.collect()
+    expect(gpu.released).toEqual([texture])
+  })
+
+  it('releases it once its clip shows a picture that is ready again', async () => {
+    const texture = await firstShownThenPushedOut()
+    provider.itemsNow([first], SCALE)
+    await provider.prepare([first], SCALE)
+    const now = provider.itemsNow([first], SCALE)
+    provider.collect()
+    expect(now.lateLayers).toBe(0)
+    expect(texturesOf(now.items)).toEqual([gpu.uploaded[3]])
+    // Loading it again also pushed out the oldest picture nobody showed.
+    expect(gpu.released).toEqual([texture, gpu.uploaded[1]])
+  })
+
+  it('keeps a picture the cache still holds when its clip leaves, and lets the cache release it later', async () => {
+    await provider.prepare([first], SCALE)
+    provider.itemsNow([first], SCALE)
+    provider.itemsNow([], SCALE)
+    provider.collect()
+    expect(gpu.released).toEqual([])
+    await provider.prepare([second, third], SCALE)
+    provider.collect()
+    expect(gpu.released).toEqual([gpu.uploaded[0]])
+  })
+
+  it('leaves out, and counts as late, a picture that was never ready', () => {
+    const now = provider.itemsNow([first], SCALE)
+    expect(now).toEqual({ items: [], lateLayers: 1 })
+  })
+
+  it('releases every texture on clear, those still shown included', async () => {
+    await firstShownThenPushedOut()
+    provider.itemsNow([first, second, third], SCALE)
+    provider.clear()
+    expect(new Set(gpu.released)).toEqual(new Set(gpu.uploaded))
+    expect(gpu.released).toHaveLength(gpu.uploaded.length)
+  })
+})

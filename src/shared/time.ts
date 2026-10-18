@@ -10,7 +10,7 @@ export const TICKS_PER_SAMPLE = TICKS_PER_SECOND / SAMPLE_RATE
 
 export const NORMAL_SPEED_PERCENT = 100
 export const MIN_SPEED_PERCENT = 1
-export const MAX_SPEED_PERCENT = 10_000
+export const MAX_SPEED_PERCENT = 50_000
 // Up to this speed a clip keeps its sound; faster, the sound has to be switched on.
 export const FAST_SOUND_ABOVE_PERCENT = 400
 

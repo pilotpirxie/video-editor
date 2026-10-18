@@ -56,6 +56,35 @@ function isSameRate(a: FrameRate, b: FrameRate): boolean {
   return a.num === b.num && a.den === b.den
 }
 
+function isRateOf(format: ExportFormat, value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || !('num' in value) || !('den' in value)) return false
+  const { num, den } = value
+  if (typeof num !== 'number' || typeof den !== 'number') return false
+  return exportFrameRates(format).some((rate) => isSameRate(rate, { num, den }))
+}
+
+function isTimeRange(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || !('start' in value) || !('end' in value)) return false
+  return typeof value.start === 'number' && typeof value.end === 'number' && value.start >= 0 && value.end > value.start
+}
+
+// A job arrives from a window, so every choice in it is checked before it is run; the frame rate must be one its format offers.
+export function isExportJob(value: unknown): value is ExportJob {
+  if (typeof value !== 'object' || value === null) return false
+  if (!('kind' in value) || value.kind !== 'export') return false
+  if (!('projectPath' in value) || typeof value.projectPath !== 'string') return false
+  if (!('outputPath' in value) || typeof value.outputPath !== 'string') return false
+  if (!('preset' in value) || typeof value.preset !== 'string' || !isExportPreset(value.preset)) return false
+  if ('format' in value && value.format !== undefined && !(typeof value.format === 'string' && isExportFormat(value.format))) return false
+  const format = 'format' in value && typeof value.format === 'string' && isExportFormat(value.format) ? value.format : 'mp4'
+  if ('frameRate' in value && value.frameRate !== undefined && !isRateOf(format, value.frameRate)) return false
+  if ('quality' in value && value.quality !== undefined && !(typeof value.quality === 'string' && isExportQuality(value.quality))) return false
+  if ('range' in value && value.range !== undefined && !isTimeRange(value.range)) return false
+  if ('encoder' in value && value.encoder !== undefined && !(typeof value.encoder === 'string' && isExportEncoder(value.encoder))) return false
+  if ('frame' in value && value.frame !== undefined && !(Number.isInteger(value.frame) && Number(value.frame) >= 0)) return false
+  return !('hasAudio' in value) || value.hasAudio === undefined || typeof value.hasAudio === 'boolean'
+}
+
 // Another format keeps the frame rate when it can hold it; otherwise it starts from its own default.
 export function withFormat(choices: ExportChoices, format: ExportFormat, projectRate: FrameRate): ExportChoices {
   const canKeepRate = exportFrameRates(format).some((rate) => isSameRate(rate, choices.frameRate))

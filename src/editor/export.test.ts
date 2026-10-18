@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SECOND, audioClip, projectOf, track, videoClip } from '../../test/fixtures.js'
-import { defaultPreset, durationText, exportFrameRates, exportJobFor, parseRememberedChoices, selectionRange, startingChoices, timeLeft, withFormat, type ExportChoices } from './export.js'
+import { EXPORT_FORMATS, EXPORT_PRESETS, EXPORT_QUALITIES } from '../shared/exportPresets.js'
+import { defaultPreset, durationText, exportFrameRates, exportJobFor, isExportJob, parseRememberedChoices, selectionRange, startingChoices, timeLeft, withFormat, type ExportChoices } from './export.js'
 
 const project = projectOf([track('t1', [videoClip('a', SECOND, 2 * SECOND), videoClip('b', 5 * SECOND, SECOND)]), track('t2', [audioClip('music', 0, 10 * SECOND)])])
 const PATHS = { projectPath: '/tmp/snapshot.json', outputPath: '/tmp/out.mp4' }
@@ -111,6 +112,70 @@ describe('exportJobFor', () => {
   it('exports the whole timeline unless the selection was asked for and exists', () => {
     expect(exportJobFor({ ...choices, isSelectionOnly: false }, { start: 0, end: SECOND }, PATHS, 0)).not.toHaveProperty('range')
     expect(exportJobFor(choices, undefined, PATHS, 0)).not.toHaveProperty('range')
+  })
+})
+
+describe('isExportJob', () => {
+  const VALID = { kind: 'export', projectPath: '/tmp/snapshot.json', outputPath: '/tmp/out.mp4', preset: '720p' }
+
+  // The main process runs only jobs that pass; every job the dialog can make must pass, or its export waits for ever.
+  it('accepts every job the dialog can make', () => {
+    const encoders = ['x264', 'hardware'] as const
+    let checked = 0
+    for (const format of EXPORT_FORMATS) {
+      for (const frameRate of exportFrameRates(format)) {
+        for (const preset of EXPORT_PRESETS) {
+          for (const quality of EXPORT_QUALITIES) {
+            for (const encoder of encoders) {
+              for (const isSelectionOnly of [false, true]) {
+                const choices: ExportChoices = { format, preset, frameRate, quality, encoder, isSelectionOnly, hasAudio: isSelectionOnly }
+                const job = exportJobFor(choices, { start: SECOND, end: 2 * SECOND }, PATHS, 7)
+                expect(isExportJob(job), JSON.stringify(job)).toBe(true)
+                checked += 1
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(1000)
+  })
+
+  it('accepts a GIF at each of its own rates, and no other picture format at them', () => {
+    expect(isExportJob({ ...VALID, format: 'gif', frameRate: { num: 10, den: 1 } })).toBe(true)
+    expect(isExportJob({ ...VALID, format: 'gif', frameRate: { num: 20, den: 1 } })).toBe(true)
+    expect(isExportJob({ ...VALID, format: 'mp4', frameRate: { num: 10, den: 1 } })).toBe(false)
+    expect(isExportJob({ ...VALID, frameRate: { num: 10, den: 1 } })).toBe(false)
+    expect(isExportJob({ ...VALID, format: 'gif', frameRate: { num: 60, den: 1 } })).toBe(false)
+  })
+
+  it('accepts the rates above the project rate that MP4 and WebM offer', () => {
+    expect(isExportJob({ ...VALID, format: 'mp4', frameRate: { num: 120, den: 1 } })).toBe(true)
+    expect(isExportJob({ ...VALID, format: 'webm', frameRate: { num: 160, den: 1 } })).toBe(true)
+    expect(isExportJob({ ...VALID, format: 'webm', frameRate: { num: 30000, den: 1001 } })).toBe(true)
+  })
+
+  it.each([
+    ['nothing', null],
+    ['a string', 'export'],
+    ['another kind of job', { ...VALID, kind: 'frames' }],
+    ['no project', { ...VALID, projectPath: undefined }],
+    ['no output', { ...VALID, outputPath: 42 }],
+    ['an unknown preset', { ...VALID, preset: '8k' }],
+    ['an unknown format', { ...VALID, format: 'avi' }],
+    ['a rate no format offers', { ...VALID, frameRate: { num: 29, den: 1 } }],
+    ['a rate as text', { ...VALID, frameRate: '30/1' }],
+    ['a rate without a denominator', { ...VALID, frameRate: { num: 30 } }],
+    ['an unknown quality', { ...VALID, quality: 'ultra' }],
+    ['an unknown encoder', { ...VALID, encoder: 'nvenc' }],
+    ['a backwards range', { ...VALID, range: { start: 2 * SECOND, end: SECOND } }],
+    ['an empty range', { ...VALID, range: { start: SECOND, end: SECOND } }],
+    ['a range before the start', { ...VALID, range: { start: -1, end: SECOND } }],
+    ['a fractional frame', { ...VALID, format: 'png', frame: 1.5 }],
+    ['a negative frame', { ...VALID, format: 'png', frame: -1 }],
+    ['sound as text', { ...VALID, hasAudio: 'yes' }],
+  ])('refuses %s', (_, job) => {
+    expect(isExportJob(job)).toBe(false)
   })
 })
 

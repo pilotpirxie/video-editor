@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode
 import { ANIMATION_NAMES, DEFAULT_ANIMATION, setAnimation, takesAnimation } from '../editor/animations.js'
 import { CALLOUT_NAMES, setArrowStyle, setCalloutStyle } from '../editor/annotations.js'
 import { deleteZoom, setZoom, type ZoomChanges } from '../editor/camera.js'
-import { freeTrackId, hasMedia, hasSource, isCroppable, isVisual, makesSound, nextTrackName } from '../editor/clips.js'
+import { allClips, freeTrackId, hasMedia, hasSource, isCroppable, isVisual, makesSound, nextTrackName } from '../editor/clips.js'
 import { cropFromValue } from '../editor/geometry.js'
 import { moveClips } from '../editor/moveTrim.js'
 import {
@@ -852,10 +852,15 @@ function ZoomProperties({ index }: { index: number }): ReactElement | undefined 
 }
 
 // One edit made of an edit for each of the clips, one after the other.
-function eachClip<Kind extends Clip>(clips: readonly Kind[], editOf: (project: Project, clip: Kind) => Project): Edit {
+// Each clip is read from the project the edit is given: while a value is previewed the rendered clips already hold it, so comparing against them would hand back the gesture's base unchanged.
+function eachClip(clips: readonly VisualClip[], editOf: (project: Project, clip: VisualClip) => Project): Edit {
   return (project) => {
+    const current = new Map(allClips(project.tracks).map((clip) => [clip.id, clip]))
     let edited = project
-    for (const clip of clips) edited = editOf(edited, clip)
+    for (const { id } of clips) {
+      const clip = current.get(id)
+      if (clip !== undefined && isVisual(clip)) edited = editOf(edited, clip)
+    }
     return edited
   }
 }

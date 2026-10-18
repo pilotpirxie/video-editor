@@ -53,9 +53,9 @@ describe('no drift over 20 hours', () => {
 
   it('stays inside safe integers at the extremes', () => {
     const twentyHours = TWENTY_HOURS_SECONDS * TICKS_PER_SECOND
-    const mapped = sourceTime({ start: 0, sourceStart: 0, speedPercent: 10_000 }, twentyHours)
+    const mapped = sourceTime({ start: 0, sourceStart: 0, speedPercent: 50_000 }, twentyHours)
     expect(Number.isSafeInteger(mapped)).toBe(true)
-    expect(mapped).toBe(twentyHours * 100)
+    expect(mapped).toBe(twentyHours * 500)
   })
 })
 

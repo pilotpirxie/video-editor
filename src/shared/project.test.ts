@@ -455,7 +455,7 @@ describe('parseProject', () => {
     ['a negative start', withValue('tracks.0.clips.0.start', -100), /^tracks\[0\]\.clips\[0\]\.start must be a non-negative multiple of 100$/],
     ['a fractional time', withValue('tracks.0.clips.0.start', 100.5), /start must be a non-negative multiple of 100$/],
     ['a speed below 1%', withValue('tracks.0.clips.0.speedPercent', 0), /speedPercent must be at least 1$/],
-    ['a speed above 10000%', withValue('tracks.0.clips.0.speedPercent', 20_000), /speedPercent must be at most 10000$/],
+    ['a speed above 50000%', withValue('tracks.0.clips.0.speedPercent', 60_000), /speedPercent must be at most 50000$/],
     ['a fractional speed', withValue('tracks.0.clips.0.speedPercent', 150.5), /speedPercent must be a whole number$/],
     ['a clip that ends past exact time', withValue('tracks.0.clips.0.start', LATEST_GRID_TIME), /^tracks\[0\]\.clips\[0\]\.duration ends the clip too far along the timeline$/],
     ['a group member that ends past exact time on the timeline', memberEndingPastExactTime(), /^tracks\[3\]\.clips\[2\]\.tracks\[0\]\.clips\[0\]\.duration ends the clip too far along the timeline$/],
