@@ -1,13 +1,15 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { Writable } from 'node:stream'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { bundledFfmpeg } from '../../test/helpers.js'
 import { createDiskCache } from './cache.js'
 import { pixelLayoutOf, temporaryPathFor, type ExportFormat, type Size } from '../shared/exportPresets.js'
 import { DEFAULT_SETTINGS, cacheLimitBytes } from '../shared/settings.js'
 import { EncoderError, startEncoder } from './encoder.js'
+import { FfmpegError, createFfmpegRunner, type FfmpegRunner } from './ffmpeg.js'
 import { MediaSession } from './mediaStore.js'
 import { probeMedia } from './probe.js'
 
@@ -100,6 +102,84 @@ describe('startEncoder', () => {
     }
     await expect(writeUntilFailure()).rejects.toThrow(/No such file or directory/)
     await encoder.cancel()
+  })
+})
+
+// An FFmpeg that takes every byte it is sent and ends as `done` says, so the last step of an export can be tested on its own.
+function fakeRunner(done: Promise<void>, onKill: () => void): FfmpegRunner {
+  const sink = (): Writable => new Writable({ write: (_chunk, _encoding, callback) => callback() })
+  const job = { stdin: sink(), pipes: [sink()], readExact: async () => undefined, readChunk: async () => undefined, done, kill: onKill }
+  return { runOnce: async () => Buffer.alloc(0), spawnJob: () => job, killAll: () => {} }
+}
+
+describe('finishing an export', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('gives up on an FFmpeg that never ends after the last frame, a minute plus the time to rewrite what it wrote, and leaves nothing behind', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const path = join(scratch, 'never-ends.mp4')
+    let kills = 0
+    const encoder = startEncoder(fakeRunner(new Promise(() => {}), () => (kills += 1)), { path, ...SIZE, ...DEFAULTS })
+    // 20 MB written may take up to a second more to rewrite.
+    await writeFile(temporaryPathFor(path), new Uint8Array(20_000_000))
+    const outcome = encoder.finish().then(
+      () => 'finished',
+      (error: unknown) => error,
+    )
+    await vi.waitFor(() => expect(vi.getTimerCount()).toBe(1), { interval: 1 })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(kills).toBe(0)
+    await vi.advanceTimersByTimeAsync(1000)
+    const error = await outcome
+    expect(error).toBeInstanceOf(EncoderError)
+    expect(String(error)).toContain('did not finish the file within 61 s of the last frame')
+    expect(kills).toBe(1)
+    expect(existsSync(temporaryPathFor(path))).toBe(false)
+    expect(existsSync(path)).toBe(false)
+  })
+
+  it('always lets FFmpeg read the sound to its end, which a shut-down extra pipe alone did not, about one export in twenty-five', async () => {
+    // Stands in for FFmpeg: reads all the pictures and all the sound, and writes into its output file how many bytes of sound came.
+    const standIn = join(scratch, 'stand-in')
+    await mkdir(standIn)
+    // A job in the background of a script reads /dev/null unless told otherwise.
+    await writeFile(join(standIn, 'ffmpeg'), '#!/bin/sh\nfor last; do :; done\nexec 4>"$last"\ncat <&0 >/dev/null &\nexec wc -c <&3 >&4\n', { mode: 0o755 })
+    const runner = createFfmpegRunner(standIn)
+    const sound = new Float32Array(SAMPLES_PER_FRAME * 2)
+    const frames = 20
+    for (let run = 0; run < 100; run++) {
+      const path = join(scratch, `stand-in-${run}.mp4`)
+      const encoder = startEncoder(runner, { path, ...SIZE, ...DEFAULTS })
+      async function exportAll(): Promise<'finished'> {
+        for (let frame = 0; frame < frames; frame++) await encoder.write(grayFrame(0), sound)
+        await encoder.finish()
+        return 'finished'
+      }
+      let timer: NodeJS.Timeout | undefined
+      const hung = new Promise<'hung'>((resolve) => {
+        timer = setTimeout(() => resolve('hung'), 3000)
+      })
+      const outcome = await Promise.race([exportAll(), hung])
+      clearTimeout(timer)
+      if (outcome === 'hung') await encoder.cancel()
+      expect(outcome, `export ${run}`).toBe('finished')
+      expect(Number((await readFile(path, 'utf8')).trim()), `the sound of export ${run}`).toBe(frames * sound.byteLength)
+    }
+  })
+
+  it('removes the unfinished file when FFmpeg fails at the end', async () => {
+    const path = join(scratch, 'fails-at-end.mp4')
+    const failure = new FfmpegError('ffmpeg exited with code 1', 'Conversion failed!', 1)
+    const done = Promise.reject(failure)
+    // Seen through finish(), as the job runner does; until then nothing waits on it.
+    done.catch(() => {})
+    const encoder = startEncoder(fakeRunner(done, () => {}), { path, ...SIZE, ...DEFAULTS })
+    await writeFile(temporaryPathFor(path), new Uint8Array(1000))
+    await expect(encoder.finish()).rejects.toBe(failure)
+    expect(existsSync(temporaryPathFor(path))).toBe(false)
+    expect(existsSync(path)).toBe(false)
   })
 })
 

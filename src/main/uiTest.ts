@@ -31,7 +31,7 @@ import {
   untilWindowCount,
 } from './uiDriver.js'
 import { OUTPUT_SCENARIOS } from './uiOutputScenarios.js'
-import { FEATURE_SCENARIOS, framesShown, pick, seekDelays, splitFirstTrackAtOneSecond, untilPrepared } from './uiScenarios.js'
+import { FEATURE_SCENARIOS, framesShown, pick, rowInView, seekDelays, splitFirstTrackAtOneSecond, untilPrepared } from './uiScenarios.js'
 
 const AUTOSAVE_TIMEOUT_MS = 20_000
 const MS_PER_SECOND = 1000
@@ -204,6 +204,8 @@ async function testTracks(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('track-4')} !== null`, 'the added track')
   const addedName = await driver.page.text('track-name-4')
 
+  // Whether the timeline opens scrolled to its bottom depends on start-up timing, and a view at the bottom holds on to it, so the track added on top can be out of sight.
+  await rowInView(driver, 0, 4, 5)
   await driver.doubleClickAt(centerOf(await driver.rect('track-name-4')))
   await driver.until(`${selector('track-name-input')} !== null`, 'the track name to become editable')
   await driver.typeInto('track-name-input', 'Titles')

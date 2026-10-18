@@ -129,6 +129,9 @@ async function testTransport(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('play')}.getAttribute('aria-label') === 'Play' && ${selector('shuttle-rate')} === null`, 'K to stop')
   const timecodeAfterForward = await driver.page.text('timecode')
 
+  // From the end, so the reverse is still running when the second J comes; from where K stops, it reaches the start in about half a second.
+  await driver.press('Return', ['meta', 'shift'])
+  await untilTimecode(driver, '00:00:01:29')
   await driver.press('J')
   await driver.until(`${selector('shuttle-rate')}?.textContent === '−1×'`, 'J to play backwards')
   await sleep(SHUTTLE_WATCH_MS)
@@ -2215,7 +2218,7 @@ const ROW_SCROLL_PIXELS = 40
 const MAX_ROW_SCROLLS = 50
 
 // Scrolls the tracks until the row of a track is in sight, and gives the place of a moment on it.
-async function rowInView(driver: Driver, time: number, trackIndex: number, trackCount: number): Promise<Point> {
+export async function rowInView(driver: Driver, time: number, trackIndex: number, trackCount: number): Promise<Point> {
   const area = await driver.rect('timeline')
   const lowest = area.y + RULER_HEIGHT + CAMERA_LANE_HEIGHT + TRACK_HEIGHT / 2
   const highest = area.y + area.height - TRACK_HEIGHT / 2

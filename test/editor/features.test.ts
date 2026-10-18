@@ -26,9 +26,9 @@ describe('transport', () => {
     expect(report.duration).toBe('/ 00:00:02:00')
     expect(report.stepMilliseconds).toBeLessThanOrEqual(MAX_STEP_MS)
 
-    // L played on from frame 15; J then ran backwards and stopped by itself at the start.
+    // L played on from frame 15; J then ran backwards from the last frame and stopped by itself at the start.
     expect(framesOf(report.timecodeAfterForward)).toBeGreaterThan(15)
-    expect(framesOf(report.timecodeWhileReversing)).toBeLessThan(framesOf(report.timecodeAfterForward))
+    expect(framesOf(report.timecodeWhileReversing)).toBeLessThan(framesOf('00:00:01:29'))
     expect(report.timecodeAtStart).toBe('00:00:00:00')
   })
 })

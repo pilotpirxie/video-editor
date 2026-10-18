@@ -1,4 +1,4 @@
-import { rename, rm } from 'node:fs/promises'
+import { rename, rm, stat } from 'node:fs/promises'
 import { encoderLimits, type EncoderLimits } from '../shared/limits.js'
 import { hasMovingPicture, hasSound, pixelLayoutOf, temporaryPathFor, type ExportQuality } from '../shared/exportPresets.js'
 import type { ExportTarget } from '../shared/mediaProtocol.js'
@@ -19,6 +19,11 @@ const MP3_BITRATE = '192k'
 const GIF_FILTER = 'split[pictures][stats];[stats]palettegen=stats_mode=single[palette];[pictures][palette]paletteuse=new=1'
 // The engine sends video pictures already in BT.709 TV range; this only labels them so players read the colours right.
 const VIDEO_COLOR_TAGS = 'setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv'
+// After the last frame FFmpeg empties its encoders, and an MP4 is rewritten once to put its index first, so the time that may take grows with the file.
+// Past it the export fails instead of waiting for ever (§12). A slow external drive still rewrites faster than 20 MB a second.
+const FINISH_BASE_MS = 60_000
+const SLOWEST_REWRITE_BYTES_PER_MS = 20_000
+const MS_PER_SECOND = 1000
 
 export class EncoderError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -110,8 +115,31 @@ export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encode
 
   async function finish(): Promise<void> {
     job.stdin.end()
-    audioPipe?.end()
-    await job.done
+    // A shut-down extra pipe does not always wake FFmpeg's read of it on macOS, and FFmpeg then waits for the rest of the sound for ever.
+    // Closing it does; stdin needs nothing more, as Node closes a write-only pipe once it has finished.
+    if (audioPipe !== undefined) audioPipe.end(() => audioPipe.destroy())
+    let writtenBytes = 0
+    try {
+      writtenBytes = (await stat(temporaryPath)).size
+    } catch (error) {
+      // FFmpeg has not made the file yet, so there is nothing to rewrite.
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
+    }
+    const limitMs = FINISH_BASE_MS + writtenBytes / SLOWEST_REWRITE_BYTES_PER_MS
+    let timer: NodeJS.Timeout | undefined
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new EncoderError(`The encoder did not finish the file within ${Math.round(limitMs / MS_PER_SECOND)} s of the last frame`)), limitMs)
+    })
+    try {
+      await Promise.race([job.done, timedOut])
+    } catch (error) {
+      // The session has already let go of this export, so no cancel follows: the unfinished file goes now.
+      job.kill()
+      await rm(temporaryPath, { force: true })
+      throw error
+    } finally {
+      clearTimeout(timer)
+    }
     await rename(temporaryPath, target.path)
   }
 

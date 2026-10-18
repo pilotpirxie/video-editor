@@ -1,10 +1,11 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { parseProject } from '../shared/project.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
 import { PageError, selector } from './page.js'
-import { RULER_HEIGHT, centerOf, dragMedia, fullQualityFrame, mediaFile, type Driver, type Scenario, type UiTestReport } from './uiDriver.js'
-import { isPlaying, openExportDialog, pick, startExport, submitExport, untilExported, untilTextEditor } from './uiScenarios.js'
+import { RULER_HEIGHT, canvasPoint, centerOf, dragMedia, fullQualityFrame, mediaFile, type Driver, type Point, type Scenario, type UiTestReport } from './uiDriver.js'
+import { isPlaying, openExportDialog, pick, splitFirstTrackAtOneSecond, startExport, submitExport, untilExported, untilTextEditor } from './uiScenarios.js'
 
 const BYTES_PER_PIXEL = 4
 
@@ -156,6 +157,7 @@ async function exportAs(driver: Driver, exported: Exported, fileName: string, pr
 }
 
 const TRACKS_AT_START = 6
+const CANVAS_WIDTH = 640
 const HALF_SECOND_FRAMES = 15
 
 async function selectVideo(driver: Driver): Promise<void> {
@@ -175,22 +177,29 @@ async function undoTo(driver: Driver, label: string): Promise<void> {
   await driver.untilUndoLabel(label)
 }
 
+async function importPrepared(driver: Driver, name: string): Promise<void> {
+  driver.options.answers.importMedia = [mediaFile(driver, name)]
+  driver.menu('import')
+  await driver.until(`${selector(`media-${name}`)} !== null && document.querySelector('.library-item .badge.warning') === null`, `${name} to be prepared`)
+}
+
+// The two-second test video on the bottom track. It sets the canvas to its own 320 x 180; doubling the width doubles the height and the clip with it.
+async function placeDoubledVideo(driver: Driver): Promise<void> {
+  await importPrepared(driver, 'h264.mp4')
+  await dragMedia(driver, 'h264.mp4', await driver.timelinePoint(0, 0, TRACKS_AT_START))
+  await driver.untilUndoLabel('Undo Add Clip')
+  await driver.press('Escape')
+  await driver.until(`${selector('canvas-width')} !== null`, 'the project settings')
+  await driver.typeInto('canvas-width', '640')
+  await driver.until(`${selector('canvas-height')}.value === '360'`, 'the height to follow the width')
+}
+
 // Edits a project the way a person does, in the panels and with the mouse, and exports after each edit, so a test can check
 // in the files that every edit really reached the output: placing, canvas size, opacity, hiding and muting a track, volume,
 // fades, speed, a cut with ripple delete, a title, and the export sizes and formats, GIF included.
 async function testEditsToOutput(driver: Driver): Promise<UiTestReport> {
   const exported: Exported = {}
-  driver.options.answers.importMedia = [mediaFile(driver, 'h264.mp4')]
-  driver.menu('import')
-  await driver.until(`${selector('media-h264.mp4')} !== null && document.querySelector('.library-item .badge.warning') === null`, 'the video to be prepared')
-  await dragMedia(driver, 'h264.mp4', await driver.timelinePoint(0, 0, TRACKS_AT_START))
-  await driver.untilUndoLabel('Undo Add Clip')
-
-  // The video set the canvas to its own 320 x 180; doubling the width doubles the height and the clip with it.
-  await driver.press('Escape')
-  await driver.until(`${selector('canvas-width')} !== null`, 'the project settings')
-  await driver.typeInto('canvas-width', '640')
-  await driver.until(`${selector('canvas-height')}.value === '360'`, 'the height to follow the width')
+  await placeDoubledVideo(driver)
   await exportAs(driver, exported, 'placed.mp4')
   await exportAs(driver, exported, 'placed.wav')
   await playheadAtHalfSecond(driver)
@@ -290,7 +299,150 @@ async function testGifExport(driver: Driver): Promise<UiTestReport> {
   return { gifs }
 }
 
+const SECOND = TICKS_PER_SECOND
+// A grab this far inside a clip's edge takes the edge, not the clip.
+const EDGE_GRAB_PIXELS = 2
+
+type Saved = Record<string, string>
+
+// Saves the project as it is under `name` in the output folder and keeps where it went, so a test reads the timing the edit really made.
+async function saveAs(driver: Driver, saved: Saved, name: string): Promise<void> {
+  await driver.savedProject(name)
+  saved[name] = join(driver.options.outputDirectory ?? '', name)
+}
+
+async function dragOnBottomTrack(driver: Driver, from: Point, toTime: number, label: string): Promise<void> {
+  await driver.drag(from, await driver.timelinePoint(toTime, 0, TRACKS_AT_START))
+  await driver.untilUndoLabel(label)
+}
+
+async function bottomTrackAt(driver: Driver, time: number, nudge = 0): Promise<Point> {
+  const point = await driver.timelinePoint(time, 0, TRACKS_AT_START)
+  return { x: point.x + nudge, y: point.y }
+}
+
+// More edits made with the mouse and the keyboard, each exported and then undone, so a test can check the files: moving and
+// trimming on the timeline, pasting at the playhead, a picture on a higher track, rotating, cropping and dragging on the canvas,
+// a transition on a cut, separating the sound and deleting it, a fade of the sound and half speed. The project is saved after
+// each timeline edit, so the test can work out from it what each frame must show.
+async function testArrangeToOutput(driver: Driver): Promise<UiTestReport> {
+  const exported: Exported = {}
+  const saved: Saved = {}
+  // Imported first, so that every edit below is undone back to the canvas size.
+  await importPrepared(driver, 'image-red.png')
+  await placeDoubledVideo(driver)
+  await saveAs(driver, saved, 'base.json')
+  await exportAs(driver, exported, 'base.mp4')
+  await exportAs(driver, exported, 'base.wav')
+  await playheadAtHalfSecond(driver)
+  await exportAs(driver, exported, 'base.png')
+
+  // The clip is grabbed a quarter second in and dropped a second later.
+  await dragOnBottomTrack(driver, await bottomTrackAt(driver, SECOND / 4), (5 * SECOND) / 4, 'Undo Move Clip')
+  await saveAs(driver, saved, 'moved.json')
+  await exportAs(driver, exported, 'moved.mp4')
+  await exportAs(driver, exported, 'moved.wav')
+  await undoTo(driver, 'Undo Change Canvas Size')
+
+  // Each edge is dragged half way in: the start onto the playhead at half a second, the end to one second.
+  await dragOnBottomTrack(driver, await bottomTrackAt(driver, 0, EDGE_GRAB_PIXELS), SECOND / 2, 'Undo Trim Clip')
+  await saveAs(driver, saved, 'trimmed-start.json')
+  await exportAs(driver, exported, 'trimmed-start.mp4')
+  await undoTo(driver, 'Undo Change Canvas Size')
+  await dragOnBottomTrack(driver, await bottomTrackAt(driver, 2 * SECOND, -EDGE_GRAB_PIXELS), SECOND, 'Undo Trim Clip')
+  await saveAs(driver, saved, 'trimmed-end.json')
+  await exportAs(driver, exported, 'trimmed-end.mp4')
+  await undoTo(driver, 'Undo Change Canvas Size')
+
+  // Copied, then pasted with the playhead put at one second on the ruler: the clip is there, so the copy goes on the track above.
+  await selectVideo(driver)
+  driver.window.webContents.copy()
+  await sleep(SAMPLE_INTERVAL_MS)
+  const ruler = await driver.rect('timeline')
+  await driver.clickAt({ x: (await bottomTrackAt(driver, SECOND)).x, y: ruler.y + RULER_HEIGHT / 2 })
+  await driver.until(`${selector('timecode')}.textContent === '00:00:01:00'`, 'the playhead at one second')
+  driver.window.webContents.paste()
+  await driver.untilUndoLabel('Undo Paste Clip')
+  await saveAs(driver, saved, 'pasted.json')
+  await exportAs(driver, exported, 'pasted.mp4')
+  await exportAs(driver, exported, 'pasted.wav')
+  await undoTo(driver, 'Undo Change Canvas Size')
+  await playheadAtHalfSecond(driver)
+
+  // A red picture dropped at the start of the track above draws over the video.
+  await dragMedia(driver, 'image-red.png', await driver.timelinePoint(0, 1, TRACKS_AT_START))
+  await driver.untilUndoLabel('Undo Add Clip')
+  await saveAs(driver, saved, 'on-top.json')
+  await exportAs(driver, exported, 'on-top.png')
+  await undoTo(driver, 'Undo Change Canvas Size')
+
+  await selectVideo(driver)
+  await driver.typeInto('clip-rotation', '180')
+  await driver.untilUndoLabel('Undo Rotate Clip')
+  await exportAs(driver, exported, 'turned.png')
+  await undoTo(driver, 'Undo Change Canvas Size')
+
+  // Half of the 320-pixel source cropped away on the left.
+  await selectVideo(driver)
+  await driver.typeInto('clip-crop-left', '160')
+  await driver.untilUndoLabel('Undo Crop Clip')
+  await exportAs(driver, exported, 'cropped.png')
+  await undoTo(driver, 'Undo Change Canvas Size')
+
+  // Dragged from the centre of the canvas 80 canvas pixels to the right.
+  await driver.drag(await canvasPoint(driver, CANVAS_WIDTH, { x: 320, y: 180 }), await canvasPoint(driver, CANVAS_WIDTH, { x: 400, y: 180 }))
+  await driver.untilUndoLabel('Undo Move Clip')
+  await saveAs(driver, saved, 'dragged.json')
+  await exportAs(driver, exported, 'dragged.png')
+  await undoTo(driver, 'Undo Change Canvas Size')
+
+  // Cut at one second, with a fade through black dropped on the cut.
+  await splitFirstTrackAtOneSecond(driver, TRACKS_AT_START)
+  await driver.page.click('tab-transitions')
+  await driver.drag(centerOf(await driver.rect('transition-fadeBlack')), await bottomTrackAt(driver, 0.8 * SECOND))
+  await driver.untilUndoLabel('Undo Add Transition')
+  await saveAs(driver, saved, 'through-black.json')
+  await exportAs(driver, exported, 'through-black.mp4')
+  await undoTo(driver, 'Undo Split Clip')
+  await undoTo(driver, 'Undo Change Canvas Size')
+  await driver.page.click('tab-media')
+  await playheadAtHalfSecond(driver)
+
+  // The sound separated from the clip's menu, then selected on its own track and deleted.
+  await driver.rightClickAt(await bottomTrackAt(driver, SECOND / 4))
+  await driver.until(`${selector('menu-separate-audio')} !== null`, 'the clip menu')
+  await driver.page.click('menu-separate-audio')
+  await driver.untilUndoLabel('Undo Separate Video and Audio')
+  // The sound went to a track of its own; which one is read back from the saved project.
+  await saveAs(driver, saved, 'separated.json')
+  const parsed = parseProject(await readFile(saved['separated.json'] ?? '', 'utf8'))
+  if (!parsed.ok) throw new PageError(`separated.json could not be read back: ${parsed.message}`)
+  const soundTrack = parsed.project.tracks.findIndex((track) => track.clips.some((clip) => clip.type === 'audio'))
+  if (soundTrack < 0) throw new PageError('The separated project has no audio clip')
+  await driver.clickAt(await driver.timelinePoint(SECOND / 4, soundTrack, parsed.project.tracks.length))
+  await driver.press('Backspace')
+  await driver.untilUndoLabel('Undo Delete Clip')
+  await exportAs(driver, exported, 'separated.mp4')
+  await exportAs(driver, exported, 'separated.wav')
+  await undoTo(driver, 'Undo Separate Video and Audio')
+  await undoTo(driver, 'Undo Change Canvas Size')
+
+  await selectVideo(driver)
+  await driver.typeInto('clip-volumeFadeIn', '1')
+  await driver.untilUndoLabel('Undo Change Fade')
+  await exportAs(driver, exported, 'sound-fade.wav')
+  await undoTo(driver, 'Undo Change Canvas Size')
+
+  await selectVideo(driver)
+  await driver.typeInto('clip-speed', '50')
+  await driver.untilUndoLabel('Undo Change Speed')
+  await exportAs(driver, exported, 'slow.mp4')
+  await undoTo(driver, 'Undo Change Canvas Size')
+  return { exported, saved }
+}
+
 export const OUTPUT_SCENARIOS: Record<string, Scenario> = {
+  'arrange-to-output': testArrangeToOutput,
   'gif-export': testGifExport,
   wysiwyg: testWysiwyg,
   'edits-to-output': testEditsToOutput,
