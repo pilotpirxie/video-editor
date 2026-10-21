@@ -1,157 +1,55 @@
-# Playback
+# video-editor
+Free video editor for macOS on Apple silicon, written in TypeScript with Electron, React, WebGL2 and FFmpeg. Make screen tutorials and short marketing videos with a multi-track timeline, keyframes and a zoom-and-pan camera. For commandline video editor check my previous project [json-to-ffmpeg](https://github.com/pilotpirxie/json-to-ffmpeg).
 
-A free video editor for macOS on Apple silicon, made for screen tutorials and short marketing
-videos. It works fully offline.
+### Features
+* Multi-track timeline, any clip on any track
+* WYSIWYG canvas with handles to move, scale, rotate and crop
+* Keyframes with easing and motion paths
+* Zoom and pan camera, set by drawing a frame on the canvas
+* Text, callouts, arrows, highlights, spotlights, blur and pixelate
+* Transitions, effects and animation presets
+* Snapping, split, ripple edits and groups
+* Speed from 1% to 50,000% and volume keyframes
+* Export to MP4, WebM, GIF, M4A, MP3, WAV and PNG
+* Shortcuts, rebindable
+* Works fully offline
 
-- A multi-track timeline where any clip goes on any track, with snapping, split, ripple edits
-  and linked video and audio
-- A canvas that shows the exported picture, with handles to move, scale, rotate and crop
-- Keyframes with easing, motion paths, and presets that fade, pop, slide or zoom clips in and out
-- A zoom-and-pan camera over the whole picture, set by drawing a frame on the canvas
-- Text, callouts, arrows, highlights, spotlights, blur and pixelate, transitions and effects
-- Groups, volume keyframes, and speeds from 1% to 50,000%
-- Export to MP4, WebM, animated GIF, M4A, MP3, WAV or a PNG of the current frame
+![Editing a clip with keyframes and a motion path](img/s1.png)
 
-To see most of it at once, open `test/projects/demo-zoom-effects.json` with File, Open. It uses
-the recordings in `samples/`; without them its clips show as missing.
+![Callouts and other annotations](img/s2.png)
 
-## Commands
+![Effects with the Look colour grade](img/s3.png)
 
-Needs Node 24 and macOS on Apple silicon. The first build downloads the pinned FFmpeg and
-FFprobe binaries into `vendor/ffmpeg` and checks their SHA-256.
+![Zoom and pan camera](img/s4.png)
 
-| Command | What it does |
-| --- | --- |
-| `npm ci` | Installs the pinned dependencies |
-| `npm start` | Builds and opens the editor |
-| `npm run typecheck` | Strict TypeScript check of everything |
-| `npm run lint` | Unused files, exports and dependencies (knip) and duplicated code (jscpd); any finding fails |
-| `npm run test:unit` | Unit tests (time, project format, resolver, mixer, FFmpeg jobs, probe, decoding, caches, editing commands) |
-| `npm run test:engine` | Builds the app and tests it for real: golden images, preview/export parity, export to every format, export speed and memory, the harness window, split and hit-test parity, and pixels worked out by hand for the camera zoom, every transition, blur, pixelate, highlight, spotlight, each effect, callouts, arrows, styled text and groups |
-| `npm run test:editor` | Builds the app and drives the editor window with real mouse and keyboard input: layout, editing, canvas, tracks, documents in several windows, crash recovery, transport keys, fades, text, animated images, relink, the export dialog and how it holds the window, arranging by dragging (landing outline, group moves across tracks, crop fields), annotations, callouts and arrows, text styling, animation presets, groups (made, edited from the inside, taken apart), volume keyframes, the volume line and the sound of fast clips, keyframes from Properties and the motion path, effects, transitions and zoom-and-pan (added, changed and removed by mouse, in Properties and from the lane's menu), the controls (drop-down lists, groups, media tiles, wide sidebars, timeline zoom-out), the Layout group, missing fonts, canvas zoom and preview mode, changing keys in Settings, two windows sharing media and the one export at a time, names, focus rings and keyboard reach for VoiceOver, windows coming back after a crash, and the responsiveness budgets on a 4,096-clip project and on a profile without a cache |
-| `npm test` | All of the above |
-| `npm run test:acceptance` | Builds a ten-minute tutorial through the editor window and exports it at 1080p; takes several minutes and is not part of `npm test` |
-| `npm run test:stability` | An eight-hour random session of edits, playback, undo, saves and exports, and every broken test file imported; `STABILITY_HOURS` shortens it and `STABILITY_SEED` repeats a session a failure printed. Run by hand, not part of `npm test` |
-| `npm run test:extremes` | 120p and 4K projects, an 8K source, 100× speed, 4,096 clips over twenty hours, the heaviest playback, CPU at rest and the installed size (after `npm run dist`). Run by hand on an M1 with 4 GB of memory, not part of `npm test` |
-| `npm run dist` | Builds `release/Playback-<version>-arm64.dmg` |
+![Export dialog](img/s5.png)
 
-`UPDATE_GOLDEN=1 npm run test:engine` rewrites the golden images in `test/golden`.
+### Usage
+You can download bundled DMG or build from the source code.
 
-## Running the app from the command line
-
-```
-npx electron . --project test/projects/demo-four-layers.json
-npx electron . --export project.json --out video.mp4 --preset 1080p
-npx electron . --export project.json --out frame.png --at 120
-npx electron . --frames project.json --at 0,30,60 --via paused --out frames/
-npx electron . --selftest project.json --seconds 10 --report-memory
+Needs Node 24 and macOS on Apple silicon.
+```shell
+git clone https://github.com/pilotpirxie/video-editor.git
+cd video-editor
+npm ci
+npm start
 ```
 
-- `--export` renders the whole timeline in the format the extension of `--out` names: `.mp4`
-  (H.264/AAC), `.webm` (VP9/Opus), `.gif`, `.m4a`, `.mp3` or `.wav` (sound alone), or `.png`
-  (the frame `--at <number>`, at the size of the project). Presets: `120p`, `240p`, `360p`,
-  `480p`, `720p`, `1080p`, `1440p`, `4k`, `youtube-1080p`, `vertical-1080x1920`, `square-1080`.
-  `--encoder hardware` encodes an MP4 with the Mac's media engine instead of x264.
-- `--frames` writes single frames as raw RGBA. `--via paused` reads the originals by seeking,
-  as the paused preview does; `--via export` reads them in order, as an export does.
-- `--selftest` opens the dev harness, plays, pauses, scrubs and zooms through its own buttons
-  and prints what the window showed. The window opens muted and without taking focus.
-- `--uitest <scenario>` opens the editor and runs one of the scenarios in `src/main/uiTest.ts`
-  and `src/main/uiScenarios.ts`, with `--media <folder>` for files to import and `--out <folder>`
-  for saved projects and a picture of the window as the scenario left it. It needs
-  `--user-data-dir=<empty folder>`: a UI test restores recovery files without asking, so it
-  refuses to run on the profile that holds your own work.
+## Video, audio and image test samples
+All samples are from [Pixabay](https://pixabay.com/). All samples are licensed under [Pixabay License](https://pixabay.com/service/license/).
 
-## Keys
+* https://pixabay.com/videos/cow-ruminant-pasture-meadow-nature-186195/
+* https://pixabay.com/videos/book-pages-literature-beach-ocean-185096/
+* https://pixabay.com/videos/flower-peony-bee-insect-pollinate-165065/
+* https://pixabay.com/videos/kangaroos-marsupials-mammal-181314/
+* https://pixabay.com/videos/flower-dandelion-wild-flowers-72763/
+* https://pixabay.com/videos/highland-cows-cows-cattle-scotland-65903/
+* https://pixabay.com/videos/robin-bird-forest-nature-spring-21723/
+* https://pixabay.com/music/beats-weeknds-122592/
+* https://pixabay.com/music/future-bass-ever-flowing-12277/
 
-Shortcuts follow Camtasia for Mac. Those that are a single key work whenever no text field has
-the focus; `src/editor/shortcuts.ts` is the table. Settings (Cmd+,) changes them, up to two keys
-for each action, and flags keys that two actions share; the keys of New, Open, Save, Close,
-Undo, the clipboard, Select All and Quit stay as every Mac app has them. The menus and tooltips
-show the keys in use.
 
-| Keys | What they do |
-| --- | --- |
-| Space | Play or pause |
-| `,` `.` or ← → | One frame back or forward |
-| Ctrl+Shift+`,` `.` | Fifteen frames back or forward |
-| Ctrl+`,` `.` | Previous or next clip edge |
-| Cmd+Return, Cmd+Shift+Return | Start or end of the timeline |
-| J, K, L | Backwards, stop, forwards; J or L again doubles the speed, up to 8× (only normal forward speed has sound) |
-| Cmd+Shift+`=` `-` `0` | Timeline zoom in, out, fit |
-| Cmd+T, Cmd+Shift+T | Split the selected clips, or every clip under the playhead |
-| Delete, Cmd+Delete | Delete, ripple delete |
-| Cmd+D | Duplicate the selected clips |
-| Cmd+G, Cmd+U | Group the selected clips, ungroup the selected group |
-| Cmd+Shift+F | Preview mode: only the canvas and the transport |
-| Esc | Leave preview mode; let go of the selection; with nothing selected, leave the open group |
-| Cmd+E, Cmd+I | Export, import media |
-| In the Media list (Tab reaches it): arrows, Shift+arrows, Cmd+arrows, Space, Return | Pick the next file, add the run to it, only move, add or drop the file in focus, place the picked files at the playhead on a new top track |
-
-## Project files
-
-A project is one JSON file saved as `.pbproj` (older `.json` projects still open): a canvas, a media list and tracks of clips, bottom track first.
-Double-clicking a `.pbproj` file in Finder opens it in the installed app.
-Times are whole ticks of 1/24,000,000 s; positions on the timeline are multiples of 100 ticks.
-`test/projects` holds the reference projects; `src/shared/project.ts` is the format.
-
-Besides video, audio, image and text clips there are `blur` clips (blur or pixelate what is
-beneath, inside a rectangle or ellipse) and `highlight` clips (tint what is beneath like a
-marker pen, or as a spotlight dim everything outside the shape). A clip with a picture can
-carry `effects`, applied first to last; any visual clip can carry `transitionIn` and
-`transitionOut`, and the one at the start of a clip that touches the clip before it is the
-transition on their cut. `camera` at the top level lists the zooms: each is the view reached at
-its time after a move of its `duration`. Lengths in all of these are canvas pixels.
-
-A `callout` clip is a filled shape with words in it (`shape`, `width`, `height`, `fill`,
-`borderColor`, `borderWidth`, and for the two bubbles a `tail` tip measured from the middle of
-the box). An `arrow` clip is a line of `length` and `thickness` through the middle of the
-clip, with a `startHead` and an `endHead`; a line is an arrow without heads. Text and callouts
-take `font.weight`, `lineSpacing`, `outline` and `shadow`; a text clip also takes `background`
-and `boxWidth`, the width its words wrap at. Any visual clip can carry `animationIn` and
-`animationOut`, a preset with a `duration`. A `group` clip holds `tracks` of its own, in a time
-of its own that it shows from `contentStart` on, with its members placed around the middle of
-the group. On a video or audio clip `changesPitch` lets the pitch follow the speed, and
-`hasFastSound` gives a clip faster than 400 % its sound; `keyframes.volume` holds the volume
-keyframes. All of these keys are optional, and the format version is still 1.
-
-## Where things are
-
-| Folder | What lives there |
-| --- | --- |
-| `src/shared` | Project format, time units and the message types between processes |
-| `src/engine` | Resolver, compositor, mixer and exporter; knows nothing about the UI |
-| `src/editor` | Editing commands, snapping and geometry as pure functions on a project |
-| `src/renderer` | The editor window (React), the timeline canvas and the dev harness |
-| `src/media` | The media process: probing, decoding, preview copies, saving project files |
-| `src/main` | Electron main process: windows, menu, dialogs, recovery, test drivers |
-
-Preview copies, sound and waveforms are kept in `cache/v2` in the app's data folder. Preview
-copies and sound are cut into 30-second segments, built outward from the playhead; all windows
-share one 10 GB limit, and the segments used longest ago are removed first. Everything there
-can be deleted and is made again when needed.
-
-Crashes of the main process, a window's page, the GPU process or a helper process are written
-one JSON line each to `logs/crash.log` in the same data folder; nothing leaves the Mac.
-
-## Test media
-
-`npm test` generates its own media into `test/media/generated` (every supported container and
-codec, alpha, 8K, 120 and 240 fps, variable frame rate, HLG and PQ, twenty hours of sound, ten
-minutes of 1080p for a 50× export, broken files). Real recordings dropped into
-`samples/` (not in the repository) are used by the demo projects and the benchmarks, which are
-skipped without them.
-Recordings that cannot be synthesised (OBS captures, iPhone HDR clips) are probed and decoded
-by the tests when they are placed in `test/media/real`.
-
-## Installing
-
-The DMG is ad-hoc signed, so macOS blocks the first launch: open Playback once, then choose Open
-Anyway in System Settings, Privacy & Security.
-
-## Licence
-
-Playback is free software under the GNU General Public License version 3 or later
-([LICENSE](LICENSE)). The bundled FFmpeg is under GPLv3 too, and the source of that build is
-published with each release. `npm run dist` copies the licences of FFmpeg, Electron, Chromium,
-React, Vite and Rolldown into `Playback.app/Contents/Resources/licenses`.
+### License
+```
+GPL-3.0-or-later
+```
