@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { allClips } from '../../src/editor/clips.js'
 import { exportSize } from '../../src/shared/exportPresets.js'
 import { parseProject, projectDuration, type Clip, type Project, type VideoClip } from '../../src/shared/project.js'
-import { TICKS_PER_SAMPLE, TICKS_PER_SECOND } from '../../src/shared/time.js'
-import { MEDIA_DIRECTORY, blockColorError, bundledFfmpeg, cropPicture, decodedAudio, pictureAt, pixelAt, probeExport, projectPath, readBarcode, renderFrames, runApp, sameBytes, scratchDirectory, uiTest, type Picture, type Size } from '../helpers.js'
+import { TICKS_PER_SAMPLE, TICKS_PER_SECOND, frameDuration } from '../../src/shared/time.js'
+import { MEDIA_DIRECTORY, blockColorError, bundledFfmpeg, cropPicture, decodedAudio, pictureAt, pixelAt, probeExport, projectPath, psnr, readBarcode, renderFrames, runApp, sameBytes, scratchDirectory, uiTest, type FrameRequest, type Picture, type Size } from '../helpers.js'
 
 const ffmpeg = bundledFfmpeg()
 const scratch = scratchDirectory('outputs')
@@ -33,8 +34,35 @@ type WysiwygReport = {
   playing: PlayingCapture[]
 }
 
+type PlaybackReport = {
+  canvas: Size
+  playing: PlayingCapture[]
+}
+
+type ZoomedReport = PlaybackReport & { paused: PausedCapture[] }
+
+type StageCapture = PausedCapture & { project: string }
+
+type EditsReport = PlaybackReport & {
+  stages: StageCapture[]
+  final: string
+  movie: string
+}
+
+function isPlaybackReport(value: Record<string, unknown>): value is PlaybackReport & Record<string, unknown> {
+  return typeof value.canvas === 'object' && Array.isArray(value.playing)
+}
+
+function isZoomedReport(value: Record<string, unknown>): value is ZoomedReport & Record<string, unknown> {
+  return isPlaybackReport(value) && Array.isArray(value.paused)
+}
+
 function isWysiwygReport(value: Record<string, unknown>): value is WysiwygReport & Record<string, unknown> {
-  return Array.isArray(value.paused) && Array.isArray(value.playing) && typeof value.still === 'string' && typeof value.movie === 'string'
+  return isZoomedReport(value) && typeof value.still === 'string' && typeof value.movie === 'string'
+}
+
+function isEditsReport(value: Record<string, unknown>): value is EditsReport & Record<string, unknown> {
+  return isPlaybackReport(value) && Array.isArray(value.stages) && typeof value.final === 'string' && typeof value.movie === 'string'
 }
 
 function pictureOf(bytes: Buffer, size: Size): Picture {
@@ -85,27 +113,37 @@ function loadProject(name: string): Project {
   return parsed.project
 }
 
-const reports = new Map<string, Promise<WysiwygReport>>()
+const reports = new Map<string, Promise<Record<string, unknown>>>()
 
-function wysiwyg(name: string): Promise<WysiwygReport> {
-  let report = reports.get(name)
+function scenarioReport(scenario: string, name: string, extraArgs: readonly string[] = []): Promise<Record<string, unknown>> {
+  const key = `${scenario} ${name}`
+  let report = reports.get(key)
   if (report === undefined) {
-    report = uiTest('wysiwyg', [SRGB_SCREEN, '--project', projectPath(name), '--out', join(scratch, name)]).then((found) => {
-      if (!isWysiwygReport(found)) throw new Error(`Unexpected report: ${JSON.stringify(found)}`)
-      return found
-    })
-    reports.set(name, report)
+    report = uiTest(scenario, [SRGB_SCREEN, ...extraArgs, '--out', join(scratch, scenario, name)])
+    reports.set(key, report)
   }
   return report
 }
 
-function closestFrames(picture: Picture, exported: readonly Picture[], from: number, to: number): { inRange: number; elsewhere: number } {
-  const framesInRange = exported.slice(from, to + 1)
+async function wysiwyg(name: string): Promise<WysiwygReport> {
+  const report = await scenarioReport('wysiwyg', name, ['--project', projectPath(name)])
+  if (!isWysiwygReport(report)) throw new Error(`Unexpected report: ${JSON.stringify(report)}`)
+  return report
+}
+
+type FrameAt = (frame: number) => Picture | undefined
+
+function closestFrames(picture: Picture, frameAt: FrameAt, from: number, to: number): { inRange: number; elsewhere: number } {
+  const framesInRange: Picture[] = []
+  for (let frame = from; frame <= to; frame++) {
+    const inRangeFrame = frameAt(frame)
+    if (inRangeFrame !== undefined) framesInRange.push(inRangeFrame)
+  }
   let inRange = Infinity
   for (const frame of framesInRange) inRange = Math.min(inRange, blockColorError(picture, frame, PLAYING_BLOCK))
   let elsewhere = Infinity
-  for (let frame = Math.max(0, from - NEIGHBOUR_FRAMES); frame <= Math.min(exported.length - 1, to + NEIGHBOUR_FRAMES); frame++) {
-    const candidate = exported[frame]
+  for (let frame = from - NEIGHBOUR_FRAMES; frame <= to + NEIGHBOUR_FRAMES; frame++) {
+    const candidate = frameAt(frame)
     if (candidate === undefined || (frame >= from && frame <= to)) continue
     let isSamePicture = false
     for (const shown of framesInRange) {
@@ -130,7 +168,7 @@ async function expectPlaybackLikeExport(name: string): Promise<void> {
     const from = frameOf(sample.timecodeBefore, perSecond)
     const to = frameOf(sample.timecodeAfter, perSecond)
     if (from >= exported.length) continue
-    const { inRange, elsewhere } = closestFrames(captureOf(sample), exported, from, to)
+    const { inRange, elsewhere } = closestFrames(captureOf(sample), (frame) => exported[frame], from, to)
     const where = `${sample.file} at ${sample.timecodeBefore}–${sample.timecodeAfter}`
     expect(inRange, `${where} shows another frame`).toBeLessThanOrEqual(elsewhere + TIE)
     expect(inRange, `${where} differs from the export`).toBeLessThanOrEqual(MAX_PLAYING_BLOCK_ERROR)
@@ -158,6 +196,7 @@ const PROJECTS = [
   '21-difficult-sources',
   '23-weird',
   '24-cache-pressure',
+  '25-no-video',
 ]
 
 const PAUSED_ONLY = ['10-alpha']
@@ -598,5 +637,251 @@ describe('GIF from the export dialog', () => {
     expect(probed.video).toMatchObject({ codec_name: 'gif', width: String(size.width), height: String(size.height), r_frame_rate: `${rate}/1`, nb_frames: String(2 * rate) })
     const frames = await decodedVideo(path, size)
     expect(frames.map(readBarcode)).toEqual(Array.from({ length: 2 * rate }, (_, frame) => Math.floor((frame * SOURCE_FRAMES_PER_SECOND) / rate)))
+  })
+})
+
+const MAX_PLAYING_RENDER_ERROR = 3
+// The camera magnifies the playback copy up to 3×, so its JPEG chroma shows; positions still match.
+const MAX_MAGNIFIED_PLAYING_ERROR = 8.5
+const MAGNIFIED_PROXY_PROJECTS = ['13-camera']
+const MAX_PLAYING_BIAS = 1.75
+const MAX_EXPORT_RENDER_ERROR = 1.75
+const MAX_EXPORT_BIAS = 2
+const MIN_EXPORT_PSNR = 21.5
+const ALIGNMENT_TIE_DB = 0.1
+const SAMPLES_PER_RENDER = 12
+const MOVIE_FRAMES_PER_RENDER = 40
+const MAX_MOVIE_FRAMES_CHECKED = 150
+const MIN_PLAYED_FRACTION = 0.7
+const ONE_PIXEL_SHIFTS = [
+  { x: 1, y: 0 },
+  { x: -1, y: 0 },
+  { x: 0, y: 1 },
+  { x: 0, y: -1 },
+]
+
+type Shift = { x: number; y: number }
+
+function hasVideo(project: Project): boolean {
+  for (const clip of allClips(project.tracks)) {
+    if (clip.type === 'video') return true
+  }
+  return false
+}
+
+function frameCountOf(project: Project): number {
+  return Math.ceil(projectDuration(project) / frameDuration(project.canvas.frameRate))
+}
+
+async function renderedFrames(project: string, frames: Iterable<number>, size?: Size): Promise<Map<number, Picture>> {
+  const wanted = [...new Set(frames)].sort((a, b) => a - b)
+  const request: FrameRequest = { via: 'export', frames: wanted }
+  if (size !== undefined) request.size = size
+  const rendered = await renderFrames(project, request)
+  const pictures = new Map<number, Picture>()
+  for (const [index, frame] of wanted.entries()) pictures.set(frame, pictureAt(rendered, index))
+  return pictures
+}
+
+// Every shift compares the same pixels of the shown picture, its border left out, so an edge row never decides it.
+function shiftedPsnr(shown: Picture, rendered: Picture, shift: Shift): number {
+  const width = shown.width - 2
+  const height = shown.height - 2
+  return psnr(cropPicture(shown, 1, 1, width, height), cropPicture(rendered, 1 + shift.x, 1 + shift.y, width, height))
+}
+
+function expectAligned(shown: Picture, rendered: Picture, where: string): void {
+  const aligned = shiftedPsnr(shown, rendered, { x: 0, y: 0 })
+  for (const shift of ONE_PIXEL_SHIFTS) expect(shiftedPsnr(shown, rendered, shift), `${where} lines up better ${shift.x},${shift.y} px away`).toBeLessThanOrEqual(aligned + ALIGNMENT_TIE_DB)
+}
+
+type SampleFrames = { from: number; to: number }
+
+function sampleFrames(sample: PlayingCapture, perSecond: number, frameCount: number): SampleFrames {
+  return { from: frameOf(sample.timecodeBefore, perSecond), to: Math.min(frameCount - 1, frameOf(sample.timecodeAfter, perSecond)) }
+}
+
+function expectSampleLikeRender(sample: PlayingCapture, frames: SampleFrames, rendered: Map<number, Picture>, maxError: number | 'exact'): void {
+  const shown = captureOf(sample)
+  const where = `${sample.file} at ${sample.timecodeBefore}–${sample.timecodeAfter}`
+  if (maxError === 'exact') {
+    let isRendered = false
+    for (let frame = frames.from; frame <= frames.to; frame++) {
+      const picture = rendered.get(frame)
+      if (picture !== undefined && sameBytes(shown, picture)) isRendered = true
+    }
+    expect(isRendered, `${where} equals the render of one of its frames`).toBe(true)
+    return
+  }
+  const { inRange, elsewhere } = closestFrames(shown, (frame) => rendered.get(frame), frames.from, frames.to)
+  expect(inRange, `${where} shows another frame`).toBeLessThanOrEqual(elsewhere + TIE)
+  // Block means cannot tell two frames of a slow wipe apart, so the pixels pick which of them is shown.
+  let best: Picture | undefined
+  let bestQuality = -Infinity
+  for (let frame = frames.from; frame <= frames.to; frame++) {
+    const picture = rendered.get(frame)
+    if (picture === undefined) continue
+    const quality = psnr(shown, picture)
+    if (quality <= bestQuality) continue
+    bestQuality = quality
+    best = picture
+  }
+  if (best === undefined) throw new Error(`Nothing was rendered for ${where}`)
+  expect(blockColorError(shown, best, BLOCK), `${where} differs from the render`).toBeLessThanOrEqual(maxError)
+  for (const bias of channelBias(shown, best)) expect(bias, `the colour of ${where}`).toBeLessThanOrEqual(MAX_PLAYING_BIAS)
+  expectAligned(shown, best, where)
+}
+
+async function expectPlaybackLikeRender(project: string, samples: readonly PlayingCapture[], size?: Size): Promise<void> {
+  const loaded = loadProject(project)
+  const perSecond = framesPerSecond(loaded)
+  const frameCount = frameCountOf(loaded)
+  let maxError: number | 'exact' = MAX_PLAYING_RENDER_ERROR
+  if (!hasVideo(loaded)) maxError = 'exact'
+  else if (MAGNIFIED_PROXY_PROJECTS.includes(project)) maxError = MAX_MAGNIFIED_PLAYING_ERROR
+  const shownSamples: PlayingCapture[] = []
+  for (const sample of samples) {
+    if (frameOf(sample.timecodeBefore, perSecond) < frameCount) shownSamples.push(sample)
+  }
+  for (let start = 0; start < shownSamples.length; start += SAMPLES_PER_RENDER) {
+    const chunk = shownSamples.slice(start, start + SAMPLES_PER_RENDER)
+    const needed: number[] = []
+    for (const sample of chunk) {
+      const { from, to } = sampleFrames(sample, perSecond, frameCount)
+      for (let frame = Math.max(0, from - NEIGHBOUR_FRAMES); frame <= Math.min(frameCount - 1, to + NEIGHBOUR_FRAMES); frame++) needed.push(frame)
+    }
+    const rendered = await renderedFrames(project, needed, size)
+    for (const sample of chunk) expectSampleLikeRender(sample, sampleFrames(sample, perSecond, frameCount), rendered, maxError)
+  }
+}
+
+async function expectPausedLikeRender(project: string, paused: readonly PausedCapture[]): Promise<void> {
+  const perSecond = framesPerSecond(loadProject(project))
+  for (const capture of paused) {
+    const size = { width: capture.width, height: capture.height }
+    const [drawn] = await renderFrames(project, { via: 'paused', frames: [frameOf(capture.timecode, perSecond)], size })
+    if (drawn === undefined) throw new Error(`The engine drew nothing at ${capture.timecode}`)
+    expect(sameBytes(captureOf(capture), drawn), `${capture.file} at ${capture.timecode} equals the engine at ${size.width}x${size.height}`).toBe(true)
+  }
+}
+
+async function expectMovieLikeRender(project: string, movie: readonly Picture[]): Promise<void> {
+  expect(movie.length, 'frames in the MP4').toBe(frameCountOf(loadProject(project)))
+  const step = Math.ceil(movie.length / MAX_MOVIE_FRAMES_CHECKED)
+  const checked: number[] = []
+  for (let frame = 0; frame < movie.length; frame += step) checked.push(frame)
+  for (let start = 0; start < checked.length; start += MOVIE_FRAMES_PER_RENDER) {
+    const chunk = checked.slice(start, start + MOVIE_FRAMES_PER_RENDER)
+    const needed: number[] = []
+    for (const frame of chunk) {
+      for (let neighbour = Math.max(0, frame - 1); neighbour <= Math.min(movie.length - 1, frame + 1); neighbour++) needed.push(neighbour)
+    }
+    const rendered = await renderedFrames(project, needed)
+    for (const frame of chunk) {
+      const exported = pictureAt(movie, frame)
+      const drawn = rendered.get(frame)
+      if (drawn === undefined) throw new Error(`Frame ${frame} was not rendered`)
+      const quality = psnr(exported, drawn)
+      expect(quality, `the MP4 at frame ${frame}`).toBeGreaterThanOrEqual(MIN_EXPORT_PSNR)
+      expect(blockColorError(exported, drawn, BLOCK), `the MP4 at frame ${frame}`).toBeLessThanOrEqual(MAX_EXPORT_RENDER_ERROR)
+      for (const bias of channelBias(exported, drawn)) expect(bias, `the colour of the MP4 at frame ${frame}`).toBeLessThanOrEqual(MAX_EXPORT_BIAS)
+      for (const neighbour of [frame - 1, frame + 1]) {
+        const other = rendered.get(neighbour)
+        if (other === undefined || blockColorError(drawn, other, PLAYING_BLOCK) <= SAME_PICTURE_MAX_ERROR) continue
+        expect(quality, `the MP4 at frame ${frame} looks more like frame ${neighbour}`).toBeGreaterThan(psnr(exported, other))
+      }
+    }
+  }
+}
+
+describe('playback and export against the lossless render', () => {
+  it.each(PROJECTS)('%s: playback shows the frame of its timecode, in the colours and at the place the export renders it', async (name) => {
+    const report = await wysiwyg(name)
+    await expectPlaybackLikeRender(name, report.playing)
+  })
+
+  it.each(PROJECTS)('%s: every exported frame is the rendered frame of its time', async (name) => {
+    const report = await wysiwyg(name)
+    await expectMovieLikeRender(name, await decodedVideo(report.movie, report.canvas))
+  })
+})
+
+const PLAYTHROUGH = [
+  { project: '14-transitions', minSamples: MIN_PLAYING_SAMPLES },
+  { project: '20-groups', minSamples: MIN_PLAYING_SAMPLES },
+  { project: '21-difficult-sources', minSamples: MIN_PLAYING_SAMPLES },
+  { project: '25-no-video', minSamples: MIN_PLAYING_SAMPLES },
+  { project: '10-alpha', minSamples: 3 },
+]
+
+describe('playing a whole project shows what the export renders', () => {
+  it.each(PLAYTHROUGH)('$project: from the first frame to the last', async ({ project, minSamples }) => {
+    const report = await scenarioReport('playthrough', project, ['--project', projectPath(project)])
+    if (!isPlaybackReport(report)) throw new Error(`Unexpected report: ${JSON.stringify(report)}`)
+    const loaded = loadProject(project)
+    const perSecond = framesPerSecond(loaded)
+    expect(report.playing.length).toBeGreaterThanOrEqual(minSamples)
+    const firstFrame = frameOf(report.playing[0]?.timecodeBefore ?? '', perSecond)
+    const lastFrame = frameOf(report.playing.at(-1)?.timecodeAfter ?? '', perSecond)
+    expect((lastFrame - firstFrame) / frameCountOf(loaded), 'the share of the project played').toBeGreaterThanOrEqual(MIN_PLAYED_FRACTION)
+    await expectPlaybackLikeRender(project, report.playing)
+  })
+})
+
+const ZOOMED = [
+  { scenario: 'wysiwyg-50', project: '15-blur-highlight' },
+  { scenario: 'wysiwyg-50', project: '22-timelapse' },
+  { scenario: 'wysiwyg-fit', project: '02-mosaic' },
+  { scenario: 'wysiwyg-fit', project: '14-transitions' },
+  { scenario: 'wysiwyg-fit', project: '12-4k-canvas' },
+]
+
+async function zoomed(scenario: string, project: string): Promise<ZoomedReport> {
+  const report = await scenarioReport(scenario, project, ['--project', projectPath(project)])
+  if (!isZoomedReport(report)) throw new Error(`Unexpected report: ${JSON.stringify(report)}`)
+  return report
+}
+
+describe('a preview smaller or larger than the canvas shows what an export at its size renders', () => {
+  it.each(ZOOMED)('$project, $scenario: the paused preview equals the engine', async ({ scenario, project }) => {
+    const report = await zoomed(scenario, project)
+    await expectPausedLikeRender(project, report.paused)
+  })
+
+  it.each(ZOOMED)('$project, $scenario: playback shows what the export renders', async ({ scenario, project }) => {
+    const report = await zoomed(scenario, project)
+    const [first] = report.playing
+    if (first === undefined) throw new Error('Nothing was captured while playing')
+    expect(report.playing.length).toBeGreaterThanOrEqual(MIN_PLAYING_SAMPLES)
+    await expectPlaybackLikeRender(project, report.playing, { width: first.width, height: first.height })
+  })
+})
+
+describe('edits made on the canvas and in Properties play back and export as they were made', () => {
+  let report: EditsReport | undefined
+
+  function edits(): EditsReport {
+    if (report === undefined) throw new Error('The edits were not made')
+    return report
+  }
+
+  it('moves, resizes, turns, fades and keyframes the video, lays a picture over it, adds a transition and a title', async () => {
+    const found = await scenarioReport('edits-to-playback', 'edits', ['--media', MEDIA_DIRECTORY])
+    if (!isEditsReport(found)) throw new Error(`Unexpected report: ${JSON.stringify(found)}`)
+    report = found
+    expect(report.stages.map((stage) => stage.file.slice(stage.file.lastIndexOf('/') + 1))).toEqual(['moved.rgba', 'properties.rgba', 'keyframed.rgba', 'overlay.rgba', 'transition.rgba', 'titled.rgba'])
+  })
+
+  it('shows each edit, paused, as the engine renders the saved project', async () => {
+    for (const stage of edits().stages) await expectPausedLikeRender(stage.project, [stage])
+  })
+
+  it('plays the edited project as the export renders it, though it was played before the edits', async () => {
+    expect(edits().playing.length).toBeGreaterThanOrEqual(MIN_PLAYING_SAMPLES)
+    await expectPlaybackLikeRender(edits().final, edits().playing)
+  })
+
+  it('exports every frame of the edited project as rendered', async () => {
+    await expectMovieLikeRender(edits().final, await decodedVideo(edits().movie, edits().canvas))
   })
 })

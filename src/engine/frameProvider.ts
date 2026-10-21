@@ -30,7 +30,9 @@ type OpenStream = {
 export type FrameProvider = {
   itemsFor(layers: readonly Layer[], quality: FrameQuality, outputScale: number, signal?: AbortSignal): Promise<DrawItem[]>
   itemsNow(layers: readonly Layer[], outputScale: number): { items: DrawItem[]; lateLayers: number }
-  prepare(layers: readonly Layer[], outputScale: number): Promise<void>
+  prepare(layers: readonly Layer[], outputScale: number): Promise<boolean>
+  keepNextFrame(layers: readonly Layer[], outputScale: number): void
+  hasRoomAhead(): boolean
   prefetchStreams(layers: readonly Layer[]): void
   setCacheShare(share: number): void
   collect(): void
@@ -234,9 +236,23 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     }
   }
 
+  // Playback starts from these, so a video whose playback copy is not made yet is held at its paused picture rather than left out.
+  function holdPausedVideo(layers: readonly Layer[], loaded: readonly (Picture | undefined)[]): void {
+    const pausedClips = new Set<string>()
+    for (const [index, layer] of layers.entries()) {
+      pausedClips.add(layer.clipId)
+      const picture = loaded[index]
+      if (layer.kind === 'video' && picture !== undefined) show(layer.clipId, picture)
+    }
+    for (const clipId of [...lastShown.keys()]) {
+      if (!pausedClips.has(clipId)) forgetShown(clipId)
+    }
+  }
+
   async function itemsFor(layers: readonly Layer[], quality: FrameQuality, outputScale: number, signal?: AbortSignal): Promise<DrawItem[]> {
     if (quality === 'stream') await closeEndedStreams(layers)
     const loaded = await Promise.all(layers.map((layer) => (hasPicture(layer) ? pictureFor(layer, quality, outputScale, signal) : undefined)))
+    if (quality === 'full') holdPausedVideo(layers, loaded)
     const items: DrawItem[] = []
     for (const [index, layer] of layers.entries()) {
       const picture = loaded[index]
@@ -246,10 +262,10 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     return items
   }
 
-  async function prepareOne(layer: Layer, outputScale: number): Promise<void> {
-    if (!hasPicture(layer)) return
+  async function prepareOne(layer: Layer, outputScale: number): Promise<boolean> {
+    if (!hasPicture(layer)) return true
     const key = playbackKey(layer, outputScale)
-    if (pictures.get(key) !== undefined) return
+    if (pictures.get(key) !== undefined) return true
     try {
       if (layer.kind === 'video') {
         await cached(key, () => requirePreview(layer))
@@ -257,12 +273,24 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
         await pictureFor(layer, 'preview', outputScale, undefined)
       }
     } catch (error) {
-      if (!(error instanceof PreviewNotReady)) logError('Could not load a picture for playback', error, { clipId: layer.clipId })
+      if (error instanceof PreviewNotReady) return false
+      logError('Could not load a picture for playback', error, { clipId: layer.clipId })
     }
+    return true
   }
 
-  async function prepare(layers: readonly Layer[], outputScale: number): Promise<void> {
-    await Promise.all(layers.map((layer) => prepareOne(layer, outputScale)))
+  async function prepare(layers: readonly Layer[], outputScale: number): Promise<boolean> {
+    const readiness = await Promise.all(layers.map((layer) => prepareOne(layer, outputScale)))
+    return readiness.every((isReady) => isReady)
+  }
+
+  // The next frame's pictures stay even over the cache limit; under memory pressure the limit can be smaller than one frame.
+  function keepNextFrame(layers: readonly Layer[], outputScale: number): void {
+    const keys = new Set<string>()
+    for (const layer of layers) {
+      if (hasPicture(layer)) keys.add(playbackKey(layer, outputScale))
+    }
+    pictures.keep(keys)
   }
 
   async function requirePreview(layer: VideoLayer): Promise<Picture> {
@@ -319,5 +347,5 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     collect()
   }
 
-  return { itemsFor, itemsNow, prepare, prefetchStreams, setCacheShare, collect, closeStreams, clear }
+  return { itemsFor, itemsNow, prepare, keepNextFrame, hasRoomAhead: pictures.hasRoom, prefetchStreams, setCacheShare, collect, closeStreams, clear }
 }

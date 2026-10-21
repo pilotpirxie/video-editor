@@ -50,9 +50,19 @@ async function capturePreview(driver: Driver, name: string): Promise<Captured> {
 }
 
 const SCRUB_POINTS = [0.23, 0.51, 0.77]
-const PLAYING_SAMPLES = 24
 const SAMPLE_INTERVAL_MS = 60
-const LONGEST_PLAY_MS = 3000
+const PLAYTHROUGH_INTERVAL_MS = 200
+const PLAYTHROUGH_MIN_SAMPLES = 12
+const MILLISECONDS = 1000
+const PERCENT = 100
+
+type PlaybackLimits = {
+  samples: number
+  longestMs: number
+  intervalMs: number
+}
+
+const WYSIWYG_PLAYBACK: PlaybackLimits = { samples: 24, longestMs: 3000, intervalMs: SAMPLE_INTERVAL_MS }
 
 async function timecodeText(driver: Driver): Promise<string> {
   return driver.page.text('timecode')
@@ -78,32 +88,45 @@ type PausedCapture = Captured & { timecode: string }
 
 type PlayingCapture = Captured & { timecodeBefore: string; timecodeAfter: string }
 
-async function capturePlayback(driver: Driver): Promise<PlayingCapture[]> {
+async function capturePlayback(driver: Driver, limits: PlaybackLimits): Promise<PlayingCapture[]> {
   const samples: PlayingCapture[] = []
   const startedAt = Date.now()
   await driver.press('Space')
   await driver.until(`${selector('play')}.getAttribute('aria-label') === 'Pause'`, 'playback to start')
-  while (samples.length < PLAYING_SAMPLES && Date.now() - startedAt < LONGEST_PLAY_MS && (await isPlaying(driver))) {
+  while (samples.length < limits.samples && Date.now() - startedAt < limits.longestMs && (await isPlaying(driver))) {
     const timecodeBefore = await timecodeText(driver)
     const captured = await capturePreview(driver, `playing-${samples.length}`)
     const timecodeAfter = await timecodeText(driver)
     samples.push({ ...captured, timecodeBefore, timecodeAfter })
-    await sleep(SAMPLE_INTERVAL_MS)
+    await sleep(limits.intervalMs)
   }
   if (await isPlaying(driver)) await driver.press('Space')
   await driver.until(`${selector('play')}.getAttribute('aria-label') === 'Play'`, 'playback to stop')
   return samples
 }
 
-async function testWysiwyg(driver: Driver): Promise<UiTestReport> {
-  await fullQualityFrame(driver, 0)
-  await driver.until(`document.querySelector('.library-item .badge.warning') === null`, 'the media to be prepared')
-  const canvas = { width: Number(await driver.value('canvas-width')), height: Number(await driver.value('canvas-height')) }
-  await pick(driver, 'canvas-zoom', '100')
-  await driver.until(`Math.round(${selector('preview')}.getBoundingClientRect().width * devicePixelRatio) === ${canvas.width} && ${selector('timecode')}.dataset.fullQuality === 'true'`, 'the picture at 100%')
-  await driver.page.click('timeline-zoom-fit')
-  const seconds = await projectSeconds(driver)
+function playthroughLimits(seconds: number): PlaybackLimits {
+  const longestMs = (seconds + 1) * MILLISECONDS
+  return { samples: Infinity, longestMs, intervalMs: Math.min(PLAYTHROUGH_INTERVAL_MS, (seconds * MILLISECONDS) / PLAYTHROUGH_MIN_SAMPLES) }
+}
 
+async function canvasSize(driver: Driver): Promise<{ width: number; height: number }> {
+  return { width: Number(await driver.value('canvas-width')), height: Number(await driver.value('canvas-height')) }
+}
+
+async function showAtZoom(driver: Driver, zoom: string): Promise<void> {
+  const canvas = await canvasSize(driver)
+  await pick(driver, 'canvas-zoom', zoom)
+  const isAtZoom = zoom === 'fit' ? 'true' : `Math.round(${selector('preview')}.getBoundingClientRect().width * devicePixelRatio) === ${(canvas.width * Number(zoom)) / PERCENT}`
+  await driver.until(`${isAtZoom} && ${selector('timecode')}.dataset.fullQuality === 'true'`, `the picture at ${zoom}`)
+}
+
+async function untilMediaPrepared(driver: Driver): Promise<void> {
+  await driver.until(`document.querySelector('.library-item .badge.warning') === null`, 'the media to be prepared')
+}
+
+async function pausedCaptures(driver: Driver): Promise<PausedCapture[]> {
+  const seconds = await projectSeconds(driver)
   const paused: PausedCapture[] = []
   const ruler = await driver.rect('timeline')
   for (const point of SCRUB_POINTS) {
@@ -115,6 +138,17 @@ async function testWysiwyg(driver: Driver): Promise<UiTestReport> {
   paused.push({ ...(await capturePreview(driver, `paused-${paused.length}`)), timecode: atEnd })
   const atStart = await pausedAfter(driver, () => driver.press('Return', ['meta']))
   paused.push({ ...(await capturePreview(driver, `paused-${paused.length}`)), timecode: atStart })
+  return paused
+}
+
+async function testWysiwyg(driver: Driver, zoom = '100'): Promise<UiTestReport> {
+  await fullQualityFrame(driver, 0)
+  await untilMediaPrepared(driver)
+  const canvas = await canvasSize(driver)
+  await showAtZoom(driver, zoom)
+  await driver.page.click('timeline-zoom-fit')
+  const paused = await pausedCaptures(driver)
+  if (zoom !== '100') return { canvas, zoom, paused, playing: await capturePlayback(driver, WYSIWYG_PLAYBACK) }
 
   await openExportDialog(driver)
   await pick(driver, 'export-format', 'png')
@@ -125,8 +159,22 @@ async function testWysiwyg(driver: Driver): Promise<UiTestReport> {
   const movie = await startExport(driver, { fileName: 'movie.mp4', preset: `${canvas.height}p`, quality: 'high', hasAudio: true })
   await untilExported(driver, 'movie.mp4')
 
-  const playing = await capturePlayback(driver)
-  return { canvas, paused, still, movie, playing }
+  const playing = await capturePlayback(driver, WYSIWYG_PLAYBACK)
+  return { canvas, zoom, paused, still, movie, playing }
+}
+
+async function testPlaythrough(driver: Driver): Promise<UiTestReport> {
+  await fullQualityFrame(driver, 0)
+  await untilMediaPrepared(driver)
+  const canvas = await canvasSize(driver)
+  await showAtZoom(driver, '100')
+  await driver.page.click('timeline-zoom-fit')
+  const ruler = await driver.rect('timeline')
+  // While the zoom picker has the keyboard focus, Space does not reach playback.
+  await pausedAfter(driver, () => driver.clickAt({ x: ruler.x + ruler.width / 2, y: ruler.y + RULER_HEIGHT / 2 }))
+  await pausedAfter(driver, () => driver.press('Return', ['meta']))
+  const playing = await capturePlayback(driver, playthroughLimits(await projectSeconds(driver)))
+  return { canvas, playing }
 }
 
 type Exported = Record<string, string>
@@ -178,6 +226,16 @@ async function placeDoubledVideo(driver: Driver): Promise<void> {
   await driver.until(`${selector('canvas-width')} !== null`, 'the project settings')
   await driver.typeInto('canvas-width', '640')
   await driver.until(`${selector('canvas-height')}.value === '360'`, 'the height to follow the width')
+}
+
+async function addTitle(driver: Driver): Promise<void> {
+  await driver.page.click('tab-annotations')
+  await driver.page.click('annotation-text')
+  await untilTextEditor(driver, true)
+  await driver.typeKeys('Hi')
+  await driver.press('Escape')
+  await untilTextEditor(driver, false)
+  await driver.untilUndoLabel('Undo Edit Text')
 }
 
 async function testEditsToOutput(driver: Driver): Promise<UiTestReport> {
@@ -240,13 +298,7 @@ async function testEditsToOutput(driver: Driver): Promise<UiTestReport> {
 
   await driver.press('Escape')
   await driver.press('Return', ['meta'])
-  await driver.page.click('tab-annotations')
-  await driver.page.click('annotation-text')
-  await untilTextEditor(driver, true)
-  await driver.typeKeys('Hi')
-  await driver.press('Escape')
-  await untilTextEditor(driver, false)
-  await driver.untilUndoLabel('Undo Edit Text')
+  await addTitle(driver)
   await driver.press('Return', ['meta'])
   await exportAs(driver, exported, 'title.png')
   await exportAs(driver, exported, 'title-480p.mp4', '480p')
@@ -405,9 +457,109 @@ async function testArrangeToOutput(driver: Driver): Promise<UiTestReport> {
   return { exported, saved }
 }
 
+const CANVAS_CENTRE = { x: 320, y: 180 }
+const MOVED_TO = { x: 380, y: 210 }
+const KEYED_TO = { x: 290, y: 150 }
+
+type StageCapture = PausedCapture & { project: string }
+
+async function seekOnRuler(driver: Driver, time: number, timecode: string): Promise<void> {
+  const ruler = await driver.rect('timeline')
+  const where = await driver.timelinePoint(time, 0, TRACKS_AT_START)
+  await driver.clickAt({ x: where.x, y: ruler.y + RULER_HEIGHT / 2 })
+  await driver.until(`${selector('timecode')}.textContent === '${timecode}'`, `the playhead at ${timecode}`)
+}
+
+async function playToEnd(driver: Driver): Promise<void> {
+  await driver.press('Space')
+  await driver.until(`${selector('play')}.getAttribute('aria-label') === 'Pause'`, 'playback to start')
+  await driver.until(`${selector('play')}.getAttribute('aria-label') === 'Play'`, 'playback to reach the end')
+}
+
+async function dragOnCanvas(driver: Driver, from: Point, to: Point): Promise<void> {
+  await driver.drag(await canvasPoint(driver, CANVAS_WIDTH, from), await canvasPoint(driver, CANVAS_WIDTH, to))
+  await driver.untilUndoLabel('Undo Move Clip')
+}
+
+async function capturedStage(driver: Driver, saved: Saved, stage: string, edit: () => Promise<void>): Promise<StageCapture> {
+  const timecode = await pausedAfter(driver, edit)
+  const captured = await capturePreview(driver, stage)
+  await saveAs(driver, saved, `${stage}.json`)
+  return { ...captured, timecode, project: saved[`${stage}.json`] ?? '' }
+}
+
+async function testEditsToPlayback(driver: Driver): Promise<UiTestReport> {
+  const saved: Saved = {}
+  const exported: Exported = {}
+  const stages: StageCapture[] = []
+  await importPrepared(driver, 'image-alpha.png')
+  await placeDoubledVideo(driver)
+  const canvas = await canvasSize(driver)
+  await showAtZoom(driver, '100')
+  await seekOnRuler(driver, SECOND, '00:00:01:00')
+  await driver.press('Return', ['meta'])
+  await playToEnd(driver)
+  await driver.press('Return', ['meta'])
+
+  stages.push(await capturedStage(driver, saved, 'moved', () => dragOnCanvas(driver, CANVAS_CENTRE, MOVED_TO)))
+
+  stages.push(
+    await capturedStage(driver, saved, 'properties', async () => {
+      await selectVideo(driver)
+      await driver.typeInto('clip-scale', '80')
+      await driver.untilUndoLabel('Undo Resize Clip')
+      await driver.typeInto('clip-rotation', '12')
+      await driver.untilUndoLabel('Undo Rotate Clip')
+      await driver.typeInto('clip-opacity', '85')
+      await driver.untilUndoLabel('Undo Change Opacity')
+    }),
+  )
+
+  await seekOnRuler(driver, 0, '00:00:00:00')
+  await driver.page.click('clip-position-keyframe')
+  await driver.untilUndoLabel('Undo Add Position Keyframe')
+  await seekOnRuler(driver, SECOND, '00:00:01:00')
+  stages.push(await capturedStage(driver, saved, 'keyframed', () => dragOnCanvas(driver, MOVED_TO, KEYED_TO)))
+
+  stages.push(
+    await capturedStage(driver, saved, 'overlay', async () => {
+      await dragMedia(driver, 'image-alpha.png', await driver.timelinePoint(0, 1, TRACKS_AT_START))
+      await driver.untilUndoLabel('Undo Add Clip')
+      await driver.clickAt(await driver.timelinePoint(SECOND / 4, 1, TRACKS_AT_START))
+      await driver.until(`${selector('clip-opacity')} !== null`, 'the picture to be selected')
+      await driver.typeInto('clip-opacity', '50')
+      await driver.untilUndoLabel('Undo Change Opacity')
+    }),
+  )
+
+  await splitFirstTrackAtOneSecond(driver, TRACKS_AT_START)
+  await driver.page.click('tab-transitions')
+  stages.push(
+    await capturedStage(driver, saved, 'transition', async () => {
+      await driver.drag(centerOf(await driver.rect('transition-crossDissolve')), await bottomTrackAt(driver, 0.8 * SECOND))
+      await driver.untilUndoLabel('Undo Add Transition')
+    }),
+  )
+  await driver.page.click('tab-media')
+
+  await seekOnRuler(driver, 0, '00:00:00:00')
+  stages.push(await capturedStage(driver, saved, 'titled', () => addTitle(driver)))
+
+  await saveAs(driver, saved, 'final.json')
+  await seekOnRuler(driver, SECOND, '00:00:01:00')
+  await driver.press('Return', ['meta'])
+  const playing = await capturePlayback(driver, playthroughLimits(await projectSeconds(driver)))
+  await exportAs(driver, exported, 'final.mp4')
+  return { canvas, stages, playing, final: saved['final.json'], movie: exported['final.mp4'] }
+}
+
 export const OUTPUT_SCENARIOS: Record<string, Scenario> = {
   'arrange-to-output': testArrangeToOutput,
   'gif-export': testGifExport,
-  wysiwyg: testWysiwyg,
+  wysiwyg: (driver) => testWysiwyg(driver),
+  'wysiwyg-50': (driver) => testWysiwyg(driver, '50'),
+  'wysiwyg-fit': (driver) => testWysiwyg(driver, 'fit'),
+  playthrough: testPlaythrough,
   'edits-to-output': testEditsToOutput,
+  'edits-to-playback': testEditsToPlayback,
 }

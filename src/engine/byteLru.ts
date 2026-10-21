@@ -3,6 +3,8 @@ export type ByteLru<Value> = {
   set(key: string, value: Value, bytes: number): void
   delete(key: string): void
   setLimit(maxBytes: number): void
+  keep(keys: ReadonlySet<string>): void
+  hasRoom(): boolean
   clear(): void
   size(): number
 }
@@ -16,6 +18,7 @@ export function createByteLru<Value>(initialMaxBytes: number, onEvict: (value: V
   const entries = new Map<string, Entry<Value>>()
   let maxBytes = initialMaxBytes
   let heldBytes = 0
+  let kept: ReadonlySet<string> = new Set()
 
   function remove(key: string): void {
     const entry = entries.get(key)
@@ -27,8 +30,8 @@ export function createByteLru<Value>(initialMaxBytes: number, onEvict: (value: V
 
   function evictOverLimit(keyToKeep: string | undefined): void {
     for (const oldestKey of entries.keys()) {
-      if (heldBytes <= maxBytes || oldestKey === keyToKeep) break
-      remove(oldestKey)
+      if (heldBytes <= maxBytes) return
+      if (oldestKey !== keyToKeep && !kept.has(oldestKey)) remove(oldestKey)
     }
   }
 
@@ -52,9 +55,14 @@ export function createByteLru<Value>(initialMaxBytes: number, onEvict: (value: V
     evictOverLimit(undefined)
   }
 
+  function keep(keys: ReadonlySet<string>): void {
+    kept = keys
+    evictOverLimit(undefined)
+  }
+
   function clear(): void {
     for (const key of [...entries.keys()]) remove(key)
   }
 
-  return { get, set, delete: remove, setLimit, clear, size: () => heldBytes }
+  return { get, set, delete: remove, setLimit, keep, hasRoom: () => heldBytes < maxBytes, clear, size: () => heldBytes }
 }

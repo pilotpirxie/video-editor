@@ -78,4 +78,26 @@ describe('createByteLru', () => {
     expect(evicted).toEqual(['B', 'C'])
     expect(cache.size()).toBe(90)
   })
+
+  it('never evicts a kept entry, even over budget, and lets it go once it is no longer kept', () => {
+    const { cache, evicted } = trackedCache()
+    cache.set('next', 'N', 60)
+    cache.keep(new Set(['next']))
+    cache.set('ahead', 'A', 60)
+    cache.set('further', 'F', 60)
+    expect(evicted).toEqual(['A'])
+    expect(cache.size()).toBe(120)
+    cache.keep(new Set())
+    expect(evicted).toEqual(['A', 'N'])
+    expect(cache.size()).toBe(60)
+  })
+
+  it('has room only while under budget', () => {
+    const { cache } = trackedCache()
+    cache.set('a', 'A', 60)
+    expect(cache.hasRoom()).toBe(true)
+    cache.keep(new Set(['a']))
+    cache.set('b', 'B', 60)
+    expect(cache.hasRoom()).toBe(false)
+  })
 })

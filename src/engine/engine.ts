@@ -15,6 +15,8 @@ import { pictureRanges, resolveFrame, type Layer } from './resolve.js'
 const AUDIO_BLOCK_SAMPLES = 2048
 const WANT_AGAIN_AFTER_TICKS = 10 * TICKS_PER_SECOND
 const WANT_INTERVAL_MS = 500
+const START_WAIT_MS = 1000
+const START_RETRY_MS = 50
 
 function decodesNeeded(layers: readonly Layer[]): string {
   const decodes: string[] = []
@@ -210,13 +212,19 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     return viewAt(project.project.camera, frameTime, project.project.canvas)
   }
 
-  async function prepareAhead(project: LoadedProject, frame: number, frameTicks: number): Promise<void> {
-    const loads: Promise<void>[] = []
+  // Nearest frame first, and only as far as the cache holds, so reading ahead never pushes out the frame about to be shown.
+  async function prepareAhead(project: LoadedProject, frame: number, frameTicks: number): Promise<boolean> {
+    let isReady = true
     for (let ahead = 0; ahead <= READ_AHEAD_FRAMES; ahead++) {
+      if (ahead > 0 && !provider.hasRoomAhead()) break
       const frameTime = (frame + ahead) * frameTicks
-      loads.push(provider.prepare(layersAt(project, frameTime), textScale(project, cameraAt(project, frameTime))))
+      const layers = layersAt(project, frameTime)
+      const scale = textScale(project, cameraAt(project, frameTime))
+      if (ahead === 0) provider.keepNextFrame(layers, scale)
+      const isFrameReady = await provider.prepare(layers, scale)
+      isReady = isReady && isFrameReady
     }
-    await Promise.all(loads)
+    return isReady
   }
 
   function tick(project: LoadedProject, playing: Playback): void {
@@ -257,12 +265,20 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
   function stopPlayback(): void {
     if (playback === undefined) return
     playback = undefined
+    provider.keepNextFrame([], 0)
     const command: OutputCommand = { type: 'stop' }
     audioPort?.postMessage(command)
   }
 
   async function startPlayback(project: LoadedProject, playing: Playback, frameTicks: number): Promise<void> {
-    await prepareAhead(project, frameAt(time, frameTicks), frameTicks)
+    const startFrame = frameAt(time, frameTicks)
+    const waitUntil = performance.now() + START_WAIT_MS
+    // Right after a project opens, the playback copies of its first frames may still be in the making.
+    let isReady = await prepareAhead(project, startFrame, frameTicks)
+    while (!isReady && playback === playing && performance.now() < waitUntil) {
+      await new Promise((resolve) => setTimeout(resolve, START_RETRY_MS))
+      isReady = await prepareAhead(project, startFrame, frameTicks)
+    }
     if (playback !== playing) return
     const command: OutputCommand = { type: 'start' }
     audioPort?.postMessage(command)
