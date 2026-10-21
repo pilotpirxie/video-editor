@@ -8,8 +8,8 @@
   "type": "module",
   "main": "dist/node/src/main/main.js",
   "scripts": {
-    "fetch-ffmpeg": "node scripts/fetch-ffmpeg.mjs",
-    "build": "node scripts/fetch-ffmpeg.mjs && tsc -p tsconfig.node.json && vite build",
+    "build-ffmpeg": "node scripts/build-ffmpeg.mjs",
+    "build": "node scripts/build-ffmpeg.mjs && tsc -p tsconfig.node.json && vite build",
     "start": "npm run build && electron .",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json --noEmit",
     "lint": "knip && jscpd",

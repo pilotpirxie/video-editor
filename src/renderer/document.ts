@@ -29,7 +29,6 @@ export type Session = {
   engine: EngineHost
   actions: Actions
   thumbnails: Thumbnails
-  hasSmallMemory: boolean
   preparation(): PreparationStates
   onPreparation(listener: () => void): () => void
   open(): Promise<void>
@@ -538,7 +537,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     chooseAndImport,
     relink,
     exportVideo,
-    hasSmallMemory: info.hasSmallMemory,
     cancelExport,
     runMenuAction,
     shortcuts: createShortcuts(),

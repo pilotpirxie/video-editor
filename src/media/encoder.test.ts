@@ -17,7 +17,7 @@ const ffmpeg = bundledFfmpeg()
 const scratch = await mkdtemp(join(tmpdir(), 'encoder-'))
 const SIZE = { width: 64, height: 36 }
 const FRAME_RATE = { num: 30, den: 1 }
-const DEFAULTS = { format: 'mp4', encoder: 'x264', frameRate: FRAME_RATE, quality: 'high', hasAudio: true } as const
+const DEFAULTS = { format: 'mp4', frameRate: FRAME_RATE, quality: 'high', hasAudio: true } as const
 const SAMPLES_PER_FRAME = 1600
 
 afterAll(() => rm(scratch, { recursive: true, force: true }))
@@ -59,16 +59,16 @@ describe('startEncoder', () => {
   })
 
   it.each([
-    { format: 'webm', encoder: 'x264', expected: { kind: 'video', video: { width: 64, height: 36, codec: 'vp9' }, audio: { channels: 2, codec: 'opus' } } },
-    { format: 'mp4', encoder: 'hardware', expected: { kind: 'video', video: { width: 64, height: 36, codec: 'h264' }, audio: { codec: 'aac' } } },
-    { format: 'gif', encoder: 'x264', expected: { kind: 'video', video: { width: 65, height: 37, codec: 'gif' } } },
-    { format: 'm4a', encoder: 'x264', expected: { kind: 'audio', audio: { channels: 2, sampleRate: 48_000, codec: 'aac' } } },
-    { format: 'mp3', encoder: 'x264', expected: { kind: 'audio', audio: { channels: 2, codec: 'mp3' } } },
-    { format: 'wav', encoder: 'x264', expected: { kind: 'audio', audio: { channels: 2, sampleRate: 48_000, codec: 'pcm_s16le' } } },
-  ] as const)('writes $format files by $encoder', async ({ format, encoder: encodedBy, expected }) => {
+    { format: 'webm', expected: { kind: 'video', video: { width: 64, height: 36, codec: 'vp9' }, audio: { channels: 2, codec: 'opus' } } },
+    { format: 'mp4', expected: { kind: 'video', video: { width: 64, height: 36, codec: 'h264' }, audio: { codec: 'aac' } } },
+    { format: 'gif', expected: { kind: 'video', video: { width: 65, height: 37, codec: 'gif' } } },
+    { format: 'm4a', expected: { kind: 'audio', audio: { channels: 2, sampleRate: 48_000, codec: 'aac' } } },
+    { format: 'mp3', expected: { kind: 'audio', audio: { channels: 2, codec: 'mp3' } } },
+    { format: 'wav', expected: { kind: 'audio', audio: { channels: 2, sampleRate: 48_000, codec: 'pcm_s16le' } } },
+  ] as const)('writes $format files', async ({ format, expected }) => {
     const path = join(scratch, `formats.${format}`)
     const size = format === 'gif' ? { width: 65, height: 37 } : SIZE
-    const encoder = startEncoder(ffmpeg, { path, ...size, ...DEFAULTS, format, encoder: encodedBy })
+    const encoder = startEncoder(ffmpeg, { path, ...size, ...DEFAULTS, format })
     for (let frame = 0; frame < 30; frame++) {
       await encoder.write(picture(format, size, frame * 8), new Float32Array(SAMPLES_PER_FRAME * 2).fill(0.25))
     }

@@ -74,7 +74,7 @@ describe('extreme canvas sizes and sources', { timeout: EXTREME_TIMEOUT_MS }, ()
     expect(played.droppedFrames).toBe(0)
     expect(played.fullQualityMilliseconds.atActualSize).toBeLessThanOrEqual(MAX_PAUSED_FRAME_MS)
 
-    const exported = await exportWithReport(projectPath(project), join(scratch, `${project}.mp4`), preset, 'hardware')
+    const exported = await exportWithReport(projectPath(project), join(scratch, `${project}.mp4`), preset)
     expect(exported.peakMemoryMegabytes).toBeLessThanOrEqual(MAX_PEAK_MEMORY_MB)
     expect(exported.realTimeRatio).toBeGreaterThanOrEqual(minRealTime)
   })
@@ -85,13 +85,13 @@ describe('extreme canvas sizes and sources', { timeout: EXTREME_TIMEOUT_MS }, ()
     console.info(`8K source: paused frame ${JSON.stringify(played.fullQualityMilliseconds)}`)
     expect(played.status).toBe('Ready.')
 
-    const exported = await exportWithReport(path, join(scratch, 'eight-k.mp4'), '4k', 'hardware')
+    const exported = await exportWithReport(path, join(scratch, 'eight-k.mp4'), '4k')
     expect(exported.peakMemoryMegabytes).toBeLessThanOrEqual(MAX_PEAK_MEMORY_MB)
   })
 
   it('exports ten minutes of 1080p at 100× within five minutes, showing progress as it goes', async () => {
     const path = writtenProject('fastest', fastestProject())
-    const exported = await exportWithReport(path, join(scratch, 'fastest.mp4'), '1080p', 'hardware')
+    const exported = await exportWithReport(path, join(scratch, 'fastest.mp4'), '1080p')
     expect(exported.elapsedMs).toBeLessThanOrEqual(MAX_FASTEST_EXPORT_MS)
     expect(exported.progressLines.length).toBeGreaterThan(1)
     expect(exported.peakMemoryMegabytes).toBeLessThanOrEqual(MAX_PEAK_MEMORY_MB)
@@ -106,7 +106,7 @@ describe('the heaviest projects', { timeout: EXTREME_TIMEOUT_MS }, () => {
     expect(played.droppedFrames).toBe(0)
     expect(played.peakMemoryMegabytes).toBeLessThanOrEqual(MAX_TYPICAL_MEMORY_MB)
 
-    const exported = await exportWithReport(path, join(scratch, 'four-layers.mp4'), '1080p', 'hardware')
+    const exported = await exportWithReport(path, join(scratch, 'four-layers.mp4'), '1080p')
     expect(exported.realTimeRatio).toBeGreaterThanOrEqual(MIN_1080P_REAL_TIME_RATIO)
   })
 

@@ -1,5 +1,5 @@
 # video-editor
-Lightweight video editor for macOS on Apple silicon, written in TypeScript with Electron, React, WebGL2 and FFmpeg. Edit videos with a multi-track timeline, keyframes and a zoom-and-pan camera. For commandline video editor check my previous project [json-to-ffmpeg](https://github.com/pilotpirxie/json-to-ffmpeg).
+Lightweight video editor for macOS, written in TypeScript with Electron, React, WebGL2 and FFmpeg. Edit videos with a multi-track timeline, keyframes and a zoom-and-pan camera. For commandline video editor check my previous project [json-to-ffmpeg](https://github.com/pilotpirxie/json-to-ffmpeg).
 
 ### Features
 * Multi-track timeline, any clip on any track
@@ -13,6 +13,7 @@ Lightweight video editor for macOS on Apple silicon, written in TypeScript with 
 * Export to MP4, WebM, GIF, M4A, MP3, WAV and PNG
 * Shortcuts, rebindable
 * Works fully offline
+* Extremely fast thanks to VideoToolbox
 
 ![Editing a clip with keyframes and a motion path](img/s1.png)
 
@@ -27,7 +28,7 @@ Lightweight video editor for macOS on Apple silicon, written in TypeScript with 
 ### Usage
 You can download bundled DMG or build from the source code.
 
-Needs Node 24 and macOS on Apple silicon.
+Needs Node 24, macOS on Apple silicon, the Xcode Command Line Tools and `brew install pkgconf cmake meson ninja autoconf automake libtool`. The first build compiles FFmpeg, which takes a few minutes.
 ```shell
 git clone https://github.com/pilotpirxie/video-editor.git
 cd video-editor

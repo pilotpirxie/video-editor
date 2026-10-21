@@ -81,14 +81,6 @@ export function temporaryPathFor(path: string): string {
   return `${path}.part`
 }
 
-export const EXPORT_ENCODERS = ['x264', 'hardware'] as const
-
-export type ExportEncoder = (typeof EXPORT_ENCODERS)[number]
-
-export function isExportEncoder(name: string): name is ExportEncoder {
-  return EXPORT_ENCODERS.some((encoder) => encoder === name)
-}
-
 // A GIF stores how long each picture shows in hundredths of a second, so only these rates play at their true speed.
 export const GIF_FRAME_RATES: readonly FrameRate[] = [
   { num: 10, den: 1 },

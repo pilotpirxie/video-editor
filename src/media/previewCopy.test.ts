@@ -202,7 +202,7 @@ describe('preview segments', () => {
   })
 
   it('follows a file with a hole in its timestamps the same way the decoder does', async () => {
-    const built = await build('mpeg4.avi')
+    const built = await build('mjpeg-mp3.avi')
     const pictures: number[] = []
     for (const frame of [0, 1, 2, 30]) {
       pictures.push(readBarcode(await decodeJpeg(ffmpeg, await frameOrFail(built, frame), 320, 180)))

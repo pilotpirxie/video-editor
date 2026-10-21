@@ -3,7 +3,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeAll, type FfmpegRunner } from '../../src/media/ffmpeg.js'
 
-const GENERATOR_VERSION = '4'
+const GENERATOR_VERSION = '5'
 const JOB_TIMEOUT_MS = 300_000
 
 const MEDIA_DIRECTORY = join(import.meta.dirname, 'generated')
@@ -163,13 +163,12 @@ function repeatedCard(card: Buffer = alphaCard(320, 180)): Buffer {
 }
 
 function hdrClip(name: string, transfer: 'arib-std-b67' | 'smpte2084'): Recipe {
-  const toHdr = `zscale=tin=bt709:pin=bt709:min=gbr:rin=full:t=${transfer}:p=bt2020:m=bt2020nc:r=tv:npl=203,format=yuv420p10le`
-  const x265 = `colorprim=bt2020:transfer=${transfer}:colormatrix=bt2020nc:log-level=error`
+  const toHdr = `zscale=tin=bt709:pin=bt709:min=gbr:rin=full:t=${transfer}:p=bt2020:m=bt2020nc:r=tv:npl=203,format=p010le`
   return {
     name,
     build: (tools) =>
       tools.ffmpegWithInput(
-        ['-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', '320x180', '-framerate', '30', '-i', 'pipe:0', '-vf', toHdr, '-c:v', 'libx265', '-preset', 'ultrafast', '-x265-params', x265, '-tag:v', 'hvc1', mediaPath(name)],
+        ['-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', '320x180', '-framerate', '30', '-i', 'pipe:0', '-vf', toHdr, ...HEVC_10_BIT, mediaPath(name)],
         repeatedCard(hdrCard(320, 180)),
       ),
   }
@@ -197,9 +196,11 @@ type Tools = {
 const TO_BT709 = 'scale=out_color_matrix=bt709:out_range=tv'
 const TO_BT601 = 'scale=out_color_matrix=bt601:out_range=tv'
 const TO_JPEG_RANGE = 'scale=out_color_matrix=bt601:out_range=pc'
-const H264 = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '12', '-pix_fmt', 'yuv420p', '-g', '30']
+const H264 = ['-c:v', 'h264_videotoolbox', '-q:v', '90', '-pix_fmt', 'yuv420p', '-g', '30']
+const HEVC_10_BIT = ['-c:v', 'hevc_videotoolbox', '-profile:v', 'main10', '-q:v', '100', '-tag:v', 'hvc1']
 const BT709_TAGS = ['-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv']
-const AAC = ['-c:a', 'aac', '-b:a', '128k']
+const AAC = ['-c:a', 'aac_at', '-b:a', '128k']
+const VORBIS = ['-c:a', 'vorbis', '-strict', 'experimental']
 
 function lavfi(pattern: VideoPattern): string[] {
   return ['-f', 'lavfi', '-i', barcodeSource(pattern)]
@@ -317,14 +318,12 @@ const RECIPES: readonly Recipe[] = [
   remux('h264.ts', 'h264.mp4'),
   remux('h264.mts', 'h264.mp4', ['-f', 'mpegts']),
   remux('h264.3gp', 'h264.mp4'),
-  clip('hevc.mp4', ['-c:v', 'libx265', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-tag:v', 'hvc1', ...BT709_TAGS, ...AAC]),
-  clip('prores.mov', ['-c:v', 'prores_ks', '-profile:v', '2', '-pix_fmt', 'yuv422p10le', ...BT709_TAGS, '-c:a', 'pcm_s16le']),
-  clip('vp8.webm', ['-c:v', 'libvpx', '-b:v', '1M', '-deadline', 'realtime', '-c:a', 'libvorbis']),
+  clip('hevc.mp4', ['-c:v', 'hevc_videotoolbox', '-q:v', '90', '-pix_fmt', 'yuv420p', '-tag:v', 'hvc1', ...BT709_TAGS, ...AAC]),
+  clip('prores.mov', ['-c:v', 'prores_videotoolbox', '-profile:v', 'standard', '-pix_fmt', 'p210le', ...BT709_TAGS, '-c:a', 'pcm_s16le']),
+  clip('vp8.webm', ['-c:v', 'libvpx', '-b:v', '1M', '-deadline', 'realtime', ...VORBIS]),
   clip('vp9.webm', ['-c:v', 'libvpx-vp9', '-b:v', '1M', '-deadline', 'realtime', '-cpu-used', '8', '-c:a', 'libopus']),
-  clip('av1.mp4', ['-c:v', 'libsvtav1', '-preset', '12', '-pix_fmt', 'yuv420p', ...AAC]),
-  clip('mpeg4.avi', ['-c:v', 'mpeg4', '-q:v', '3', '-c:a', 'libmp3lame']),
   clip('mjpeg.avi', ['-c:v', 'mjpeg', '-q:v', '3', '-pix_fmt', 'yuvj420p', '-c:a', 'pcm_s16le'], { filter: TO_JPEG_RANGE }),
-  clip('dnxhr.mov', ['-c:v', 'dnxhd', '-profile:v', 'dnxhr_lb', '-pix_fmt', 'yuv422p', '-c:a', 'pcm_s16le'], { pattern: { width: 640, height: 360, rate: '30' }, frames: 30 }),
+  clip('mjpeg-mp3.avi', ['-c:v', 'mjpeg', '-q:v', '3', '-pix_fmt', 'yuvj420p', '-c:a', 'libmp3lame'], { filter: TO_JPEG_RANGE }),
 
   silentClip('h264-untagged-hd.mp4', H264, { pattern: { width: 1280, height: 720, rate: '30' }, frames: 30 }),
   silentClip('h264-untagged-sd.mp4', H264, { filter: TO_BT601 }),
@@ -335,7 +334,8 @@ const RECIPES: readonly Recipe[] = [
   ...RATE_VARIANTS.map((variant) =>
     silentClip(variant.name, [...H264, ...BT709_TAGS], { pattern: { width: 320, height: 180, rate: variant.rate }, frames: 48 }),
   ),
-  silentClip('long-gop.mp4', ['-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-g', '90', '-bf', '3', ...BT709_TAGS], { frames: 200 }),
+  // VideoToolbox starts each group of pictures one frame before -g says, so the keyframes are forced.
+  silentClip('long-gop.mp4', ['-c:v', 'h264_videotoolbox', '-q:v', '90', '-pix_fmt', 'yuv420p', '-g', '250', '-force_key_frames', 'expr:eq(mod(n,90),0)', '-bf', '3', ...BT709_TAGS], { frames: 200 }),
   remux('long-gop.mkv', 'long-gop.mp4'),
   remux('long-gop.ts', 'long-gop.mp4'),
   {
@@ -372,16 +372,9 @@ const RECIPES: readonly Recipe[] = [
         ...lavfi(SMALL),
         '-frames:v',
         '30',
-        '-c:v',
-        'libx265',
-        '-preset',
-        'ultrafast',
-        '-pix_fmt',
-        'yuv420p10le',
-        '-tag:v',
-        'hvc1',
-        '-x265-params',
-        'colorprim=bt2020:transfer=arib-std-b67:colormatrix=bt2020nc',
+        '-vf',
+        'format=p010le,setparams=color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc',
+        ...HEVC_10_BIT,
         upright,
       ])
       await tools.ffmpeg(['-display_rotation', '90', '-i', upright, '-c', 'copy', mediaPath('hevc-hlg-portrait.mov')])
@@ -424,7 +417,7 @@ const RECIPES: readonly Recipe[] = [
         '-fps_mode',
         'vfr',
         ...H264,
-        // Phones record screens without B-frames. With them, x264 gives the frame after the gap a decode time inside the gap, and seeking there lands after the gap.
+        // Phones record screens without B-frames. With them, the frame after the gap gets a decode time inside the gap, and seeking there lands after the gap.
         '-bf',
         '0',
         ...BT709_TAGS,
@@ -432,16 +425,17 @@ const RECIPES: readonly Recipe[] = [
         mediaPath('variable-rate-gap.mp4'),
       ]),
   },
-  silentClip('8k.mp4', ['-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', ...BT709_TAGS], { pattern: { width: 7680, height: 4320, rate: '30' }, frames: 4 }),
-  silentClip('4k-long-gop.mp4', ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '30', '-pix_fmt', 'yuv420p', '-g', '250', ...BT709_TAGS], { pattern: { width: 3840, height: 2160, rate: '30' }, frames: 300 }),
-  silentClip('1080p.mp4', ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26', '-pix_fmt', 'yuv420p', '-g', '60', ...BT709_TAGS], { pattern: { width: 1920, height: 1080, rate: '30' }, frames: 150 }),
-  silentClip('timelapse-part.mp4', ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '40', '-pix_fmt', 'yuv420p', '-g', '60', ...BT709_TAGS], { pattern: { width: 1920, height: 1080, rate: '30' }, frames: 150 }),
+  // VideoToolbox makes H.264 up to 4096 pixels wide, so the 8K clip is HEVC.
+  silentClip('8k.mp4', ['-c:v', 'hevc_videotoolbox', '-q:v', '50', '-pix_fmt', 'yuv420p', '-tag:v', 'hvc1', ...BT709_TAGS], { pattern: { width: 7680, height: 4320, rate: '30' }, frames: 4 }),
+  silentClip('4k-long-gop.mp4', ['-c:v', 'h264_videotoolbox', '-q:v', '40', '-pix_fmt', 'yuv420p', '-g', '250', ...BT709_TAGS], { pattern: { width: 3840, height: 2160, rate: '30' }, frames: 300 }),
+  silentClip('1080p.mp4', ['-c:v', 'h264_videotoolbox', '-q:v', '50', '-pix_fmt', 'yuv420p', '-g', '60', ...BT709_TAGS], { pattern: { width: 1920, height: 1080, rate: '30' }, frames: 150 }),
+  silentClip('timelapse-part.mp4', ['-c:v', 'h264_videotoolbox', '-q:v', '25', '-pix_fmt', 'yuv420p', '-g', '60', ...BT709_TAGS], { pattern: { width: 1920, height: 1080, rate: '30' }, frames: 150 }),
   {
     name: 'timelapse-1080p.mp4',
     build: (tools) => tools.ffmpeg(['-stream_loop', String(TIMELAPSE_REPEATS - 1), '-i', mediaPath('timelapse-part.mp4'), '-c', 'copy', mediaPath('timelapse-1080p.mp4')]),
   },
 
-  alphaClip('prores4444-alpha.mov', ['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', ...BT709_TAGS]),
+  alphaClip('prores4444-alpha.mov', ['-c:v', 'prores_videotoolbox', '-profile:v', '4444', '-pix_fmt', 'ayuv64le', ...BT709_TAGS]),
   alphaClip('vp9-alpha.webm', ['-c:v', 'libvpx-vp9', '-pix_fmt', 'yuva420p', '-b:v', '1M', '-deadline', 'realtime', '-cpu-used', '8']),
   alphaClip('lossless-alpha.mov', ['-c:v', 'png', '-pix_fmt', 'rgba']),
 
@@ -450,7 +444,7 @@ const RECIPES: readonly Recipe[] = [
   audio('audio-alac.m4a', ['-c:a', 'alac']),
   audio('audio.aiff', ['-c:a', 'pcm_s16be']),
   audio('audio.flac', ['-c:a', 'flac']),
-  audio('audio.ogg', ['-c:a', 'libvorbis']),
+  audio('audio.ogg', VORBIS),
   audio('audio.opus', ['-c:a', 'libopus']),
   audio('audio-mono.wav', ['-ac', '1']),
   audio('audio-surround.wav', ['-ac', '6']),

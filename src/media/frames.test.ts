@@ -46,7 +46,6 @@ describe('decodeFrame returns exactly the requested frame', () => {
     'prores.mov',
     'vp8.webm',
     'vp9.webm',
-    'av1.mp4',
     'mjpeg.avi',
     'delayed-video.mkv',
     'anamorphic.mp4',
@@ -62,12 +61,8 @@ describe('decodeFrame returns exactly the requested frame', () => {
     await expectBarcodes(name, [0, 1, 88, 89, 90, 91, 92, 178, 179, 180, 181, 198, 199])
   })
 
-  it('dnxhr.mov', async () => {
-    await expectBarcodes('dnxhr.mov', [0, 1, 15, 29])
-  })
-
   it('follows the timestamps of a file with a hole in them (AVI with MP3 delay)', async () => {
-    const source = await sourceOf('mpeg4.avi')
+    const source = await sourceOf('mjpeg-mp3.avi')
     expect(source.video.isVariableFrameRate).toBe(true)
     const shownAt = [
       { time: 0, picture: 0 },

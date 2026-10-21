@@ -42,7 +42,7 @@ const PINCH_DELTA = 20
 const HANDLE_FROM_ROW_MIDDLE = 19
 const DIAMOND_FROM_ROW_MIDDLE = 1
 const NEAR_SNAP_PIXELS = 7
-const DIALOG_TAB_STOPS = 14
+const DIALOG_TAB_STOPS = 13
 const CANCEL_SETTLE_MS = 1500
 const LONG_EXPORT_TIMEOUT_MS = 30 * 60 * 1000
 const MS_PER_SECOND = 1000
@@ -396,7 +396,7 @@ export async function startExport(driver: Driver, setup: ExportSetup): Promise<s
   return submitExport(driver, setup.fileName)
 }
 
-const EXPORT_FIELDS = ['export-preset', 'export-frame-rate', 'export-quality-high', 'export-encoder', 'export-range-whole', 'export-audio']
+const EXPORT_FIELDS = ['export-preset', 'export-frame-rate', 'export-quality-high', 'export-range-whole', 'export-audio']
 
 async function shownExportFields(driver: Driver): Promise<unknown> {
   return driver.page.evaluate(`${JSON.stringify(EXPORT_FIELDS)}.filter((id) => document.querySelector('[data-testid="' + id + '"]') !== null)`)

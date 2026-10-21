@@ -2,17 +2,14 @@ import { useEffect, useRef, useState, type FormEvent, type ReactElement } from '
 import { exportFrameRates, parseRememberedChoices, selectionRange, startingChoices, durationText, timeLeftMs, withFormat, type ExportChoices, type RememberedChoices } from '../editor/export.js'
 import { unlinkedMedia } from '../editor/place.js'
 import {
-  EXPORT_ENCODERS,
   EXPORT_FORMATS,
   EXPORT_PRESETS,
   EXPORT_QUALITIES,
   exportSize,
   hasMovingPicture,
-  isExportEncoder,
   isExportFormat,
   isExportPreset,
   shortSideOf,
-  type ExportEncoder,
   type ExportFormat,
   type ExportPreset,
   type ExportQuality,
@@ -55,8 +52,6 @@ const FORMAT_NAMES: Record<ExportFormat, string> = {
 
 const SUMMARY_NAMES: Record<ExportFormat, string> = { mp4: 'MP4', webm: 'WebM', gif: 'GIF', m4a: 'M4A sound', mp3: 'MP3 sound', wav: 'WAV sound', png: 'PNG' }
 
-const ENCODER_NAMES: Record<ExportEncoder, string> = { hardware: 'Apple hardware (fast)', x264: 'x264 (smallest files)' }
-
 function rateKey(rate: FrameRate): string {
   return `${rate.num}/${rate.den}`
 }
@@ -72,7 +67,7 @@ export function ExportDialog(): ReactElement {
   const selection = useEditorState((state) => state.selection)
   const mediaStates = useEditorState((state) => state.mediaStates)
   const dialogRef = useRef<HTMLDialogElement>(null)
-  const [choices, setChoices] = useState<ExportChoices>(() => startingChoices(project, parseRememberedChoices(localStorage.getItem(CHOICES_KEY) ?? undefined), session.hasSmallMemory))
+  const [choices, setChoices] = useState<ExportChoices>(() => startingChoices(project, parseRememberedChoices(localStorage.getItem(CHOICES_KEY) ?? undefined)))
   const [playheadTime] = useState(() => session.transport.position().time)
 
   useEffect(() => {
@@ -105,7 +100,7 @@ export function ExportDialog(): ReactElement {
 
   function onSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
-    const remembered: RememberedChoices = { format, preset: choices.preset, quality: choices.quality, encoder: choices.encoder, hasAudio: choices.hasAudio }
+    const remembered: RememberedChoices = { format, preset: choices.preset, quality: choices.quality, hasAudio: choices.hasAudio }
     try {
       localStorage.setItem(CHOICES_KEY, JSON.stringify(remembered))
     } catch (error) {
@@ -182,20 +177,6 @@ export function ExportDialog(): ReactElement {
                 </button>
               ))}
             </div>
-          </div>
-        )}
-        {format === 'mp4' && (
-          <div className="labelled">
-            <span className="field-label">Encoder</span>
-            <Picker
-              label="Encoder"
-              testId="export-encoder"
-              choices={EXPORT_ENCODERS.map((value) => ({ value, label: ENCODER_NAMES[value] }))}
-              value={choices.encoder}
-              onChoose={(encoder) => {
-                if (isExportEncoder(encoder)) setChoices({ ...choices, encoder })
-              }}
-            />
           </div>
         )}
         {format !== 'png' && (

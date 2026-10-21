@@ -1,4 +1,4 @@
-import type { ExportEncoder, ExportFormat, ExportPreset, ExportQuality } from './exportPresets.js'
+import type { ExportFormat, ExportPreset, ExportQuality } from './exportPresets.js'
 import type { MediaRef, Project } from './project.js'
 import type { AppSettings, MediaSettings } from './settings.js'
 import type { FrameRate } from './time.js'
@@ -105,7 +105,6 @@ export type RawFrame = {
 export type ExportTarget = {
   path: string
   format: ExportFormat
-  encoder: ExportEncoder
   width: number
   height: number
   frameRate: FrameRate
@@ -198,7 +197,6 @@ export type ExportJob = {
   outputPath: string
   preset: ExportPreset
   format?: ExportFormat
-  encoder?: ExportEncoder
   frameRate?: FrameRate
   quality?: ExportQuality
   range?: TimeRange
@@ -263,7 +261,6 @@ export type DocumentInfo = {
   loadFrom: string | undefined
   recoveryPath: string
   exportSnapshotPath: string
-  hasSmallMemory: boolean
 }
 
 export type DocumentState = {

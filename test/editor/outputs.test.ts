@@ -19,6 +19,8 @@ const MAX_PLAYING_BLOCK_ERROR = 6
 const MIN_PLAYING_SAMPLES = 10
 const NEIGHBOUR_FRAMES = 3
 const TIE = 0.05
+// VideoToolbox sharpens a still picture over several frames, so one picture on the timeline comes out slightly different from frame to frame.
+const SAME_PICTURE_MAX_ERROR = 1
 
 type Captured = Size & { file: string }
 type PausedCapture = Captured & { timecode: string }
@@ -99,14 +101,19 @@ function wysiwyg(name: string): Promise<WysiwygReport> {
 }
 
 function closestFrames(picture: Picture, exported: readonly Picture[], from: number, to: number): { inRange: number; elsewhere: number } {
+  const framesInRange = exported.slice(from, to + 1)
   let inRange = Infinity
+  for (const frame of framesInRange) inRange = Math.min(inRange, blockColorError(picture, frame, PLAYING_BLOCK))
   let elsewhere = Infinity
   for (let frame = Math.max(0, from - NEIGHBOUR_FRAMES); frame <= Math.min(exported.length - 1, to + NEIGHBOUR_FRAMES); frame++) {
     const candidate = exported[frame]
-    if (candidate === undefined) continue
-    const error = blockColorError(picture, candidate, PLAYING_BLOCK)
-    if (frame >= from && frame <= to) inRange = Math.min(inRange, error)
-    else elsewhere = Math.min(elsewhere, error)
+    if (candidate === undefined || (frame >= from && frame <= to)) continue
+    let isSamePicture = false
+    for (const shown of framesInRange) {
+      if (blockColorError(shown, candidate, PLAYING_BLOCK) <= SAME_PICTURE_MAX_ERROR) isSamePicture = true
+    }
+    if (isSamePicture) continue
+    elsewhere = Math.min(elsewhere, blockColorError(picture, candidate, PLAYING_BLOCK))
   }
   return { inRange, elsewhere }
 }

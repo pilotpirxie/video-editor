@@ -5,7 +5,7 @@ import { describe, expect, it, onTestFinished } from 'vitest'
 import { EXPORT_PRESETS, exportSize, fitCanvas, type ExportPreset } from '../../src/shared/exportPresets.js'
 import { temporaryPathFor } from '../../src/shared/exportPresets.js'
 import { serializeProject, type Project } from '../../src/shared/project.js'
-import { ELECTRON_BINARY, ROOT, bundledFfmpeg, cropPicture, decodedAudio, probeExport, projectPath, readBarcode, runApp, scratchDirectory, type Picture } from '../helpers.js'
+import { ELECTRON_BINARY, ROOT, bundledFfmpeg, clickHeardAt, cropPicture, decodedAudio, probeExport, projectPath, readBarcode, runApp, scratchDirectory, type Picture } from '../helpers.js'
 import { CLICK_SAMPLE_44K, mediaPath } from '../media/generate.js'
 
 const ffmpeg = bundledFfmpeg()
@@ -69,14 +69,6 @@ function loudness(samples: Float32Array, firstFrame: number, endFrame: number): 
   return Math.sqrt(sumOfSquares / (endFrame - firstFrame))
 }
 
-function loudestSample(samples: Float32Array, fromSecond: number, toSecond: number): number {
-  let loudest = fromSecond * SAMPLE_RATE
-  for (let frame = loudest; frame < toSecond * SAMPLE_RATE; frame++) {
-    if (Math.abs(samples[frame * 2] ?? 0) > Math.abs(samples[loudest * 2] ?? 0)) loudest = frame
-  }
-  return loudest
-}
-
 describe('MP4 export', () => {
   it.each(EXPORT_PRESETS)('writes H.264/AAC at the %s preset', async (preset) => {
     const path = await exportCheckProject(preset)
@@ -127,8 +119,8 @@ describe('MP4 export', () => {
     const samples = await decodedAudio(await exported(projectFile, 'click-at-two-speeds', '120p'))
     expect(Math.abs(samples.length / 2 - 4 * SAMPLE_RATE)).toBeLessThan(2048)
 
-    const fastClick = loudestSample(samples, 0, 2)
-    const slowClick = loudestSample(samples, 2, 4)
+    const fastClick = clickHeardAt(samples, 0, 2 * SAMPLE_RATE)
+    const slowClick = clickHeardAt(samples, 2 * SAMPLE_RATE, 4 * SAMPLE_RATE)
     expect(Math.abs(fastClick - (CLICK_SECONDS / 2) * SAMPLE_RATE)).toBeLessThanOrEqual(SAMPLES_PER_VIDEO_FRAME)
     expect(Math.abs(slowClick - (2 + CLICK_SECONDS * 2) * SAMPLE_RATE)).toBeLessThanOrEqual(SAMPLES_PER_VIDEO_FRAME)
     expect(loudness(samples, SAMPLE_RATE / 2 + SAMPLES_PER_VIDEO_FRAME, 2 * SAMPLE_RATE)).toBeLessThan(0.005)

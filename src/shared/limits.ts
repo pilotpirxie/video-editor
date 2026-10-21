@@ -1,5 +1,4 @@
 const MEBIBYTE = 1024 * 1024
-const FULL_HD_PIXELS = 1920 * 1080
 const ULTRA_HD_PIXELS = 3840 * 2160
 
 export const MAX_SOURCE_DIMENSION = 4096
@@ -28,17 +27,6 @@ export function frameDecoderThreads(pixelCount: number): number {
 export function streamDecoderThreads(pixelCount: number, step: number): number {
   if (step > 1) return frameDecoderThreads(pixelCount)
   return 2
-}
-
-export type EncoderLimits = {
-  threads: number
-  lookahead: number
-  references: number
-}
-
-export function encoderLimits(pixelCount: number): EncoderLimits {
-  if (pixelCount <= FULL_HD_PIXELS) return { threads: 4, lookahead: 20, references: 3 }
-  return { threads: 4, lookahead: 10, references: 2 }
 }
 
 export function minimumHalvings(width: number, height: number): number {

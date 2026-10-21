@@ -639,7 +639,7 @@ describe('export dialog', () => {
     expect(report.summaryAtOpen).toBe('MP4, 640x360, 3s long')
     expect(report.canChooseSelection).toBe(false)
 
-    const controls = ['export-preset', 'export-frame-rate', 'export-quality-low', 'export-quality-medium', 'export-quality-high', 'export-encoder', 'export-range-whole', 'export-audio', 'export-cancel-dialog', 'export-start', 'export-format']
+    const controls = ['export-preset', 'export-frame-rate', 'export-quality-low', 'export-quality-medium', 'export-quality-high', 'export-range-whole', 'export-audio', 'export-cancel-dialog', 'export-start', 'export-format']
     expect(report.tabStops).toEqual([...controls, ...controls.slice(0, 3)])
     expect(report.isDialogOpenAfterListEscape).toBe(true)
 
@@ -667,7 +667,7 @@ describe('export dialog', () => {
       gif: ['export-preset', 'export-frame-rate', 'export-range-whole'],
       wav: ['export-range-whole'],
       png: [],
-      mp4: ['export-preset', 'export-frame-rate', 'export-quality-high', 'export-encoder', 'export-range-whole', 'export-audio'],
+      mp4: ['export-preset', 'export-frame-rate', 'export-quality-high', 'export-range-whole', 'export-audio'],
     })
     const sound = await probeExport(String(report.sound))
     expect(sound.video).toEqual({})

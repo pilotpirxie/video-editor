@@ -96,7 +96,7 @@ async function encode(context: RenderContext, target: ExportTarget, write: (jobI
 }
 
 function targetOf(job: ExportJob, format: ExportFormat, output: Size, frameRate: FrameRate, hasAudio: boolean): ExportTarget {
-  return { path: job.outputPath, format, encoder: job.encoder ?? 'x264', ...output, frameRate, quality: job.quality ?? 'high', hasAudio }
+  return { path: job.outputPath, format, ...output, frameRate, quality: job.quality ?? 'high', hasAudio }
 }
 
 async function exportPictures(context: RenderContext, job: ExportJob, format: ExportFormat, onProgress: ProgressListener): Promise<JobSummary> {

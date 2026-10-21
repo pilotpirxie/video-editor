@@ -4,12 +4,10 @@ import {
   GIF_FRAME_RATES,
   hasMovingPicture,
   hasSound,
-  isExportEncoder,
   isExportFormat,
   isExportPreset,
   isExportQuality,
   shortSideOf,
-  type ExportEncoder,
   type ExportFormat,
   type ExportPreset,
   type ExportQuality,
@@ -32,12 +30,11 @@ export type ExportChoices = {
   preset: ExportPreset
   frameRate: FrameRate
   quality: ExportQuality
-  encoder: ExportEncoder
   isSelectionOnly: boolean
   hasAudio: boolean
 }
 
-export type RememberedChoices = Partial<Pick<ExportChoices, 'format' | 'preset' | 'quality' | 'encoder' | 'hasAudio'>>
+export type RememberedChoices = Partial<Pick<ExportChoices, 'format' | 'preset' | 'quality' | 'hasAudio'>>
 
 function framesPerSecond(rate: FrameRate): number {
   return rate.num / rate.den
@@ -76,7 +73,6 @@ export function isExportJob(value: unknown): value is ExportJob {
   if ('frameRate' in value && value.frameRate !== undefined && !isRateOf(format, value.frameRate)) return false
   if ('quality' in value && value.quality !== undefined && !(typeof value.quality === 'string' && isExportQuality(value.quality))) return false
   if ('range' in value && value.range !== undefined && !isTimeRange(value.range)) return false
-  if ('encoder' in value && value.encoder !== undefined && !(typeof value.encoder === 'string' && isExportEncoder(value.encoder))) return false
   if ('frame' in value && value.frame !== undefined && !(Number.isInteger(value.frame) && Number(value.frame) >= 0)) return false
   return !('hasAudio' in value) || value.hasAudio === undefined || typeof value.hasAudio === 'boolean'
 }
@@ -110,21 +106,19 @@ export function parseRememberedChoices(text: string | undefined): RememberedChoi
   if (typeof stored !== 'object' || stored === null) return {}
   const remembered: RememberedChoices = {}
   if ('format' in stored && typeof stored.format === 'string' && isExportFormat(stored.format)) remembered.format = stored.format
-  if ('encoder' in stored && typeof stored.encoder === 'string' && isExportEncoder(stored.encoder)) remembered.encoder = stored.encoder
   if ('preset' in stored && typeof stored.preset === 'string' && isExportPreset(stored.preset)) remembered.preset = stored.preset
   if ('quality' in stored && typeof stored.quality === 'string' && isExportQuality(stored.quality)) remembered.quality = stored.quality
   if ('hasAudio' in stored && typeof stored.hasAudio === 'boolean') remembered.hasAudio = stored.hasAudio
   return remembered
 }
 
-export function startingChoices(project: Project, remembered: RememberedChoices, hasSmallMemory: boolean): ExportChoices {
+export function startingChoices(project: Project, remembered: RememberedChoices): ExportChoices {
   const projectRate = project.canvas.frameRate
   const choices: ExportChoices = {
     format: 'mp4',
     preset: remembered.preset ?? defaultPreset(project.canvas),
     frameRate: projectRate,
     quality: remembered.quality ?? 'high',
-    encoder: remembered.encoder ?? (hasSmallMemory ? 'hardware' : 'x264'),
     isSelectionOnly: false,
     hasAudio: remembered.hasAudio ?? true,
   }
@@ -157,7 +151,6 @@ export function exportJobFor(choices: ExportChoices, range: TimeRange | undefine
     job.quality = choices.quality
     job.hasAudio = choices.hasAudio
   }
-  if (format === 'mp4') job.encoder = choices.encoder
   if (!hasMovingPicture(format) && hasSound(format)) job.hasAudio = true
   if (choices.isSelectionOnly && range !== undefined) job.range = range
   return job

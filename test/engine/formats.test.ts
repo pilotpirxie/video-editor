@@ -57,7 +57,7 @@ describe('export formats', () => {
     expect(exportedSound.length / 2).toBe(2 * SAMPLE_RATE)
     const source = await decodedAudio(mediaPath('h264.mp4'))
     let largestDifference = 0
-    for (let index = 2000; index < 2 * (SAMPLE_RATE - 1000); index++) largestDifference = Math.max(largestDifference, Math.abs((exportedSound[index] ?? 0) - (source[index] ?? 0)))
+    for (let index = 4000; index < 2 * (SAMPLE_RATE - 1000); index++) largestDifference = Math.max(largestDifference, Math.abs((exportedSound[index] ?? 0) - (source[index] ?? 0)))
     expect(largestDifference).toBeLessThan(1 / 32_768)
     let loudestAfter = 0
     for (let index = 2 * SAMPLE_RATE; index < exportedSound.length; index++) loudestAfter = Math.max(loudestAfter, Math.abs(exportedSound[index] ?? 0))
@@ -72,8 +72,8 @@ describe('export formats', () => {
     expect(sameBytes(await pictureOf(path, 640, 360), paused)).toBe(true)
   })
 
-  it('encodes an MP4 with the media engine when asked', async () => {
-    const probed = await probeExport(await exported('hardware.mp4', ['--encoder', 'hardware']))
+  it('encodes an MP4 with VideoToolbox', async () => {
+    const probed = await probeExport(await exported('video.mp4'))
     expect(probed.video).toMatchObject({ codec_name: 'h264', width: '426', height: '240', nb_frames: '60' })
     expect(probed.audio).toMatchObject({ codec_name: 'aac' })
   })

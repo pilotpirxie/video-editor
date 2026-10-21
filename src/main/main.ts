@@ -16,7 +16,7 @@ import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { cpus, totalmem } from 'node:os'
 import { basename, dirname, extname, join, normalize, resolve } from 'node:path'
-import { EXPORT_FORMATS, EXPORT_PRESETS, isExportEncoder, isExportFormat, isExportPreset, type ExportFormat } from '../shared/exportPresets.js'
+import { EXPORT_FORMATS, EXPORT_PRESETS, isExportFormat, isExportPreset, type ExportFormat } from '../shared/exportPresets.js'
 import { describeError, logError } from '../shared/log.js'
 import type {
   DebugSystemInfo,
@@ -73,7 +73,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.png': 'image/png',
 }
 
-const CLI_FLAGS = ['project', 'export', 'frames', 'out', 'preset', 'encoder', 'via', 'at', 'size', 'selftest', 'uitest', 'media', 'seconds', 'seed', 'report-memory']
+const CLI_FLAGS = ['project', 'export', 'frames', 'out', 'preset', 'via', 'at', 'size', 'selftest', 'uitest', 'media', 'seconds', 'seed', 'report-memory']
 const DEFAULT_SELFTEST_SECONDS = 2
 const BYTES_PER_MEGABYTE = 1024 * 1024
 const SIZE_PATTERN = /^(?<width>\d+)x(?<height>\d+)$/
@@ -137,8 +137,6 @@ type AppState = {
 
 class UsageError extends Error {}
 
-const SMALL_MEMORY_BYTES = 8 * 1024 ** 3
-
 const SAVED_FORMAT_NAMES: Record<ExportFormat, string> = {
   mp4: 'MP4 video',
   webm: 'WebM video',
@@ -172,11 +170,6 @@ function exportJobFromCli(projectPath: string, options: Map<string, string>): Ex
   const format = extname(outputPath).slice(1).toLowerCase()
   if (!isExportFormat(format)) throw new UsageError(`--out must end in one of .${EXPORT_FORMATS.join(', .')}`)
   const job: ExportJob = { kind: 'export', projectPath: resolve(projectPath), outputPath: resolve(outputPath), preset, format }
-  const encoder = options.get('encoder')
-  if (encoder !== undefined) {
-    if (!isExportEncoder(encoder)) throw new UsageError('--encoder must be x264 or hardware')
-    job.encoder = encoder
-  }
   if (format !== 'png') return job
   const frame = Number(options.get('at') ?? '0')
   if (!Number.isInteger(frame) || frame < 0) throw new UsageError('--at must be a frame number')
@@ -551,7 +544,7 @@ function showDocument(state: AppState, editor: Editor): void {
 
 function documentFor(state: AppState, projectPath: string | undefined): DocumentInfo {
   const recoveryPath = newRecoveryPath(state.recoveryDirectory)
-  const document: DocumentInfo = { path: projectPath, loadFrom: projectPath, recoveryPath, exportSnapshotPath: exportSnapshotPath(recoveryPath), hasSmallMemory: totalmem() <= SMALL_MEMORY_BYTES }
+  const document: DocumentInfo = { path: projectPath, loadFrom: projectPath, recoveryPath, exportSnapshotPath: exportSnapshotPath(recoveryPath) }
   if (projectPath !== undefined) {
     if (state.remembersRecentDocuments) app.addRecentDocument(projectPath)
     void rememberProjectPath(document.recoveryPath, projectPath)
@@ -939,7 +932,7 @@ async function shouldRestore(state: AppState, found: readonly FoundRecovery[]): 
 }
 
 function recoveredDocument(found: FoundRecovery): DocumentInfo {
-  return { path: found.projectPath, loadFrom: found.recoveryPath, recoveryPath: found.recoveryPath, exportSnapshotPath: exportSnapshotPath(found.recoveryPath), hasSmallMemory: totalmem() <= SMALL_MEMORY_BYTES }
+  return { path: found.projectPath, loadFrom: found.recoveryPath, recoveryPath: found.recoveryPath, exportSnapshotPath: exportSnapshotPath(found.recoveryPath) }
 }
 
 async function firstDocuments(state: AppState, projectPath: string | undefined): Promise<DocumentInfo[]> {

@@ -40,7 +40,8 @@ describe('probeMedia', () => {
   it('reports size, timing, colour and audio layout', async () => {
     expect(await probe('h264.mp4')).toEqual({
       kind: 'video',
-      duration: 2 * SECOND,
+      // AudioToolbox fills the last 1024-sample AAC frame, so the sound outlasts the 2 s picture by 256 samples.
+      duration: Math.round(2.005_333 * SECOND),
       containerStart: 0,
       video: {
         width: 320,
@@ -48,7 +49,7 @@ describe('probeMedia', () => {
         frameDuration: 800_000,
         frameCount: 60,
         startOffset: 0,
-        seekPreroll: 3 * 800_000,
+        seekPreroll: 800_000,
         isVariableFrameRate: false,
         hasAlpha: false,
         colorMatrix: 'bt709',

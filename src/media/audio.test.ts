@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { audioClip, projectOf, track } from '../../test/fixtures.js'
-import { bundledFfmpeg } from '../../test/helpers.js'
+import { bundledFfmpeg, clickHeardAt } from '../../test/helpers.js'
 import { CLICK_SAMPLE_44K, GAP_CLICK_SECONDS, LONG_CLICK_SECOND, LONG_MINUTES, mediaPath } from '../../test/media/generate.js'
 import type { AudioStretch } from '../shared/mediaProtocol.js'
 import { WAVEFORM_BUCKET_SAMPLES, WAVEFORM_FILE, audioSegmentPath, buildWaveform, createPeakFolder, tempoFilter, waveformLevels } from './audio.js'
@@ -127,7 +127,7 @@ describe('prepared sound', () => {
     { name: 'vp9.webm', toleranceSamples: 48 },
     { name: 'h264.ts', toleranceSamples: 2 },
     { name: 'h264.flv', toleranceSamples: 48 },
-    { name: 'mpeg4.avi', toleranceSamples: 1600 },
+    { name: 'mjpeg-mp3.avi', toleranceSamples: 1600 },
   ])('keeps the sound of $name in sync with its picture', async ({ name, toleranceSamples }) => {
     const info = await probeMedia(ffmpeg, mediaPath(name))
     if (info.kind !== 'video') throw new Error(`${name} is not a video`)
@@ -228,7 +228,7 @@ describe('sound at another speed', () => {
     for (const { speedPercent, keepsPitch } of [{ speedPercent: 200, keepsPitch: true }, { speedPercent: 150, keepsPitch: true }, { speedPercent: 50, keepsPitch: true }, { speedPercent: 200, keepsPitch: false }]) {
       const samples = await stretched(opened, speedPercent, keepsPitch)
       const expected = (24_000 * 100) / speedPercent
-      expect(Math.abs(loudestFrame(samples) - expected), `${speedPercent} % ${keepsPitch}`).toBeLessThanOrEqual(oneFrame)
+      expect(Math.abs(clickHeardAt(samples, 0, samples.length / 2) - expected), `${speedPercent} % ${keepsPitch}`).toBeLessThanOrEqual(oneFrame)
     }
   })
 

@@ -17,9 +17,9 @@ const scratch = scratchDirectory('acceptance')
 const SOURCES: readonly { name: string; args: readonly string[] }[] = [
   {
     name: 'screen.mp4',
-    args: ['-f', 'lavfi', '-i', `testsrc=size=1920x1080:rate=30:duration=${TUTORIAL_SECONDS}`, '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-g', '60'],
+    args: ['-f', 'lavfi', '-i', `testsrc=size=1920x1080:rate=30:duration=${TUTORIAL_SECONDS}`, '-c:v', 'h264_videotoolbox', '-q:v', '60', '-pix_fmt', 'yuv420p', '-g', '60'],
   },
-  { name: 'voice.m4a', args: ['-f', 'lavfi', '-i', `sine=frequency=180:sample_rate=48000:duration=${TUTORIAL_SECONDS}`, '-c:a', 'aac', '-b:a', '96k'] },
+  { name: 'voice.m4a', args: ['-f', 'lavfi', '-i', `sine=frequency=180:sample_rate=48000:duration=${TUTORIAL_SECONDS}`, '-c:a', 'aac_at', '-b:a', '96k'] },
   { name: 'music.mp3', args: ['-f', 'lavfi', '-i', `sine=frequency=440:sample_rate=44100:duration=${TUTORIAL_SECONDS}`, '-ac', '2', '-c:a', 'libmp3lame', '-b:a', '128k'] },
   { name: 'logo.png', args: ['-f', 'lavfi', '-i', 'color=c=0x3dba74:size=800x400', '-frames:v', '1'] },
 ]

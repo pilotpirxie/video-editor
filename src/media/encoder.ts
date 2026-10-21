@@ -1,15 +1,13 @@
 import { rename, rm, stat } from 'node:fs/promises'
-import { encoderLimits, type EncoderLimits } from '../shared/limits.js'
 import { hasMovingPicture, hasSound, pixelLayoutOf, temporaryPathFor, type ExportQuality } from '../shared/exportPresets.js'
 import type { ExportTarget } from '../shared/mediaProtocol.js'
 import { SAMPLE_RATE } from '../shared/time.js'
 import { FfmpegError, writeAll, type FfmpegRunner } from './ffmpeg.js'
 
 const AUDIO_PIPE = 'pipe:3'
-const X264_CRF: Record<ExportQuality, number> = { low: 30, medium: 25, high: 20 }
-// The media engine's constant quality, 1 to 100: higher keeps more detail. Chosen to give files of about the size x264 makes.
-const HARDWARE_QUALITY: Record<ExportQuality, number> = { low: 45, medium: 55, high: 65 }
+const VIDEOTOOLBOX_QUALITY: Record<ExportQuality, number> = { low: 45, medium: 55, high: 65 }
 const VP9_CRF: Record<ExportQuality, number> = { low: 40, medium: 34, high: 28 }
+const VP9_THREADS = 4
 const AAC_BITRATE = '192k'
 const OPUS_BITRATE = '128k'
 const MP3_BITRATE = '192k'
@@ -41,38 +39,20 @@ function soundArguments(target: ExportTarget): string[] {
   if (target.format === 'mp3') return ['-c:a', 'libmp3lame', '-b:a', MP3_BITRATE]
   // A WAV over 4 GB becomes RF64, which keeps its length readable.
   if (target.format === 'wav') return ['-c:a', 'pcm_s16le', '-rf64', 'auto']
-  return ['-c:a', 'aac', '-b:a', AAC_BITRATE]
-}
-
-function h264Arguments(target: ExportTarget, limits: EncoderLimits): string[] {
-  if (target.encoder === 'hardware') return ['-c:v', 'h264_videotoolbox', '-q:v', String(HARDWARE_QUALITY[target.quality]), '-profile:v', 'high']
-  return [
-    '-c:v',
-    'libx264',
-    '-preset',
-    'veryfast',
-    '-crf',
-    String(X264_CRF[target.quality]),
-    '-profile:v',
-    'high',
-    '-threads',
-    String(limits.threads),
-    '-x264-params',
-    `rc-lookahead=${limits.lookahead}:ref=${limits.references}`,
-  ]
+  return ['-c:a', 'aac_at', '-b:a', AAC_BITRATE]
 }
 
 // The picture codec and the container, named outright: the file being written ends in .part, which says nothing of its format.
-function formatArguments(target: ExportTarget, limits: EncoderLimits): string[] {
+function formatArguments(target: ExportTarget): string[] {
   if (target.format === 'webm') {
-    return ['-vf', VIDEO_COLOR_TAGS, '-c:v', 'libvpx-vp9', '-row-mt', '1', '-deadline', 'good', '-cpu-used', '4', '-crf', String(VP9_CRF[target.quality]), '-b:v', '0', '-threads', String(limits.threads), '-f', 'webm']
+    return ['-vf', VIDEO_COLOR_TAGS, '-c:v', 'libvpx-vp9', '-row-mt', '1', '-deadline', 'good', '-cpu-used', '4', '-crf', String(VP9_CRF[target.quality]), '-b:v', '0', '-threads', String(VP9_THREADS), '-f', 'webm']
   }
   if (target.format === 'gif') return ['-vf', GIF_FILTER, '-loop', '0', '-f', 'gif']
   if (target.format === 'png') return ['-frames:v', '1', '-pix_fmt', 'rgb24', '-c:v', 'png', '-update', '1', '-f', 'image2']
   if (target.format === 'm4a') return ['-movflags', '+faststart', '-f', 'ipod']
   if (target.format === 'mp3') return ['-f', 'mp3']
   if (target.format === 'wav') return ['-f', 'wav']
-  return ['-vf', VIDEO_COLOR_TAGS, ...h264Arguments(target, limits), '-movflags', '+faststart', '-f', 'mp4']
+  return ['-vf', VIDEO_COLOR_TAGS, '-c:v', 'h264_videotoolbox', '-q:v', String(VIDEOTOOLBOX_QUALITY[target.quality]), '-profile:v', 'high', '-movflags', '+faststart', '-f', 'mp4']
 }
 
 export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encoder {
@@ -80,7 +60,6 @@ export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encode
   const hasEvenSize = target.width > 0 && target.height > 0 && target.width % 2 === 0 && target.height % 2 === 0
   if (layout === 'yuv420p' && !hasEvenSize) throw new EncoderError(`${target.format.toUpperCase()} video needs an even picture size, not ${target.width}x${target.height}`)
 
-  const limits = encoderLimits(target.width * target.height)
   const temporaryPath = temporaryPathFor(target.path)
   const hasPicture = hasMovingPicture(target.format) || target.format === 'png'
   const isHeard = target.hasAudio && hasSound(target.format)
@@ -91,7 +70,7 @@ export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encode
   const maps: string[] = []
   if (hasPicture) maps.push('-map', '0:v')
   if (isHeard) maps.push('-map', hasPicture ? '1:a' : '0:a', ...soundArguments(target))
-  const args = [...inputs, ...maps, ...formatArguments(target, limits), '-y', temporaryPath]
+  const args = [...inputs, ...maps, ...formatArguments(target), '-y', temporaryPath]
   const hasAudioPipe = hasPicture && isHeard
   const job = ffmpeg.spawnJob('ffmpeg', args, { extraInputPipes: hasAudioPipe ? 1 : 0 })
   const audioPipe = job.pipes[0]

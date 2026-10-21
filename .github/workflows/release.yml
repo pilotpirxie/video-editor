@@ -1,5 +1,5 @@
 # Pushing a tag such as v0.1.0 builds the DMG on an Apple silicon runner and publishes it as a GitHub release,
-# together with the source of the bundled FFmpeg, which its GPL licence requires next to the binary.
+# together with the sources of the bundled FFmpeg and its libraries, which their LGPL licences require next to the binary.
 name: Release
 
 on:
@@ -13,8 +13,6 @@ permissions:
 jobs:
   release:
     runs-on: macos-15
-    env:
-      FFMPEG_VERSION: 9.0.2
     steps:
       - uses: actions/checkout@v4
 
@@ -27,9 +25,16 @@ jobs:
         run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
 
       - uses: actions/cache@v4
+        id: ffmpeg-cache
         with:
-          path: vendor/ffmpeg
-          key: ffmpeg-${{ hashFiles('scripts/fetch-ffmpeg.mjs') }}
+          path: |
+            vendor/ffmpeg
+            vendor/ffmpeg-sources
+          key: ffmpeg-${{ hashFiles('scripts/build-ffmpeg.mjs') }}
+
+      - name: Install the tools that build FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: brew install pkgconf cmake meson ninja autoconf automake libtool
 
       - run: npm ci
 
@@ -41,10 +46,7 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
-      - name: Download the source of the bundled FFmpeg
-        run: curl -fsSL -o "release/ffmpeg-${FFMPEG_VERSION}.tar.xz" "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
-
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" release/*.dmg "release/ffmpeg-${FFMPEG_VERSION}.tar.xz" --title "Playback ${GITHUB_REF_NAME#v}" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" release/*.dmg vendor/ffmpeg-sources/* --title "Playback ${GITHUB_REF_NAME#v}" --generate-notes

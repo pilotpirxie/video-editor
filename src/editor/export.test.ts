@@ -33,7 +33,7 @@ describe('exportFrameRates', () => {
 
 describe('withFormat', () => {
   const projectRate = { num: 30, den: 1 }
-  const mp4 = startingChoices(project, {}, false)
+  const mp4 = startingChoices(project, {})
 
   it('keeps a frame rate the new format can hold, and starts from its default otherwise', () => {
     expect(withFormat(mp4, 'webm', projectRate)).toEqual({ ...mp4, format: 'webm' })
@@ -58,8 +58,8 @@ describe('defaultPreset', () => {
 })
 
 describe('remembered choices', () => {
-  it('keeps format, size, quality, encoder and sound from the last export', () => {
-    expect(parseRememberedChoices('{"format":"webm","preset":"720p","quality":"low","encoder":"hardware","hasAudio":false}')).toEqual({ format: 'webm', preset: '720p', quality: 'low', encoder: 'hardware', hasAudio: false })
+  it('keeps format, size, quality and sound from the last export', () => {
+    expect(parseRememberedChoices('{"format":"webm","preset":"720p","quality":"low","hasAudio":false}')).toEqual({ format: 'webm', preset: '720p', quality: 'low', hasAudio: false })
   })
 
   it('drops what it does not understand', () => {
@@ -70,14 +70,9 @@ describe('remembered choices', () => {
   })
 
   it('start from the project and the last export together', () => {
-    expect(startingChoices(project, {}, false)).toEqual({ format: 'mp4', preset: '1080p', frameRate: { num: 30, den: 1 }, quality: 'high', encoder: 'x264', isSelectionOnly: false, hasAudio: true })
-    expect(startingChoices(project, { preset: '480p', hasAudio: false }, false)).toMatchObject({ preset: '480p', quality: 'high', hasAudio: false })
-    expect(startingChoices(project, { format: 'gif' }, false)).toMatchObject({ format: 'gif', frameRate: { num: 10, den: 1 } })
-  })
-
-  it('make MP4s with the media engine on a Mac with little memory, unless the user chose otherwise', () => {
-    expect(startingChoices(project, {}, true).encoder).toBe('hardware')
-    expect(startingChoices(project, { encoder: 'x264' }, true).encoder).toBe('x264')
+    expect(startingChoices(project, {})).toEqual({ format: 'mp4', preset: '1080p', frameRate: { num: 30, den: 1 }, quality: 'high', isSelectionOnly: false, hasAudio: true })
+    expect(startingChoices(project, { preset: '480p', hasAudio: false })).toMatchObject({ preset: '480p', quality: 'high', hasAudio: false })
+    expect(startingChoices(project, { format: 'gif' })).toMatchObject({ format: 'gif', frameRate: { num: 10, den: 1 } })
   })
 })
 
@@ -94,12 +89,12 @@ describe('selectionRange', () => {
 })
 
 describe('exportJobFor', () => {
-  const choices: ExportChoices = { format: 'mp4', preset: '720p', frameRate: { num: 25, den: 1 }, quality: 'medium', encoder: 'hardware', isSelectionOnly: true, hasAudio: false }
+  const choices: ExportChoices = { format: 'mp4', preset: '720p', frameRate: { num: 25, den: 1 }, quality: 'medium', isSelectionOnly: true, hasAudio: false }
   const selected = { start: SECOND, end: 3 * SECOND }
   const BASE = { kind: 'export', projectPath: '/tmp/snapshot.json', outputPath: '/tmp/out.mp4', preset: '720p' }
 
   it('carries every choice of an MP4', () => {
-    expect(exportJobFor(choices, selected, PATHS, 12)).toEqual({ ...BASE, format: 'mp4', encoder: 'hardware', frameRate: { num: 25, den: 1 }, quality: 'medium', hasAudio: false, range: selected })
+    expect(exportJobFor(choices, selected, PATHS, 12)).toEqual({ ...BASE, format: 'mp4', frameRate: { num: 25, den: 1 }, quality: 'medium', hasAudio: false, range: selected })
   })
 
   it('carries only what the format uses', () => {
@@ -120,19 +115,16 @@ describe('isExportJob', () => {
 
   // The main process runs only jobs that pass; every job the dialog can make must pass, or its export waits for ever.
   it('accepts every job the dialog can make', () => {
-    const encoders = ['x264', 'hardware'] as const
     let checked = 0
     for (const format of EXPORT_FORMATS) {
       for (const frameRate of exportFrameRates(format)) {
         for (const preset of EXPORT_PRESETS) {
           for (const quality of EXPORT_QUALITIES) {
-            for (const encoder of encoders) {
-              for (const isSelectionOnly of [false, true]) {
-                const choices: ExportChoices = { format, preset, frameRate, quality, encoder, isSelectionOnly, hasAudio: isSelectionOnly }
-                const job = exportJobFor(choices, { start: SECOND, end: 2 * SECOND }, PATHS, 7)
-                expect(isExportJob(job), JSON.stringify(job)).toBe(true)
-                checked += 1
-              }
+            for (const isSelectionOnly of [false, true]) {
+              const choices: ExportChoices = { format, preset, frameRate, quality, isSelectionOnly, hasAudio: isSelectionOnly }
+              const job = exportJobFor(choices, { start: SECOND, end: 2 * SECOND }, PATHS, 7)
+              expect(isExportJob(job), JSON.stringify(job)).toBe(true)
+              checked += 1
             }
           }
         }
@@ -167,7 +159,6 @@ describe('isExportJob', () => {
     ['a rate as text', { ...VALID, frameRate: '30/1' }],
     ['a rate without a denominator', { ...VALID, frameRate: { num: 30 } }],
     ['an unknown quality', { ...VALID, quality: 'ultra' }],
-    ['an unknown encoder', { ...VALID, encoder: 'nvenc' }],
     ['a backwards range', { ...VALID, range: { start: 2 * SECOND, end: SECOND } }],
     ['an empty range', { ...VALID, range: { start: SECOND, end: SECOND } }],
     ['a range before the start', { ...VALID, range: { start: -1, end: SECOND } }],

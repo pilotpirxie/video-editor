@@ -5,7 +5,6 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { afterAll, expect, onTestFinished } from 'vitest'
 import { allClips } from '../src/editor/clips.js'
 import { createFfmpegRunner, writeAll, type FfmpegRunner } from '../src/media/ffmpeg.js'
-import type { ExportEncoder } from '../src/shared/exportPresets.js'
 import { parseProject, serializeProject, type CameraKeyframe, type Clip, type MediaRef, type Project, type Track, type Transform, type VideoClip } from '../src/shared/project.js'
 import { FRAME, SECOND } from './fixtures.js'
 import { BARCODE_BITS, BARCODE_HEIGHT_FRACTION, barcodeSource, type VideoPattern } from './media/generate.js'
@@ -455,14 +454,14 @@ function isExportSummary(value: unknown): value is { peakMemoryMegabytes: number
   return typeof value.peakMemoryMegabytes === 'number' && typeof value.realTimeRatio === 'number'
 }
 
-export async function exportWithReport(path: string, outputPath: string, preset: string, encoder: ExportEncoder): Promise<ExportReport> {
+export async function exportWithReport(path: string, outputPath: string, preset: string): Promise<ExportReport> {
   const startedAt = performance.now()
-  const result = await runApp(['--export', path, '--out', outputPath, '--preset', preset, '--encoder', encoder, '--report-memory'], EXPORT_TIMEOUT_MS)
+  const result = await runApp(['--export', path, '--out', outputPath, '--preset', preset, '--report-memory'], EXPORT_TIMEOUT_MS)
   if (result.exitCode !== 0) throw new Error(`Export failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`)
   const summary = lastJsonLine(result.stdout)
   if (!isExportSummary(summary)) throw new Error(`The export did not report its memory and speed: ${result.stdout}`)
   const elapsedMs = performance.now() - startedAt
-  console.info(`export ${path} at ${preset} by ${encoder}: peak memory ${summary.peakMemoryMegabytes} MB, ${summary.realTimeRatio}× real time, ${(elapsedMs / 1000).toFixed(1)} s`)
+  console.info(`export ${path} at ${preset}: peak memory ${summary.peakMemoryMegabytes} MB, ${summary.realTimeRatio}× real time, ${(elapsedMs / 1000).toFixed(1)} s`)
   const progressLines = result.stdout.split('\n').filter((line) => line.startsWith('progress '))
   return { peakMemoryMegabytes: summary.peakMemoryMegabytes, realTimeRatio: summary.realTimeRatio, progressLines, elapsedMs }
 }
@@ -526,6 +525,22 @@ function fieldsOf(line: string): Record<string, string> {
     fields[pair.slice(0, separator)] = pair.slice(separator + 1)
   }
   return fields
+}
+
+const LOUD_FRACTION = 0.9
+
+// Slowed down, the tempo filter plays a short click twice, and either copy can be the louder by a rounding error.
+export function clickHeardAt(stereo: Float32Array, fromFrame: number, toFrame: number): number {
+  let peak = 0
+  for (let frame = fromFrame; frame < toFrame; frame++) peak = Math.max(peak, Math.abs(stereo[frame * 2] ?? 0))
+  let frameSum = 0
+  let loudFrames = 0
+  for (let frame = fromFrame; frame < toFrame; frame++) {
+    if (Math.abs(stereo[frame * 2] ?? 0) < peak * LOUD_FRACTION) continue
+    frameSum += frame
+    loudFrames += 1
+  }
+  return frameSum / loudFrames
 }
 
 export async function decodedAudio(path: string): Promise<Float32Array> {
