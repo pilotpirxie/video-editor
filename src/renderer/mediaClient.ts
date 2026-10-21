@@ -85,7 +85,6 @@ export function createMediaClient(firstPort: MessagePort): MediaConnection {
   function attach(next: MessagePort): void {
     port = next
     next.onmessage = onReply
-    // Without this a request made just before the media process dies would wait forever, and so would Save.
     next.addEventListener('close', () => {
       if (port !== next) return
       port = undefined

@@ -70,7 +70,6 @@
   grid-area: left;
 }
 
-/* Room for the scroll bar is kept even when nothing scrolls, so folding a group never changes the width of the fields. */
 .sidebar.right {
   grid-area: right;
   overflow-y: auto;
@@ -136,7 +135,6 @@
   min-height: 0;
 }
 
-/* A fitted picture never needs scrolling, and a scrollable area would change size while the picture is refitted to it. */
 .canvas-area {
   position: relative;
   flex: 1;
@@ -312,8 +310,7 @@
   height: 100%;
 }
 
-/* Scrolls the tracks sideways for a mouse without a sideways wheel. It starts under the canvases: the track headers are 190px wide with a 1px edge.
-   Styling it keeps it shown, as macOS otherwise hides scroll bars until something scrolls. */
+/* 191px clears the 190px track headers and their edge. Styled, so macOS does not hide it until something scrolls. */
 .timeline-scrollbar {
   flex: none;
   margin-left: 191px;

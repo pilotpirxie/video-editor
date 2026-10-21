@@ -34,8 +34,6 @@ export type Keyframe = {
   easing: Easing
 }
 
-// The value a list of keyframes gives at a time measured from the start of its clip; before the first keyframe its value, after the last one its value.
-// The list is in time order, which loading a file checks. A binary search keeps it cheap where the mixer asks once per audio sample.
 export function valueAt(keyframes: readonly Keyframe[], localTime: number): number | undefined {
   let earlier = 0
   let later = keyframes.length
@@ -629,7 +627,6 @@ function parseFade(fields: Fields, key: string, clipDuration: number): number {
   return fade
 }
 
-// A transition may be longer than its clip. Tying the two together would shorten a transition whenever a clip is trimmed or split somewhere else, and the picture there would change with it.
 function parseTransition(fields: Fields, key: string): Transition {
   const transition = readFields(fields.raw(key), fields.at(key), ['type', 'duration'])
   return { type: transition.oneOf('type', TRANSITION_TYPES), duration: transition.gridTime('duration', 'positive') }
@@ -750,7 +747,6 @@ function parseTiming(fields: Fields, context: ParseContext, animatable: readonly
     start: fields.gridTime('start', 'zero or more'),
     duration: fields.gridTime('duration', 'positive'),
   }
-  // Past the largest safe integer, times stop being exact and stop adding up.
   const projectEnd = context.shift + timing.start + timing.duration
   if (!Number.isSafeInteger(projectEnd)) fail(fields.at('duration'), 'ends the clip too far along the timeline')
   if (fields.has('keyframes')) {
@@ -806,7 +802,6 @@ function parseVolume(fields: Fields, clipDuration: number): VolumeSettings {
   return settings
 }
 
-// A switch that is off is left out of the file, so a file never has two ways to say the same thing.
 function parseSwitch(fields: Fields, key: string): true {
   if (!fields.boolean(key)) fail(fields.at(key), 'must be true or left out')
   return true

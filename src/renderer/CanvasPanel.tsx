@@ -48,7 +48,7 @@ function canvasHintOf(state: EditorState): string | undefined {
 }
 
 type CanvasPanelProps = {
-  // Created once outside React: its drawing surface is handed to the engine worker and cannot be handed over twice.
+  // Created outside React: its surface is transferred to the engine worker, which can happen only once.
   preview: HTMLCanvasElement
 }
 
@@ -114,7 +114,6 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
       setZoom(next)
     }
 
-    // Not passive, so that the pinch does not also zoom the whole window.
     area.addEventListener('wheel', onWheel, { passive: false })
     return () => area.removeEventListener('wheel', onWheel)
   }, [preview, canvas.width])

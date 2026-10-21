@@ -36,7 +36,7 @@ function pictureOf(clip: VideoClip): VideoClip {
 export function separateAudio(project: Project, mediaStates: MediaStates, newIds: ReadonlyMap<string, string>, newTracks: readonly NewTrack[]): Project {
   let separated = project
   let usedTracks = 0
-  // Top track first: a track inserted above a row does not move the rows still to come.
+  // Top track first, so an inserted track does not shift the rows still to come.
   for (let trackIndex = project.tracks.length - 1; trackIndex >= 0; trackIndex--) {
     const track = project.tracks[trackIndex]
     const newTrack = newTracks[usedTracks]

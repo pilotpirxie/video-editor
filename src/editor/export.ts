@@ -61,7 +61,6 @@ function isTimeRange(value: unknown): boolean {
   return typeof value.start === 'number' && typeof value.end === 'number' && value.start >= 0 && value.end > value.start
 }
 
-// A job arrives from a window, so every choice in it is checked before it is run; the frame rate must be one its format offers.
 export function isExportJob(value: unknown): value is ExportJob {
   if (typeof value !== 'object' || value === null) return false
   if (!('kind' in value) || value.kind !== 'export') return false

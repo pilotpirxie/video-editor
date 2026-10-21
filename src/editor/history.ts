@@ -1,6 +1,5 @@
 import type { Project } from '../shared/project.js'
 
-// A step keeps the project before and after one command. Unchanged tracks and clips are shared between snapshots, so a step costs only what the command touched.
 export type Step = {
   label: string
   before: Project

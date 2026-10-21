@@ -826,8 +826,6 @@ function ZoomProperties({ index }: { index: number }): ReactElement | undefined 
   )
 }
 
-// One edit made of an edit for each of the clips, one after the other.
-// Each clip is read from the project the edit is given: while a value is previewed the rendered clips already hold it, so comparing against them would hand back the gesture's base unchanged.
 function eachClip(clips: readonly VisualClip[], editOf: (project: Project, clip: VisualClip) => Project): Edit {
   return (project) => {
     const current = new Map(allClips(project.tracks).map((clip) => [clip.id, clip]))

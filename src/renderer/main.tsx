@@ -61,7 +61,7 @@ function logSlowFrames(): void {
 }
 
 async function runEditor(): Promise<void> {
-  // The engine must listen for its media port before the page finishes loading, so it starts before anything is awaited or rendered.
+  // Started before anything is awaited: the engine must listen for its media port before the page finishes loading.
   const preview = document.createElement('canvas')
   preview.dataset.testid = 'preview'
   preview.setAttribute('aria-label', 'Preview')

@@ -11,12 +11,8 @@ const VP9_THREADS = 4
 const AAC_BITRATE = '192k'
 const OPUS_BITRATE = '128k'
 const MP3_BITRATE = '192k'
-// A palette of its own for every picture, so nothing is held back until the end of the export.
 const GIF_FILTER = 'split[pictures][stats];[stats]palettegen=stats_mode=single[palette];[pictures][palette]paletteuse=new=1'
-// The engine sends video pictures already in BT.709 TV range; this only labels them so players read the colours right.
 const VIDEO_COLOR_TAGS = 'setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv'
-// After the last frame FFmpeg empties its encoders, and an MP4 is rewritten once to put its index first, so the time that may take grows with the file.
-// Past it the export fails instead of waiting for ever. A slow external drive still rewrites faster than 20 MB a second.
 const FINISH_BASE_MS = 60_000
 const SLOWEST_REWRITE_BYTES_PER_MS = 20_000
 const MS_PER_SECOND = 1000
@@ -37,12 +33,10 @@ export type Encoder = {
 function soundArguments(target: ExportTarget): string[] {
   if (target.format === 'webm') return ['-c:a', 'libopus', '-b:a', OPUS_BITRATE]
   if (target.format === 'mp3') return ['-c:a', 'libmp3lame', '-b:a', MP3_BITRATE]
-  // A WAV over 4 GB becomes RF64, which keeps its length readable.
   if (target.format === 'wav') return ['-c:a', 'pcm_s16le', '-rf64', 'auto']
   return ['-c:a', 'aac_at', '-b:a', AAC_BITRATE]
 }
 
-// The picture codec and the container, named outright: the file being written ends in .part, which says nothing of its format.
 function formatArguments(target: ExportTarget): string[] {
   if (target.format === 'webm') {
     return ['-vf', VIDEO_COLOR_TAGS, '-c:v', 'libvpx-vp9', '-row-mt', '1', '-deadline', 'good', '-cpu-used', '4', '-crf', String(VP9_CRF[target.quality]), '-b:v', '0', '-threads', String(VP9_THREADS), '-f', 'webm']
@@ -77,7 +71,6 @@ export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encode
   if (hasAudioPipe && audioPipe === undefined) throw new EncoderError('The encoder was started without an audio input')
 
   async function write(pixels: ArrayBuffer, audio: Float32Array): Promise<void> {
-    // A picture of the wrong size would not fail: FFmpeg would cut the bytes into frames that are not the ones sent.
     if (hasPicture && pixels.byteLength !== pictureBytes) throw new EncoderError(`A picture of ${pixels.byteLength} bytes was sent where ${layout} at ${target.width}×${target.height} takes ${pictureBytes}`)
     const sound = new Uint8Array(audio.buffer, audio.byteOffset, audio.byteLength)
     if (hasAudioPipe) audioPipe?.write(sound)
@@ -91,8 +84,7 @@ export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encode
 
   async function finish(): Promise<void> {
     job.stdin.end()
-    // A shut-down extra pipe does not always wake FFmpeg's read of it on macOS, and FFmpeg then waits for the rest of the sound for ever.
-    // Closing it does; stdin needs nothing more, as Node closes a write-only pipe once it has finished.
+    // On macOS ending an extra pipe does not always wake FFmpeg's read of it; destroying it does.
     if (audioPipe !== undefined) audioPipe.end(() => audioPipe.destroy())
     let writtenBytes = 0
     try {
@@ -108,7 +100,6 @@ export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encode
     try {
       await Promise.race([job.done, timedOut])
     } catch (error) {
-      // The session has already let go of this export, so no cancel follows: the unfinished file goes now.
       job.kill()
       await rm(temporaryPath, { force: true })
       throw error

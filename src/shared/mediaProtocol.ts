@@ -23,7 +23,6 @@ export type AudioInfo = {
   channels: number
   sampleRate: number
   codec: string
-  // MP3 and raw AAC files cannot be sought to an exact sample; their sound is decoded from the start.
   seeksExactly: boolean
 }
 

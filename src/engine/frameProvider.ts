@@ -76,8 +76,6 @@ function itemOf(layer: PictureLayer, picture: Picture): DrawItem {
 
 export function createFrameProvider(media: MediaClient, compositor: Compositor): FrameProvider {
   const retired: GpuTexture[] = []
-  // What each clip last showed while playing. It outlives its place in the cache until the clip shows another picture or leaves,
-  // so a video or image that is late is drawn as it last was and is never left out of the frame.
   const lastShown = new Map<string, Picture>()
   const evictedWhileShown = new Set<GpuTexture>()
   const pictures = createByteLru<Picture>(TEXTURE_CACHE_BYTES, (picture) => retire(picture.texture))

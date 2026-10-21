@@ -106,7 +106,6 @@ export function rasterizeCallout(look: CalloutLook, pixelsPerUnitX: number, pixe
 
   const outline = calloutOutline(look)
   if (look.borderWidth > 0) {
-    // The border lies around the shape. Its inner half is taken away again, so a fill that lets light through does not show it.
     context.lineJoin = 'round'
     context.lineWidth = 2 * look.borderWidth
     context.strokeStyle = look.borderColor

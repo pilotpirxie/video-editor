@@ -148,7 +148,6 @@ export function createEditorStore(settings: AppSettings = DEFAULT_SETTINGS): Edi
     }
     if (openGroups.length !== next.openGroups.length) next.openGroups = openGroups
     next.scope = scopeOf(next.wholeProject, openGroups)
-    // Inside a group every change of the whole project gives a new object for the open tracks; views must only see one when something they show has changed.
     const { project } = state
     const isSameInside = openGroups.length > 0 && scoped.tracks === project.tracks && scoped.media === project.media && scoped.canvas === project.canvas && project.camera === undefined
     next.project = isSameInside ? project : scoped
@@ -187,7 +186,6 @@ export function createEditorStore(settings: AppSettings = DEFAULT_SETTINGS): Edi
     gesture = { label, base: state.wholeProject }
   }
 
-  // Every update starts from the project as it was when the gesture began, so a drag is absolute and repeating an update changes nothing.
   function update(edit: Edit): boolean {
     if (gesture === undefined) return false
     const { base } = gesture

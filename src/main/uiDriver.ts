@@ -109,7 +109,6 @@ export function centerOf(rect: Rect): Point {
 function driverOf(window: BrowserWindow, options: UiTestOptions): Driver {
   const page = pageOf(window)
 
-  // The page reloads when a document is replaced; a check that lands in the middle of that simply counts as "not yet".
   async function holds(script: string): Promise<boolean> {
     try {
       return (await page.evaluate(script)) === true
@@ -310,7 +309,6 @@ function driverOf(window: BrowserWindow, options: UiTestOptions): Driver {
   }
 }
 
-// The test window is shown without taking focus from whoever runs the tests; the page must still behave as a focused one.
 export async function attachedDriver(window: BrowserWindow, options: UiTestOptions): Promise<Driver> {
   window.webContents.debugger.attach()
   await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })

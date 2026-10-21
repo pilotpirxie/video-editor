@@ -64,7 +64,6 @@ export function clipForMedia(mediaId: string, info: MediaInfo, canvas: Canvas, c
   return { ...video, loop: true, duration: Math.max(timing.duration, stillDuration) }
 }
 
-// Higher project rates are a deliberate choice: a phone's slow-motion clip should not make the whole project twice as heavy to play and export.
 function nearestProjectFrameRate(frameTicks: number): FrameRate {
   let nearest = PROJECT_FRAME_RATES[0] ?? { num: 30, den: 1 }
   for (const rate of PROJECT_FRAME_RATES) {

@@ -1,5 +1,3 @@
-# Pushing a tag such as v0.1.0 builds the DMG on an Apple silicon runner and publishes it as a GitHub release,
-# together with the sources of the bundled FFmpeg and its libraries, which their LGPL licences require next to the binary.
 name: Release
 
 on:

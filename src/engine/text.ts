@@ -2,7 +2,6 @@ import { lettersOf, type TextLook } from './resolve.js'
 
 const PADDING_PER_FONT_SIZE = 0.25
 const MAX_RASTER_SIDE = 8192
-// 64 MB of pixels: a zoomed-in heading on a 4 GB Mac must not take a quarter of its memory, and twice that with a shadow.
 const MAX_RASTER_PIXELS = 4096 * 4096
 const FALLBACK_FAMILY = 'sans-serif'
 const SHADOW_REACH_PER_BLUR = 2
@@ -20,7 +19,7 @@ class TextError extends Error {
   }
 }
 
-// The GPU canvas smooths the edges of a stretched drawing a little differently on every run; the CPU canvas gives the same pixels every time, which preview and export parity needs.
+// The CPU canvas gives the same pixels on every run and the GPU canvas does not, which preview and export parity needs.
 function contextOf(canvas: OffscreenCanvas): OffscreenCanvasRenderingContext2D {
   const context = canvas.getContext('2d', { willReadFrequently: true })
   if (context === null) throw new TextError('This environment cannot draw text')
@@ -36,8 +35,7 @@ function wantedPixels(units: number, pixelsPerUnit: number): number {
 export function rasterSize(naturalWidth: number, naturalHeight: number, pixelsPerUnitX: number, pixelsPerUnitY: number): { width: number; height: number } {
   const wantedWidth = wantedPixels(naturalWidth, pixelsPerUnitX)
   const wantedHeight = wantedPixels(naturalHeight, pixelsPerUnitY)
-  // Both sides shrink by the same factor, so a drawing that is too large keeps its shape and only loses detail.
-  // The square roots are taken apart so their product cannot overflow.
+  // Separate square roots, so the product of the two sides cannot overflow.
   const shrink = Math.min(1, MAX_RASTER_SIDE / wantedWidth, MAX_RASTER_SIDE / wantedHeight, Math.sqrt(MAX_RASTER_PIXELS) / Math.sqrt(wantedWidth) / Math.sqrt(wantedHeight))
   return { width: Math.max(1, Math.ceil(wantedWidth * shrink)), height: Math.max(1, Math.ceil(wantedHeight * shrink)) }
 }
@@ -154,7 +152,6 @@ function drawLetters(context: OffscreenCanvasRenderingContext2D, look: TextLook,
       left -= parts.length
     }
     if (look.outline !== undefined) {
-      // Half of a stroke lies inside the letters, where the fill covers it.
       context.lineWidth = 2 * look.outline.width
       context.strokeStyle = look.outline.color
       context.strokeText(shown, x, y)
@@ -170,7 +167,6 @@ export function drawText(target: Raster & { context: OffscreenCanvasRenderingCon
     drawLetters(target.context, look, measure, shownLetters)
     return
   }
-  // The letters and their outline throw one shadow together, so they are drawn on a sheet of their own, and the sheet is laid down with the shadow.
   const sheet = new OffscreenCanvas(target.canvas.width, target.canvas.height)
   const sheetContext = contextOf(sheet)
   sheetContext.setTransform(target.context.getTransform())

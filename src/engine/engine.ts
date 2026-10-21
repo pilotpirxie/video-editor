@@ -160,7 +160,6 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     const { canvas, camera } = project.project
     const view = isWholeCanvasShownWhenPaused ? wholeCanvas(canvas) : viewAt(camera, time, canvas)
     const scale = textScale(project, view)
-    // An edit that needs the same source frames keeps the running decodes: aborting them on every drag frame would never let a slow decode finish.
     const needed = decodesNeeded(layers)
     if (refining === undefined || refining.signal.aborted || needed !== refiningFor) {
       refining?.abort()
@@ -352,7 +351,6 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     readAudio = cachedAudioReader(readFromMedia, AUDIO_CACHE_BYTES * share)
   }
 
-  // Chromium loses the WebGL context when the GPU process stops, and gives it back once a new one runs. Everything the GPU held is made again.
   surface.addEventListener('webglcontextlost', (event) => {
     event.preventDefault()
     isContextLost = true
@@ -378,7 +376,6 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     if (playback === undefined) void showPaused()
   }
 
-  // The playback loop holds the project it started with, so an edit pauses instead of swapping the project under it.
   function setProject(project: LoadedProject): void {
     stopPlayback()
     loaded = project

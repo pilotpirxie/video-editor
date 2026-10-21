@@ -10,7 +10,7 @@ function familyOf(font: unknown): string | undefined {
   return typeof font.family === 'string' ? font.family : undefined
 }
 
-// The font families installed on this Mac, in alphabetical order. The browser only answers after a click or a key press, so this is called when the font control is first used.
+// The browser answers only after a click or a key press, so call this when the font control is first used.
 export async function installedFontFamilies(): Promise<string[]> {
   const query: unknown = Reflect.get(window, 'queryLocalFonts')
   if (typeof query !== 'function') throw new FontListError('This system cannot list its fonts')

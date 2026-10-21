@@ -5,7 +5,6 @@ import { serializeProject, type CameraKeyframe, type Clip, type Project } from '
 import { FRAME, SECOND, textClip } from '../fixtures.js'
 import { ROOT, at, exportWithReport, largeProject, projectOfTracks, projectPath, scratchDirectory, selfTestReport, uiTest, videoOf } from '../helpers.js'
 
-// Run by hand with `npm run test:extremes` on an M1 with 4 GB of memory; it is not part of `npm test`.
 const scratch = scratchDirectory('extremes')
 const MS_PER_SECOND = 1000
 const BYTES_PER_MEGABYTE = 1024 * 1024

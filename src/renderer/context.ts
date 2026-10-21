@@ -19,7 +19,6 @@ export function useSession(): Session {
   return session
 }
 
-// The selector must return a value that is identical between calls while the part of the state it reads has not changed.
 export function useEditorState<Selected>(select: (state: EditorState) => Selected): Selected {
   const { store } = useSession()
   return useSyncExternalStore(store.subscribe, () => select(store.getState()))

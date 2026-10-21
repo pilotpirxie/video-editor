@@ -70,7 +70,6 @@ export function hasSound(format: ExportFormat): boolean {
   return SOUND_FORMATS.includes(format)
 }
 
-// What the engine hands the encoder for each picture. Video codecs take YUV 4:2:0, made on the GPU so a third as many bytes cross between processes; a GIF and a PNG take the RGBA pixels.
 export type PixelLayout = 'yuv420p' | 'rgba'
 
 export function pixelLayoutOf(format: ExportFormat): PixelLayout {
@@ -81,7 +80,7 @@ export function temporaryPathFor(path: string): string {
   return `${path}.part`
 }
 
-// A GIF stores how long each picture shows in hundredths of a second, so only these rates play at their true speed.
+// GIF delays are whole hundredths of a second; only these rates play at their true speed.
 export const GIF_FRAME_RATES: readonly FrameRate[] = [
   { num: 10, den: 1 },
   { num: 20, den: 1 },

@@ -29,7 +29,6 @@ type SpawnOptions = {
   signal?: AbortSignal
   extraInputPipes?: number
   isBackground?: boolean
-  // How much output is read before anyone asks for it, so FFmpeg works on while the last piece is used. Without it FFmpeg waits for each read.
   readAheadBytes?: number
 }
 

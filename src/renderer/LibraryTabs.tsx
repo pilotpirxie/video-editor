@@ -151,7 +151,7 @@ type Entry = {
 function EntryTile({ entry }: { entry: Entry }): ReactElement {
   const drag = useLibraryDrag(entry.item, entry.label)
 
-  // A click with the pointer adds nothing: the item is dragged where it goes. Enter, Space and VoiceOver press the button without a pointer, which `detail` 0 tells apart.
+  // detail 0 is Enter, Space or VoiceOver; a pointer click chooses nothing, as pointer users drag.
   function onClick(event: MouseEvent<HTMLButtonElement>): void {
     if (event.detail === 0) entry.onChoose()
   }

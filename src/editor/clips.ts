@@ -122,12 +122,11 @@ export function nextTrackName(project: Project): string {
   return `Track ${project.tracks.length + 1}`
 }
 
-// Where something added above everything else goes: the empty track just above the highest clip, so the empty tracks a new project starts with are filled before new ones are made.
-// A locked or hidden track there would swallow it, so a new track on top is used instead (an index past the last track).
 export function trackAboveAll(project: Project): number {
-  const index = project.tracks.findLastIndex((track) => track.clips.length > 0) + 1
-  const track = project.tracks[index]
-  return track === undefined || track.locked || track.hidden ? project.tracks.length : index
+  const aboveHighestClip = project.tracks.findLastIndex((track) => track.clips.length > 0) + 1
+  const track = project.tracks[aboveHighestClip]
+  const isUsable = track !== undefined && !track.locked && !track.hidden
+  return isUsable ? aboveHighestClip : project.tracks.length
 }
 
 export function shiftedKeyframes(keyframes: Keyframes | undefined, delta: number): Keyframes | undefined {

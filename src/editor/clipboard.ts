@@ -6,7 +6,6 @@ type CopiedClip = {
   trackIndex: number
 }
 
-// Holds the media references too, so a paste still works after the import that brought the media in was undone.
 export type Clipboard = {
   clips: readonly CopiedClip[]
   media: readonly MediaRef[]

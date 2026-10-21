@@ -86,7 +86,6 @@ function scaledKeyframes(list: Keyframe[] | undefined, factor: number, added: nu
   return list?.map((keyframe) => ({ ...keyframe, value: Math.min(most, keyframe.value * factor + added) }))
 }
 
-// The x and y keyframes of a member, as they are on the canvas. A turned group mixes the two, so both get a keyframe wherever either had one.
 function placeKeyframes(keyframes: Keyframes, own: Transform, frame: GroupFrame): Pick<Keyframes, 'x' | 'y'> {
   if (keyframes.x === undefined && keyframes.y === undefined) return {}
   if (frame.rotation === 0) {

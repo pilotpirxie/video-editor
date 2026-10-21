@@ -95,7 +95,6 @@ function MediaItem({ reference, state, preparation, isSelected, isTabStop, dragg
         if (event.button === 0) onPress(reference.id, event)
         drag.onPointerDown(event)
       }}
-      // A click leaves the keys with the editor, so Space still plays; Tab is what brings them into the list.
       onMouseDown={(event) => event.preventDefault()}
       onClick={(event) => onChoose(reference.id, event)}
     >

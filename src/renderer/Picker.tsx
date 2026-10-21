@@ -30,7 +30,6 @@ export function OptionList({ label, testId, choices, chosen, onPreview, onChoose
   const previewedRef = useRef(chosen)
   const [chosenAtOpen] = useState(chosen)
 
-  // A choice or a close is reported once: a release on an option is followed by its click, and whatever closes the list may happen twice.
   function finish(report: () => void): void {
     if (isDoneRef.current) return
     isDoneRef.current = true

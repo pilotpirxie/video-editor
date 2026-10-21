@@ -185,7 +185,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     location.reload()
   }
 
-  // An answer that is waited for in order is caught at once, so a later file that fails first is not reported as unhandled.
   async function settledAddition(path: string): Promise<PromiseSettledResult<AddedMedia>> {
     try {
       return { status: 'fulfilled', value: await media.addMedia(path) }
@@ -381,7 +380,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
       if (choice === 'cancel') return
       if (choice === 'save' && !(await save())) return
     }
-    // An autosave still running would write the recovery file again after the main process removed it.
     window.clearInterval(autosaveTimer)
     autosaveTimer = undefined
     await recoveryWork
@@ -389,7 +387,7 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   }
 
   function undoOrRedo(action: 'undo' | 'redo'): void {
-    // The menu shortcut also arrives while a text field has focus, where it must undo typing, not the project.
+    // Menu shortcuts also arrive while a text field has focus, where they must act on the text.
     if (isTypingTarget(document.activeElement)) {
       document.execCommand(action)
     } else if (action === 'undo') {
@@ -399,8 +397,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     }
   }
 
-  // Like Undo, the menu's Select All also arrives while a text field has focus, where it must select the text.
-  // A panel with a selection of its own cancels the event while it is the one in use, and then the clips stay as they are.
   function selectAll(): void {
     if (isTypingTarget(document.activeElement)) document.execCommand('selectAll')
     else if (window.dispatchEvent(new Event(SELECT_ALL_EVENT, { cancelable: true }))) actions.selectAll()
@@ -489,7 +485,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     store.notify('The media process stopped. It is being restarted; your work is safe.')
   })
 
-  // A restarted media process knows nothing of this window. It is told the project's files before the engine asks it for frames, and the engine is then given the project again so it asks for what it lost.
   async function reconnect(ports: MediaPorts): Promise<void> {
     media.reconnect(ports.ui)
     isMediaConnected = true

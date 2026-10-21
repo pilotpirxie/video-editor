@@ -37,7 +37,7 @@ const STEPS_TO_TIME = 20
 const PICTURES_SETTLE_MS = 1500
 const HANDLE_INSET = 7
 const CLEAR_OF_VOLUME_LINE = 10
-// A short pinch outwards, which the page sees as a wheel delta of -20: the zoom grows by e^0.2, about a fifth. Electron's wheel input counts the other way.
+// Electron's wheel delta is the page's negated: this is a -20 pinch outward, a zoom of e^0.2.
 const PINCH_DELTA = 20
 const HANDLE_FROM_ROW_MIDDLE = 19
 const DIAMOND_FROM_ROW_MIDDLE = 1
@@ -189,7 +189,6 @@ function isListOpen(testId: string): string {
   return `${selector(`${testId}-options`)} !== null`
 }
 
-// A panel that scrolls to bring a control into view tells the page so with its next frame. A person could not press sooner, and a list that opened sooner would take the scroll for a reason to close.
 const ONCE_THE_SCROLL_IS_HEARD = `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`
 
 async function centerInView(driver: Driver, testId: string): Promise<Point> {
@@ -580,7 +579,6 @@ async function testExport(driver: Driver): Promise<UiTestReport> {
   await driver.press('Space')
   driver.menu('duplicate')
   await driver.clickAt(await driver.timelinePoint(second / 2, 0, 3))
-  // A file dropped on the window is not imported either. The page cannot be handed a real file, so the drop carries one without a place on disk: were it let through, the import would complain about it.
   await driver.page.evaluate(`(() => {
     const files = new DataTransfer()
     files.items.add(new File(['x'], 'dropped.mp4'))
@@ -990,8 +988,6 @@ function clearOfVolumeLine(point: Point): Point {
   return { x: point.x, y: point.y - CLEAR_OF_VOLUME_LINE }
 }
 
-// Sorted by duration the files are listed in the order they are imported: the video and the sound are both 2 s long and keep that order, and the image has no length.
-// The dates the test files were created on would give an order that changes when they are made again.
 async function importThreeFiles(driver: Driver): Promise<void> {
   const names = ['h264.mp4', 'audio.wav', 'image.jpg']
   driver.menu('sort-duration')
@@ -2054,7 +2050,6 @@ export async function rowInView(driver: Driver, time: number, trackIndex: number
   for (let scroll = 0; scroll < MAX_ROW_SCROLLS; scroll++) {
     const point = await driver.timelinePoint(time, trackIndex, trackCount)
     if (point.y >= lowest && point.y <= highest) return point
-    // Electron's wheel input counts the other way from the page: a negative delta scrolls the tracks up.
     await driver.scrollAt(centerOf(area), 0, point.y > highest ? -ROW_SCROLL_PIXELS : ROW_SCROLL_PIXELS, false)
   }
   throw new PageError(`Track ${trackIndex + 1} could not be scrolled into view`)

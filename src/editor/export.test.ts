@@ -113,7 +113,6 @@ describe('exportJobFor', () => {
 describe('isExportJob', () => {
   const VALID = { kind: 'export', projectPath: '/tmp/snapshot.json', outputPath: '/tmp/out.mp4', preset: '720p' }
 
-  // The main process runs only jobs that pass; every job the dialog can make must pass, or its export waits for ever.
   it('accepts every job the dialog can make', () => {
     let checked = 0
     for (const format of EXPORT_FORMATS) {

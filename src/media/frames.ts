@@ -8,9 +8,7 @@ const STREAM_READ_TIMEOUT_MS = 20_000
 const BYTES_PER_PIXEL = 4
 const MAX_END_OVERSHOOT_FRAMES = 4
 const STREAM_RESTART_DISTANCE_FRAMES = 150
-// Pictures nobody asked for that a stream reads through before it starts anew at the frame asked for. A restart cost about as much as five 720p pictures read through (measured).
 const MAX_SKIPPED_PICTURES = 5
-// BT.2408 puts the white of paper and faces at 203 nits in HDR video; it becomes SDR white. Highlights up to 1,000 nits are rolled off above 80 % of SDR white.
 const HDR_REFERENCE_WHITE_NITS = 203
 const HDR_PEAK_NITS = 1000
 const HDR_ROLL_OFF_START = 0.8
@@ -62,7 +60,6 @@ function toneMapFilters(video: VideoInfo, transfer: 'hlg' | 'pq'): string[] {
   ]
 }
 
-// Tone mapping is the costly step, so an HDR picture is made smaller first. Chroma is kept whole, as a halved size may be odd.
 export function shrinkBeforeToneMapping(size: FrameSize, resizeFilter: string): string[] {
   return [`scale=${size.width}:${size.height}:flags=${resizeFilter}`, 'format=yuv444p16le']
 }
@@ -76,7 +73,6 @@ function frameStartOf(video: VideoInfo, frame: number): number {
   return video.startOffset + frame * video.frameDuration
 }
 
-// Where a decode that starts at `frame` cuts in: a quarter frame early, so a frame whose time is rounded a little early is not lost.
 function cutOf(video: VideoInfo, frame: number): number {
   return Math.max(0, frameStartOf(video, frame) - video.frameDuration / 4)
 }
@@ -121,7 +117,7 @@ export function inputArguments(source: VideoSource, frame: number, threads: numb
   const seek = Math.max(0, cut - video.seekPreroll)
 
   const args = ['-threads', String(threads), '-copyts']
-  // A recording with uneven frame times may hold no frame for many seconds. The frame shown through such a gap lies before the place sought to, so decoding starts at the keyframe before it and the frame-rate filter sees that frame too.
+  // With uneven frame times the frame shown at the seek point may lie seconds earlier, so seek to the keyframe before it.
   if (video.isVariableFrameRate) args.push('-noaccurate_seek')
   if (video.alphaDecoder !== undefined) args.push('-c:v', video.alphaDecoder)
   if (seek > 0) args.push('-ss', seconds(seek))
@@ -232,7 +228,6 @@ export function openFrameStream(ffmpeg: FfmpegRunner, source: VideoSource, first
 
     await readUpTo(running, index)
     if (latest === undefined) throw new FfmpegError(`ffmpeg found no picture at frame ${index} of ${source.path}`, '', undefined)
-    // A stepped stream that ran out passed the end of the file: the frames after its last picture are read one by one, so the held frame is the file's last, as in a plain stream.
     const hasRunOutStepping = latest.index !== index && step > 1
     if (hasRunOutStepping) await readUpTo(restartAt(latest.index + 1, 1), index)
     return latest.frame

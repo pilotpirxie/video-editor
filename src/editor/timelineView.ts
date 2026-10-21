@@ -98,7 +98,6 @@ export function rulerStep(pixelsPerSecond: number, frameTicks: number): number {
 
 export type ClipIndex = (track: Track) => readonly Clip[]
 
-// Clips of a track in time order. Tracks are never changed in place, so the order is worked out once per track object.
 export function createClipIndex(): ClipIndex {
   const sorted = new WeakMap<Track, readonly Clip[]>()
   return (track) => {

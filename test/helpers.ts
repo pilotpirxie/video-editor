@@ -183,7 +183,6 @@ export function runApp(args: readonly string[], timeoutMs = APP_TIMEOUT_MS, kept
   return new Promise((resolve, reject) => {
     const profile = keptProfile ?? mkdtempSync(join(tmpdir(), 'video-editor-test-'))
     const child = spawn(ELECTRON_BINARY, [ROOT, `--user-data-dir=${profile}`, ...args])
-    // A test that vitest times out leaves running what it started; the app would export on unseen and slow down the tests after it.
     onTestFinished(() => {
       child.kill('SIGKILL')
     })
@@ -529,7 +528,6 @@ function fieldsOf(line: string): Record<string, string> {
 
 const LOUD_FRACTION = 0.9
 
-// Slowed down, the tempo filter plays a short click twice, and either copy can be the louder by a rounding error.
 export function clickHeardAt(stereo: Float32Array, fromFrame: number, toFrame: number): number {
   let peak = 0
   for (let frame = fromFrame; frame < toFrame; frame++) peak = Math.max(peak, Math.abs(stereo[frame * 2] ?? 0))

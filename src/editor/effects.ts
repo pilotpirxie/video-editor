@@ -3,8 +3,7 @@ import type { Clip, Effect, EffectType, GroupClip, PictureClip, Project } from '
 import { editClips } from './clips.js'
 
 const OPAQUE_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
-// The smallest length an effect can have; the file format refuses a border, a radius or a blur of nothing.
-const SMALLEST_LENGTH = 0.1
+const SMALLEST_EFFECT_LENGTH = 0.1
 const EFFECT_SIZES_CANVAS_HEIGHT = 1080
 
 export function takesEffects(clip: Clip): clip is PictureClip | GroupClip {
@@ -113,11 +112,11 @@ function withinLimits(effect: Effect, before: Effect): Effect {
     const color = colorOr(effect.color, before.type === 'dropShadow' ? before.color : '#000000')
     return { ...effect, softness: Math.max(0, effect.softness), color, opacity: between(effect.opacity, 0, 1) }
   } else if (effect.type === 'border') {
-    return { ...effect, width: Math.max(SMALLEST_LENGTH, effect.width), color: colorOr(effect.color, before.type === 'border' ? before.color : '#ffffff') }
+    return { ...effect, width: Math.max(SMALLEST_EFFECT_LENGTH, effect.width), color: colorOr(effect.color, before.type === 'border' ? before.color : '#ffffff') }
   } else if (effect.type === 'roundedCorners') {
-    return { ...effect, radius: Math.max(SMALLEST_LENGTH, effect.radius) }
+    return { ...effect, radius: Math.max(SMALLEST_EFFECT_LENGTH, effect.radius) }
   } else if (effect.type === 'clipBlur') {
-    return { ...effect, strength: Math.max(SMALLEST_LENGTH, effect.strength) }
+    return { ...effect, strength: Math.max(SMALLEST_EFFECT_LENGTH, effect.strength) }
   } else if (effect.type === 'tint') {
     return { ...effect, color: colorOr(effect.color, before.type === 'tint' ? before.color : '#3d7be6'), amount: between(effect.amount, 0, 1) }
   } else if (effect.type === 'vignette') {
@@ -141,9 +140,9 @@ function withinLimits(effect: Effect, before: Effect): Effect {
       highlightAmount: between(effect.highlightAmount, 0, 1),
     }
   } else if (effect.type === 'sharpen') {
-    return { ...effect, amount: between(effect.amount, 0, 2), radius: Math.max(SMALLEST_LENGTH, effect.radius) }
+    return { ...effect, amount: between(effect.amount, 0, 2), radius: Math.max(SMALLEST_EFFECT_LENGTH, effect.radius) }
   } else if (effect.type === 'blurFill') {
-    return { ...effect, strength: Math.max(SMALLEST_LENGTH, effect.strength), darken: between(effect.darken, 0, 1) }
+    return { ...effect, strength: Math.max(SMALLEST_EFFECT_LENGTH, effect.strength), darken: between(effect.darken, 0, 1) }
   } else {
     const color = colorOr(effect.color, before.type === 'chromaKey' ? before.color : '#00b140')
     return { ...effect, color, tolerance: between(effect.tolerance, 0, 1), softness: between(effect.softness, 0, 1), spill: between(effect.spill, 0, 1) }

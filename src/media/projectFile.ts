@@ -50,7 +50,6 @@ async function writeAndSync(path: string, text: string): Promise<void> {
   }
 }
 
-// The previous file stays intact until the new one is complete on disk: a crash or power cut mid-save loses nothing.
 export async function writeProjectFile(path: string, project: Project): Promise<void> {
   const name = basename(path)
   const text = serializeProject(project)

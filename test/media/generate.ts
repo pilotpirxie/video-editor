@@ -417,7 +417,6 @@ const RECIPES: readonly Recipe[] = [
         '-fps_mode',
         'vfr',
         ...H264,
-        // Phones record screens without B-frames. With them, the frame after the gap gets a decode time inside the gap, and seeking there lands after the gap.
         '-bf',
         '0',
         ...BT709_TAGS,

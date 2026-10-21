@@ -72,8 +72,6 @@ async function contributionOf(audible: AudibleClip, rangeFirst: number, readAudi
   const end = Math.ceil(audible.to / TICKS_PER_SAMPLE)
   if (first >= end) return undefined
 
-  // At another speed the samples come from the sound as it is at that speed. Counted from the start of the file, the place in it
-  // does not depend on where the clip begins, so both halves of a split read the same samples.
   const speed = clip.speedPercent
   const stretch = stretchOf(clip)
   const localTime = first * TICKS_PER_SAMPLE - shift - clip.start
@@ -160,7 +158,7 @@ export async function mix(project: Project, media: MediaStates, firstSample: num
   for (let batchStart = 0; batchStart < sounds.length; batchStart += READS_IN_FLIGHT) {
     const batch = sounds.slice(batchStart, batchStart + READS_IN_FLIGHT)
     const contributions = await Promise.all(batch.map((audible) => contributionOf(audible, rangeFirst, readAudio)))
-    // Added in the order of the sounds, so the sum is the same to the last bit however the reads finished.
+    // Summed in sound order, so the result is bit-identical however the reads finished.
     for (const contribution of contributions) {
       if (contribution === undefined) continue
       const start = contribution.offset * CHANNELS
@@ -182,7 +180,6 @@ export function cachedAudioReader(read: AudioReader, maxBytes: number): AudioRea
     if (cached !== undefined) return cached
     const fetched = read(mediaId, chunkIndex * AUDIO_CHUNK_SAMPLES, AUDIO_CHUNK_SAMPLES, stretch)
     chunks.set(key, fetched, AUDIO_CHUNK_SAMPLES * BYTES_PER_STEREO_SAMPLE)
-    // A read that failed, for example while the media process was restarted, is asked for again next time. The caller still gets the failure.
     fetched.catch(() => {
       if (chunks.get(key) === fetched) chunks.delete(key)
     })

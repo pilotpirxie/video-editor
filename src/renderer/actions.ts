@@ -236,7 +236,6 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     stepFrames(count) {
       const timeline = limits()
       const position = transport.position()
-      // Key repeat is faster than the engine answers, so a step taken before the last one was shown counts on from where that one aimed.
       const from = stepped !== undefined && stepped.sequence === position.sequence ? stepped.time : position.time
       const frame = frameAt(from, timeline.frameTicks) + count
       const time = Math.min(lastFrameStart(timeline), Math.max(0, frame * timeline.frameTicks))

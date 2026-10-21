@@ -19,8 +19,6 @@ export function earlierPart(clip: Clip, cut: number): Clip {
   return withFadesWithin({ ...clip, ...ending })
 }
 
-// Both parts keep every keyframe, also those now outside their own range, so an eased curve stays exactly the curve it was.
-// The later part of a group shows the same members from later on.
 export function laterPart(clip: Clip, cut: number): Clip {
   const local = cut - clip.start
   const timing = { start: cut, duration: clip.duration - local, keyframes: shiftedKeyframes(clip.keyframes, -local) }

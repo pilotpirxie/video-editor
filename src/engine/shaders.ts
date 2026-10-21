@@ -1,4 +1,3 @@
-// How many effects one draw can apply. A clip has each kind at most once, four of the fourteen kinds are not applied here, and a group adds its own effects to those of its members.
 export const MAX_OPS = 12
 export const BLUR_TAPS_PER_SIDE = 7
 
@@ -45,10 +44,8 @@ export const LAYER_SHADER = `#version 300 es
 precision highp float;
 const int MAX_OPS = ${MAX_OPS};
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
-// How far apart two colours may be, in the plane of their colour without their brightness, at full tolerance and at full softness.
 const float TOLERANCE_REACH = 0.5;
 const float SOFTNESS_REACH = 0.25;
-// How far beyond the clear middle a vignette takes to reach its full darkness, as a share of the way to the corners.
 const float VIGNETTE_FALLOFF = 0.5;
 uniform sampler2D uTexture;
 uniform int uSource;
@@ -68,8 +65,7 @@ in vec2 vLocal;
 out vec4 outColor;
 ${REVEAL}
 
-// How much of a pixel lies inside the box once its corners are rounded.
-float roundedBox(vec2 halfSize, float radius) {
+float roundedBoxCoverage(vec2 halfSize, float radius) {
   float rounding = min(radius, min(halfSize.x, halfSize.y));
   vec2 corner = abs(vLocal) - (halfSize - rounding);
   float outside = length(max(corner, 0.0)) + min(max(corner.x, corner.y), 0.0) - rounding;
@@ -121,7 +117,6 @@ void main() {
       vec2 key = chromaOf(a.rgb);
       float nearest = a.w * TOLERANCE_REACH;
       float kept = smoothstep(nearest, nearest + b.x * SOFTNESS_REACH + 0.001, distance(chroma, key));
-      // What is left of the key colour in the pixels that stay is taken out along the key's own direction of colour.
       float keyLength = length(key);
       vec2 toward = keyLength > 0.0 ? key / keyLength : vec2(0.0);
       vec2 spill = -toward * max(dot(chroma, toward), 0.0) * b.y;
@@ -129,11 +124,11 @@ void main() {
       color = vec4(picture, 1.0) * (color.a * kept);
     } else if (kind == ${OP_ROUNDED_CORNERS}) {
       radius = a.x;
-      color *= roundedBox(uHalfSize, radius);
+      color *= roundedBoxCoverage(uHalfSize, radius);
       coverage = 1.0;
     } else if (kind == ${OP_BORDER}) {
-      float outer = roundedBox(uHalfSize, radius);
-      float inner = roundedBox(uHalfSize - a.w, max(radius - a.w, 0.0));
+      float outer = roundedBoxCoverage(uHalfSize, radius);
+      float inner = roundedBoxCoverage(uHalfSize - a.w, max(radius - a.w, 0.0));
       color = mix(color, vec4(a.rgb, 1.0) * outer, 1.0 - inner);
       coverage = 1.0;
     } else if (kind == ${OP_SEPIA}) {
@@ -144,17 +139,21 @@ void main() {
     } else if (kind == ${OP_TINT}) {
       color.rgb = mix(color.rgb, a.rgb * dot(color.rgb, LUMA), a.w);
     } else if (kind == ${OP_VIGNETTE}) {
-      // 0 in the middle of the box, 1 in its corners.
-      float away = length(vLocal / uHalfSize) * 0.70710678;
-      color.rgb *= 1.0 - a.x * smoothstep(a.y, a.y + VIGNETTE_FALLOFF, away);
+      float centerToCorner = length(vLocal / uHalfSize) * 0.70710678;
+      color.rgb *= 1.0 - a.x * smoothstep(a.y, a.y + VIGNETTE_FALLOFF, centerToCorner);
     } else if (kind == ${OP_LOOK}) {
-      // a: gain and contrast, b: lift and saturation, c: how much the shadows and the highlights are brightened.
-      vec3 graded = straight(color) * a.rgb;
+      vec3 gain = a.rgb;
+      float contrast = a.w;
+      vec3 lift = b.rgb;
+      float saturation = b.w;
+      float shadowBoost = c.x;
+      float highlightBoost = c.y;
+      vec3 graded = straight(color) * gain;
       float light = dot(graded, LUMA);
-      graded *= 1.0 + c.x * (1.0 - smoothstep(0.0, 0.5, light)) + c.y * smoothstep(0.5, 1.0, light);
-      graded = (graded - 0.5) * (1.0 + a.w) + 0.5;
-      graded = mix(vec3(dot(graded, LUMA)), graded, 1.0 + b.w);
-      graded = b.rgb + graded * (1.0 - b.rgb);
+      graded *= 1.0 + shadowBoost * (1.0 - smoothstep(0.0, 0.5, light)) + highlightBoost * smoothstep(0.5, 1.0, light);
+      graded = (graded - 0.5) * (1.0 + contrast) + 0.5;
+      graded = mix(vec3(dot(graded, LUMA)), graded, 1.0 + saturation);
+      graded = lift + graded * (1.0 - lift);
       color.rgb = clamp(graded, 0.0, 1.0) * color.a;
     }
   }
@@ -183,11 +182,9 @@ void main() {
     vec2 away = uStep * float(tap);
     sum += (textureLod(uTexture, at + away, uLevel) + textureLod(uTexture, at - away, uLevel)) * uWeights[tap];
   }
-  // A shadow is the blurred shape of the picture, filled with one colour.
   outColor = uShadow.a > 0.0 ? vec4(uShadow.rgb, 1.0) * (sum.a * uShadow.a) : vec4(sum.rgb * uGain, sum.a);
 }`
 
-// An unsharp mask: each pixel is pushed away from the mean of the pixels around it. Both are taken as straight colour, so the transparent pixels around a clip do not brighten its edge.
 export const SHARPEN_SHADER = `#version 300 es
 precision highp float;
 uniform sampler2D uTexture;
@@ -207,7 +204,6 @@ void main() {
     return;
   }
   vec2 at = gl_FragCoord.xy * uTexel;
-  // A 3 × 3 bell: the middle counts 4, each side 2 and each corner 1.
   vec4 around = near(at, 0.0, 0.0) * 4.0;
   around += (near(at, 1.0, 0.0) + near(at, -1.0, 0.0) + near(at, 0.0, 1.0) + near(at, 0.0, -1.0)) * 2.0;
   around += near(at, 1.0, 1.0) + near(at, -1.0, 1.0) + near(at, 1.0, -1.0) + near(at, -1.0, -1.0);
@@ -231,7 +227,6 @@ in vec2 vLocal;
 out vec4 outColor;
 ${REVEAL}
 
-// How far inside the shape a pixel lies, as a share of the soft edge: 0 at the edge, 1 where the edge has ended.
 float shapeCoverage() {
   float inside;
   if (uIsEllipse > 0.5) {
@@ -249,14 +244,12 @@ void main() {
   float cover = shapeCoverage();
   float strength = uOpacity * shown(gl_FragCoord.xy);
   if (uKind == ${SHAPE_HIGHLIGHT} || uKind == ${SHAPE_SPOTLIGHT}) {
-    // Drawn with a blend that multiplies: what is beneath keeps its colour where this is white.
     float amount = strength * (uKind == ${SHAPE_SPOTLIGHT} ? 1.0 - cover : cover);
     outColor = vec4(mix(vec3(1.0), uColor, amount), 1.0);
     return;
   }
   vec4 beneath;
   if (uKind == ${SHAPE_PIXELATE}) {
-    // Each block shows the mean of what is beneath it: sixteen samples in a grid, each already the mean of its sixteenth of the block.
     vec2 corner = uBlocks.xy + floor((gl_FragCoord.xy - uBlocks.xy) / uBlocks.z) * uBlocks.z;
     beneath = vec4(0.0);
     for (int part = 0; part < 16; part++) {
@@ -269,8 +262,7 @@ void main() {
   outColor = beneath * (cover * strength);
 }`
 
-// The frame as the bytes of a YUV 4:2:0 picture in BT.709 TV range, as video encoders take it: the luma plane, then the blue and the red
-// difference planes, each of their samples the average of 2 × 2 pixels. Every RGBA texel holds the next four bytes, row after row.
+// Packs BT.709 TV-range YUV 4:2:0 (Y plane, then Cb, then Cr, chroma averaged over 2 × 2 pixels) four bytes per RGBA texel, row after row.
 export const YUV_SHADER = `#version 300 es
 precision highp float;
 precision highp int;

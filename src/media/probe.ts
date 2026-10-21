@@ -30,7 +30,6 @@ const ALPHA_PIXEL_FORMATS = /^(ya\d|pal8)|yuva|rgba|bgra|argb|abgr|gbrap/
 const RATIO = /^(?<num>\d+)[/:](?<den>\d+)$/
 const TRANSFERS: Record<string, VideoInfo['transfer']> = { 'arib-std-b67': 'hlg', smpte2084: 'pq' }
 const DOLBY_VISION_RECORD = 'DOVI configuration record'
-// Profile 5 holds its picture in a colour space only Dolby's own decoder turns back into one that can be shown.
 const UNSHOWABLE_DOLBY_VISION_PROFILE = 5
 const LONG_ENOUGH_TO_SAMPLE_AGAIN_SECONDS = 10
 const SECONDS_BEFORE_END_SAMPLE = 5
@@ -115,7 +114,6 @@ function hasUnevenFrameTimes(stream: ProbedStream, packets: readonly ProbedPacke
     if (packet.stream_index === stream.index && Number.isFinite(time)) times.push(time)
   }
   times.sort((a, b) => a - b)
-  // Pictures that show before the last ones read may not have been read yet.
   const incompleteTail = 2 * ((stream.has_b_frames ?? 0) + 1)
   times.length = Math.max(0, times.length - incompleteTail)
 
@@ -173,7 +171,6 @@ function transferOf(stream: ProbedStream): VideoInfo['transfer'] {
     const isUnshowable = sideData.side_data_type === DOLBY_VISION_RECORD && sideData.dv_profile === UNSHOWABLE_DOLBY_VISION_PROFILE
     if (isUnshowable) throw new UnusableMedia('Dolby Vision profile 5 is not supported')
   }
-  // Other Dolby Vision profiles carry an ordinary HLG, PQ or SDR picture, tagged as such, beneath their extra layer.
   return TRANSFERS[stream.color_transfer ?? ''] ?? 'sdr'
 }
 
@@ -271,7 +268,6 @@ function hasDuration(output: ProbeOutput): boolean {
   return Number(output.format?.duration) > 0
 }
 
-// Animated WebP and APNG files do not state how long they run; the end of their last picture does.
 function endOfLastPacket(packets: readonly ProbedPacket[]): number {
   let end = 0
   for (const packet of packets) {

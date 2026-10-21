@@ -7,7 +7,6 @@ import { writeAll, type FfmpegRunner, type Job } from './ffmpeg.js'
 
 export const WAVEFORM_BUCKET_SAMPLES = 480
 export const WAVEFORM_FILE = 'waveform.i8'
-// Each segment holds this much more than its share; where two segments meet, the reader fades from the end of one into the start of the next, so two decodes that differ by a fraction of a sample never click.
 const SEAM_SAMPLES = 480
 
 const CHANNELS = 2
@@ -18,12 +17,9 @@ const INT8_PEAK = 127
 const INITIAL_BUCKET_CAPACITY = 4096
 const WAVEFORM_LEVEL_FACTOR = 8
 const SMALLEST_LEVEL_BUCKETS = 512
-// FFmpeg's tempo filter goes no slower or faster than these in one step; speeds beyond them take several steps.
 const SLOWEST_TEMPO_STEP = 0.5
 const FASTEST_TEMPO_STEP = 100
-// Decoding starts a second early: the first sound a decoder gives after a seek is not yet right.
 const PREROLL_SAMPLES = SAMPLE_RATE
-// A stretched segment is made from a little more sound than it needs on either side, so the tempo filter has settled where the segment starts and ends.
 const STRETCH_MARGIN_SAMPLES = SAMPLE_RATE
 const STRETCH_FEED_SAMPLES = 10 * SAMPLE_RATE
 const RUN_END_MARGIN_SECONDS = 0.5
@@ -164,7 +160,6 @@ export async function readWaveform(directory: string): Promise<WaveformLevel[]> 
   return waveformLevels(peaks)
 }
 
-// The FFmpeg filter that plays sound at another speed. The request comes from the window, so it is checked before it becomes part of a command and of a file name.
 export function tempoFilter(stretch: AudioStretch): string {
   const { speedPercent } = stretch
   const isUsable = Number.isInteger(speedPercent) && speedPercent >= MIN_SPEED_PERCENT && speedPercent <= MAX_SPEED_PERCENT && speedPercent !== NORMAL_SPEED_PERCENT
@@ -281,8 +276,6 @@ function createSegmentFiller(layout: AudioLayout, firstSegment: number, write: (
   return { add, finish, isDone: () => segment >= layout.segmentCount }
 }
 
-// Decodes consecutive segments with one FFmpeg run, starting a second early so the decoder has settled.
-// Answers the claimed segments the sound ended before: a sound track may be shorter than its file.
 export async function buildAudioRun(run: AudioRun): Promise<string[]> {
   const { ffmpeg, source, directory, layout, cache, firstSegment, lastSegment, claim, signal } = run
   if (claim.paths.length === 0) return []

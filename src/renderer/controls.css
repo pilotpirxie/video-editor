@@ -237,7 +237,6 @@ body {
   min-width: 180px;
 }
 
-/* Scrolling past either end of the list stops there: the panel behind does not start to move, which would close the list. */
 .options {
   overflow-y: auto;
   overscroll-behavior: contain;

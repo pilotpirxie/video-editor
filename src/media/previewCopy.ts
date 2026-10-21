@@ -76,7 +76,6 @@ export function splitJpegFrames(data: Buffer): { frames: Buffer[]; rest: Buffer 
   return { frames, rest: data.subarray(start) }
 }
 
-// Picture n after the first is kept when a whole number of steps from the phase lands within its frame; the numbers are whole ticks, so the arithmetic is exact.
 function sparseFilters(source: VideoSource, firstFrame: number, sparse: SparseFrames | undefined): string[] {
   if (sparse === undefined) return []
   const { step, phase, frameDuration } = sparse
@@ -128,7 +127,6 @@ export function pictureIndexOf(layout: PreviewLayout, frame: number): number | u
   return sourceFrameOf(layout, index) === frame ? index : undefined
 }
 
-// Copies of the default size keep the names they had before the size could be chosen, so those already made stay in use.
 export function previewSegmentFiles(directory: string, segment: number, layout?: Pick<PreviewLayout, 'longSide' | 'sparse'>): { data: string; index: string } {
   const longSide = layout?.longSide ?? DEFAULT_PREVIEW_LONG_SIDE
   const prefix = longSide === DEFAULT_PREVIEW_LONG_SIDE ? 'preview' : `preview${longSide}`

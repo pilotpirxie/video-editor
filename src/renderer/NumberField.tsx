@@ -36,7 +36,6 @@ export function NumberField(props: NumberFieldProps): ReactElement {
   const [isListOpen, setIsListOpen] = useState(false)
   const isPreviewingRef = useRef(false)
   const [draft, setDraft] = useState<string | undefined>(undefined)
-  // Enter applies the text and then leaves the field, which asks to apply it again; the ref makes the second request see it is already done.
   const draftRef = useRef<string | undefined>(undefined)
   const scrubRef = useRef<Scrub | undefined>(undefined)
 
@@ -93,7 +92,6 @@ export function NumberField(props: NumberFieldProps): ReactElement {
     }
     if (event.key === 'Enter') {
       applyDraft()
-      // With the field left, the next Cmd+Z undoes the edit instead of the typing.
       event.currentTarget.blur()
     } else if (event.key === 'Escape') {
       setDraftText(undefined)

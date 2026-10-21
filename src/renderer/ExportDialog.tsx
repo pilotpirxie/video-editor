@@ -236,7 +236,6 @@ export function ExportProgressDialog(): ReactElement | undefined {
     const dialog = dialogRef.current
     if (dialog === null) return
     dialog.showModal()
-    // The focus starts on the dialog, not on Cancel: a key pressed out of habit must not stop a long export.
     dialog.focus()
   }, [])
 

@@ -9,7 +9,6 @@ import { MEDIA_DIRECTORY, blockColorError, bundledFfmpeg, cropPicture, decodedAu
 const ffmpeg = bundledFfmpeg()
 const scratch = scratchDirectory('outputs')
 const BYTES_PER_PIXEL = 4
-// The screen of a Mac converts colours to its display; the tests read the pixels the editor drew, before that conversion.
 const SRGB_SCREEN = '--force-color-profile=srgb'
 const BLOCK = 8
 const MAX_PAUSED_BLOCK_ERROR = 2

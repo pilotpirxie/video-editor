@@ -226,7 +226,6 @@ export function createDiskCache(directory: string, initialLimitBytes: number, ma
     if (unit !== undefined) unit.usedAt = Date.now()
   }
 
-  // A file that becomes needed is marked on disk as well, so the order of use survives a restart.
   function protect(owner: object, paths: ReadonlySet<string>): void {
     const before = protectedBy.get(owner) ?? new Set<string>()
     protectedBy.set(owner, paths)

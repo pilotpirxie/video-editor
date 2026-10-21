@@ -45,7 +45,6 @@ export function exportSnapshotPath(recoveryPath: string): string {
   return `${recoveryPath}${EXPORT_SNAPSHOT_EXTENSION}`
 }
 
-// Removes an export's copy of the project. Only files this app put in its own recovery folder are ever removed.
 export async function discardExportSnapshot(path: string, directory: string): Promise<void> {
   const isOurs = dirname(path) === directory && path.endsWith(EXPORT_SNAPSHOT_EXTENSION)
   if (isOurs) await discardRecoveredWork(path)
@@ -72,7 +71,6 @@ async function removeUnfinishedExport(notePath: string): Promise<void> {
   await discardRecoveredWork(notePath)
 }
 
-// The recovery file itself is a plain project file, so this note is the only record of which project it belongs to.
 export async function rememberProjectPath(recoveryPath: string, projectPath: string): Promise<void> {
   try {
     await mkdir(dirname(recoveryPath), { recursive: true })

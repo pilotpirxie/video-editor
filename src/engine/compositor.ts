@@ -40,7 +40,6 @@ const FLOATS_PER_VERTEX = 4
 const COMPONENTS = 4
 const DEGREES_TO_RADIANS = Math.PI / 180
 const COLOR_CHANNEL_MAX = 255
-// The samples of a blur are this many of its standard deviations apart; closer together a strong blur would need more of them than the shader takes.
 const SIGMA_PER_STEP = 2.5
 const SMALLEST_SIGMA = 0.01
 const SMALLEST_VISIBLE_BLUR_PIXELS = 0.05
@@ -288,7 +287,6 @@ function boxOf(width: number, height: number, transform: Transform, mapping: Out
   }
 }
 
-// Reused for every quad: bufferSubData copies it before the next one is written.
 const quad = new Float32Array(4 * FLOATS_PER_VERTEX)
 
 function quadVertices(box: Box, margin: number): Float32Array {
@@ -354,7 +352,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
     gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer)
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, target.texture, 0)
-    // An effect that is silently left out could show what a blur was meant to hide, so a refusal stops the frame.
+    // Skipping an effect could reveal what a blur was meant to hide, so the frame fails instead.
     if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
       throw new CompositorError(`The GPU cannot render at ${width}x${height}`)
     }
@@ -395,7 +393,6 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     return used.locations.get(name) ?? null
   }
 
-  // Only the frame is cut to the canvas. A spare target is always cleared, copied and drawn whole, so nothing of an earlier frame can be left in it.
   function drawInto(target: Target, blend: Blend): void {
     gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer)
     if (target === frame) gl.enable(gl.SCISSOR_TEST)
@@ -572,7 +569,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     gl.uniform4f(at('uShadow'), color?.red ?? 0, color?.green ?? 0, color?.blue ?? 0, color === undefined ? 0 : (shadow?.opacity ?? 0))
     gl.uniform1f(at('uGain'), isHorizontal ? 1 : pass.gain)
     drawQuad(pass.box, pass.margin)
-    // A target whose filter asks for smaller copies it does not have reads as black, so the filter goes back at once.
+    // A mipmap filter on a texture without mipmaps samples black.
     if (isHorizontal) gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
   }
 
@@ -611,7 +608,6 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     const shiftY = isShadow ? effect.offsetY * mapping.scale : 0
     const reachAfterBlur = reach + Math.hypot(shiftX, shiftY) + plan.reach * Math.SQRT2
     const common = { box, plan, shadow: isShadow ? effect : undefined, gain }
-    // The first direction is written wider than the second reads, so the second never reads what the first did not write.
     blurPass({ ...common, source: picture, target: other, blend: 'replace', margin: reachAfterBlur + plan.reach, isHorizontal: true, shiftX: -shiftX, shiftY: -shiftY })
     blurPass({ ...common, source: other, target: picture, blend: isShadow ? 'under' : 'replace', margin: reachAfterBlur, isHorizontal: false, shiftX: 0, shiftY: 0 })
     return reachAfterBlur
@@ -652,7 +648,6 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
       drawWithEffects(item, box, target, blend, finish)
       return
     }
-    // The clip goes over its fill first and the two are then drawn as one, so a fade or a transition shows neither through the other.
     const backdrop = backdropTarget()
     clear(backdrop, 0)
     drawBlurFill(item, fill, croppedWidth, croppedHeight, backdrop)
@@ -734,7 +729,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     const margin = kind === SHAPE_SPOTLIGHT ? Math.hypot(output.width, output.height) : EDGE_MARGIN
     drawInto(frame, item.kind === 'highlight' ? 'multiply' : 'over')
     use(shapeProgram)
-    // A highlight reads no picture. Nothing is left bound for it either: a draw that could read the frame it writes to is refused.
+    // Nothing stays bound: WebGL refuses a draw that could read the frame it writes to.
     gl.bindTexture(gl.TEXTURE_2D, source?.texture ?? null)
     if (kind === SHAPE_PIXELATE) {
       gl.generateMipmap(gl.TEXTURE_2D)
@@ -770,7 +765,6 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     return finishTexture(handle, pixels.width, pixels.height)
   }
 
-  // A stream shows a frame of the same size each time; writing it into the texture it has spares the GPU a new 4K texture, and its freeing, per frame.
   function refillPixels(texture: GpuTexture, pixels: RawFrame): GpuTexture {
     if (texture.width !== pixels.width || texture.height !== pixels.height) {
       release(texture)
@@ -796,7 +790,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
   }
 
   function render(canvas: Size, outputSize: Size, view: View, items: readonly DrawItem[]): void {
-    // Drawing on a lost context does nothing and would read back black pictures, so an export stops here instead.
+    // A lost context draws nothing and reads back black, so an export stops here.
     if (gl.isContextLost()) throw new CompositorError('The graphics processor stopped; export again once the preview is back.')
     output = outputSize
     canvasSize = canvas

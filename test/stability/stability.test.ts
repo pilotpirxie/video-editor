@@ -3,8 +3,6 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { MEDIA_DIRECTORY, scratchDirectory, uiTest } from '../helpers.js'
 
-// Run by hand with `npm run test:stability`; it is not part of `npm test`.
-// STABILITY_HOURS sets the length of the random session (8 by default); STABILITY_SEED repeats the session a failure reported.
 const SECONDS_PER_HOUR = 3600
 const MS_PER_SECOND = 1000
 const HOURS = Number(process.env.STABILITY_HOURS ?? '8')

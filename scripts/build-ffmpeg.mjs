@@ -57,11 +57,9 @@ const SOURCES = [
   },
 ]
 
-// No encoder that a patent pool licenses: macOS encodes H.264, HEVC, ProRes and AAC through VideoToolbox and AudioToolbox,
-// and AudioToolbox decodes AAC, AC-3 and E-AC-3 in place of FFmpeg's own decoders.
 const APP_ENCODERS = ['h264_videotoolbox', 'aac_at', 'libvpx_vp9', 'libopus', 'libmp3lame', 'gif', 'png', 'mjpeg', 'pcm_s16le', 'pcm_f32le', 'rawvideo', 'wrapped_avframe']
 const TEST_MEDIA_ENCODERS = ['hevc_videotoolbox', 'prores_videotoolbox', 'libvpx_vp8', 'vorbis', 'flac', 'alac', 'pcm_s16be', 'apng', 'libwebp', 'libwebp_anim']
-const DISABLED_DECODERS = ['aac', 'aac_fixed', 'aac_latm', 'ac3', 'ac3_fixed', 'eac3']
+const DISABLED_DECODERS = ['aac', 'aac_fixed', 'aac_latm', 'ac3', 'ac3_fixed', 'eac3', 'vvc']
 const MINIMUM_MACOS = '15.0'
 const LIBVPX_TARGET = 'arm64-darwin24-gcc'
 const BUILD_TOOLS = ['make', 'pkg-config', 'cmake', 'meson', 'ninja', 'autoreconf', 'glibtoolize']
@@ -91,7 +89,6 @@ if (missingTools.length > 0) {
   process.exit(1)
 }
 
-// Only the libraries built here are found, so nothing from Homebrew is linked into the binaries.
 const buildEnv = {
   ...process.env,
   MACOSX_DEPLOYMENT_TARGET: MINIMUM_MACOS,

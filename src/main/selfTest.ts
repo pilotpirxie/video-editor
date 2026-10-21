@@ -106,9 +106,7 @@ export async function runSelfTest(window: BrowserWindow, options: SelfTestOption
   await sleep(PAUSE_SETTLE_MS)
   const timecodeStillPaused = await page.text('timecode')
 
-  // Playback can pause on the very frame the test scrubs to, and a slider set to the value it already shows reports nothing.
-  // So the slider first goes to the frame beside it, and once the harness shows that frame, to the frame the test wants.
-  // Both are worked out in the page, because the slider keeps a value within a project shorter than the scrub frame.
+  // A slider set to the value it already shows reports nothing, so it first goes to the frame beside the wanted one.
   const scrubTo = (frame: 'wanted' | 'beside it'): Promise<unknown> =>
     page.evaluate(`(() => {
       const slider = ${selector('scrub')}

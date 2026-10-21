@@ -164,7 +164,6 @@ function SpeedDialog({ clipIds, onClose }: { clipIds: readonly string[]; onClose
     if (isTypedValid) apply(typed)
   }
 
-  // Return is handled on the key itself: a form submits only on the character Return types, which not every source of keys sends.
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
     if (event.key !== 'Enter') return
     event.preventDefault()

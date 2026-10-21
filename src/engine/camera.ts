@@ -12,8 +12,6 @@ export function wholeCanvas(canvas: Size): View {
   return { x: canvas.width / 2, y: canvas.height / 2, scale: 1, largestScale: 1 }
 }
 
-// The zoom grows by the same ratio in every equal step, and the centre travels with the width of the view.
-// That keeps one point of the picture where it is on screen, so everything else moves straight toward it or away from it: no wobble and no overshoot.
 function interpolatedView(from: View, to: View, progress: number): View {
   const largestScale = Math.max(from.scale, to.scale)
   if (from.scale === to.scale) {
@@ -50,7 +48,6 @@ export function viewAt(camera: readonly CameraKeyframe[] | undefined, time: numb
   return previous
 }
 
-// The largest scale the camera has anywhere from `from` to `to`. Within one move the scale only rises or only falls, so the two ends and the zooms between them are enough.
 export function largestScaleBetween(camera: readonly CameraKeyframe[] | undefined, from: number, to: number, canvas: Size): number {
   let largest = Math.max(viewAt(camera, from, canvas).scale, viewAt(camera, to, canvas).scale)
   for (const zoom of camera ?? []) {

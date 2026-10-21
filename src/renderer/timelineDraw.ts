@@ -139,7 +139,6 @@ export type OverlayScene = {
   heldLabel: string
 }
 
-// The canvas cannot use CSS variables, so the design tokens are read once from the page.
 export function readColors(element: Element): TimelineColors {
   const style = getComputedStyle(element)
   const token = (name: string): string => style.getPropertyValue(name).trim()
@@ -241,7 +240,6 @@ function drawWaveform(context: CanvasRenderingContext2D, clip: AudioClip | Video
   const level = levelFor(levels, samplesPerBar)
   if (level === undefined) return
 
-  // The bars stand on a grid that starts with the timeline and scrolls with it. Each bar then always shows the same stretch of sound; on a grid of the window, every scroll would change them all.
   const scrolled = Math.round(view.scrollX)
   const firstBar = Math.ceil(Math.max(scrolled, timeToX(clip.start, view) + scrolled) / WAVEFORM_BAR_STEP)
   const endX = Math.min(scene.size.width, timeToX(endOf(clip), view))
@@ -446,7 +444,6 @@ function drawSelection(context: CanvasRenderingContext2D, shape: ClipShape, scen
   context.stroke()
 }
 
-// Thousands of clips can be in view at once, so their bodies are not drawn one by one: every body of one colour goes into one shape that is filled once.
 function drawTrack(context: CanvasRenderingContext2D, track: Track, scene: ContentScene, rowTop: number): void {
   const { view, size, colors } = scene
   context.fillStyle = colors.divider

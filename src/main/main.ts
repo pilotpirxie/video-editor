@@ -85,9 +85,9 @@ const MEMORY_PRESSURE_POLL_MS = 5000
 const UNTITLED = 'Untitled'
 const CLEAN_DOCUMENT: DocumentState = { isDirty: false, undoLabel: undefined, redoLabel: undefined }
 const PROJECT_EXTENSION = 'pbproj'
+const LEGACY_PROJECT_EXTENSION = 'json'
 const SAVE_PROJECT_FILTERS = [{ name: 'Project', extensions: [PROJECT_EXTENSION] }]
-// Projects saved before the .pbproj extension are .json files and must still open.
-const OPEN_PROJECT_FILTERS = [{ name: 'Project', extensions: [PROJECT_EXTENSION, 'json'] }]
+const OPEN_PROJECT_FILTERS = [{ name: 'Project', extensions: [PROJECT_EXTENSION, LEGACY_PROJECT_EXTENSION] }]
 const MEDIA_EXTENSIONS = [
   'mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'flv', 'ts', 'mts', '3gp',
   'mp3', 'm4a', 'aac', 'wav', 'aiff', 'aif', 'flac', 'ogg', 'opus',
@@ -95,7 +95,6 @@ const MEDIA_EXTENSIONS = [
 ]
 const UNSAVED_CHOICES: readonly UnsavedChoice[] = ['save', 'discard', 'cancel']
 const NEW_WINDOW_OFFSET_PIXELS = 22
-// Where windows of a test run open: beyond every screen, so a run does not cover the desktop. Shown there, they still draw every frame.
 const OFF_SCREEN_POSITION = { x: -20_000, y: 0 }
 const RELOAD_LOOP_GUARD_MS = 10_000
 
@@ -123,7 +122,6 @@ type AppState = {
   lastExportPath: string | undefined
   dialogAnswers: DialogAnswers
   recoveryDirectory: string
-  // False for test runs, which must not leave their scratch files in the system's Open Recent list.
   remembersRecentDocuments: boolean
   isQuitting: boolean
   memory: MemoryMonitor | undefined
@@ -260,7 +258,6 @@ function launchMediaProcess(state: AppState): UtilityProcess {
   child.on('message', (message: unknown) => {
     if (isVersionReport(message)) state.versions = showVersionsInAboutPanel(message)
   })
-  // Its error output goes on to the app's own, through the console, which does not fail when nothing reads it any more. Its end is kept for the crash log.
   let errorOutputTail = ''
   child.stderr?.on('data', (chunk: Buffer) => {
     const text = chunk.toString()
@@ -317,7 +314,6 @@ function slowFramesLogPath(): string {
   return join(app.getPath('userData'), 'logs', 'slow-frames.log')
 }
 
-// One line for each process that died, kept on this Mac only. Written at once, as the process may be about to end.
 function writeCrashLog(entry: Record<string, unknown>): void {
   try {
     const path = crashLogPath()
@@ -349,7 +345,7 @@ function watchForCrashes(state: AppState): void {
     const editor = state.editors.find((each) => each.window.webContents === webContents)
     if (editor !== undefined) restartEditor(editor, `its page ${details.reason}`)
   })
-  // A GPU process that dies takes the drawing of every window with it; Chromium starts a new one, and each page draws again on it by itself.
+  // Chromium restarts a dead GPU process and every page redraws on its own, so this only logs it.
   app.on('child-process-gone', (_event, details) => {
     if (state.isQuitting || details.reason === 'clean-exit') return
     if (details.type === 'Utility' && details.name === 'Media') return
@@ -378,7 +374,6 @@ function watchMemoryPressure(state: AppState): void {
   setInterval(() => void check(), MEMORY_PRESSURE_POLL_MS)
 }
 
-// Every load gets fresh ports: a reloaded page has lost the old ones, and closing them ends the old media session. A page that loads while the media process is being restarted gets its ports when the new one runs.
 function connectToMedia(state: AppState, window: BrowserWindow): void {
   const mediaProcess = state.mediaProcess
   if (mediaProcess === undefined) return
@@ -459,13 +454,11 @@ function runHeadlessJob(state: AppState, job: HeadlessJob, onEvent: (event: JobE
   return window
 }
 
-// Marks the exit as intended first, so the media process stopping with the app is not taken for a crash.
 function exit(state: AppState, code: number): void {
   state.isQuitting = true
   app.exit(code)
 }
 
-// A command-line run whose reader is gone (a closed pipe, a test that gave up) cannot deliver its result; going on would throw at every line.
 function exitWhenOutputCloses(state: AppState): void {
   for (const stream of [process.stdout, process.stderr]) {
     stream.on('error', (error) => {
@@ -751,7 +744,6 @@ function registerIpc(state: AppState): void {
       startExportFor(state, requester, job)
       return
     }
-    // The dialog waits for an answer; a job it was never told was refused would leave it waiting for ever.
     logError('Refused an export job from a window', new Error('a choice in it is not one the dialog offers'), { job })
     send(requester, { type: 'export-event', event: { type: 'error', message: 'The export settings were not understood. Choose them again and export once more.' } })
   })
@@ -802,7 +794,7 @@ function buildEditorMenu(state: AppState): void {
     return accelerator === undefined ? { id: action, label, click } : { id: action, label, accelerator, click }
   }
 
-  // The keys of these commands can be changed. The menu shows them, but the page answers to them, so a single key never fires while a text field has the focus.
+  // The page handles these keys, so a single key never fires inside a text field.
   function rebindable(action: MenuAction, label: string): MenuItemConstructorOptions {
     const accelerator = state.menuShortcuts[action]
     return accelerator === undefined ? item(action, label) : { ...item(action, label, accelerator), registerAccelerator: false }
@@ -970,7 +962,6 @@ function openEditor(state: AppState, document: DocumentInfo): BrowserWindow {
     const canCloseNow = window.webContents.isCrashed() || (!isExporting && hasNothingToAsk)
     if (canCloseNow) return
     event.preventDefault()
-    // A close that is refused calls off the quit it may have been part of.
     state.isQuitting = false
     if (!isExporting) send(window, { type: 'menu', action: 'close' })
     else if (!state.isUnattended) shell.beep()
@@ -987,8 +978,7 @@ function openEditor(state: AppState, document: DocumentInfo): BrowserWindow {
   return window
 }
 
-// Core Audio takes about 130 ms to set up the first sound output of the app, and the page that asks for it can do nothing else meanwhile.
-// A hidden page of its own asks first, so the editor's first Space does not stall its window; the outputs after the first open at once.
+// Core Audio takes ~130 ms to open the app's first output and blocks the asking page; a hidden page takes that hit instead of the editor.
 async function prepareSoundOutput(): Promise<void> {
   const window = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true } })
   window.webContents.setAudioMuted(true)
@@ -1006,7 +996,7 @@ async function openFirstEditors(state: AppState, projectPath: string | undefined
   const [first, ...others] = await firstDocuments(state, projectPath)
   const firstWindow = openEditor(state, first ?? documentFor(state, projectPath))
   for (const document of others) openEditor(state, document)
-  // Started once a window is open: the hidden page closing must not look like the last window closing.
+  // Started after a window opens, so closing the hidden page does not count as the last window closing.
   void prepareSoundOutput()
   return firstWindow
 }
@@ -1051,11 +1041,9 @@ async function main(): Promise<void> {
   if (!(playSeconds > 0)) throw new UsageError('--seconds must be a positive number')
   const seed = options.has('seed') ? Number(options.get('seed')) : undefined
   if (seed !== undefined && !Number.isSafeInteger(seed)) throw new UsageError('--seed must be a whole number')
-  // A UI test restores recovery files without asking and changes stored settings, so it must never run on the profile that holds someone's real work.
   const hasOwnProfile = app.commandLine.hasSwitch('user-data-dir')
   if (uiTestScenario !== undefined && !hasOwnProfile) throw new UsageError('--uitest needs a profile of its own: add --user-data-dir=<empty folder>')
 
-  // Two editors on one profile would each offer to restore the other's live recovery file.
   const isInteractive = cliJob === undefined && selfTestPath === undefined && uiTestScenario === undefined
   if (isInteractive && !app.requestSingleInstanceLock()) {
     app.quit()

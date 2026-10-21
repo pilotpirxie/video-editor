@@ -160,7 +160,6 @@ function start(): void {
     }
   }
 
-  // Background work that fails without a handler is a bug to log, not a reason to stop the media of every window. An uncaught exception still ends the process; the main process records its last words.
   process.on('unhandledRejection', (reason) => logError('A media task failed and nothing handled it', reason))
 
   process.parentPort.on('message', (event) => {

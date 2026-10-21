@@ -16,15 +16,13 @@ type PopupMenuProps = {
   onClose(): void
 }
 
-// Closes a menu or a list that is open above everything when the user turns to something else: a press or a scroll outside it, another window, a window of another size.
-// The browser's own way of closing a popover is not used: it also counts the release of the very press that opened one, when that release lands just beside it.
+// Not a native popover: that also closes on the release of the opening press when it lands just outside.
 export function closeOnTurningAway(element: HTMLElement, close: () => void): () => void {
   function onEvent(event: Event): void {
     const isInside = event.target instanceof Node && element.contains(event.target)
     if (!isInside) close()
   }
 
-  // A scroll is reported where it happens and does not travel up, so it is caught on the way down.
   document.addEventListener('pointerdown', onEvent, true)
   document.addEventListener('scroll', onEvent, true)
   window.addEventListener('blur', onEvent)

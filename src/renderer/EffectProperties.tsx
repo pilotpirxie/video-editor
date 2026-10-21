@@ -23,7 +23,7 @@ const CUSTOM_LOOK = 'custom'
 
 type Look = Extract<Effect, { type: 'look' }>
 
-// The system's colour picker, which reads one pixel from anywhere on screen. The type library of this TypeScript does not describe it yet.
+// Not yet in this TypeScript's DOM library.
 declare class EyeDropper {
   open(): Promise<{ sRGBHex: string }>
 }

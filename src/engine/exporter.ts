@@ -118,8 +118,6 @@ async function exportPictures(context: RenderContext, job: ExportJob, format: Ex
     context,
     targetOf(job, format, output, frameRate, hasAudio),
     async (jobId) => {
-      // While a frame is copied out of the GPU the next one is fetched and drawn, and the encoder takes the frames before it meanwhile.
-      // A write is copied as it is sent, so the pixels can be read into again at once.
       const writes: Promise<void>[] = []
       let drawn: { frame: number; time: number; pixels: () => Promise<ArrayBuffer> } | undefined
 

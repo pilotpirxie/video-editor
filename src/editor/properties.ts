@@ -121,7 +121,6 @@ function withBaseValue(clip: Clip, property: AnimatableProperty, value: number):
   return { ...clip, crop: cropsNothing ? undefined : crop }
 }
 
-// Properties that a drag on the canvas changes together are keyed together, so they pass through the same moments and a moving clip travels in straight lines.
 const KEYFRAME_SETS = {
   position: ['x', 'y'],
   size: ['scaleX', 'scaleY'],
@@ -148,8 +147,6 @@ function isAnimated(clip: Clip, properties: readonly AnimatableProperty[]): bool
   return properties.some((property) => clip.keyframes?.[property] !== undefined)
 }
 
-// The moment of a clip that a change at `time` keys: a keyframe already inside the frame that starts there, or else the playhead's own moment.
-// The playhead stops on frame starts, while a keyframe dragged on the timeline may lie between two.
 function keyTimeAt(clip: Clip, properties: readonly AnimatableProperty[], time: number, frameTicks: number): number {
   const local = localGridTime(clip, time)
   for (const property of properties) {
@@ -222,8 +219,6 @@ function evenlyScaled(values: PropertyValues): PropertyValues {
   return scale === undefined ? values : { ...values, scaleX: scale, scaleY: scale }
 }
 
-// With anything the change touches animated, every set it changes is keyed at the playhead; otherwise the resting values change.
-// A corner drag changes size and position, a crop drag crop and position: keying only one of them would make the picture jump at its other keyframes.
 export function setProperties(project: Project, clipIds: readonly string[], values: PropertyValues, time: number): Project {
   const frameTicks = frameDuration(project.canvas.frameRate)
   return editClips(project, new Set(clipIds), (clip) => {

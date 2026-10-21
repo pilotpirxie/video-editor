@@ -31,7 +31,6 @@ const MAX_HALVINGS = 6
 const NO_CROP: Crop = { left: 0, top: 0, right: 0, bottom: 0 }
 const ZOOM_IN_START_SCALE = 0.5
 const ZOOM_OUT_END_SCALE = 2
-// Transitions whose two pictures are added up. Drawn one over the other, each at part strength, they would let what is beneath show through halfway.
 const ADDED_UP_TRANSITIONS: readonly TransitionType[] = [
   'crossDissolve',
   'wipeLeft',
@@ -370,7 +369,6 @@ export type GroupFrame = Pick<Frame, 'x' | 'y' | 'scale' | 'rotation'>
 
 const NO_FRAME: Frame = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, largestScale: 1, effects: [], look: undefined, shift: 0, groups: [] }
 
-// Outside groups a transform is returned as it is, so nothing that was drawn before groups existed moves by a rounding.
 export function onCanvas(frame: GroupFrame, transform: Transform): Transform {
   if (frame === NO_FRAME) return transform
   const angle = frame.rotation * DEGREES_TO_RADIANS
@@ -403,8 +401,7 @@ function effectsOf(clip: { effects?: Effect[] }, frame: Frame): Effect[] {
   return effects
 }
 
-// The largest camera scale while a clip is on screen, the halves of the transitions on its cuts included.
-// It decides how large the clip's video is decoded. It must not change from frame to frame, because an export opens each clip's decoder once.
+// Must not change from frame to frame: an export opens each clip's decoder once, at this scale.
 function largestZoom(clip: VisualClip, track: Track, project: Project, shift: number): number {
   if (project.camera === undefined) return 1
   const end = clip.start + clip.duration

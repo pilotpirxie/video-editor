@@ -289,7 +289,6 @@ export class MediaSession implements MediaClient {
     return readWaveform(entry.directory)
   }
 
-  // Saves run one at a time, so an autosave and a Save can never interleave their writes.
   saveProject(path: string, project: Project): Promise<void> {
     const resolvedPaths = new Map<string, string>()
     for (const [id, entry] of this.project.media) resolvedPaths.set(id, entry.path)
@@ -352,7 +351,6 @@ export class MediaSession implements MediaClient {
     const entry = this.entryOf(mediaId)
     const layout = audioLayoutOf(entry.info, this.segmentSeconds)
     if (layout === undefined) return undefined
-    // The request comes from the window; a speed that cannot be played is refused before it becomes part of a file name.
     if (stretch !== undefined) tempoFilter(stretch)
     await this.cache.ready
     const { signal } = this.project.lifetime
@@ -454,7 +452,7 @@ export class MediaSession implements MediaClient {
   }
 
   private async openFile(path: string): Promise<MediaEntry> {
-    // Until the cache has looked at what earlier runs left, a folder made here could be taken for an empty one and removed.
+    // Until the cache has scanned what earlier runs left, a folder made here could be removed as an empty leftover.
     await this.cache.ready
     let file: Stats
     try {
@@ -465,7 +463,7 @@ export class MediaSession implements MediaClient {
     const directory = join(this.cache.directory, cacheKey(`${path}\n${file.size}\n${file.mtimeMs}`))
     await mkdir(directory, { recursive: true })
     const info = await this.infoOf(path, directory)
-    // A disk that keeps no creation time reports 0; the time of the last change stands in for it.
+    // A disk without creation times reports 0.
     const createdAt = file.birthtimeMs > 0 ? file.birthtimeMs : file.mtimeMs
     return { path, info, createdAt, directory, failures: 0, hasFailed: false, silentSegmentPaths: new Set() }
   }
@@ -786,7 +784,6 @@ function audioSource(entry: MediaEntry): { path: string; containerStart: number 
   return { path: entry.path, containerStart }
 }
 
-// A failed save must not block the saves queued after it; its own caller still sees the failure.
 async function settled(work: Promise<void>): Promise<void> {
   await Promise.allSettled([work])
 }

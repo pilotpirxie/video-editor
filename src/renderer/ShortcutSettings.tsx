@@ -26,7 +26,6 @@ export function ShortcutSettings(): ReactElement {
   const [recording, setRecording] = useState<Recording | undefined>(undefined)
   const [refusal, setRefusal] = useState<{ action: ShortcutAction; text: string } | undefined>(undefined)
   const [tab, setTab] = useState<SettingsTab>('Performance')
-  // A key that was just recorded is also let go: Space and Enter would then press the focused button and start recording again.
   const isReleasingRef = useRef(false)
   const conflicts = conflictsOf(bindings)
 

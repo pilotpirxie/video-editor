@@ -70,7 +70,6 @@ function fontWith(font: TextSettings['font'], style: TextStyle): TextSettings['f
   if (style.weight !== undefined) {
     const hundreds = Math.round(style.weight / WEIGHT_STEP) * WEIGHT_STEP
     const within = Math.min(HEAVIEST_WEIGHT, Math.max(LIGHTEST_WEIGHT, hundreds))
-    // The regular weight is left out of the clip, so a title that was never made bold stays as it was saved.
     weight = within === REGULAR_WEIGHT ? undefined : within
   }
   const isUnchanged = family === font.family && size === font.size && weight === font.weight
@@ -133,8 +132,6 @@ function boxWidthWith(current: number | undefined, wanted: TextStyle['boxWidth']
   return wanted === 'auto' ? undefined : Math.max(NARROWEST_BOX, wanted)
 }
 
-// Changes the words or the look of the chosen text clips and callouts. A family or colour the file format would refuse is ignored.
-// Empty text is accepted so that typing can pass through it; whoever ends the edit must not keep it in a text clip, because it cannot be saved there.
 export function setTextStyle(project: Project, clipIds: readonly string[], style: TextStyle): Project {
   return editClips(project, new Set(clipIds), (clip) => {
     if (clip.type !== 'text' && clip.type !== 'callout') return clip

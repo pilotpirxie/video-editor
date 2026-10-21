@@ -54,7 +54,6 @@ describe('a ten-minute tutorial', () => {
       expect(Math.abs(exported.duration - TUTORIAL_SECONDS)).toBeLessThanOrEqual(FRAME_SECONDS)
 
       const exportSpeed = TUTORIAL_SECONDS / Number(report.exportSeconds)
-      // Written straight to the output: the test runner shows what a test logs only when it fails.
       process.stdout.write(`Exported ten minutes in ${Math.round(Number(report.exportSeconds))} s (${exportSpeed.toFixed(1)}x real time); peak memory ${String(report.peakMemoryMegabytes)} MB\n`)
       expect(report.peakMemoryMegabytes).toBeLessThanOrEqual(MAX_PEAK_MEGABYTES)
     },

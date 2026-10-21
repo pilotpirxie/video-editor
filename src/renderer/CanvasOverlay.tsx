@@ -38,7 +38,7 @@ const PATH_DOT_PIXELS = 8
 const ROTATE_HANDLE_OFFSET_PIXELS = 26
 const ROTATE_HANDLE_MAX_REACH = 0.35
 const MIN_BOX_PIXELS = 6
-// The overlay reaches at least this far past the picture on every side, so the handles of a clip that fills the canvas are whole and can be grabbed. Must match the CSS.
+// Must match `inset: -14px` in editor.css.
 export const MARGIN_PIXELS = 14
 const EDGE_TOLERANCE_CANVAS_PIXELS = 0.5
 

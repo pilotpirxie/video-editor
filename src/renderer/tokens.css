@@ -43,7 +43,6 @@
   --radius: 6px;
   --control-height: 24px;
 
-  /* Depth, kept faint: raised controls catch light on their top edge, fields sit sunken, and only what floats casts a shadow. Hard 1px lines without blur or gradients: a panel full of controls repaints while text is typed, and softer edges missed the frame budget. */
   --raised-edge: inset 0 1px 0 rgb(255 255 255 / 7%), 0 1px 0 rgb(0 0 0 / 30%);
   --primary-edge: inset 0 1px 0 rgb(255 255 255 / 22%), 0 1px 0 rgb(0 0 0 / 30%);
   --pressed-edge: inset 0 1px 0 rgb(0 0 0 / 40%);

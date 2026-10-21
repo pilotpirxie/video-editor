@@ -179,7 +179,6 @@ export function createTimelineController(elements: TimelineElements, session: Se
   let isLowestWanted = false
   let drawnTrackCount: number | undefined
   let shownScrollWidth = -1
-  // Where the scroll bar is scrolled to, kept here so drawing never reads it back: a read lays out the page.
   let shownScrollLeft = 0
   let wasPlaying = false
   let namedMedia: readonly MediaRef[] | undefined
@@ -247,7 +246,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
       })
       headers.style.transform = `translateY(${-view.scrollY}px)`
       showScroll(state.project)
-      // Tests read this to find where a time and a track are on screen.
+      // Read by the UI tests.
       host.dataset.view = JSON.stringify(view)
       isOverlayStale = true
     }
@@ -502,7 +501,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
     invalidate('content')
   }
 
-  // The scroll bar is told only what changed: setting its width lays out the page, and setting where it is scrolled to sends a scroll event back.
+  // Writes only what changed: setting the width forces a layout, setting scrollLeft fires a scroll event.
   function showScroll(project: Project): void {
     const scrollWidth = Math.round(maxScrollXOf(project, view.pixelsPerSecond) + size.width)
     if (scrollWidth !== shownScrollWidth) {
@@ -709,7 +708,6 @@ export function createTimelineController(elements: TimelineElements, session: Se
       deltaTime = snap.delta
       guide = snap.guide
     }
-    // Rows are counted in the project as it was when the drag began: a track created by this very drag must not shift the rows under the pointer.
     const row = Math.min(move.trackCount, Math.max(0, trackIndexAt(point.y, move.trackCount, view)))
     const trackShift = row - move.grabbedRow
     const { clipIds, newTrack } = move
@@ -1006,7 +1004,6 @@ export function createTimelineController(elements: TimelineElements, session: Se
 
   const cancel = (): void => endGesture('cancel')
   const commit = (): void => endGesture('commit')
-  // A window that is left in the middle of a drag may never hear how the drag ended.
   function onWindowBlur(): void {
     heldLibraryItem = undefined
     endGesture('cancel')
