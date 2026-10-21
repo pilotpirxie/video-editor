@@ -2,7 +2,6 @@ export type ByteLru<Value> = {
   get(key: string): Value | undefined
   set(key: string, value: Value, bytes: number): void
   delete(key: string): void
-  // Evicts the least recently used entries until the cache fits the new limit.
   setLimit(maxBytes: number): void
   clear(): void
   size(): number
@@ -26,10 +25,9 @@ export function createByteLru<Value>(initialMaxBytes: number, onEvict: (value: V
     onEvict(entry.value)
   }
 
-  // The entry named `kept` stays even when it alone is over the limit.
-  function evictOverLimit(kept: string | undefined): void {
+  function evictOverLimit(keyToKeep: string | undefined): void {
     for (const oldestKey of entries.keys()) {
-      if (heldBytes <= maxBytes || oldestKey === kept) break
+      if (heldBytes <= maxBytes || oldestKey === keyToKeep) break
       remove(oldestKey)
     }
   }

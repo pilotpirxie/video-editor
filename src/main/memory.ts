@@ -47,25 +47,21 @@ async function footprintOf(pids: readonly number[]): Promise<number> {
   return total
 }
 
-// The memory the app and every process it started use together, in bytes.
 export async function footprintNow(rootPid: number): Promise<number> {
   return footprintOf(await processTree(rootPid))
 }
 
-// "1:02.50" or "1:00:02.50" as seconds.
 function secondsOfCpuTime(text: string): number {
   let seconds = 0
   for (const part of text.split(':')) seconds = seconds * SECONDS_PER_MINUTE + Number(part)
   return seconds
 }
 
-// Whether macOS says memory is short, by the same measure as the Activity Monitor's memory pressure graph.
 export async function isMemoryUnderPressure(): Promise<boolean> {
   const { stdout } = await runTool('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'])
   return Number(stdout.trim()) >= WARNING_PRESSURE_LEVEL
 }
 
-// The processor time the app and every process it started have used so far, in seconds; a process that ended since is no longer counted.
 export async function cpuSecondsOf(rootPid: number): Promise<number> {
   const tree = new Set(await processTree(rootPid))
   const { stdout } = await runTool('/bin/ps', ['-axo', 'pid=,time='])

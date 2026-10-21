@@ -5,7 +5,6 @@ import type { Compositor, DrawItem, GpuTexture } from './compositor.js'
 import { createFrameProvider, type FrameProvider } from './frameProvider.js'
 import type { ImageLayer } from './resolve.js'
 
-// Each picture takes 40% of the cache, so a third one pushes out the oldest.
 const PICTURE_BYTES = Math.ceil(TEXTURE_CACHE_BYTES * 0.4)
 const SCALE = 1
 
@@ -104,7 +103,6 @@ describe('pictures while playing', () => {
     vi.unstubAllGlobals()
   })
 
-  // The first picture is shown, then the read-ahead loads two more and the cache lets the first go.
   async function firstShownThenPushedOut(): Promise<GpuTexture> {
     await provider.prepare([first], SCALE)
     const shown = provider.itemsNow([first], SCALE)
@@ -147,7 +145,6 @@ describe('pictures while playing', () => {
     provider.collect()
     expect(now.lateLayers).toBe(0)
     expect(texturesOf(now.items)).toEqual([gpu.uploaded[3]])
-    // Loading it again also pushed out the oldest picture nobody showed.
     expect(gpu.released).toEqual([texture, gpu.uploaded[1]])
   })
 

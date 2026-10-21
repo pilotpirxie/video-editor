@@ -6,7 +6,6 @@ import { longestTransition, setTransition, transitionSpans, transitionTargetAt }
 
 const DISSOLVE: Transition = { type: 'crossDissolve', duration: SECOND }
 
-// Two clips that touch at 4 s, a gap, and a third clip from 10 s.
 function cutProject(first: Partial<VideoClip> = {}, second: Partial<VideoClip> = {}): Project {
   return projectOf([
     track('main', [videoClip('first', 0, 4 * SECOND, first), videoClip('second', 4 * SECOND, 4 * SECOND, second), videoClip('third', 10 * SECOND, 2 * SECOND)]),

@@ -16,7 +16,6 @@ function referenceProject(name: string): Project {
   const path = projectPath(name)
   const parsed = parseProject(readFileSync(path, 'utf8'))
   if (!parsed.ok) throw new Error(`${name}: ${parsed.message}`)
-  // The copy is written to another folder, so its media is pointed at by full path.
   const media = parsed.project.media.map((reference) => ({ id: reference.id, path: resolve(dirname(path), reference.relativePath), relativePath: '' }))
   return { ...parsed.project, media }
 }
@@ -38,7 +37,6 @@ describe('split', () => {
   it.each([
     ['06-keyframes', 22, [0, 1, 14, 21, 22, 23, 30, 45, 59]],
     ['07-speeds', 31, [0, 5, 30, 31, 32, 58, 59]],
-    // Cut where no fade is in progress: a cut inside a fade ramp shortens that fade by design.
     ['05-fades', 25, [0, 7, 15, 24, 25, 26, 52, 60, 89]],
     ['05-fades', 70, [0, 30, 45, 69, 70, 71, 86, 89]],
   ])('exports %s identically before and after a split at frame %i', async (name, cutFrame, frames) => {
@@ -57,7 +55,6 @@ describe('split', () => {
   })
 })
 
-// The animated test images hold twelve pictures at ten a second, each numbered by a barcode; the project runs at thirty a second.
 describe('animated images', () => {
   const frames = [0, 2, 3, 4, 35, 36, 39, 71, 72, 89]
   const pictureShown = [0, 0, 1, 1, 11, 0, 1, 11, 0, 5]
@@ -119,7 +116,6 @@ function distanceToEdge(box: Box, x: number, y: number): number {
 describe('canvas hit testing', () => {
   it('finds a rotated, scaled and cropped clip exactly where the compositor draws it', async () => {
     const natural = { width: 320, height: 180 }
-    // The crop removes the dark bar on the right, so every pixel of the picture is brighter than the black canvas.
     const crop: Crop = { left: 20, top: 10, right: 50, bottom: 30 }
     const transform: Transform = { x: 300, y: 170, scaleX: 1.5, scaleY: 1.2, rotation: 25 }
     const project: Project = {
@@ -137,7 +133,6 @@ describe('canvas hit testing', () => {
     let outside = 0
     for (let y = GRID_STEP; y < picture.height; y += GRID_STEP) {
       for (let x = GRID_STEP; x < picture.width; x += GRID_STEP) {
-        // Right on the edge the picture is blended with the background, so those points say nothing either way.
         if (Math.abs(distanceToEdge(box, x, y)) < EDGE_ALLOWANCE) continue
         const isHit = containsPoint(box, { x, y })
         expect(isLit(picture, x, y), `pixel ${x},${y}`).toBe(isHit)

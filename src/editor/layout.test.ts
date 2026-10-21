@@ -44,7 +44,6 @@ describe('clampLayout', () => {
   it('shrinks the sidebars so the canvas keeps exactly its minimum width at the smallest window', () => {
     const clamped = clampLayout({ ...DEFAULT_LAYOUT, leftWidth: 900, rightWidth: 390 }, MIN_WINDOW)
     expect(MIN_WINDOW.width - clamped.leftWidth - clamped.rightWidth - 10).toBe(360)
-    // The wider one had four times as much to give, and gave four times as much.
     expect(clamped).toMatchObject({ leftWidth: 596, rightWidth: 314 })
   })
 

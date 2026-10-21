@@ -37,18 +37,13 @@ import { ProbeError, probeMedia } from './probe.js'
 import { withSavedPaths, writeProjectFile } from './projectFile.js'
 
 const CACHE_KEY_LENGTH = 32
-// After opening or seeking, the paused frame is asked for within this time; preparation waits so it does not start first.
 const PREPARATION_GRACE_MS = 250
 const INFO_FILE = 'info.json'
-// A run decodes a few segments at most, so a new playhead position is taken up within seconds.
 const PREVIEW_RUN_SEGMENTS = 4
 const AUDIO_RUN_SEGMENTS = 4
-// A media file whose preparation fails again after one retry is marked as broken; its clips show "media error" and the session goes on.
-const ALLOWED_FAILURES = 1
-// Beyond this share of the cache's limit only what is needed now is prepared.
-const LATER_PREPARATION_SHARE = 0.8
+const MAX_PREPARATION_RETRIES = 1
+const LATER_PREPARATION_CACHE_SHARE = 0.8
 const MEDIA_KINDS = ['video', 'audio', 'image']
-// Opening or importing many files runs this many ffprobes side by side.
 const PROBES_AT_ONCE = 4
 
 export class MediaError extends Error {
@@ -65,13 +60,11 @@ type MediaEntry = {
   directory: string
   failures: number
   hasFailed: boolean
-  // Segments past the end of the sound track, which read as silence.
-  soundless: Set<string>
+  silentSegmentPaths: Set<string>
 }
 
 type OpenProject = {
   media: Map<string, MediaEntry>
-  // Directory of the project file the media list came from; undefined for a project that was never saved.
   directory: string | undefined
   lifetime: AbortController
 }
@@ -87,7 +80,6 @@ function cacheKey(text: string): string {
 
 function isMediaInfo(value: unknown): value is MediaInfo {
   if (typeof value !== 'object' || value === null || !('kind' in value)) return false
-  // Animated images used to be described as stills; such a remembered answer is not used, so the file is looked at again.
   const isOutdatedAnimation = 'isAnimated' in value && value.isAnimated === true
   return typeof value.kind === 'string' && MEDIA_KINDS.includes(value.kind) && !isOutdatedAnimation
 }
@@ -148,13 +140,10 @@ export class MediaSession implements MediaClient {
   private readonly previews: PreviewReader
   private nextId = 1
   private wanted: Wanted | undefined
-  // What to prepare, most urgent first; made again whenever the timeline, the playhead or the media change.
   private plan: PreparationJob[] = []
-  // The sparse copies the fast clips of the timeline want, by media file.
   private cadences = new Map<string, Cadence[]>()
   private inProgress: SegmentInProgress | undefined
   private wake: (() => void) | undefined
-  // The project the preparation loop works for; the loop ends with that project's lifetime.
   private preparing: OpenProject | undefined
   private preparedWaiters: (() => void)[] = []
   private isWaveformRunning = false
@@ -163,7 +152,6 @@ export class MediaSession implements MediaClient {
     private readonly ffmpeg: FfmpegRunner,
     private readonly cache: DiskCache,
     private readonly segmentSeconds = CACHE_SEGMENT_SECONDS,
-    // Read each time it is needed: the settings of the app can change while the session runs.
     private readonly settings: () => MediaSettings = () => mediaSettingsOf(DEFAULT_SETTINGS),
   ) {
     this.previews = createPreviewReader(cache)
@@ -186,7 +174,6 @@ export class MediaSession implements MediaClient {
     return this.open(media, projectPath, true)
   }
 
-  // Resolves once everything the timeline needs now is prepared, or has failed.
   whenPrepared(): Promise<void> {
     if (this.isNearPrepared()) return Promise.resolve()
     return new Promise((resolve) => this.preparedWaiters.push(resolve))
@@ -205,7 +192,6 @@ export class MediaSession implements MediaClient {
     return { id, info: entry.info, createdAt: entry.createdAt }
   }
 
-  // Puts the file the user pointed at in the place of unlinked media, then looks beside it for the other unlinked files by name.
   async relinkMedia(path: string, wanted: UnlinkedMedia, others: readonly UnlinkedMedia[]): Promise<RelinkedMedia[]> {
     const project = this.project
     const chosen = await this.openFile(path)
@@ -225,7 +211,6 @@ export class MediaSession implements MediaClient {
         this.register(project, other.reference.id, entry)
         relinked.push({ id: other.reference.id, path: beside, info: entry.info, createdAt: entry.createdAt })
       } catch (error) {
-        // A neighbour that cannot be read simply stays unlinked; the file that was asked for is relinked all the same.
         if (!(error instanceof ProbeError) && !(error instanceof MediaError)) throw error
         logError('A file beside the relinked one could not be used', error, { path: beside })
       }
@@ -233,7 +218,6 @@ export class MediaSession implements MediaClient {
     return relinked
   }
 
-  // How much of what the timeline needs now is prepared, per media file. The segment being written counts by its frames.
   async preparation(): Promise<Record<string, Preparation>> {
     const counts = new Map<string, { ready: number; total: number }>()
     for (const job of this.plan) {
@@ -267,12 +251,10 @@ export class MediaSession implements MediaClient {
     this.replan()
   }
 
-  // The settings changed: the copies the plan points at may be others now.
   settingsChanged(): void {
     this.replan()
   }
 
-  // Each kind of copy of a file is guessed at the average size of its segments made so far; a kind with none made yet is not counted.
   private neededBytes(): number {
     const kinds = new Map<string, { madeBytes: number; made: number; missing: number }>()
     for (const job of this.plan) {
@@ -322,7 +304,6 @@ export class MediaSession implements MediaClient {
     return toArrayBuffer(await readFile(entry.path))
   }
 
-  // From the sparse copy of a fast clip that shows the frame, or else from the full copy.
   async previewFrame(mediaId: string, frame: number): Promise<ArrayBuffer | undefined> {
     const entry = this.entryOf(mediaId)
     for (const cadence of this.cadences.get(mediaId) ?? []) {
@@ -343,7 +324,6 @@ export class MediaSession implements MediaClient {
     return this.frameDecodes.run(pixelCount, () => decodeFrame(this.ffmpeg, source, frame, halvings, signal))
   }
 
-  // Outside the limit on full-quality decodes: a thumbnail must not hold back the paused frame.
   keyframeThumbnail(mediaId: string, frame: number, halvings: number): Promise<RawFrame> {
     return decodeKeyframe(this.ffmpeg, this.videoSourceOf(mediaId), frame, halvings)
   }
@@ -368,7 +348,6 @@ export class MediaSession implements MediaClient {
     this.streams.delete(streamId)
   }
 
-  // Segments that are not prepared yet are made at once, and the answer waits for them.
   async audio(mediaId: string, firstSample: number, sampleCount: number, stretch?: AudioStretch): Promise<Float32Array | undefined> {
     const entry = this.entryOf(mediaId)
     const layout = audioLayoutOf(entry.info, this.segmentSeconds)
@@ -428,7 +407,6 @@ export class MediaSession implements MediaClient {
     this.settleWaiters()
   }
 
-  // The files are looked at side by side; ffprobe runs for at most a few of them at a time, and those it already knows answer from the cache.
   private async open(references: readonly MediaRef[], projectPath: string | undefined, forPreview: boolean): Promise<Record<string, MediaState>> {
     await this.closeProject()
     const directory = projectPath === undefined ? undefined : dirname(projectPath)
@@ -462,7 +440,6 @@ export class MediaSession implements MediaClient {
     }
   }
 
-  // A project that was never loaded, such as a new one, starts preparing with its first file.
   private register(project: OpenProject, id: string, entry: MediaEntry): void {
     project.media.set(id, entry)
     if (project !== this.project) return
@@ -476,7 +453,6 @@ export class MediaSession implements MediaClient {
     void this.prepareInBackground(project.lifetime.signal)
   }
 
-  // The cache belongs to the media file, not to a project: an untitled project, Save As and a recovery file all reuse the same preview copy.
   private async openFile(path: string): Promise<MediaEntry> {
     // Until the cache has looked at what earlier runs left, a folder made here could be taken for an empty one and removed.
     await this.cache.ready
@@ -491,7 +467,7 @@ export class MediaSession implements MediaClient {
     const info = await this.infoOf(path, directory)
     // A disk that keeps no creation time reports 0; the time of the last change stands in for it.
     const createdAt = file.birthtimeMs > 0 ? file.birthtimeMs : file.mtimeMs
-    return { path, info, createdAt, directory, failures: 0, hasFailed: false, soundless: new Set() }
+    return { path, info, createdAt, directory, failures: 0, hasFailed: false, silentSegmentPaths: new Set() }
   }
 
   private async infoOf(path: string, directory: string): Promise<MediaInfo> {
@@ -505,7 +481,6 @@ export class MediaSession implements MediaClient {
         logError('Ignoring an unreadable media info cache', error, { infoPath })
       }
       if (isMediaInfo(cached)) {
-        // Marks the media as used, so the cache does not take it for one no project needs any more.
         const now = new Date()
         utimes(infoPath, now, now).catch((error: unknown) => logError('Could not mark a media info cache as used', error, { infoPath }))
         return cached
@@ -548,7 +523,6 @@ export class MediaSession implements MediaClient {
     return audioSegmentPath(entry.directory, job.segment, job.stretch)
   }
 
-  // The full copy of a video, or its sparse copy for a cadence, at the size the settings ask for.
   private layoutOf(entry: MediaEntry, cadence: Cadence | undefined): PreviewLayout | undefined {
     return previewLayoutOf(entry.info, this.segmentSeconds, cadence, this.settings().previewLongSide)
   }
@@ -556,7 +530,7 @@ export class MediaSession implements MediaClient {
   private readinessOf(job: PreparationJob): number {
     const entry = this.project.media.get(job.mediaId)
     const path = this.jobPath(job)
-    if (entry === undefined || path === undefined || entry.hasFailed || this.cache.has(path) || entry.soundless.has(path)) return 1
+    if (entry === undefined || path === undefined || entry.hasFailed || this.cache.has(path) || entry.silentSegmentPaths.has(path)) return 1
     const inProgress = this.inProgress
     const layout = this.layoutOf(entry, undefined)
     const isBeingWritten = job.kind === 'picture' && inProgress?.index === path
@@ -581,15 +555,14 @@ export class MediaSession implements MediaClient {
   }
 
   private nextJob(): PreparationJob | undefined {
-    const isFull = this.cache.totalBytes() >= this.cache.limitBytes() * LATER_PREPARATION_SHARE
+    const isFull = this.cache.totalBytes() >= this.cache.limitBytes() * LATER_PREPARATION_CACHE_SHARE
     for (const job of this.plan) {
-      // The plan holds what is needed now first; past it, a full cache stops preparation.
       if (!job.isNear && isFull) return undefined
       if (job.kind === 'waveform' && this.isWaveformRunning) continue
       const entry = this.project.media.get(job.mediaId)
       const path = this.jobPath(job)
       if (entry === undefined || entry.hasFailed || path === undefined) continue
-      if (this.cache.has(path) || this.cache.pending(path) !== undefined || entry.soundless.has(path)) continue
+      if (this.cache.has(path) || this.cache.pending(path) !== undefined || entry.silentSegmentPaths.has(path)) continue
       return job
     }
     return undefined
@@ -602,7 +575,6 @@ export class MediaSession implements MediaClient {
     })
   }
 
-  // One segment job at a time, most urgent first, with a waveform beside it; paused-frame decodes go before both.
   private async prepareInBackground(signal: AbortSignal): Promise<void> {
     await this.cache.ready
     let wasIdle = true
@@ -614,7 +586,6 @@ export class MediaSession implements MediaClient {
         wasIdle = true
         continue
       }
-      // The plan may change meanwhile, so the job is chosen again after the wait.
       if (wasIdle) {
         await sleep(PREPARATION_GRACE_MS)
         wasIdle = false
@@ -630,7 +601,6 @@ export class MediaSession implements MediaClient {
     }
   }
 
-  // Waveforms are made one at a time beside the segments: one covers a whole file, and a long one must not hold back what the playhead needs.
   private async runWaveform(job: PreparationJob, signal: AbortSignal): Promise<void> {
     this.isWaveformRunning = true
     try {
@@ -656,7 +626,7 @@ export class MediaSession implements MediaClient {
     } catch (error) {
       if (signal.aborted) return
       entry.failures += 1
-      entry.hasFailed = entry.failures > ALLOWED_FAILURES
+      entry.hasFailed = entry.failures > MAX_PREPARATION_RETRIES
       logError('Could not prepare media', error, { path: entry.path, job: job.kind })
     }
   }
@@ -692,7 +662,6 @@ export class MediaSession implements MediaClient {
       cache: this.cache,
       firstSegment,
       claim,
-      // Half the cores leave the editor room on a small Mac, at the cost of slower preparing.
       threads: this.settings().backgroundCores === 'half' ? Math.max(1, Math.ceil(availableParallelism() / 2)) : 0,
       signal,
       onFrame: (inProgress) => {
@@ -701,17 +670,15 @@ export class MediaSession implements MediaClient {
     })
   }
 
-  // Makes one segment of sound, or waits for the build already making it. A segment past the end of the sound stays missing and reads as silence.
   private async ensureSound(entry: MediaEntry, layout: AudioLayout, segment: number, stretch: AudioStretch | undefined, signal: AbortSignal): Promise<void> {
     const path = audioSegmentPath(entry.directory, segment, stretch)
-    if (entry.soundless.has(path)) return
+    if (entry.silentSegmentPaths.has(path)) return
     if (this.cache.has(path)) {
       this.cache.used(path)
       return
     }
     const pending = this.cache.pending(path)
     if (pending !== undefined) {
-      // A build that gave up is the business of whoever started it; this one tries again below.
       await Promise.allSettled([pending])
       if (this.cache.has(path)) return
     }
@@ -732,7 +699,6 @@ export class MediaSession implements MediaClient {
     })
   }
 
-  // A run from the segment on; a file that cannot seek exactly is decoded from its start, writing the missing segments on the way.
   private async buildBaseSound(entry: MediaEntry, layout: AudioLayout, segment: number, signal: AbortSignal): Promise<void> {
     const firstSegment = layout.seeksExactly ? segment : 0
     const lastSegment = Math.min(layout.segmentCount - 1, segment + AUDIO_RUN_SEGMENTS - 1)
@@ -745,8 +711,8 @@ export class MediaSession implements MediaClient {
     }
     const claim = this.cache.claim(paths)
     const last = layout.seeksExactly ? segment + paths.length - 1 : lastSegment
-    const soundless = await buildAudioRun({ ffmpeg: this.ffmpeg, source: audioSource(entry), directory: entry.directory, layout, cache: this.cache, firstSegment, lastSegment: last, claim, signal })
-    for (const path of soundless) entry.soundless.add(path)
+    const silentSegmentPaths = await buildAudioRun({ ffmpeg: this.ffmpeg, source: audioSource(entry), directory: entry.directory, layout, cache: this.cache, firstSegment, lastSegment: last, claim, signal })
+    for (const path of silentSegmentPaths) entry.silentSegmentPaths.add(path)
   }
 
   private suspendIdleStreams(): void {
@@ -780,7 +746,6 @@ function fileNameOf(reference: MediaRef): string {
   return basename(reference.path === '' ? reference.relativePath : reference.path)
 }
 
-// Where a project's media file is now: where it was, or where it is relative to the project file that may have moved with it.
 function existingPath(reference: MediaRef, projectDirectory: string | undefined): string | undefined {
   const candidates: string[] = []
   if (reference.path !== '') candidates.push(reference.path)
@@ -794,8 +759,6 @@ function offers(info: MediaInfo, use: MediaUse): boolean {
   return info.kind === 'audio' || (info.kind === 'video' && info.audio !== undefined)
 }
 
-// A waveform is needed now, so it is kept and made even in a full cache, but it covers its whole file: a twenty-hour one takes minutes and is not needed to play what is around the playhead.
-// Each cadence once per media file, in the order the timeline lists the clips.
 function cadencesOf(wanted: Wanted | undefined): Map<string, Cadence[]> {
   const byMedia = new Map<string, Cadence[]>()
   for (const range of wanted?.ranges ?? []) {

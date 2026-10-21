@@ -8,7 +8,6 @@ const AA_CONTRAST = 4.5
 const HEX_COLOR = /#[0-9a-fA-F]{3,8}\b/g
 const TOKEN = /--(?<name>[\w-]+):\s*(?<value>#[0-9a-fA-F]{6})/g
 
-// Every pair of text colour and surface that the stylesheets actually put together.
 const TEXT_ON_SURFACE: readonly [string, string][] = [
   ['text-primary', 'window-background'],
   ['text-primary', 'panel-background'],

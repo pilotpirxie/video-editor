@@ -15,11 +15,9 @@ const INPUT_SETTLE_MS = 30
 const WHEEL_INTERVAL_MS = 8
 export const P95 = 0.95
 export const RULER_HEIGHT = 24
-// The lane of the camera's zooms lies between the ruler and the first track.
 export const CAMERA_LANE_HEIGHT = 22
 export const TRACK_HEIGHT = 56
 
-// Answers the tests give in place of the dialogs a person would see.
 export type DialogAnswers = {
   openProject?: string
   saveProject?: string
@@ -55,7 +53,6 @@ type Rect = Point & {
 
 type Modifier = 'shift' | 'meta' | 'control' | 'alt'
 
-// The sort items of the Media menu are handled by main, so they are no actions of a window.
 type MenuItemId = MenuAction | `sort-${MediaSort}`
 
 export type Driver = {
@@ -65,12 +62,10 @@ export type Driver = {
   until(script: string, what: string, timeoutMs?: number): Promise<void>
   untilUndoLabel(label: string): Promise<void>
   untilRedoLabel(label: string): Promise<void>
-  // Waits for a menu item to show these keys, as an Electron accelerator.
   untilMenuKeys(action: MenuAction, accelerator: string): Promise<void>
   rect(testId: string): Promise<Rect>
   hover(point: Point): Promise<void>
   drag(from: Point, to: Point, modifiers?: readonly Modifier[]): Promise<void>
-  // The three parts of a drag, for looking at the window while the button is still held.
   holdAt(point: Point): void
   dragOn(from: Point, to: Point, modifiers?: readonly Modifier[]): Promise<void>
   releaseAt(point: Point): Promise<void>
@@ -80,14 +75,12 @@ export type Driver = {
   scrollAt(point: Point, deltaX: number, deltaY: number, isPinch: boolean): Promise<void>
   press(keyCode: string, modifiers?: readonly Modifier[]): Promise<void>
   typeInto(testId: string, text: string): Promise<void>
-  // Types into whatever has the focus, one key at a time, as a person would.
   typeKeys(text: string): Promise<void>
   value(testId: string): Promise<string>
   menu(action: MenuItemId): void
   menuLabel(action: MenuAction): string
   timelinePoint(time: number, trackIndex: number, trackCount: number): Promise<Point>
   savedProject(name: string): Promise<unknown>
-  // Saves a picture of the window in the output folder, when the test was given one.
   picture(name: string): Promise<void>
 }
 
@@ -244,12 +237,10 @@ function driverOf(window: BrowserWindow, options: UiTestOptions): Driver {
     return item
   }
 
-  // Chosen with this window in front, as a person would choose it.
   function clickMenu(action: MenuItemId): void {
     menuItem(action).click(undefined, window, window.webContents)
   }
 
-  // Waits for the menu item of `action` to show `expected`, as read by `shown`: its label or its keys.
   async function untilMenuShows(action: MenuAction, expected: string, shown: (item: Electron.MenuItem) => string): Promise<void> {
     const deadline = Date.now() + STEP_TIMEOUT_MS
     while (shown(menuItem(action)) !== expected) {
@@ -258,7 +249,6 @@ function driverOf(window: BrowserWindow, options: UiTestOptions): Driver {
     }
   }
 
-  // Where a moment on a track is on screen. Track 0 is the bottom layer, shown in the bottom row.
   async function timelinePoint(time: number, trackIndex: number, trackCount: number): Promise<Point> {
     const box = await rect('timeline')
     const view: unknown = JSON.parse(String(await page.evaluate(`${selector('timeline')}.dataset.view`)))
@@ -284,7 +274,6 @@ function driverOf(window: BrowserWindow, options: UiTestOptions): Driver {
   }
 
   async function picture(name: string): Promise<void> {
-    // A test may close the window it started with.
     if (options.outputDirectory === undefined || window.isDestroyed()) return
     const captured = await window.webContents.capturePage()
     await mkdir(options.outputDirectory, { recursive: true })
@@ -326,7 +315,6 @@ export async function attachedDriver(window: BrowserWindow, options: UiTestOptio
   window.webContents.debugger.attach()
   await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
   const driver = driverOf(window, options)
-  // The first picture may be of the empty project that shows while the project is opened.
   await driver.until(`${selector('editor')}?.getAttribute('aria-busy') === 'false'`, 'the editor to open its project')
   return driver
 }
@@ -343,7 +331,6 @@ export async function untilWindowCount(count: number): Promise<void> {
   }
 }
 
-// Drives the editor window that opened after `known`, set up as the first one is.
 export async function driverOfNewWindow(driver: Driver, known: readonly BrowserWindow[]): Promise<Driver> {
   const deadline = Date.now() + STEP_TIMEOUT_MS
   let found = editorWindows().find((window) => !known.includes(window))
@@ -372,7 +359,6 @@ export async function dragMedia(driver: Driver, name: string, to: Point): Promis
   await driver.drag(centerOf(await driver.rect(`media-${name}`)), to)
 }
 
-// Where a point of the project canvas is on screen.
 export async function canvasPoint(driver: Driver, canvasWidth: number, point: Point): Promise<Point> {
   const picture = await driver.rect('preview')
   const pixelsPerUnit = picture.width / canvasWidth
@@ -390,19 +376,16 @@ export function numbersIn(value: unknown): number[] {
 
 export type Shown = 'any frame' | 'another timecode'
 
-// What of the timecode changes with each kind of picture: its frame count with every picture drawn, its text when the playhead is somewhere else.
 export const TIMECODE_CHANGES: Record<Shown, string> = {
   'any frame': `{ attributes: true, attributeFilter: ['data-frames'] }`,
   'another timecode': `{ childList: true, characterData: true, subtree: true }`,
 }
 
 type DelayStart = {
-  // Timing starts at the first event of this kind in the page; left out, it starts at once.
   event?: string
   shown: Shown
 }
 
-// Milliseconds from the start to the first picture the preview shows after it: any picture, or one with another timecode.
 export async function delayUntilShown(driver: Driver, start: DelayStart, act: () => Promise<void> | void): Promise<number> {
   const startsAt = start.event === undefined ? 'performance.now()' : 'undefined'
   const listen = start.event === undefined ? '' : `addEventListener('${start.event}', () => { startedAt ??= performance.now() }, true)`
@@ -427,7 +410,6 @@ export async function delayUntilShown(driver: Driver, start: DelayStart, act: ()
   return Number(await driver.page.evaluate('window.delayUntilShown'))
 }
 
-// Every task that held the page for more than 50 ms since it loaded, in milliseconds.
 export async function watchLongTasks(driver: Driver): Promise<{ read(): Promise<number[]> }> {
   await driver.page.evaluate(`(() => {
     window.longTasks = []

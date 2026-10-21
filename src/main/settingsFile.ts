@@ -4,7 +4,6 @@ import { logError } from '../shared/log.js'
 import { DEFAULT_SETTINGS, parseSettings, type AppSettings } from '../shared/settings.js'
 import { isMissingFile } from './logFiles.js'
 
-// No file yet is the first launch. A file that cannot be read or parsed is logged and the defaults are used, so a bad file never stops the app.
 export async function readSettings(path: string): Promise<AppSettings> {
   let text: string
   try {
@@ -21,7 +20,6 @@ export async function readSettings(path: string): Promise<AppSettings> {
   }
 }
 
-// Written beside the file and renamed over it, so a crash mid-write leaves the earlier settings whole.
 export async function writeSettings(path: string, settings: AppSettings): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   const temporary = `${path}.tmp`

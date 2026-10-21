@@ -1,9 +1,6 @@
-// The programs the compositor draws with. Positions are output pixels with the first row at the top; `vLocal` is the place inside the box being drawn, measured from its centre.
-
 // How many effects one draw can apply. A clip has each kind at most once, four of the fourteen kinds are not applied here, and a group adds its own effects to those of its members.
 export const MAX_OPS = 12
-// Samples on each side of the centre of a blur.
-export const BLUR_TAPS = 7
+export const BLUR_TAPS_PER_SIDE = 7
 
 export const OP_COLOR_ADJUST = 1
 export const OP_BLACK_AND_WHITE = 2
@@ -35,7 +32,6 @@ void main() {
   gl_Position = vec4(aPosition / uOutputSize * 2.0 - 1.0, 0.0, 1.0);
 }`
 
-// The part of the output a wipe or a circle lets through. With no transition the line lies far behind every pixel and the circle is larger than any output.
 const REVEAL = `
 uniform vec3 uLine;
 uniform vec4 uCircle;
@@ -167,10 +163,9 @@ void main() {
   outColor = color * (uOpacity * coverage * shown(gl_FragCoord.xy));
 }`
 
-// One direction of a blur. Its samples are taken from the level of the source's chain of smaller copies whose pixels are as far apart as the samples, so the cost does not grow with the strength.
 export const BLUR_SHADER = `#version 300 es
 precision highp float;
-const int TAPS = ${BLUR_TAPS};
+const int TAPS = ${BLUR_TAPS_PER_SIDE};
 uniform sampler2D uTexture;
 uniform vec2 uTexel;
 uniform vec2 uStep;

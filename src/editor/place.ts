@@ -7,19 +7,15 @@ import { allClips, endOf, hasMedia, placeOnTrack, type NewTrack } from './clips.
 
 const MAX_AUTOMATIC_FRAMES_PER_SECOND = 60
 
-// Where a clip without media is added: from `start`, on the track at `trackIndex`, with its middle at `centre` in canvas pixels.
-// Left out, the track is a new layer above everything else and the middle is the middle of the canvas.
 export type NewStill = {
   clipId: string
   start: number
-  // How long a clip without a source of its own length lasts when it is added, as the settings say.
   duration: number
   newTrack: NewTrack
   trackIndex?: number
   centre?: { x: number; y: number }
 }
 
-// What every clip that is added without media starts with: the still duration, upright and at its natural size.
 export function centredStill(project: Project, added: NewStill): { id: string; start: number; duration: number; transform: Transform; opacity: number } {
   const { canvas } = project
   const centre = added.centre ?? { x: canvas.width / 2, y: canvas.height / 2 }
@@ -38,13 +34,11 @@ export type DroppedMedia = {
   clipId: string
 }
 
-// Several files dropped at once land one after another, in the order given.
 export type MediaDrop = {
   media: readonly DroppedMedia[]
   start: number
   trackIndex: number
   newTrack: NewTrack
-  // How long a still or an animated image lasts.
   stillDuration: number
 }
 
@@ -57,7 +51,6 @@ function centred(natural: Size, canvas: Canvas): Transform {
   return { x: canvas.width / 2, y: canvas.height / 2, scaleX: fit, scaleY: fit, rotation: 0 }
 }
 
-// A new clip shows the whole picture: centred and scaled down to fit, never enlarged.
 export function clipForMedia(mediaId: string, info: MediaInfo, canvas: Canvas, clipId: string, start: number, stillDuration: number): Clip {
   const frameTicks = frameDuration(canvas.frameRate)
   if (info.kind === 'image') {
@@ -68,7 +61,6 @@ export function clipForMedia(mediaId: string, info: MediaInfo, canvas: Canvas, c
   if (info.kind === 'audio') return { ...timing, ...source, type: 'audio' }
   const video: Clip = { ...timing, ...source, type: 'video', transform: centred(info.video, canvas), opacity: 1 }
   if (info.isAnimatedImage !== true) return video
-  // An animated image behaves like a still that moves: it lasts as long as a still, and repeats to fill that time.
   return { ...video, loop: true, duration: Math.max(timing.duration, stillDuration) }
 }
 
@@ -96,7 +88,6 @@ function canvasSizeFor(natural: Size): Size {
   }
 }
 
-// The first clip decides what the project looks like: its size, and for video its frame rate.
 export function canvasForFirstClip(info: MediaInfo, canvas: Canvas): Canvas {
   if (info.kind === 'audio') return canvas
   if (info.kind === 'image') return { ...canvas, ...canvasSizeFor(info) }
@@ -109,7 +100,6 @@ export function mediaFileName(reference: MediaRef): string {
   return path.split('/').at(-1) ?? path
 }
 
-// What the clips of a project need from one of its media files.
 export function mediaUses(project: Project, mediaId: string): MediaUse[] {
   const uses = new Set<MediaUse>()
   for (const clip of allClips(project.tracks)) {
@@ -120,7 +110,6 @@ export function mediaUses(project: Project, mediaId: string): MediaUse[] {
   return [...uses]
 }
 
-// The media whose files are not where the project expects them, with what the project's clips need from each.
 export function unlinkedMedia(project: Project, mediaStates: MediaStates): UnlinkedMedia[] {
   const unlinked: UnlinkedMedia[] = []
   for (const reference of project.media) {
@@ -131,7 +120,6 @@ export function unlinkedMedia(project: Project, mediaStates: MediaStates): Unlin
   return unlinked
 }
 
-// Points media at the files that were found for it. The path relative to the project file is worked out again when the project is saved.
 export function relinkedMedia(project: Project, found: readonly { id: string; path: string }[]): Project {
   const paths = new Map(found.map((item) => [item.id, item.path]))
   let hasChanged = false
@@ -164,15 +152,14 @@ function tracksWithoutMedia(tracks: readonly Track[], mediaIds: ReadonlySet<stri
         continue
       }
       const members = tracksWithoutMedia(clip.tracks, mediaIds)
-      // A group left with nothing inside has nothing to show.
-      if (members.some((member) => member.clips.length > 0)) clips.push({ ...clip, tracks: members })
+      const hasMembersLeft = members.some((member) => member.clips.length > 0)
+      if (hasMembersLeft) clips.push({ ...clip, tracks: members })
     }
     kept.push({ ...track, clips })
   }
   return kept
 }
 
-// Takes files out of the project with every clip that uses them, inside groups and on locked tracks too: a clip cannot outlive its file.
 export function withoutMedia(project: Project, mediaIds: readonly string[]): Project {
   const removed = new Set(mediaIds)
   const media = project.media.filter((reference) => !removed.has(reference.id))
@@ -180,7 +167,6 @@ export function withoutMedia(project: Project, mediaIds: readonly string[]): Pro
   return { ...project, media, tracks: tracksWithoutMedia(project.tracks, removed) }
 }
 
-// The dropped files that can be placed, in the order given, each with the id of its new clip. Files that are missing or could not be read are left out.
 export function placeableMedia(project: Project, mediaStates: MediaStates, mediaIds: readonly string[], newClipId: (index: number) => string): DroppedMedia[] {
   const placeable: DroppedMedia[] = []
   for (const mediaId of mediaIds) {
@@ -192,10 +178,8 @@ export function placeableMedia(project: Project, mediaStates: MediaStates, media
   return placeable
 }
 
-// The clips go on the track they were dropped on when they all fit there, otherwise together on a new track above it.
 export function dropMedia(project: Project, drop: MediaDrop): Project {
   if (drop.media.length === 0) return project
-  // Sound has no size or frame rate, so the first picture decides what an empty project looks like.
   const firstPicture = drop.media.find((item) => item.info.kind !== 'audio')
   const canvas = hasClips(project) || firstPicture === undefined ? project.canvas : canvasForFirstClip(firstPicture.info, project.canvas)
   let prepared: Project = { ...project, canvas }

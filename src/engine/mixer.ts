@@ -12,17 +12,13 @@ const UNITY_GAIN = 1 << 20
 const LIMITER_REACH = 2 * LIMITER_WINDOW
 const AUDIO_CHUNK_SAMPLES = SAMPLE_RATE
 const BYTES_PER_STEREO_SAMPLE = CHANNELS * Float32Array.BYTES_PER_ELEMENT
-// Sounds read at the same time: after a seek their reads wait on the media process together instead of one after another,
-// and a project with hundreds of sounds at one moment still holds only this many windows of samples.
 const READS_IN_FLIGHT = 8
 
-// With a `stretch`, the samples are counted in the sound as it is at that speed.
 export type AudioReader = (mediaId: string, firstSample: number, sampleCount: number, stretch?: AudioStretch) => Promise<Float32Array | undefined>
 
 type SoundClip = VideoClip | AudioClip
 
-// A clip that is heard in the range being mixed.
-type Sounding = PlacedClip & { clip: SoundClip }
+type AudibleClip = PlacedClip & { clip: SoundClip }
 
 type Contribution = {
   offset: number
@@ -38,8 +34,7 @@ function hasSound(clip: Clip, media: MediaStates): clip is SoundClip {
   return state.info.audio !== undefined
 }
 
-// The sound of members of groups is mixed like any other, inside the time the group is there.
-function collectSounds(tracks: readonly Track[], media: MediaStates, window: { from: number; to: number }, found: Sounding[]): void {
+function collectSounds(tracks: readonly Track[], media: MediaStates, window: { from: number; to: number }, found: AudibleClip[]): void {
   forEachPlacedClip(tracks, window, (track) => track.muted, (placed) => {
     const { clip } = placed
     if (hasSound(clip, media)) found.push({ ...placed, clip })
@@ -51,13 +46,12 @@ function stretchOf(clip: SoundClip): AudioStretch | undefined {
   return { speedPercent: clip.speedPercent, keepsPitch: clip.changesPitch !== true }
 }
 
-// The parts of files the mix plays, and where in project time, so the media process prepares what is nearest the playhead first.
 export function soundRanges(project: Project, media: MediaStates): WantedRange[] {
-  const found: Sounding[] = []
+  const found: AudibleClip[] = []
   collectSounds(project.tracks, media, { from: 0, to: Infinity }, found)
   const ranges: WantedRange[] = []
-  for (const sounding of found) {
-    const { clip, shift, from, to } = sounding
+  for (const audible of found) {
+    const { clip, shift, from, to } = audible
     const range: WantedRange = { mediaId: clip.mediaId, use: 'sound', timelineStart: from, timelineEnd: to, sourceStart: sourceTime(clip, from - shift), speedPercent: clip.speedPercent, isLooping: false }
     const stretch = stretchOf(clip)
     if (stretch !== undefined) range.stretch = stretch
@@ -66,17 +60,16 @@ export function soundRanges(project: Project, media: MediaStates): WantedRange[]
   return ranges
 }
 
-// How loud a clip or a group is at a moment of its own time: its volume, which keyframes may move, shaped by its fades.
 function gainAt(sound: SoundClip | GroupClip, localTime: number): number {
   const keyframes = sound.keyframes?.volume
   const volume = keyframes === undefined ? sound.volume : (valueAt(keyframes, localTime) ?? sound.volume)
   return volume * fadeFactor(localTime, sound.duration, sound.volumeFadeIn, sound.volumeFadeOut)
 }
 
-async function contributionOf(sounding: Sounding, rangeFirst: number, readAudio: AudioReader): Promise<Contribution | undefined> {
-  const { clip, shift, groups } = sounding
-  const first = Math.ceil(sounding.from / TICKS_PER_SAMPLE)
-  const end = Math.ceil(sounding.to / TICKS_PER_SAMPLE)
+async function contributionOf(audible: AudibleClip, rangeFirst: number, readAudio: AudioReader): Promise<Contribution | undefined> {
+  const { clip, shift, groups } = audible
+  const first = Math.ceil(audible.from / TICKS_PER_SAMPLE)
+  const end = Math.ceil(audible.to / TICKS_PER_SAMPLE)
   if (first >= end) return undefined
 
   // At another speed the samples come from the sound as it is at that speed. Counted from the start of the file, the place in it
@@ -161,12 +154,12 @@ export async function mix(project: Project, media: MediaStates, firstSample: num
   const rangeCount = sampleCount + 2 * LIMITER_REACH
   const mixed = new Float64Array(rangeCount * CHANNELS)
 
-  const sounds: Sounding[] = []
+  const sounds: AudibleClip[] = []
   const range = { from: rangeFirst * TICKS_PER_SAMPLE, to: (rangeFirst + rangeCount) * TICKS_PER_SAMPLE }
   collectSounds(project.tracks, media, range, sounds)
   for (let batchStart = 0; batchStart < sounds.length; batchStart += READS_IN_FLIGHT) {
     const batch = sounds.slice(batchStart, batchStart + READS_IN_FLIGHT)
-    const contributions = await Promise.all(batch.map((sounding) => contributionOf(sounding, rangeFirst, readAudio)))
+    const contributions = await Promise.all(batch.map((audible) => contributionOf(audible, rangeFirst, readAudio)))
     // Added in the order of the sounds, so the sum is the same to the last bit however the reads finished.
     for (const contribution of contributions) {
       if (contribution === undefined) continue

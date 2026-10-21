@@ -25,9 +25,7 @@ const FASTEST_TEMPO_STEP = 100
 const PREROLL_SAMPLES = SAMPLE_RATE
 // A stretched segment is made from a little more sound than it needs on either side, so the tempo filter has settled where the segment starts and ends.
 const STRETCH_MARGIN_SAMPLES = SAMPLE_RATE
-// Sound is fed to the tempo filter in pieces of this many samples, so a very fast clip does not hold an hour of sound in memory.
 const STRETCH_FEED_SAMPLES = 10 * SAMPLE_RATE
-// Decoding goes on a little past what a run needs, so its last segment is never cut short by rounding.
 const RUN_END_MARGIN_SECONDS = 0.5
 
 class StretchError extends Error {
@@ -42,8 +40,6 @@ export type AudioSource = {
   containerStart: number
 }
 
-// Sound is kept in segments of a fixed number of samples, each with its own file, so a long file is prepared around the playhead. A file whose sound
-// cannot be found exactly by seeking (MP3, raw AAC) is always decoded from its start.
 export type AudioLayout = {
   samplesPerSegment: number
   segmentCount: number
@@ -56,7 +52,6 @@ export type AudioRun = {
   directory: string
   layout: AudioLayout
   cache: DiskCache
-  // Decoding starts at the first segment and stops after the last; only the claimed segments are written.
   firstSegment: number
   lastSegment: number
   claim: BuildClaim
@@ -153,7 +148,6 @@ function coarserPeaks(peaks: Int8Array): Int8Array {
   return coarser
 }
 
-// Drawing a 20-hour waveform zoomed out must not walk 7 million buckets per frame, so each level holds an eighth of the one before.
 export function waveformLevels(peaks: Int8Array): WaveformLevel[] {
   const levels: WaveformLevel[] = [{ samplesPerBucket: WAVEFORM_BUCKET_SAMPLES, peaks }]
   for (;;) {
@@ -176,7 +170,6 @@ export function tempoFilter(stretch: AudioStretch): string {
   const isUsable = Number.isInteger(speedPercent) && speedPercent >= MIN_SPEED_PERCENT && speedPercent <= MAX_SPEED_PERCENT && speedPercent !== NORMAL_SPEED_PERCENT
   if (!isUsable || typeof stretch.keepsPitch !== 'boolean') throw new StretchError(`Sound cannot be played at "${String(speedPercent)}" percent of its speed`)
 
-  // Samples made for one rate and played at another are faster and higher, like a tape.
   if (!stretch.keepsPitch) return `asetrate=${(SAMPLE_RATE * speedPercent) / NORMAL_SPEED_PERCENT},aresample=${SAMPLE_RATE}`
 
   const steps: string[] = []
@@ -203,7 +196,6 @@ export function audioLayout(durationTicks: number, segmentSeconds: number, seeks
   return { samplesPerSegment, segmentCount: Math.max(1, Math.ceil(totalSamples / samplesPerSegment)), seeksExactly }
 }
 
-// Counted in the stretched sound, a file at another speed has as many segments as its length at that speed needs.
 export function stretchedLayout(layout: AudioLayout, stretch: AudioStretch): AudioLayout {
   const totalSamples = (layout.segmentCount * layout.samplesPerSegment * NORMAL_SPEED_PERCENT) / stretch.speedPercent
   return { ...layout, segmentCount: Math.max(1, Math.ceil(totalSamples / layout.samplesPerSegment)) }
@@ -218,7 +210,6 @@ function seconds(ticks: number): string {
   return (ticks / TICKS_PER_SECOND).toFixed(6)
 }
 
-// Decodes the sound of a file from `startSample` on as 48 kHz stereo float samples, placed by the file's timestamps: sample 0 is the start of the file.
 function decodeFrom(ffmpeg: FfmpegRunner, source: AudioSource, startSample: number, durationSamples: number | undefined, signal: AbortSignal): Job {
   const firstPts = Math.round(source.containerStart / TICKS_PER_SAMPLE) + startSample
   const filter = `aresample=${SAMPLE_RATE}:async=1:first_pts=${firstPts},aformat=sample_fmts=flt:channel_layouts=stereo`
@@ -231,7 +222,6 @@ function decodeFrom(ffmpeg: FfmpegRunner, source: AudioSource, startSample: numb
   return ffmpeg.spawnJob('ffmpeg', args, { signal })
 }
 
-// Hands on the whole stereo frames of each chunk a job puts out, keeping a frame split between chunks for the next.
 async function forEachFrames(job: Job, onFrames: (frames: Float32Array) => Promise<void> | void): Promise<void> {
   let loose: Buffer = Buffer.alloc(0)
   for (;;) {
@@ -261,7 +251,6 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error))
 }
 
-// Fills segments one after another from a stream of samples. Each segment is written with its seam tail, which is also the start of the next.
 function createSegmentFiller(layout: AudioLayout, firstSegment: number, write: (segment: number, samples: Float32Array) => Promise<void>): { add(frames: Float32Array): Promise<void>; finish(): Promise<void>; isDone(): boolean } {
   const segmentFrames = layout.samplesPerSegment + SEAM_SAMPLES
   let segment = firstSegment
@@ -329,7 +318,6 @@ export async function buildAudioRun(run: AudioRun): Promise<string[]> {
   return claim.paths.filter((path) => !written.has(path))
 }
 
-// The waveform of the whole file, made by one decode that keeps nothing but the peaks.
 export async function buildWaveform(ffmpeg: FfmpegRunner, source: AudioSource, directory: string, cache: DiskCache, signal: AbortSignal): Promise<void> {
   const peaks = createPeakFolder()
   await forEachFrames(decodeFrom(ffmpeg, source, 0, undefined, signal), (frames) => peaks.add(frames))
@@ -340,13 +328,11 @@ function greatestCommonDivisor(a: number, b: number): number {
   return b === 0 ? a : greatestCommonDivisor(b, a % b)
 }
 
-// One stretched segment: the sound around it is fed through the tempo filter, and the part that lands in the segment is kept.
 export async function buildStretchedSegment(build: StretchedBuild): Promise<void> {
   const { ffmpeg, directory, layout, cache, stretch, segment, claim, readBase, signal } = build
   const path = audioSegmentPath(directory, segment, stretch)
   if (!claim.paths.includes(path)) return
   const speed = stretch.speedPercent
-  // The source start is a whole number of samples that also lands on a whole stretched sample.
   const step = speed / greatestCommonDivisor(speed, NORMAL_SPEED_PERCENT)
   const segmentStart = segment * layout.samplesPerSegment
   const sourceStart = Math.max(0, Math.floor((segmentStart * speed) / NORMAL_SPEED_PERCENT / step - STRETCH_MARGIN_SAMPLES / step) * step)
@@ -402,8 +388,6 @@ async function readSegmentInto(path: string, offsetFrames: number, target: Float
   }
 }
 
-// Reads samples across segment files, asking for each segment to be made first. Where two segments meet, the end of one fades into the start of
-// the next. Samples outside the sound are silence.
 export async function readSegmentedAudio(directory: string, layout: AudioLayout, firstSample: number, sampleCount: number, ensure: (segment: number) => Promise<void>, stretch?: AudioStretch): Promise<Float32Array> {
   const samples = new Float32Array(sampleCount * CHANNELS)
   const perSegment = layout.samplesPerSegment

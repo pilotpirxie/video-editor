@@ -41,7 +41,6 @@ export function newRecoveryPath(directory: string): string {
   return join(directory, `${randomUUID()}${RECOVERY_EXTENSION}`)
 }
 
-// The copy of a project that an export reads. It lives beside the recovery file and is never taken for one.
 export function exportSnapshotPath(recoveryPath: string): string {
   return `${recoveryPath}${EXPORT_SNAPSHOT_EXTENSION}`
 }
@@ -52,7 +51,6 @@ export async function discardExportSnapshot(path: string, directory: string): Pr
   if (isOurs) await discardRecoveredWork(path)
 }
 
-// Notes where a running export writes, so the unfinished file of one that a crash cuts short is removed at the next launch. Returns the note.
 export async function rememberExportOutput(directory: string, outputPath: string): Promise<string> {
   const notePath = join(directory, `${randomUUID()}${EXPORT_OUTPUT_EXTENSION}`)
   try {
@@ -64,7 +62,6 @@ export async function rememberExportOutput(directory: string, outputPath: string
   return notePath
 }
 
-// Only the unfinished file is removed, never the finished export or anything else the note might name.
 async function removeUnfinishedExport(notePath: string): Promise<void> {
   try {
     const outputPath = await readFile(notePath, 'utf8')
@@ -85,7 +82,6 @@ export async function rememberProjectPath(recoveryPath: string, projectPath: str
   }
 }
 
-// The project file now holds everything, so the recovered work is dropped; the note stays for the next autosave.
 export async function discardRecoveredWork(recoveryPath: string): Promise<void> {
   try {
     await rm(recoveryPath, { force: true })
@@ -99,7 +95,6 @@ export async function discardRecovery(recoveryPath: string): Promise<void> {
   await discardRecoveredWork(`${recoveryPath}${PROJECT_PATH_EXTENSION}`)
 }
 
-// The recovery files that still hold work their project files do not, the newest first: one for each window that had unsaved changes.
 export async function findRecoveries(directory: string): Promise<FoundRecovery[]> {
   let names: string[]
   try {
@@ -111,10 +106,8 @@ export async function findRecoveries(directory: string): Promise<FoundRecovery[]
 
   const found: (FoundRecovery & { writtenAt: number })[] = []
   for (const name of names) {
-    // No export is running at launch, so a copy an interrupted one left behind is of no use any more.
     if (name.endsWith(EXPORT_SNAPSHOT_EXTENSION)) await discardRecoveredWork(join(directory, name))
     if (name.endsWith(EXPORT_OUTPUT_EXTENSION)) await removeUnfinishedExport(join(directory, name))
-    // A note whose recovery file is gone belonged to a window that closed without unsaved work, or never had any.
     if (name.endsWith(PROJECT_PATH_EXTENSION) && !names.includes(name.slice(0, -PROJECT_PATH_EXTENSION.length))) await discardRecoveredWork(join(directory, name))
     if (!name.endsWith(RECOVERY_EXTENSION)) continue
     const recoveryPath = join(directory, name)

@@ -11,7 +11,6 @@ export type Point = {
   y: number
 }
 
-// The rectangle a layer is drawn into, in canvas pixels, exactly as the compositor places it.
 export type Box = {
   centerX: number
   centerY: number
@@ -56,7 +55,6 @@ function rotated(point: Point, degrees: number): Point {
   return { x: point.x * cosine - point.y * sine, y: point.x * sine + point.y * cosine }
 }
 
-// Position relative to the box centre, with the box's rotation undone.
 export function toLocal(box: Box, point: Point): Point {
   return rotated({ x: point.x - box.centerX, y: point.y - box.centerY }, -box.rotation)
 }
@@ -71,7 +69,6 @@ export function containsPoint(box: Box, point: Point): boolean {
   return Math.abs(local.x) <= box.width / 2 && Math.abs(local.y) <= box.height / 2
 }
 
-// Which way a handle points from the centre: -1, 0 or 1 on each axis.
 export function handleDirection(handle: Handle): Point {
   const horizontal = handle.includes('e') ? 1 : 0
   const vertical = handle.includes('s') ? 1 : 0
@@ -97,7 +94,6 @@ type Stretch = {
   direction: Point
 }
 
-// How far the pointer pulls each side, measured from the opposite side, which stays where it is.
 function stretchTo(box: Box, handle: Handle, pointer: Point): Stretch {
   const direction = handleDirection(handle)
   const local = toLocal(box, pointer)
@@ -147,7 +143,6 @@ export function scaleFromHandle(natural: Size, crop: Crop, transform: Transform,
   }
 }
 
-// Dragging a handle in crop mode hides or reveals picture on that side. The centre moves with it, so the picture that stays visible does not shift.
 export function cropFromHandle(natural: Size, crop: Crop, transform: Transform, handle: Handle, pointer: Point): Cropped {
   const box = boxOf(natural, crop, transform)
   const stretch = stretchTo(box, handle, pointer)
@@ -173,14 +168,12 @@ export function cropFromHandle(natural: Size, crop: Crop, transform: Transform, 
 
 const OPPOSITE_SIDE: Record<keyof Crop, keyof Crop> = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' }
 
-// One crop side set to a value, as typing it does. The centre moves as it does when the handle of that side is dragged there, so the picture that stays visible does not shift.
 export function cropFromValue(natural: Size, crop: Crop, transform: Transform, side: keyof Crop, value: number): Cropped {
   const isHorizontal = side === 'left' || side === 'right'
   const full = isHorizontal ? natural.width : natural.height
   const most = Math.max(0, full - crop[OPPOSITE_SIDE[side]] - 1)
   const hidden = Math.min(most, Math.max(0, value))
   const scale = isHorizontal ? transform.scaleX : transform.scaleY
-  // Hiding picture on one side moves the centre toward the other.
   const direction = side === 'left' || side === 'top' ? 1 : -1
   const along = (direction * (hidden - crop[side]) * scale) / 2
   const shift = rotated(isHorizontal ? { x: along, y: 0 } : { x: 0, y: along }, transform.rotation)
@@ -194,7 +187,6 @@ function angleTo(box: Box, point: Point): number {
   return Math.atan2(point.y - box.centerY, point.x - box.centerX) / DEGREES_TO_RADIANS
 }
 
-// The box turns by as much as the pointer has travelled around its centre; stepped rotation lands on multiples of 15 degrees.
 export function rotationFromPointer(box: Box, grabbedAt: Point, pointer: Point, isStepped: boolean): number {
   const rotation = box.rotation + angleTo(box, pointer) - angleTo(box, grabbedAt)
   return isStepped ? Math.round(rotation / ROTATION_STEP) * ROTATION_STEP : rotation

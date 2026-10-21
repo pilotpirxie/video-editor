@@ -10,7 +10,6 @@ function clampWhole(value: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(value), min), max)
 }
 
-// How the picture moves into a canvas of another size: one scale about the middle of each canvas.
 type Rescale = {
   scale: number
   x(value: number): number
@@ -32,8 +31,6 @@ function rescaledKeyframes(keyframes: Keyframes | undefined, rescale: Rescale): 
   return rescaled
 }
 
-// Lengths that are canvas pixels and that the clip's own scale does not enlarge get the canvas's scale too.
-// The members of a group are left as they are: the group's scale carries them, their effects and their blur.
 function rescaledClip(clip: Clip, rescale: Rescale): Clip {
   if (!isVisual(clip)) return clip
   const { transform } = clip
@@ -48,7 +45,6 @@ function rescaledClip(clip: Clip, rescale: Rescale): Clip {
   return { ...placed, effects: placed.effects.map((effect) => scaledEffect(effect, rescale.scale)) }
 }
 
-// The whole picture is fitted into the new canvas: it keeps its proportions, nothing of it is cut off, and it stays centred.
 export function setCanvasSize(project: Project, size: Size): Project {
   const width = clampWhole(size.width, MIN_CANVAS.width, MAX_CANVAS.width)
   const height = clampWhole(size.height, MIN_CANVAS.height, MAX_CANVAS.height)
@@ -89,7 +85,6 @@ function isTransformProperty(property: AnimatableProperty): property is keyof Tr
   return property === 'x' || property === 'y' || property === 'scaleX' || property === 'scaleY' || property === 'rotation'
 }
 
-// The value a property has while nothing animates it; undefined when this kind of clip does not have the property at all.
 function baseValue(clip: Clip, property: AnimatableProperty): number | undefined {
   if (property === 'volume') return hasVolume(clip) ? clip.volume : undefined
   if (clip.type === 'audio') return undefined
@@ -141,7 +136,6 @@ export type KeyframeSet = keyof typeof KEYFRAME_SETS
 const ALL_SETS: readonly KeyframeSet[] = ['position', 'size', 'rotation', 'opacity', 'crop', 'volume']
 const PATH_STEPS = 16
 
-// The properties of a set that this kind of clip has.
 function propertiesOf(clip: Clip, set: KeyframeSet): AnimatableProperty[] {
   const owned: AnimatableProperty[] = []
   for (const property of KEYFRAME_SETS[set]) {
@@ -165,7 +159,6 @@ function keyTimeAt(clip: Clip, properties: readonly AnimatableProperty[], time: 
   return local
 }
 
-// A new keyframe moves on as its partners at that moment do, so x and y, or the two scales of a group, keep one curve.
 function easingAt(clip: Clip, properties: readonly AnimatableProperty[], local: number): Easing {
   for (const property of properties) {
     const partner = clip.keyframes?.[property]?.find((keyframe) => keyframe.time === local)
@@ -180,7 +173,6 @@ function withKeyframeAt(keyframes: readonly Keyframe[], time: number, value: num
   return [...keyframes, { time, value, easing }].sort((a, b) => a.time - b.time)
 }
 
-// Keys every property of a set at one moment of the clip: those given a value take it, the others hold the value they have there.
 function withSetKeyed(clip: Clip, properties: readonly AnimatableProperty[], values: PropertyValues, local: number): Clip {
   const easing = easingAt(clip, properties, local)
   let keyed = clip
@@ -206,7 +198,6 @@ function withBaseValues(clip: Clip, properties: readonly AnimatableProperty[], v
   return edited
 }
 
-// The properties of each set in which a change really changes a value.
 function changedSets(clip: Clip, values: PropertyValues, time: number): AnimatableProperty[][] {
   const changed: AnimatableProperty[][] = []
   for (const set of ALL_SETS) {
@@ -221,13 +212,11 @@ function changedSets(clip: Clip, values: PropertyValues, time: number): Animatab
   return changed
 }
 
-// The moment of a clip that a project time falls on, on the time grid and inside the clip.
 function localGridTime(clip: Clip, time: number): number {
   const inside = Math.min(clip.duration, Math.max(0, time - clip.start))
   return Math.round(inside / TIMELINE_GRID) * TIMELINE_GRID
 }
 
-// A group is scaled by one number, so either of its two scales sets both.
 function evenlyScaled(values: PropertyValues): PropertyValues {
   const scale = values.scaleX ?? values.scaleY
   return scale === undefined ? values : { ...values, scaleX: scale, scaleY: scale }
@@ -255,7 +244,6 @@ function withKeyframeList(clip: Clip, property: AnimatableProperty, list: readon
   return { ...clip, keyframes: isLeft ? keyframes : undefined }
 }
 
-// When the last keyframe goes, the property keeps the value that keyframe had, so nothing jumps.
 function withoutKeyframe(clip: Clip, property: AnimatableProperty, list: readonly Keyframe[], removed: Keyframe): Clip {
   const remaining = list.filter((keyframe) => keyframe !== removed)
   const settled = remaining.length === 0 ? withBaseValue(clip, property, removed.value) : clip
@@ -272,7 +260,6 @@ function withoutKeyframesAt(clip: Clip, properties: readonly AnimatableProperty[
   return edited
 }
 
-// Keys a whole set at the playhead, holding the values it has there, or takes the set's keyframes in the playhead's frame away.
 export function setKeyframesAt(project: Project, clipIds: readonly string[], set: KeyframeSet, time: number, isKeyed: boolean): Project {
   const frameTicks = frameDuration(project.canvas.frameRate)
   return editClips(project, new Set(clipIds), (clip) => {
@@ -283,21 +270,18 @@ export function setKeyframesAt(project: Project, clipIds: readonly string[], set
   })
 }
 
-// Whether every property of the set that the clip has is keyed in the frame of the playhead.
 export function hasKeyframesAt(clip: Clip, set: KeyframeSet, time: number, frameTicks: number): boolean {
   const properties = propertiesOf(clip, set)
   const local = keyTimeAt(clip, properties, time, frameTicks)
   return properties.length > 0 && properties.every((property) => clip.keyframes?.[property]?.some((keyframe) => keyframe.time === local) === true)
 }
 
-// The frame on which a keyframe of a clip is reached: one where the clip is drawn, so a keyframe at the very end of a clip is reached on its last frame.
 export function keyframeFrame(clip: Clip, localTime: number, frameTicks: number): number {
   const firstFrame = Math.ceil(clip.start / frameTicks)
   const lastFrame = Math.ceil((clip.start + clip.duration) / frameTicks) - 1
   return Math.min(lastFrame, Math.max(firstFrame, frameAt(clip.start + localTime, frameTicks)))
 }
 
-// The start of the nearest frame before or after the playhead's that holds a keyframe of the set on one of the clips.
 export function nearestKeyframe(clips: readonly Clip[], set: KeyframeSet, time: number, direction: 1 | -1, frameTicks: number): number | undefined {
   const current = frameAt(time, frameTicks)
   let nearest: number | undefined
@@ -316,13 +300,10 @@ export function nearestKeyframe(clips: readonly Clip[], set: KeyframeSet, time: 
 }
 
 export type MotionPath = {
-  // Where the place of the clip goes over its length, in the units of its track.
   line: Point[]
-  // One dot for each moment inside the clip that has a position keyframe, measured from the clip's start.
   dots: { time: number; point: Point }[]
 }
 
-// The way the clip's place travels, sampled finely enough that eased moves, and x and y keyed at different moments, are drawn as they play.
 export function motionPath(clip: Clip): MotionPath | undefined {
   if (clip.type === 'audio') return undefined
   const keyframes = [...(clip.keyframes?.x ?? []), ...(clip.keyframes?.y ?? [])]
@@ -350,13 +331,11 @@ export function motionPath(clip: Clip): MotionPath | undefined {
 }
 
 export type KeyframeChange = {
-  // Measured from the start of the clip. A keyframe never passes its neighbours.
   time?: number
   value?: number
   easing?: Easing
 }
 
-// Changes one keyframe of a clip, counted from the first. A change of nothing returns the project as it is.
 export function changeKeyframe(project: Project, clipId: string, property: AnimatableProperty, index: number, change: KeyframeChange): Project {
   return editClips(project, new Set([clipId]), (clip) => {
     const list = clip.keyframes?.[property]
@@ -388,7 +367,6 @@ export type SoundSwitches = {
   hasFastSound?: boolean
 }
 
-// How the sound of the chosen clips follows their speed. A switch that is off is left out of the clip, as the file format wants it.
 export function setSoundSwitches(project: Project, clipIds: readonly string[], switches: SoundSwitches): Project {
   return editClips(project, new Set(clipIds), (clip) => {
     if (!hasSource(clip)) return clip
@@ -420,8 +398,6 @@ export function setSourceStart(project: Project, clipIds: readonly string[], sou
   })
 }
 
-// Changing the speed keeps the same stretch of source, so the clip gets shorter or longer. The clips after it on its track move by as much,
-// so clips laid end to end stay that way and gaps between them keep their length.
 export function setSpeed(project: Project, clipIds: readonly string[], speedPercent: number): Project {
   const speed = Math.min(MAX_SPEED_PERCENT, Math.max(MIN_SPEED_PERCENT, Math.round(speedPercent)))
   let edited = project
@@ -438,7 +414,6 @@ export function setSpeed(project: Project, clipIds: readonly string[], speedPerc
   return edited
 }
 
-// Only an animated image can loop. Switching the loop off ends the clip where one play of its source ends.
 export function setLoop(project: Project, clipIds: readonly string[], isLooping: boolean, mediaStates: MediaStates): Project {
   return editClips(project, new Set(clipIds), (clip) => {
     if (clip.type !== 'video' || (clip.loop === true) === isLooping) return clip
@@ -468,7 +443,6 @@ export function setFade(project: Project, clipIds: readonly string[], fade: Fade
   })
 }
 
-// What a field shows for several clips: their common value, or nothing when they differ.
 export function sharedValue<Value>(values: readonly Value[]): Value | undefined {
   const [first] = values
   return values.every((value) => value === first) ? first : undefined

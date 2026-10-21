@@ -12,7 +12,6 @@ export type Position = {
   droppedFrames: number
   fullQualityMs: number | undefined
   sequence: number
-  // How fast the J and L keys are moving the playhead: negative backwards, 0 when they are not.
   shuttleRate: number
 }
 
@@ -28,7 +27,6 @@ export type Transport = {
   pause(): void
   seek(time: number): void
   shuttle(direction: 1 | -1, limits: TimelineLimits): void
-  // While a group is open, times are those of its tracks: project time minus this offset.
   setOffset(offset: number): void
 }
 
@@ -76,7 +74,6 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
     announce()
   })
 
-  // The engine knows project time only, and none before its start.
   function seekEngine(time: number): void {
     engine.send({ type: 'seek', time: Math.max(0, time + offset) })
   }
@@ -114,7 +111,6 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
     await play()
   }
 
-  // The engine plays forwards, at normal speed, with sound. Every other speed is shown by seeking frame after frame, silently.
   function showShuttle(active: Shuttle): void {
     if (shuttling !== active) return
     const { duration, frameTicks } = active.limits
@@ -134,7 +130,6 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
     requestAnimationFrame(() => showShuttle(active))
   }
 
-  // Pressing the same direction again doubles the speed; the other direction starts over at normal speed.
   function shuttle(direction: 1 | -1, limits: TimelineLimits): void {
     let rate = position.isPlaying ? 1 : 0
     if (shuttling !== undefined) rate = shuttling.rate
@@ -180,18 +175,15 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
 }
 
 export function isTypingTarget(target: EventTarget | null): boolean {
-  // A seek bar takes no typing: the keys stay with the editor while it has the focus.
   if (target instanceof HTMLInputElement) return target.type !== 'range'
   if (target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return true
   return target instanceof HTMLElement && target.isContentEditable
 }
 
-// A dialog that is open has the window to itself: nothing behind it answers to keys, menu commands, pasted clips or dropped files.
 export function isModalOpen(): boolean {
   return document.querySelector('dialog:modal') !== null
 }
 
-// Keys belong to a dialog, a menu or a list of options while one is open, and to a text field while it has the focus.
 export function isKeyForTheEditor(event: KeyboardEvent): boolean {
   if (event.defaultPrevented || isTypingTarget(event.target) || isModalOpen()) return false
   return !(event.target instanceof Element) || event.target.closest('[role="menu"], [role="listbox"]') === null

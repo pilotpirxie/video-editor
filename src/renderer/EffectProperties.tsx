@@ -39,8 +39,7 @@ type NumberSetting = {
   label: string
   testId: string
   value: number
-  // What the field shows is the stored value times this: 100 for settings stored as a share and shown in percent.
-  shownPer: number
+  displayMultiplier: number
   min: number
   max: number
   presets: readonly number[]
@@ -48,18 +47,17 @@ type NumberSetting = {
 }
 
 function lengthOf(label: string, key: string, value: number, changed: (value: number) => Effect, min = 0): NumberSetting {
-  return { label, testId: key, value, shownPer: 1, min, max: MAX_LENGTH, presets: LENGTHS, changed }
+  return { label, testId: key, value, displayMultiplier: 1, min, max: MAX_LENGTH, presets: LENGTHS, changed }
 }
 
 function amountOf(label: string, key: string, value: number, changed: (value: number) => Effect): NumberSetting {
-  return { label: `${label} (%)`, testId: key, value, shownPer: PERCENT, min: 0, max: PERCENT, presets: AMOUNTS, changed }
+  return { label: `${label} (%)`, testId: key, value, displayMultiplier: PERCENT, min: 0, max: PERCENT, presets: AMOUNTS, changed }
 }
 
 function adjustmentOf(label: string, key: string, value: number, changed: (value: number) => Effect): NumberSetting {
-  return { label: `${label} (%)`, testId: key, value, shownPer: PERCENT, min: -PERCENT, max: PERCENT, presets: ADJUSTMENTS, changed }
+  return { label: `${label} (%)`, testId: key, value, displayMultiplier: PERCENT, min: -PERCENT, max: PERCENT, presets: ADJUSTMENTS, changed }
 }
 
-// The numbers of an effect, in the order they are shown. Lengths are canvas pixels.
 function numberSettings(effect: Effect): NumberSetting[] {
   if (effect.type === 'colorAdjust') {
     return [
@@ -87,7 +85,7 @@ function numberSettings(effect: Effect): NumberSetting[] {
   } else if (effect.type === 'look') {
     return [
       amountOf('Strength', 'strength', effect.strength, (strength) => ({ ...effect, strength })),
-      { label: 'Exposure (stops)', testId: 'exposure', value: effect.exposure, shownPer: 1, min: -MAX_STOPS, max: MAX_STOPS, presets: STOPS, changed: (exposure) => ({ ...effect, exposure }) },
+      { label: 'Exposure (stops)', testId: 'exposure', value: effect.exposure, displayMultiplier: 1, min: -MAX_STOPS, max: MAX_STOPS, presets: STOPS, changed: (exposure) => ({ ...effect, exposure }) },
       adjustmentOf('Contrast', 'contrast', effect.contrast, (contrast) => ({ ...effect, contrast })),
       adjustmentOf('Highlights', 'highlights', effect.highlights, (highlights) => ({ ...effect, highlights })),
       adjustmentOf('Shadows', 'shadows', effect.shadows, (shadows) => ({ ...effect, shadows })),
@@ -124,12 +122,12 @@ function SettingField({ type, setting, withSettings }: SettingFieldProps): React
       label={setting.label}
       testId={`effect-${type}-${setting.testId}`}
       command="Change Effect"
-      value={setting.value * setting.shownPer}
+      value={setting.value * setting.displayMultiplier}
       min={setting.min}
       max={setting.max}
       decimals={1}
       presets={setting.presets}
-      edit={(shown) => withSettings(setting.changed(shown / setting.shownPer))}
+      edit={(shown) => withSettings(setting.changed(shown / setting.displayMultiplier))}
     />
   )
 }
@@ -139,7 +137,6 @@ type LookFieldsProps = {
   withSettings(changed: Effect): Edit
 }
 
-// The ready-made looks, which set every slider but the strength; "Custom" is shown once a slider no longer matches any of them.
 function LookPresetField({ look, withSettings }: LookFieldsProps): ReactElement {
   const { store } = useSession()
   const current = lookPresetOf(look)
@@ -160,7 +157,6 @@ function LookPresetField({ look, withSettings }: LookFieldsProps): ReactElement 
   )
 }
 
-// The colours the shadows and the highlights are tinted with, each with how strongly.
 function LookToneFields({ look, withSettings }: LookFieldsProps): ReactElement {
   const shadowAmount = amountOf('Shadow colour amount', 'shadowAmount', look.shadowAmount, (amount) => ({ ...look, shadowAmount: amount }))
   const highlightAmount = amountOf('Highlight colour amount', 'highlightAmount', look.highlightAmount, (amount) => ({ ...look, highlightAmount: amount }))
@@ -174,7 +170,6 @@ function LookToneFields({ look, withSettings }: LookFieldsProps): ReactElement {
   )
 }
 
-// One effect of the selected clip: its settings, and in its title line the switch, its place in the order and its removal.
 function EffectGroup({ clipId, effect, isFirst, isLast }: EffectGroupProps): ReactElement {
   const { store } = useSession()
   const { type } = effect
@@ -186,7 +181,6 @@ function EffectGroup({ clipId, effect, isFirst, isLast }: EffectGroupProps): Rea
     return (project) => setEffect(project, ids, changed)
   }
 
-  // While a colour is picked the key is switched off, so the picture shows the colours there are to pick from.
   async function pickKeyColor(key: Extract<Effect, { type: 'chromaKey' }>): Promise<void> {
     updateStep(store, 'Pick Key Colour', (project) => setEffectOff(project, ids, 'chromaKey', true), false)
     try {
@@ -195,7 +189,6 @@ function EffectGroup({ clipId, effect, isFirst, isLast }: EffectGroupProps): Rea
       store.commit()
     } catch (error) {
       store.cancel()
-      // Escape closes the picker without a colour; that is not a failure.
       if (error instanceof DOMException && error.name === 'AbortError') return
       logError('Could not pick a colour from the screen', error)
       store.notify(`The colour could not be picked: ${describeErrorAsSentence(error)} Choose it in the Key colour field instead.`)
@@ -230,7 +223,6 @@ function EffectGroup({ clipId, effect, isFirst, isLast }: EffectGroupProps): Rea
   )
 }
 
-// The effects of the selected clip, first to last, under the clip's other properties.
 export function EffectProperties(): ReactElement | undefined {
   const project = useEditorState((state) => state.project)
   const selection = useEditorState((state) => state.selection)
@@ -239,7 +231,6 @@ export function EffectProperties(): ReactElement | undefined {
   if (only === undefined) return undefined
   if (clips.length > 1) {
     const hasEffects = clips.some((clip) => clip.effects !== undefined)
-    // Two clips rarely have the same effects in the same order, so their settings are changed one clip at a time.
     return hasEffects ? (
       <p className="hint panel-hint" data-testid="effects-hint">
         Select one clip to change its effects.

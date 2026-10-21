@@ -27,7 +27,6 @@ function groupOf(project: Project, id: string): GroupClip {
   return clip
 }
 
-// What is drawn at a number of moments, without the names of the groups around each layer and with the numbers rounded.
 function drawn(project: Project): unknown[] {
   const pictures: unknown[] = []
   for (let time = 0; time < 13 * SECOND; time += SECOND / 4) {

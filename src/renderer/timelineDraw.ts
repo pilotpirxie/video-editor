@@ -45,7 +45,6 @@ const SELECTION_WIDTH = 2
 const TICK_HEIGHT = 6
 const PLAYHEAD_HEAD = 5
 const INT8_PEAK = 127
-// A waveform is a row of bars: enough to see where the sound is loud, and a third of the drawing that a line per pixel takes.
 const WAVEFORM_BAR_STEP = 3
 const WAVEFORM_BAR_WIDTH = 2
 const RAMP_SHADE_OPACITY = 0.6
@@ -104,23 +103,19 @@ export type ContentScene = {
   fonts: TimelineFonts
   inOrder: ClipIndex
   thumbnails: Thumbnails
-  // The part of the timeline an open group shows; the rest is shaded. Undefined while no group is open.
   shown: { from: number; to: number } | undefined
 }
 
-// What something held over the timeline would change if it were released now: the end of a clip a transition would go to, or the clip an effect would go to.
 export type DropTarget = {
   left: number
   right: number
   top: number
 }
 
-// Where media held over the timeline would land if it were released now.
 export type Landing = {
   start: number
   end: number
   trackIndex: number
-  // Top of the row the clip will be on, once a track made for it has moved the rows.
   top: number
   isNewTrack: boolean
   guide: number | undefined
@@ -136,13 +131,10 @@ export type OverlayScene = {
   marquee: Marquee | undefined
   landing: Landing | undefined
   dropTarget: DropTarget | undefined
-  // Fade handles of the clip under the pointer or being changed, and which of them is held.
   handles: readonly FadeHandle[]
   heldHandle: FadeHandle | undefined
-  // The grips of the transitions of that clip, and the one that is held.
   grips: readonly TransitionBand[]
   heldGrip: TransitionBand | undefined
-  // The volume keyframe that is being dragged.
   heldPoint: VolumePoint | undefined
   heldLabel: string
 }
@@ -187,13 +179,11 @@ function videoOf(clip: VideoClip, mediaStates: MediaStates): VideoMedia | undefi
   return state.info
 }
 
-// An animated image is a moving clip, but to its user it is still an image.
 function clipColor(clip: Clip, scene: ContentScene): string {
   const { colors } = scene
   if (clip.type === 'video') return videoOf(clip, scene.mediaStates)?.isAnimatedImage === true ? colors.image : colors.video
   if (clip.type === 'audio') return colors.audio
   if (clip.type === 'image') return colors.image
-  // A group has no kind of its own, so it takes the one colour that says nothing about what is inside.
   if (clip.type === 'blur' || clip.type === 'group') return colors.blur
   return colors.annotation
 }
@@ -225,7 +215,6 @@ function badgeOf(clip: Clip, scene: ContentScene): { text: string; color: string
   return undefined
 }
 
-// One small picture at the start of a video clip shows what it is. It scrolls away with the start of the clip.
 function drawThumbnail(context: CanvasRenderingContext2D, clip: VideoClip, media: VideoMedia, scene: ContentScene, left: number, band: Band): void {
   const { video } = media
   const pictureWidth = Math.max(1, (band.height * video.width) / video.height)
@@ -300,7 +289,6 @@ function drawLabel(context: CanvasRenderingContext2D, clip: Clip, scene: Content
     context.fillText(badge.text, textX + LABEL_PADDING / 2, top + LABEL_HEIGHT / 2)
     textX += badgeWidth + LABEL_PADDING / 2
   }
-  // A clip with effects says so before its name; what the effects are is in Properties.
   if (takesEffects(clip) && clip.effects !== undefined) {
     context.fillStyle = colors.textSecondary
     context.fillText(EFFECTS_MARK, textX, top + LABEL_HEIGHT / 2)
@@ -310,7 +298,6 @@ function drawLabel(context: CanvasRenderingContext2D, clip: Clip, scene: Content
   context.fillText(clipName(clip, scene.mediaNames), textX, top + LABEL_HEIGHT / 2, Math.max(0, left + width - textX - LABEL_PADDING))
 }
 
-// A transition is a shaded band with a cross from corner to corner. On a cut it lies over the ends of both clips.
 function drawTransitionBand(context: CanvasRenderingContext2D, band: TransitionBand, rowTop: number, scene: ContentScene): void {
   const top = rowTop + CLIP_INSET
   const height = TRACK_HEIGHT - 2 * CLIP_INSET
@@ -332,7 +319,6 @@ function drawTransitionBand(context: CanvasRenderingContext2D, band: TransitionB
   context.stroke()
 }
 
-// Shades what a fade takes away: a wedge that is widest at the clip edge and gone where the fade ends.
 function drawRamp(context: CanvasRenderingContext2D, band: Band, edgeX: number, fade: number | undefined, direction: 1 | -1, scene: ContentScene): void {
   if (fade === undefined) return
   const endX = edgeX + direction * (fade / TICKS_PER_SECOND) * scene.view.pixelsPerSecond
@@ -379,8 +365,6 @@ function hasFades(clip: Clip): boolean {
   return pictureFades || soundFades
 }
 
-// The volume of a clip over its length, as a line through its volume keyframes with a dot on each. The way between two keyframes is drawn straight, whatever its easing.
-// The volume line runs across the clip's sound, level at its volume until it has keyframes, and then through them.
 function drawVolumeLine(context: CanvasRenderingContext2D, shape: ClipShape, scene: ContentScene, rowTop: number): void {
   const { clip } = shape
   const makesSound = shape.sound !== undefined
@@ -405,7 +389,6 @@ function drawVolumeLine(context: CanvasRenderingContext2D, shape: ClipShape, sce
   }
 }
 
-// What is drawn inside a clip: its thumbnail, waveform, fade ramps and name. A clip too narrow for a name has none of the first two either.
 function drawClipDetails(context: CanvasRenderingContext2D, shape: ClipShape, scene: ContentScene): void {
   const { clip, left, top, width, height, radius, picture, sound } = shape
   const isWide = width >= MIN_WIDTH_FOR_PICTURES
@@ -418,7 +401,6 @@ function drawClipDetails(context: CanvasRenderingContext2D, shape: ClipShape, sc
   if (isWide) {
     const media = clip.type === 'video' ? videoOf(clip, scene.mediaStates) : undefined
     if (clip.type === 'video' && media !== undefined && picture !== undefined) drawThumbnail(context, clip, media, scene, left, picture)
-    // Media that is missing has no waveform to ask for.
     const state = hasMedia(clip) ? scene.mediaStates[clip.mediaId] : undefined
     const isAvailable = state !== undefined && 'info' in state
     if ((clip.type === 'audio' || clip.type === 'video') && sound !== undefined && isAvailable) drawWaveform(context, clip, scene, sound.top, sound.height)
@@ -445,7 +427,6 @@ function traceDiamond(context: CanvasRenderingContext2D, x: number, y: number, s
   context.closePath()
 }
 
-// A diamond for each moment the clip's picture is keyed. They are drawn whole, also where one sits on the clip's edge.
 function drawKeyframeDiamonds(context: CanvasRenderingContext2D, shape: ClipShape, scene: ContentScene): void {
   context.fillStyle = scene.colors.textPrimary
   context.strokeStyle = scene.colors.background
@@ -476,7 +457,6 @@ function drawTrack(context: CanvasRenderingContext2D, track: Track, scene: Conte
   const shapes: ClipShape[] = []
   const bodies = new Map<string, Path2D>()
   const soundBands = new Path2D()
-  // The clip just past the right edge is looked at too: a transition on its cut reaches back into view.
   const bands: TransitionBand[] = []
   for (let index = range.first; index <= range.end; index++) {
     const clip = clips[index]
@@ -489,7 +469,6 @@ function drawTrack(context: CanvasRenderingContext2D, track: Track, scene: Conte
     const body = bodies.get(color) ?? new Path2D()
     bodies.set(color, body)
     body.roundRect(shape.left, shape.top, shape.width, shape.height, shape.radius)
-    // The sound of a linked clip has the colour of an audio clip, under its picture.
     if (clip.type === 'video' && shape.sound !== undefined) soundBands.roundRect(shape.left, shape.sound.top, shape.width, shape.sound.height, [0, 0, shape.radius, shape.radius])
   }
 
@@ -505,12 +484,10 @@ function drawTrack(context: CanvasRenderingContext2D, track: Track, scene: Conte
     if (scene.selection.has(shape.clip.id)) drawSelection(context, shape, scene)
   }
   for (const band of bands) drawTransitionBand(context, band, rowTop, scene)
-  // Over the shade of a transition too, so no keyframe goes unseen.
   for (const shape of shapes) drawKeyframeDiamonds(context, shape, scene)
   context.globalAlpha = 1
 }
 
-// The zooms of the camera, in a lane of their own under the ruler: a bar for the time each move takes, ending in a diamond where the zoom is reached.
 function drawCameraLane(context: CanvasRenderingContext2D, scene: ContentScene): void {
   const { view, size, colors, project } = scene
   context.fillStyle = colors.panel
@@ -563,7 +540,6 @@ export function drawContent(context: CanvasRenderingContext2D, scene: ContentSce
     if (isVisible) drawTrack(context, track, scene, rowTop)
   }
   if (scene.shown !== undefined) {
-    // What an open group does not show is still there to be edited, but it is not seen or heard in the project.
     const from = Math.max(0, timeToX(scene.shown.from, view))
     const to = Math.min(size.width, timeToX(scene.shown.to, view))
     context.globalAlpha = OUTSIDE_GROUP_OPACITY
@@ -576,7 +552,6 @@ export function drawContent(context: CanvasRenderingContext2D, scene: ContentSce
   drawCameraLane(context, scene)
 }
 
-// A few words on a patch of the background, readable over whatever is drawn beneath.
 function drawChip(context: CanvasRenderingContext2D, scene: OverlayScene, text: string, left: number, middle: number): void {
   context.font = scene.fonts.small
   context.textBaseline = 'middle'
@@ -587,7 +562,6 @@ function drawChip(context: CanvasRenderingContext2D, scene: OverlayScene, text: 
   context.fillText(text, left, middle)
 }
 
-// The outline of the clip that a drop would make. A dashed one says the drop makes a track of its own.
 function drawLanding(context: CanvasRenderingContext2D, scene: OverlayScene, landing: Landing): void {
   const { view, colors } = scene
   const left = timeToX(landing.start, view)
@@ -657,7 +631,6 @@ export function drawOverlay(context: CanvasRenderingContext2D, scene: OverlaySce
     context.stroke()
   }
   if (scene.heldGrip !== undefined) {
-    // The length is written on the side of the grip that points into the transition.
     context.font = scene.fonts.small
     const labelWidth = context.measureText(scene.heldLabel).width
     const { gripX, gripY, edge } = scene.heldGrip
@@ -678,7 +651,6 @@ export function drawOverlay(context: CanvasRenderingContext2D, scene: OverlaySce
     const { x, y } = scene.heldHandle
     context.font = scene.fonts.small
     const labelWidth = context.measureText(scene.heldLabel).width
-    // The length is written on the side of the handle that points into the clip, where there is room for it.
     const isFadeIn = scene.heldHandle.fade === 'fadeIn' || scene.heldHandle.fade === 'volumeFadeIn'
     drawChip(context, scene, scene.heldLabel, isFadeIn ? x + HANDLE_LABEL_GAP : x - HANDLE_LABEL_GAP - labelWidth, y)
   }

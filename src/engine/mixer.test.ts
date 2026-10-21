@@ -191,7 +191,6 @@ describe('volume keyframes', () => {
   })
 })
 
-// The sound at another speed, as the media process would hand it out: every sample tells its place in the stretched sound and how it was stretched.
 const readStretched: AudioReader = async (mediaId, firstSample, sampleCount, stretch) => {
   if (stretch === undefined) return readSource(mediaId, firstSample, sampleCount)
   const samples = new Float32Array(sampleCount * 2)
@@ -250,7 +249,6 @@ describe('groups', () => {
     const grouped = group({ start: 2000 * TICKS_PER_SAMPLE, duration: 600 * TICKS_PER_SAMPLE, contentStart: 500 * TICKS_PER_SAMPLE }, [member])
     const mixed = await mixRange(project([grouped]), 0, 4000)
     expect(mixed[1999 * 2]).toBe(0)
-    // The group shows its content from sample 500 on, where the member has already played 200 samples.
     expect(mixed[2000 * 2]).toBe(sourceSample('voice', 200, 0))
     expect(mixed[2599 * 2]).toBe(sourceSample('voice', 799, 0))
     expect(mixed[2600 * 2]).toBe(0)
@@ -398,7 +396,6 @@ describe('mix with many sounds at once', () => {
   it('gives the same bits whatever order the reads finish in, and stays under the ceiling', async () => {
     let calls = 0
     const shuffledReader: AudioReader = async (mediaId, firstSample, sampleCount) => {
-      // Each read of a batch waits a different time, so they finish out of order.
       calls += 1
       await new Promise((resolve) => setTimeout(resolve, (calls * 7) % 5))
       return readSource(mediaId, firstSample, sampleCount)

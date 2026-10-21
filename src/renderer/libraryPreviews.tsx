@@ -2,9 +2,6 @@ import type { ReactElement, ReactNode } from 'react'
 import type { AnnotationKind } from '../editor/annotations.js'
 import type { EffectType, TransitionType } from '../shared/project.js'
 
-// The pictures on the tiles of the library: one made-up landscape, shown as each item changes it. They are drawn once, are never animated and load nothing.
-// Every picture is 64 by 36 units, the shape of a 16:9 video; colours come from the stylesheet.
-
 type Box = {
   x: number
   y: number
@@ -19,14 +16,12 @@ const BOTTOM_HALF: Box = { x: 0, y: 18, width: 64, height: 18 }
 const CARD: Box = { x: 12, y: 6, width: 40, height: 22.5 }
 const FILLED_CARD: Box = { x: 18, y: 10.125, width: 28, height: 15.75 }
 const REGION: Box = { x: 16, y: 6, width: 32, height: 22 }
-// The colours of the pixel blocks: rows from the top, as the landscape under them roughly is.
 const BLOCKS: readonly (readonly ('sky' | 'sun' | 'hill')[])[] = [
   ['sky', 'sky', 'sky', 'sun'],
   ['sky', 'hill', 'sky', 'sky'],
   ['hill', 'hill', 'hill', 'hill'],
 ]
 const BLOCK_SIZE = 8
-// The arrow runs from its tail up to the back of its head; the head ends at its tip.
 const ARROW_TAIL = 'M14 28L41 12.9'
 const ARROW_HEAD = 'M48 9L43.2 16.8L38.8 9Z'
 
@@ -48,8 +43,7 @@ function Scene({ look }: { look?: string }): ReactElement {
   )
 }
 
-// The picture a transition arrives at.
-function NextScene(): ReactElement {
+function ArrivingScene(): ReactElement {
   return (
     <g>
       <rect className="ink-other" width="64" height="36" />
@@ -58,8 +52,7 @@ function NextScene(): ReactElement {
   )
 }
 
-// Only the part `view` of a picture, drawn at its own place unless `at` moves it.
-function Part({ view, at, children }: { view: Box; at?: { x: number; y: number }; children: ReactNode }): ReactElement {
+function CroppedView({ view, at, children }: { view: Box; at?: { x: number; y: number }; children: ReactNode }): ReactElement {
   const place = at ?? view
   return (
     <svg x={place.x} y={place.y} width={view.width} height={view.height} viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}>
@@ -68,8 +61,7 @@ function Part({ view, at, children }: { view: Box; at?: { x: number; y: number }
   )
 }
 
-// A whole picture made smaller to fit `box`.
-function Shrunk({ box, children }: { box: Box; children: ReactNode }): ReactElement {
+function ShrunkToFit({ box, children }: { box: Box; children: ReactNode }): ReactElement {
   return (
     <svg x={box.x} y={box.y} width={box.width} height={box.height} viewBox="0 0 64 36">
       {children}
@@ -81,44 +73,41 @@ function Divider(): ReactElement {
   return <path className="ink-divider" d="M32 0V36" />
 }
 
-// Before on the left, after on the right.
-function Compared({ look }: { look: string }): ReactElement {
+function BeforeAndAfter({ look }: { look: string }): ReactElement {
   return (
     <Picture>
       <Scene />
-      <Part view={RIGHT_HALF}>
+      <CroppedView view={RIGHT_HALF}>
         <Scene look={look} />
-      </Part>
+      </CroppedView>
       <Divider />
     </Picture>
   )
 }
 
-// The landscape as a card on a light backdrop, with something drawn over or around it.
 function OnBackdrop({ isShadowed, children }: { isShadowed?: boolean; children?: ReactNode }): ReactElement {
   return (
     <Picture>
       <rect className="ink-backdrop" width="64" height="36" />
       <g className={isShadowed === true ? 'look-shadow' : undefined}>
-        <Shrunk box={CARD}>
+        <ShrunkToFit box={CARD}>
           <Scene />
-        </Shrunk>
+        </ShrunkToFit>
       </g>
       {children}
     </Picture>
   )
 }
 
-// Halfway through: the leaving picture, a band of black or white, the arriving picture.
 function FadeThrough({ ink }: { ink: string }): ReactElement {
   return (
     <Picture>
-      <Part view={{ x: 0, y: 0, width: 24, height: 36 }}>
+      <CroppedView view={{ x: 0, y: 0, width: 24, height: 36 }}>
         <Scene />
-      </Part>
-      <Part view={{ x: 40, y: 0, width: 24, height: 36 }}>
-        <NextScene />
-      </Part>
+      </CroppedView>
+      <CroppedView view={{ x: 40, y: 0, width: 24, height: 36 }}>
+        <ArrivingScene />
+      </CroppedView>
       <rect className={ink} x="16" width="8" height="36" opacity="0.5" />
       <rect className={ink} x="24" width="16" height="36" />
       <rect className={ink} x="40" width="8" height="36" opacity="0.5" />
@@ -126,14 +115,13 @@ function FadeThrough({ ink }: { ink: string }): ReactElement {
   )
 }
 
-// Halfway through a wipe: the arriving picture covers `arriving`, the edge between them moves the way the chevron points.
 function Wipe({ arriving, edge, chevron }: { arriving: Box; edge: string; chevron: string }): ReactElement {
   return (
     <Picture>
       <Scene />
-      <Part view={arriving}>
-        <NextScene />
-      </Part>
+      <CroppedView view={arriving}>
+        <ArrivingScene />
+      </CroppedView>
       <path className="ink-divider" d={edge} />
       <path className="ink-chevron" d={chevron} />
     </Picture>
@@ -145,7 +133,6 @@ type Point = {
   y: number
 }
 
-// Halfway through a slide or a push the way it goes: the part of each picture still in view and where it is, the edge between them and a chevron that points the way.
 type Halfway = {
   leaving: Box
   leavingAt: Point
@@ -192,40 +179,37 @@ const HALFWAY: Record<Way, Halfway> = {
   },
 }
 
-// The arriving picture comes in over the one that stays.
 function Slide({ way }: { way: Way }): ReactElement {
   const halfway = HALFWAY[way]
   return (
     <Picture>
       <Scene />
       <g className="look-shadow">
-        <Part view={halfway.arriving} at={halfway.arrivingAt}>
-          <NextScene />
-        </Part>
+        <CroppedView view={halfway.arriving} at={halfway.arrivingAt}>
+          <ArrivingScene />
+        </CroppedView>
       </g>
       <path className="ink-chevron" d={halfway.chevron} />
     </Picture>
   )
 }
 
-// The arriving picture comes in and pushes the other one out.
 function Push({ way }: { way: Way }): ReactElement {
   const halfway = HALFWAY[way]
   return (
     <Picture>
-      <Part view={halfway.leaving} at={halfway.leavingAt}>
+      <CroppedView view={halfway.leaving} at={halfway.leavingAt}>
         <Scene />
-      </Part>
-      <Part view={halfway.arriving} at={halfway.arrivingAt}>
-        <NextScene />
-      </Part>
+      </CroppedView>
+      <CroppedView view={halfway.arriving} at={halfway.arrivingAt}>
+        <ArrivingScene />
+      </CroppedView>
       <path className="ink-divider" d={halfway.edge} />
       <path className="ink-chevron" d={halfway.chevron} />
     </Picture>
   )
 }
 
-// Halfway through a wipe from a corner: the arriving picture covers the triangle `arriving`, and the edge moves the way the chevron points.
 function CornerWipe({ arriving, edge, chevron }: { arriving: string; edge: string; chevron: string }): ReactElement {
   return (
     <Picture>
@@ -237,15 +221,14 @@ function CornerWipe({ arriving, edge, chevron }: { arriving: string; edge: strin
   )
 }
 
-// The leaving picture made small over the arriving one, turned by `turn` degrees.
 function Shrinking({ turn }: { turn: number }): ReactElement {
   return (
     <Picture>
-      <NextScene />
+      <ArrivingScene />
       <g className="look-shadow" transform={`rotate(${turn} 32 18)`}>
-        <Shrunk box={{ x: 20, y: 11.25, width: 24, height: 13.5 }}>
+        <ShrunkToFit box={{ x: 20, y: 11.25, width: 24, height: 13.5 }}>
           <Scene />
-        </Shrunk>
+        </ShrunkToFit>
       </g>
     </Picture>
   )
@@ -267,7 +250,6 @@ function PixelBlocks(): ReactElement {
       const x = REGION.x + column * BLOCK_SIZE
       const y = REGION.y + row * BLOCK_SIZE
       blocks.push(<rect key={`${row}-${column}`} className={`ink-${colour}`} x={x} y={y} width={BLOCK_SIZE} height={BLOCK_SIZE} />)
-      // Every other block is a little lighter, so the blocks read as blocks.
       if ((row + column) % 2 === 0) blocks.push(<rect key={`${row}-${column}-tint`} className="ink-tint" x={x} y={y} width={BLOCK_SIZE} height={BLOCK_SIZE} />)
     }
   }
@@ -275,13 +257,12 @@ function PixelBlocks(): ReactElement {
 }
 
 export const EFFECT_PREVIEWS: Record<EffectType, ReactElement> = {
-  colorAdjust: <Compared look="look-vivid" />,
-  look: <Compared look="look-graded" />,
-  blackAndWhite: <Compared look="look-grey" />,
-  sepia: <Compared look="look-sepia" />,
-  tint: <Compared look="look-tint" />,
-  invert: <Compared look="look-invert" />,
-  // The corners and edges darken softly towards the frame.
+  colorAdjust: <BeforeAndAfter look="look-vivid" />,
+  look: <BeforeAndAfter look="look-graded" />,
+  blackAndWhite: <BeforeAndAfter look="look-grey" />,
+  sepia: <BeforeAndAfter look="look-sepia" />,
+  tint: <BeforeAndAfter look="look-tint" />,
+  invert: <BeforeAndAfter look="look-invert" />,
   vignette: (
     <OnScene>
       <path className="ink-shade look-soft" fillRule="evenodd" d="M0 0H64V36H0ZM6 18A26 16 0 1 0 58 18A26 16 0 1 0 6 18Z" />
@@ -293,7 +274,6 @@ export const EFFECT_PREVIEWS: Record<EffectType, ReactElement> = {
       <rect className="ink-border" x={CARD.x} y={CARD.y} width={CARD.width} height={CARD.height} />
     </OnBackdrop>
   ),
-  // The corners of the card are covered with the backdrop, so the card looks rounded.
   roundedCorners: (
     <OnBackdrop>
       <path className="ink-backdrop" d="M12 6H16A4 4 0 0 0 12 10ZM52 6V10A4 4 0 0 0 48 6ZM52 28.5H48A4 4 0 0 0 52 24.5ZM12 28.5V24.5A4 4 0 0 0 16 28.5Z" />
@@ -305,32 +285,29 @@ export const EFFECT_PREVIEWS: Record<EffectType, ReactElement> = {
       <Scene look="look-soft" />
     </Picture>
   ),
-  // Soft on the left, crisp on the right.
   sharpen: (
     <Picture>
       <Scene look="look-soft" />
-      <Part view={RIGHT_HALF}>
+      <CroppedView view={RIGHT_HALF}>
         <Scene />
-      </Part>
+      </CroppedView>
       <Divider />
     </Picture>
   ),
-  // The picture, blurred and darkened, fills the frame around a smaller copy of itself.
   blurFill: (
     <Picture>
       <Scene look="look-fill" />
-      <Shrunk box={FILLED_CARD}>
+      <ShrunkToFit box={FILLED_CARD}>
         <Scene />
-      </Shrunk>
+      </ShrunkToFit>
     </Picture>
   ),
-  // A person in front of a green screen on the left; with the green keyed out on the right.
   chromaKey: (
     <Picture>
       <rect className="ink-key" width="32" height="36" />
-      <Part view={RIGHT_HALF}>
+      <CroppedView view={RIGHT_HALF}>
         <Scene />
-      </Part>
+      </CroppedView>
       <g className="ink-person">
         <circle cx="32" cy="14" r="5" />
         <path d="M21 36C21 25 43 25 43 36Z" />
@@ -345,7 +322,7 @@ export const TRANSITION_PREVIEWS: Record<TransitionType, ReactElement> = {
     <Picture>
       <Scene />
       <g opacity="0.5">
-        <NextScene />
+        <ArrivingScene />
       </g>
     </Picture>
   ),
@@ -371,9 +348,9 @@ export const TRANSITION_PREVIEWS: Record<TransitionType, ReactElement> = {
     <Picture>
       <Scene />
       <g className="look-shadow">
-        <Shrunk box={{ x: 16, y: 9, width: 32, height: 18 }}>
-          <NextScene />
-        </Shrunk>
+        <ShrunkToFit box={{ x: 16, y: 9, width: 32, height: 18 }}>
+          <ArrivingScene />
+        </ShrunkToFit>
       </g>
     </Picture>
   ),
@@ -386,10 +363,9 @@ export const TRANSITION_PREVIEWS: Record<TransitionType, ReactElement> = {
       <rect className="ink-card" x="24" y="13" width="16" height="10" rx="2" />
     </Picture>
   ),
-  // The circle that still shows the leaving picture closes on the middle.
   circleClose: (
     <Picture>
-      <NextScene />
+      <ArrivingScene />
       <circle className="ink-sky" cx="32" cy="18" r="11" />
       <circle className="ink-sun" cx="36" cy="14" r="3" />
     </Picture>
@@ -424,9 +400,9 @@ export const ANNOTATION_PREVIEWS: Record<AnnotationKind, ReactElement> = {
   ),
   blur: (
     <OnScene>
-      <Part view={REGION}>
+      <CroppedView view={REGION}>
         <Scene look="look-soft" />
-      </Part>
+      </CroppedView>
       <rect className="ink-frame" x={REGION.x} y={REGION.y} width={REGION.width} height={REGION.height} />
     </OnScene>
   ),

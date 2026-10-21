@@ -29,7 +29,6 @@ export type ShortcutAction =
 
 type Modifier = 'ctrl' | 'alt' | 'shift' | 'meta'
 
-// The part of a keyboard event a shortcut is matched on. `code` names the physical key, so the keys stay put on every keyboard layout.
 export type KeyPress = {
   code: string
   metaKey: boolean
@@ -47,7 +46,6 @@ export type Bindings = Readonly<Record<ShortcutAction, readonly Binding[]>>
 
 type ShortcutSection = 'Playback' | 'Timeline' | 'Editing' | 'File and view'
 
-// Every action that can be given keys, in the order the settings list them.
 export const SHORTCUT_ACTIONS: readonly { action: ShortcutAction; name: string; section: ShortcutSection }[] = [
   { action: 'play-pause', name: 'Play or pause', section: 'Playback' },
   { action: 'step-back', name: 'Previous frame', section: 'Playback' },
@@ -76,14 +74,12 @@ export const SHORTCUT_ACTIONS: readonly { action: ShortcutAction; name: string; 
   { action: 'preview-mode', name: 'Preview mode', section: 'File and view' },
 ]
 
-// An action has at most this many keys.
 export const MAX_KEYS = 2
 
 function key(code: string, ...modifiers: Modifier[]): Binding {
   return { code, modifiers }
 }
 
-// Keys common to Mac video editors, plus the arrow keys and K.
 export const DEFAULT_BINDINGS: Bindings = {
   'play-pause': [key('Space')],
   'step-back': [key('Comma'), key('ArrowLeft')],
@@ -112,8 +108,7 @@ export const DEFAULT_BINDINGS: Bindings = {
   'preview-mode': [key('KeyF', 'shift', 'meta')],
 }
 
-// The keys of the menu commands that cannot be rebound, the standard keys of every Mac app, and those that move the focus or cancel.
-const FIXED_KEYS: readonly { binding: Binding; name: string }[] = [
+const RESERVED_KEYS: readonly { binding: Binding; name: string }[] = [
   { binding: key('KeyN', 'meta'), name: 'New Project' },
   { binding: key('KeyO', 'meta'), name: 'Open' },
   { binding: key('KeyS', 'meta'), name: 'Save' },
@@ -142,7 +137,6 @@ const MODIFIER_SYMBOLS: Record<Modifier, string> = { ctrl: '⌃', alt: '⌥', sh
 const MODIFIER_ACCELERATORS: Record<Modifier, string> = { ctrl: 'Ctrl', alt: 'Alt', shift: 'Shift', meta: 'Cmd' }
 const LETTER_OR_DIGIT = /^(?:Key(?<letter>[A-Z])|Digit(?<digit>[0-9])|(?<function>F[0-9]{1,2}))$/
 
-// How a key is written in a tooltip and in the settings, then how Electron names it in a menu.
 const KEY_NAMES: Record<string, { symbol: string; accelerator: string }> = {
   Comma: { symbol: ',', accelerator: ',' },
   Period: { symbol: '.', accelerator: '.' },
@@ -183,7 +177,6 @@ function isModifier(value: unknown): value is Modifier {
   return value === 'ctrl' || value === 'alt' || value === 'shift' || value === 'meta'
 }
 
-// What a key press would be bound as; nothing for a modifier pressed on its own or for a key without a name.
 export function bindingOf(press: KeyPress): Binding | undefined {
   if (MODIFIER_CODES.has(press.code) || keyName(press.code) === undefined) return undefined
   const held: Record<Modifier, boolean> = { ctrl: press.ctrlKey, alt: press.altKey, shift: press.shiftKey, meta: press.metaKey }
@@ -205,7 +198,6 @@ export function hintOf(binding: Binding): string {
   return `${modifiers.join('')}${keyName(binding.code)?.symbol ?? binding.code}`
 }
 
-// How a menu writes the key, as an Electron accelerator; nothing for a key Electron has no name for.
 export function acceleratorOf(binding: Binding): string | undefined {
   const name = keyName(binding.code)
   if (name === undefined) return undefined
@@ -213,12 +205,10 @@ export function acceleratorOf(binding: Binding): string | undefined {
   return [...modifiers, name.accelerator].join('+')
 }
 
-// The fixed command a key belongs to, which no action may take from it.
 export function reservedBy(binding: Binding): string | undefined {
-  return FIXED_KEYS.find((fixed) => isSameBinding(fixed.binding, binding))?.name
+  return RESERVED_KEYS.find((fixed) => isSameBinding(fixed.binding, binding))?.name
 }
 
-// For each action, the other actions that share one of its keys. Only the first of them in the list answers to that key.
 export function conflictsOf(bindings: Bindings): Map<ShortcutAction, ShortcutAction[]> {
   const conflicts = new Map<ShortcutAction, ShortcutAction[]>()
   for (const { action } of SHORTCUT_ACTIONS) {
@@ -241,7 +231,6 @@ function parsedBinding(value: unknown): Binding | undefined {
   return { code, modifiers: MODIFIER_ORDER.filter((modifier) => held.includes(modifier)) }
 }
 
-// The keys stored on this Mac. An action stored wrongly, or not at all, keeps its default keys; an action stored with none has none.
 export function parseBindings(text: string | undefined): Bindings {
   if (text === undefined) return DEFAULT_BINDINGS
   let stored: unknown
@@ -267,7 +256,6 @@ export function parseBindings(text: string | undefined): Bindings {
   return bindings
 }
 
-// The actions that are also menu commands of the same name. The menu shows their first key; the page answers to all of them.
 export const MENU_SHORTCUT_ACTIONS = ['split', 'split-all', 'duplicate', 'delete', 'ripple-delete', 'group', 'ungroup', 'import', 'export', 'preview-mode'] as const satisfies readonly (ShortcutAction & MenuAction)[]
 
 export function menuShortcutsOf(bindings: Bindings): MenuShortcuts {

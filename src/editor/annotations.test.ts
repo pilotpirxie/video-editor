@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SECOND, clipIds, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import type { Project } from '../shared/project.js'
-import { ANNOTATION_KINDS, addAnnotation, addArrow, addCallout, arrowBetween, arrowEnds, intoClip, outOfClip, setArrowStyle, setCalloutStyle } from './annotations.js'
+import { ANNOTATION_KINDS, addAnnotation, addArrow, addCallout, arrowBetween, arrowEnds, canvasPointToClip, clipPointToCanvas, setArrowStyle, setCalloutStyle } from './annotations.js'
 import { setTextStyle } from './text.js'
 
 const NEW_TRACK = { id: 'notes', name: 'Track 2' }
@@ -121,12 +121,12 @@ describe('arrow ends', () => {
   })
 
   it('turns a point of a clip into a point of the canvas and back', () => {
-    const onCanvas = outOfClip(transform, { x: 30, y: -10 })
+    const onCanvas = clipPointToCanvas(transform, { x: 30, y: -10 })
     expect(onCanvas.x).toBeCloseTo(520)
     expect(onCanvas.y).toBeCloseTo(360)
-    const back = intoClip(transform, onCanvas)
+    const back = canvasPointToClip(transform, onCanvas)
     expect(back.x).toBeCloseTo(30)
     expect(back.y).toBeCloseTo(-10)
-    expect(intoClip({ ...transform, scaleX: 0 }, onCanvas)).toEqual({ x: 0, y: 0 })
+    expect(canvasPointToClip({ ...transform, scaleX: 0 }, onCanvas)).toEqual({ x: 0, y: 0 })
   })
 })

@@ -6,17 +6,14 @@ const BIG_STEP_FACTOR = 10
 
 type NumberFieldProps = {
   label: string
-  // Undefined means the selected clips do not agree on a value.
   value: number | undefined
   min: number
   max: number
   step?: number
   decimals?: number
-  // Ready-made values, offered in a list that opens from the arrow at the end of the field.
   presets?: readonly number[]
   testId: string
   isDisabled?: boolean
-  // The keyframe buttons of an animatable value, at the end of the field's line.
   keyframes?: ReactElement
   onBegin(): void
   onChange(value: number): void
@@ -30,7 +27,6 @@ type Scrub = {
   hasMoved: boolean
 }
 
-// A typed value, an arrow key, a scrub and a ready-made value are each one undo step; while scrubbing or pointing at a ready-made value, every intermediate value is passed on so the canvas follows.
 export function NumberField(props: NumberFieldProps): ReactElement {
   const { label, value, min, max, testId, presets } = props
   const step = props.step ?? 1
@@ -160,7 +156,6 @@ export function NumberField(props: NumberFieldProps): ReactElement {
           data-testid={`${testId}-presets`}
           disabled={props.isDisabled}
           onPointerDown={(event) => {
-            // The list takes the focus as it opens; a press while it is open has already closed it.
             event.preventDefault()
             if (!isListOpen) setIsListOpen(true)
           }}

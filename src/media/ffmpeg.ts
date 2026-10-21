@@ -188,7 +188,6 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
       buffered.push(chunk)
       bufferedBytes += chunk.length
       wakeReader?.()
-      // Past the read-ahead FFmpeg waits until some is used. Once it has exited its output is read to the end, so the pipe can close.
       if (bufferedBytes >= readAheadBytes && !running.hasExited()) stdout.pause()
     })
     function markEnded(): void {

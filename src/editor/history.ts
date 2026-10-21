@@ -19,7 +19,6 @@ export type Travel = {
 
 export const EMPTY_HISTORY: History = { done: [], undone: [] }
 
-// Only the newest `maxSteps` are kept; a limit lowered in the settings drops the oldest at the next step.
 export function record(history: History, step: Step, maxSteps: number): History {
   const done = [...history.done, step].slice(-maxSteps)
   return { done, undone: [] }

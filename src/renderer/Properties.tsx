@@ -142,7 +142,6 @@ type EditFieldProps = {
   edit(value: number): Edit
 }
 
-// A number field whose scrub, arrow keys, typed values and ready-made values all run as one undoable command.
 export function EditField({ label, testId, command, value, min, max, step, decimals, presets, keyframes, edit }: EditFieldProps): ReactElement {
   const { store } = useSession()
   return (
@@ -175,9 +174,7 @@ function rateLabel(rate: FrameRate): string {
 type GroupProps = {
   title: string
   icon: IconName
-  // Controls that belong to the whole group, shown at the end of its title line.
   actions?: ReactElement
-  // Groups start folded each time the editor opens, except these.
   isOpenAtStart?: boolean
   children: ReactNode
 }
@@ -186,12 +183,10 @@ type ColorFieldProps = {
   label: string
   testId: string
   command: string
-  // Undefined means the selected clips do not agree on a colour.
   value: string | undefined
   edit(color: string): Edit
 }
 
-// The colour picker reports every colour it passes over; they become one undo step, closed when the picker is.
 export function ColorField({ label, testId, command, value, edit }: ColorFieldProps): ReactElement {
   const { store } = useSession()
   const fieldRef = useRef<HTMLInputElement>(null)
@@ -227,7 +222,6 @@ export function ColorField({ label, testId, command, value, edit }: ColorFieldPr
   )
 }
 
-// Fields that belong together, under a title that folds them away. What is folded or unfolded stays so while the window is open.
 export function Group({ title, icon, actions, isOpenAtStart = false, children }: GroupProps): ReactElement {
   const storageKey = `group-${title}`
   const [isOpen, setIsOpen] = useState(() => {
@@ -262,7 +256,6 @@ export function Group({ title, icon, actions, isOpenAtStart = false, children }:
 function ProjectSettings(): ReactElement {
   const { store } = useSession()
   const canvas = useEditorState((state) => state.project.canvas)
-  // The picture is fitted into every new size, so a new shape typed one side at a time would shrink it twice; linked, both sides change in one step.
   const [keepsAspect, setKeepsAspect] = useState(true)
 
   function onFrameRate(key: string): void {
@@ -296,7 +289,6 @@ function ProjectSettings(): ReactElement {
   )
 }
 
-// The selected clips, in the order they were selected. One pass over the project, however many are selected.
 export function selectedClips(project: Project, selection: readonly string[]): Clip[] {
   const wanted = new Set(selection)
   const found = new Map<string, Clip>()
@@ -313,7 +305,6 @@ export function selectedClips(project: Project, selection: readonly string[]): C
   return clips
 }
 
-// The whole picture of a clip as its media has it; nothing for sound, for clips without media, and for media that is missing.
 function pictureSize(clip: Clip, mediaStates: MediaStates): Size | undefined {
   if (!hasMedia(clip) || clip.type === 'audio') return undefined
   const state = mediaStates[clip.mediaId]
@@ -321,7 +312,6 @@ function pictureSize(clip: Clip, mediaStates: MediaStates): Size | undefined {
   return state.info.kind === 'video' ? state.info.video : state.info
 }
 
-// The size a clip's picture has at 100%, after cropping, at the given time.
 function shownSize(clip: Clip, mediaStates: MediaStates, time: number): Size | undefined {
   if (clip.type === 'text') {
     const measured = measureText(clip)
@@ -329,7 +319,6 @@ function shownSize(clip: Clip, mediaStates: MediaStates, time: number): Size | u
   }
   if (clip.type === 'blur' || clip.type === 'highlight' || clip.type === 'callout') return { width: clip.width, height: clip.height }
   if (clip.type === 'arrow') return arrowSize(clip)
-  // A group has no size of its own: it is as large as its members make it.
   if (clip.type === 'group') return undefined
   const natural = pictureSize(clip, mediaStates)
   if (natural === undefined) return undefined
@@ -358,12 +347,10 @@ function isArrow(clip: Clip): clip is ArrowClip {
   return clip.type === 'arrow'
 }
 
-// The picker has no transparency, so a colour keeps the transparency it had.
 function withAlphaOf(current: string | undefined, picked: string): string {
   return `${picked}${(current ?? '').slice(OPAQUE_COLOR_LENGTH)}`
 }
 
-// Crop and placement of a clip at a moment, with whatever animates them.
 function placementAt(clip: Clip, time: number): { crop: Crop; transform: Transform } {
   const at = (property: AnimatableProperty): number => propertyAt(clip, property, time) ?? 0
   return {
@@ -388,7 +375,6 @@ function isAnimatedImage(clip: Clip, mediaStates: MediaStates): clip is VideoCli
 
 type WordsClip = TextClip | CalloutClip
 
-// Words and look of the selected text clips and callouts. Each control changes all of them.
 function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
   const { store } = useSession()
   const [installed, setInstalled] = useState<readonly string[]>([])
@@ -400,7 +386,6 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
   const family = sharedValue(clips.map((clip) => clip.font.family))
   const color = sharedValue(clips.map((clip) => clip.color))
   const align = sharedValue(clips.map((clip) => clip.align))
-  // A fixed width and a background are for text clips; a callout has a box and a fill of its own.
   const boxed = clips.filter(isText)
   const isWrapped = boxed.length > 0 && boxed.every((clip) => clip.boxWidth !== undefined)
   const hasOutline = clips.every((clip) => clip.outline !== undefined)
@@ -415,7 +400,6 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
     return (value) => (project) => setTextStyle(project, ids, styleOf(value))
   }
 
-  // Wrapping starts at the width the text has now, so switching it on changes nothing until the box is made narrower.
   function wrap(isOn: boolean): void {
     store.apply(isOn ? 'Wrap Text' : 'Stop Wrapping Text', (project) => {
       let edited = project
@@ -424,7 +408,6 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
     })
   }
 
-  // The list is read when the panel appears. Should the system want a click first, opening the font control asks again, and only then is a failure worth a notice.
   const isShownRef = useRef(true)
   async function listFonts(isAskedByUser: boolean): Promise<void> {
     try {
@@ -442,7 +425,6 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
     return () => {
       isShownRef.current = false
     }
-    // Once per appearance of the panel: the list does not depend on which clips are selected.
   }, [])
 
   function endTyping(): void {
@@ -456,7 +438,6 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
     isTypingRef.current = true
   }
 
-  // One colour of every clip, each keeping the transparency it had.
   function withColor(colorOf: (clip: WordsClip) => string | undefined, styleOf: (color: string) => TextStyle): (picked: string) => Edit {
     return (picked) => (project) => {
       let edited = project
@@ -465,7 +446,6 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
     }
   }
 
-  // The font under the pointer, or reached with the arrow keys, is shown on the canvas at once; only choosing it makes it an undo step.
   function tryFont(name: string): void {
     updateStep(store, 'Change Font', (project) => setTextStyle(project, ids, { family: name }), isTryingFontRef.current)
     isTryingFontRef.current = true
@@ -482,9 +462,7 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
     isTryingFontRef.current = false
   }
 
-  // Before the list has arrived, and for a font this Mac does not have, the fonts in use are still offered.
   const families = [...new Set([...clips.map((clip) => clip.font.family), ...installed])].sort((a, b) => a.localeCompare(b))
-  // Until the list has arrived nothing is known to be missing.
   const missing = installed.length === 0 ? [] : missingFonts(clips, installed)
   return (
     <>
@@ -679,7 +657,6 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
   )
 }
 
-// The shape of the selected callouts, its size and its colours. Their words are in the Text group.
 function CalloutFields({ clips }: { clips: readonly CalloutClip[] }): ReactElement {
   const { store } = useSession()
   const ids = clips.map((clip) => clip.id)
@@ -739,7 +716,6 @@ function CalloutFields({ clips }: { clips: readonly CalloutClip[] }): ReactEleme
   )
 }
 
-// Length, thickness, colour and the two heads of the selected arrows and lines.
 function ArrowFields({ clips }: { clips: readonly ArrowClip[] }): ReactElement {
   const { store } = useSession()
   const ids = clips.map((clip) => clip.id)
@@ -798,7 +774,6 @@ function ArrowFields({ clips }: { clips: readonly ArrowClip[] }): ReactElement {
   )
 }
 
-// What the selected zoom shows and how the camera gets there.
 function ZoomProperties({ index }: { index: number }): ReactElement | undefined {
   const { store } = useSession()
   const zoom = useEditorState((state) => state.project.camera?.[index])
@@ -873,17 +848,14 @@ type InOutProps = {
 }
 
 type ClipEnd = {
-  // FADE, `animation-<type>` or the type of a transition.
   value: string
   duration: number
 }
 
 const FADE = 'fade'
 const ANIMATION_PREFIX = 'animation-'
-// Slides and zooms are offered as transitions, which do the same at an edge with nothing beside it; files may still hold them as animations.
 const OFFERED_ANIMATIONS: readonly AnimationType[] = ['pop', 'typewriter']
 
-// How a clip comes in or goes out. An end has one of them; files from before may hold more, and then the transition is what is shown.
 function clipEnd(clip: VisualClip, edge: TransitionEdge): ClipEnd | undefined {
   const transition = edge === 'in' ? clip.transitionIn : clip.transitionOut
   if (transition !== undefined) return { value: transition.type, duration: transition.duration }
@@ -898,7 +870,6 @@ function animationOf(value: string): AnimationType | undefined {
   return ANIMATION_TYPES.find((type) => `${ANIMATION_PREFIX}${type}` === value)
 }
 
-// Setting one way in or out takes the others at that end away (see `withOnlyAtEnd`).
 function withEnd(project: Project, clip: VisualClip, edge: TransitionEdge, end: ClipEnd | undefined, frameTicks: number): Project {
   const fade = edge === 'in' ? 'fadeIn' : 'fadeOut'
   if (end === undefined) {
@@ -913,7 +884,6 @@ function withEnd(project: Project, clip: VisualClip, edge: TransitionEdge, end: 
   return setTransition(project, { clipId: clip.id, edge }, { type: transition, duration: end.duration }, frameTicks)
 }
 
-// The one place a clip's fade, animation or transition at one end is chosen, and for how long.
 function InOutFields({ edge, label, clips, frameTicks }: InOutProps): ReactElement {
   const { store } = useSession()
   const current = clips.map((clip) => clipEnd(clip, edge))
@@ -924,12 +894,10 @@ function InOutFields({ edge, label, clips, frameTicks }: InOutProps): ReactEleme
     { value: NONE, label: 'None' },
     { value: FADE, label: 'Fade' },
   ]
-  // Only what every selected clip can do is offered: a typewriter needs letters.
   for (const type of OFFERED_ANIMATIONS) {
     if (clips.every((clip) => takesAnimation(clip, type))) choices.push({ value: `${ANIMATION_PREFIX}${type}`, label: ANIMATION_NAMES[type] })
   }
   for (const type of TRANSITION_TYPES) choices.push({ value: type, label: TRANSITION_NAMES[type] })
-  // An animation no longer offered is still named while a clip has it.
   for (const end of current) {
     const animation = end === undefined ? undefined : animationOf(end.value)
     const isListed = choices.some((choice) => choice.value === end?.value)
@@ -981,7 +949,6 @@ function InOutFields({ edge, label, clips, frameTicks }: InOutProps): ReactEleme
   )
 }
 
-// The outline of the selected blur or highlight clips and how soft its edge is.
 function ShapeFields({ clips }: { clips: readonly ShapeClip[] }): ReactElement {
   const { store } = useSession()
   const ids = clips.map((clip) => clip.id)
@@ -1028,7 +995,6 @@ function SwitchField({ label, testId, isOn, onSwitch }: SwitchFieldProps): React
   )
 }
 
-// What is said about a group that is open while nothing in it is selected, where the project settings would be.
 function OpenGroupNote(): ReactElement {
   const { actions } = useSession()
   return (
@@ -1042,7 +1008,6 @@ function OpenGroupNote(): ReactElement {
 }
 
 type KeyframeButtonsProps = {
-  // The selected clips that have the field.
   clips: readonly Clip[]
   set: KeyframeSet
   testId: string
@@ -1052,12 +1017,9 @@ function clipsUnder(clips: readonly Clip[], time: number): Clip[] {
   return clips.filter((clip) => time >= clip.start && time < clip.start + clip.duration)
 }
 
-// The keyframe of a field's set at the playhead, and the way to the keyframes before and after it.
-// Only the clips the playhead is over are keyed: anywhere else the keyframe would land on the clip's edge.
 function KeyframeButtons({ clips, set, testId }: KeyframeButtonsProps): ReactElement {
   const { store, transport } = useSession()
   const frameTicks = useEditorState((state) => frameDuration(state.project.canvas.frameRate))
-  // Each is read on its own, so the buttons draw again only when what they show changes, not on every frame the playhead moves.
   const isOverClip = usePosition((position) => clipsUnder(clips, position.time).length > 0)
   const isKeyed = usePosition((position) => {
     const underPlayhead = clipsUnder(clips, position.time)
@@ -1103,7 +1065,6 @@ function KeyframeButtons({ clips, set, testId }: KeyframeButtonsProps): ReactEle
 function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const mediaStates = useEditorState((state) => state.mediaStates)
   const canvas = useEditorState((state) => state.project.canvas)
-  // Without keyframes every value is the same at any moment, so the fields do not draw again as the playhead moves.
   const isAnimated = clips.some((clip) => clip.keyframes !== undefined)
   const time = usePosition((position) => (isAnimated ? position.time : 0))
   const [keepsAspect, setKeepsAspect] = useState(true)
@@ -1123,7 +1084,6 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const soundingIds = sounding.map((clip) => clip.id)
   const stretched = sounding.filter(hasSource)
   const fast = stretched.filter((clip) => clip.speedPercent > FAST_SOUND_ABOVE_PERCENT)
-  // A group is as large as its members make it, so it has a scale but no width or height to type.
   const hasSize = visual.some((clip) => clip.type !== 'group')
   const blurs = clips.filter(isBlur)
   const highlights = clips.filter(isHighlight)
@@ -1146,7 +1106,6 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
     return Math.round((valueInSeconds * TICKS_PER_SECOND) / frameTicks) * frameTicks
   }
 
-  // Width and height are another way to state the scale, so setting one sets the scale that gives it; with the lock on, the other axis follows.
   function setSide(side: 'width' | 'height'): (value: number) => Edit {
     const axis = side === 'width' ? 'scaleX' : 'scaleY'
     const otherAxis = side === 'width' ? 'scaleY' : 'scaleX'
@@ -1176,8 +1135,6 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
     )
   }
 
-  // A typed crop hides or reveals picture on its side as the crop tool does: the rest of the picture stays where it is.
-  // It starts from the values at the playhead, so a clip whose place is animated does not jump.
   function setCrop(side: keyof Crop, property: AnimatableProperty): (value: number) => Edit {
     return (value) => (project) => {
       let edited = project

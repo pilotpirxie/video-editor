@@ -8,7 +8,6 @@ const MINUTE = 60 * SECOND
 const HOUR = 60 * MINUTE
 const AUDIO = { channels: 2, sampleRate: 48_000, codec: 'aac', seeksExactly: true }
 
-// A two-hour recording with sound, at 30 fps.
 const LONG_RECORDING: MediaInfo = {
   kind: 'video',
   duration: 2 * HOUR,
@@ -75,7 +74,6 @@ describe('planPreparation', () => {
   })
 
   it('counts a fast clip with a sparse copy as needed by its time on the timeline, not by its source', () => {
-    // Fifty times the speed: two hours of the recording play in 144 seconds, one picture every 50 frames.
     const fiftyTimes = { ...rangeOf('picture', 0, 144 * SECOND, 0, 5000), cadence: { step: 50 * LONG_RECORDING.video.frameDuration, phase: 0 } }
     const plan = planPreparation({ playhead: 0, ranges: [fiftyTimes] }, [RECORDING], SEGMENT_SECONDS)
     expect(described(plan)).toEqual(['picture 0 near', 'picture 1 near', 'picture 2 near', 'picture 3 near', 'picture 4 near'])

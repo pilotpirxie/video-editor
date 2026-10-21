@@ -50,7 +50,6 @@ function frameOf(name: string, tracks: readonly Clip[][], frame = 0): Promise<Pi
   return frameOfTracks(scratch, name, tracks, frame)
 }
 
-// The share of a bell curve that lies below `deviations` standard deviations from its middle (Abramowitz and Stegun 26.2.17).
 function shareBelow(deviations: number): number {
   const reach = 1 / (1 + 0.2316419 * Math.abs(deviations))
   const tail = 0.3989423 * Math.exp((-deviations * deviations) / 2) * reach * (0.3193815 + reach * (-0.3565638 + reach * (1.781478 + reach * (-1.821256 + reach * 1.330274))))
@@ -59,7 +58,6 @@ function shareBelow(deviations: number): number {
 
 describe('blur and pixelate clips', () => {
   it('blurs a hard edge into the ramp its strength stands for, the same on both sides', async () => {
-    // Black on the left, white on the right, cut at x = 160, at the size the card has: enlarged, its edge would be soft before any blur. The upper half is blurred by 2, the lower by 8.
     const tracks = [
       [imageOf('image-edge.png', 'edge', FIRST_SECOND, at(160, 90, 1))],
       [blurOf('slight', { transform: at(160, 45, 1), width: 320, height: 90 }, { strength: 2 })],
@@ -83,12 +81,10 @@ describe('blur and pixelate clips', () => {
     const large = pictureAt(await renderFrames('15-blur-highlight', { via: 'paused', frames: [0], size: { width: 3840, height: 2160 } }), 0)
     const small = pictureAt(await renderFrames('15-blur-highlight', { via: 'paused', frames: [0], size: { width: 240, height: 135 } }), 0)
     const reduced = halved(halved(halved(halved(large))))
-    // The inside of the blurred rectangle, which spans 200 to 800 by 250 to 550 on the 1920 wide canvas.
     expect(psnr(cropPicture(reduced, 33, 39, 60, 22), cropPicture(small, 33, 39, 60, 22))).toBeGreaterThan(32)
   })
 
   it('fills every block of a pixelated clip with the mean of what is beneath it', async () => {
-    // The magenta subject spans 200 to 440 by 100 to 260; blocks of 40 start at the corner of the canvas.
     const tracks = [[imageOf('image-green-screen.png', 'picture', FIRST_SECOND, at(320, 180, 2))], [blurOf('blocks', { transform: at(320, 180, 1), width: 640, height: 360 }, { strength: 40, isPixelated: true })]]
     const picture = await frameOf('blocks', tracks)
     expectPixel(picture, 20, 20, KEY_GREEN, 2)
@@ -140,7 +136,6 @@ describe('highlight and spotlight clips', () => {
 })
 
 describe('effects', () => {
-  // Tiles of 160 by 90 on white. The magenta subject of the green-screen card is the middle 60 by 40 of its tile.
   function tile(file: string, id: string, x: number, y: number, effects: Effect[], rotation = 0): Clip[] {
     return [imageOf(file, id, FIRST_SECOND, at(x, y, 0.5, rotation), effects.length === 0 ? {} : { effects })]
   }
@@ -176,7 +171,6 @@ describe('effects', () => {
     expectPixel(picture, 500, 180, RED, 0)
     expectPixel(picture, 500, 137, RED, 0)
 
-    // The shadow lies 20 to the right whichever way the clip is turned: half black over white beside the right edge, nothing beside the left.
     for (const centre of [100, 500]) {
       expectPixel(picture, centre + 90, 300, GREY)
       expectPixel(picture, centre - 90, 300, WHITE, 0)
@@ -184,7 +178,6 @@ describe('effects', () => {
     }
 
     expectPixel(picture, 300, 300, RED, 0)
-    // Right at the edge the blur has mixed a little more red than white into the pixel.
     expectPixel(picture, 220, 300, { red: 255, green: 117, blue: 117 }, 10)
     expectPixel(picture, 405, 300, WHITE, 1)
   })
@@ -200,9 +193,7 @@ describe('effects', () => {
     const picture = await frameOf('colour-effects', tracks)
     expectPixel(picture, 100, 60, { red: 100, green: 89, blue: 69 })
     expectPixel(picture, 300, 60, { red: 0, green: 255, blue: 255 })
-    // The tint colour at the brightness of red.
     expectPixel(picture, 500, 60, { red: 13, green: 26, blue: 49 })
-    // Clear in the middle, black in the corners.
     expectPixel(picture, 300, 180, RED, 0)
     expectPixel(picture, 300 + 76, 180 + 42, { red: 0, green: 0, blue: 0 })
   })
@@ -212,7 +203,6 @@ describe('effects', () => {
     const border: Effect = { type: 'border', width: 6, color: '#0000FF' }
     const tracks = [[WHITE_GROUND], [imageOf('image-red.png', 'followed', FIRST_SECOND, at(160, 180, 0.9), { effects: [corners, border] })], [imageOf('image-red.png', 'cut', FIRST_SECOND, at(480, 180, 0.9), { effects: [border, corners] })]]
     const picture = await frameOf('order', tracks)
-    // Fourteen pixels in from the top left corner of each tile: on the rounded border of the first, inside the square border of the second.
     expectPixel(picture, 16 + 14, 99 + 14, BLUE, 0)
     expectPixel(picture, 336 + 14, 99 + 14, RED, 0)
     expectPixel(picture, 16 + 2, 99 + 2, WHITE, 0)
@@ -253,9 +243,7 @@ describe('looks, sharpening and blur fills', () => {
   }
   const PORTRAIT = { width: 360, height: 640 }
   const FILL: Effect = { type: 'blurFill', strength: 40, darken: 0.3 }
-  // Red darkened by the fill: 255 × 0.7.
   const DARK_RED = { red: 179, green: 0, blue: 0 }
-  // The green-screen card, 320 wide and drawn at full size around 320, has its magenta subject from 100 to 220 of its width.
   const SUBJECT_LEFT = 260
 
   function screenTile(effects: Effect[]): Clip[][] {
@@ -276,7 +264,6 @@ describe('looks, sharpening and blur fills', () => {
   it('darkens by the exposure and warms by the temperature', async () => {
     const white = imageOf('image-white.png', 'white', FIRST_SECOND, at(320, 180), { effects: [{ ...NO_LOOK, exposure: -1, temperature: 1 }] })
     const picture = await frameOf('warm-look', [[white]])
-    // Half as bright, with red raised and blue lowered by 15% around the same brightness.
     expectPixel(picture, 320, 180, { red: 144, green: 125, blue: 106 })
   })
 
@@ -306,7 +293,6 @@ describe('looks, sharpening and blur fills', () => {
     const ground = imageOf('image-white.png', 'ground', FIRST_SECOND, at(180, 320, 4))
     const red = imageOf('image-red.png', 'red', FIRST_SECOND, at(180, 320, 1.125), { opacity: 0.5, effects: [FILL] })
     const picture = await portraitFrame('blur-fill-faded', [[ground], [red]])
-    // Half of red over white: the fill beneath the clip does not show through it.
     expectPixel(picture, 180, 320, { red: 255, green: 128, blue: 128 })
     expectPixel(picture, 180, 20, { red: 217, green: 128, blue: 128 }, 2)
   })

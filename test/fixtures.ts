@@ -41,7 +41,6 @@ export function textClip(id: string, start: number, duration: number, settings: 
   }
 }
 
-// A group around the given tracks, the lowest first, placed so that it changes nothing about its members.
 export function groupClip(id: string, start: number, duration: number, tracks: Clip[][], settings: Partial<GroupClip> = {}): GroupClip {
   return {
     id,
@@ -66,14 +65,12 @@ export const SAMPLE_MEDIA: MediaRef[] = [
   { id: 'logo', path: '/footage/logo.png', relativePath: '' },
 ]
 
-// The sample media plus a video file with sound and an animated image; `MEDIA_STATES.talk` and `MEDIA_STATES.sticker` describe them.
 export const ALL_MEDIA: MediaRef[] = [...SAMPLE_MEDIA, { id: 'talk', path: '/footage/talk.mp4', relativePath: '' }, { id: 'sticker', path: '/footage/sticker.gif', relativePath: '' }]
 
 export function projectOf(tracks: Track[], media: MediaRef[] = SAMPLE_MEDIA): Project {
   return { version: 1, canvas: { width: 1920, height: 1080, frameRate: { num: 30, den: 1 } }, media, tracks }
 }
 
-// What the project looks like after a save and a reopen. Throws when a command produced something the format rejects.
 export function reopened(project: Project): Project {
   const parsed = parseProject(serializeProject(project))
   if (!parsed.ok) throw new Error(`The project is not valid: ${parsed.message}`)
@@ -109,7 +106,6 @@ export const VIDEO_INFO: VideoInfo = {
 
 export const VIDEO_MEDIA: Extract<MediaInfo, { kind: 'video' }> = { kind: 'video', duration: 10 * SECOND, containerStart: 0, video: VIDEO_INFO }
 
-// An animated image: twelve pictures at ten a second.
 export const STICKER_MEDIA: Extract<MediaInfo, { kind: 'video' }> = {
   kind: 'video',
   duration: 1.2 * SECOND,

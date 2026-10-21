@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SECOND, audioClip, projectOf, track, videoClip } from '../../test/fixtures.js'
 import { EXPORT_FORMATS, EXPORT_PRESETS, EXPORT_QUALITIES } from '../shared/exportPresets.js'
-import { defaultPreset, durationText, exportFrameRates, exportJobFor, isExportJob, parseRememberedChoices, selectionRange, startingChoices, timeLeft, withFormat, type ExportChoices } from './export.js'
+import { defaultPreset, durationText, exportFrameRates, exportJobFor, isExportJob, parseRememberedChoices, selectionRange, startingChoices, timeLeftMs, withFormat, type ExportChoices } from './export.js'
 
 const project = projectOf([track('t1', [videoClip('a', SECOND, 2 * SECOND), videoClip('b', 5 * SECOND, SECOND)]), track('t2', [audioClip('music', 0, 10 * SECOND)])])
 const PATHS = { projectPath: '/tmp/snapshot.json', outputPath: '/tmp/out.mp4' }
@@ -179,16 +179,16 @@ describe('isExportJob', () => {
   })
 })
 
-describe('timeLeft', () => {
+describe('timeLeftMs', () => {
   it('scales the time taken so far to what is left', () => {
-    expect(timeLeft(250, 1000, 10_000)).toBe(30_000)
-    expect(timeLeft(1000, 1000, 10_000)).toBe(0)
+    expect(timeLeftMs(250, 1000, 10_000)).toBe(30_000)
+    expect(timeLeftMs(1000, 1000, 10_000)).toBe(0)
   })
 
   it('gives no answer before the pace has settled', () => {
-    expect(timeLeft(0, 1000, 10_000)).toBeUndefined()
-    expect(timeLeft(500, 1000, 2000)).toBeUndefined()
-    expect(timeLeft(10, 1000, 10_000)).toBeUndefined()
+    expect(timeLeftMs(0, 1000, 10_000)).toBeUndefined()
+    expect(timeLeftMs(500, 1000, 2000)).toBeUndefined()
+    expect(timeLeftMs(10, 1000, 10_000)).toBeUndefined()
   })
 })
 

@@ -15,14 +15,11 @@ type Captured = {
   file: string
 }
 
-// What the preview shows on screen, as a person sees it, saved as raw RGBA in the output folder.
-// The preview may start half way into a point; the capture takes whole points around it and cuts the picture out on device pixels.
 async function capturePreview(driver: Driver, name: string): Promise<Captured> {
   if (driver.options.outputDirectory === undefined) throw new PageError('This UI test needs --out <directory>')
   const box = await driver.rect('preview')
   const scale = Number(await driver.page.evaluate('devicePixelRatio'))
   const around = { x: Math.floor(box.x), y: Math.floor(box.y), width: Math.ceil(box.x + box.width) - Math.floor(box.x), height: Math.ceil(box.y + box.height) - Math.floor(box.y) }
-  // Handles and the outlines of clips off the canvas are drawn over the picture and never exported; they are left out of the capture.
   await driver.page.evaluate(`(() => {
     ${selector('canvas-overlay')}.style.visibility = 'hidden'
     return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
@@ -52,7 +49,6 @@ async function capturePreview(driver: Driver, name: string): Promise<Captured> {
   return { width, height, file }
 }
 
-// Where on the ruler the playhead is put, as parts of the length of the project.
 const SCRUB_POINTS = [0.23, 0.51, 0.77]
 const PLAYING_SAMPLES = 24
 const SAMPLE_INTERVAL_MS = 60
@@ -66,13 +62,11 @@ async function framesDrawn(driver: Driver): Promise<number> {
   return Number(await driver.page.evaluate(`${selector('timecode')}.dataset.frames`))
 }
 
-// The frames of the timecode are counted at 30 a second: near enough to pick places on the ruler at any rate.
 async function projectSeconds(driver: Driver): Promise<number> {
   const [hours = 0, minutes = 0, seconds = 0, frames = 0] = (await driver.page.text('duration')).replace('/', '').trim().split(':').map(Number)
   return (hours * 60 + minutes) * 60 + seconds + frames / 30
 }
 
-// Moves the playhead as `act` does and waits for the paused preview to show that moment at full quality.
 async function pausedAfter(driver: Driver, act: () => Promise<void>): Promise<string> {
   const drawnBefore = await framesDrawn(driver)
   await act()
@@ -84,7 +78,6 @@ type PausedCapture = Captured & { timecode: string }
 
 type PlayingCapture = Captured & { timecodeBefore: string; timecodeAfter: string }
 
-// Captures what the playing preview shows, with the timecode just before and just after each capture.
 async function capturePlayback(driver: Driver): Promise<PlayingCapture[]> {
   const samples: PlayingCapture[] = []
   const startedAt = Date.now()
@@ -102,11 +95,8 @@ async function capturePlayback(driver: Driver): Promise<PlayingCapture[]> {
   return samples
 }
 
-// What you see is what you export, checked on the screen: the paused preview at 100% at the start, at three places
-// the ruler was clicked and at the end; the PNG of the current frame and the MP4 exported from the dialog; then what the preview shows while it plays.
 async function testWysiwyg(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
-  // Playback is checked on prepared media; a project of titles and shapes alone has nothing to prepare.
   await driver.until(`document.querySelector('.library-item .badge.warning') === null`, 'the media to be prepared')
   const canvas = { width: Number(await driver.value('canvas-width')), height: Number(await driver.value('canvas-height')) }
   await pick(driver, 'canvas-zoom', '100')
@@ -126,7 +116,6 @@ async function testWysiwyg(driver: Driver): Promise<UiTestReport> {
   const atStart = await pausedAfter(driver, () => driver.press('Return', ['meta']))
   paused.push({ ...(await capturePreview(driver, `paused-${paused.length}`)), timecode: atStart })
 
-  // The PNG is of the frame under the playhead, which is now the first one.
   await openExportDialog(driver)
   await pick(driver, 'export-format', 'png')
   const still = await submitExport(driver, 'still.png')
@@ -142,7 +131,6 @@ async function testWysiwyg(driver: Driver): Promise<UiTestReport> {
 
 type Exported = Record<string, string>
 
-// Exports what the project is now from the dialog, as a person would, and keeps where the file went under `name`.
 async function exportAs(driver: Driver, exported: Exported, fileName: string, preset = '360p'): Promise<void> {
   await openExportDialog(driver)
   const format = fileName.slice(fileName.lastIndexOf('.') + 1)
@@ -165,7 +153,6 @@ async function selectVideo(driver: Driver): Promise<void> {
   await driver.until(`${selector('clip-opacity')} !== null`, 'the video to be selected')
 }
 
-// Half a second in: the start, then the jump forward that moves 15 frames.
 async function playheadAtHalfSecond(driver: Driver): Promise<void> {
   await driver.press('Return', ['meta'])
   await driver.press('.', ['control', 'shift'])
@@ -183,7 +170,6 @@ async function importPrepared(driver: Driver, name: string): Promise<void> {
   await driver.until(`${selector(`media-${name}`)} !== null && document.querySelector('.library-item .badge.warning') === null`, `${name} to be prepared`)
 }
 
-// The two-second test video on the bottom track. It sets the canvas to its own 320 x 180; doubling the width doubles the height and the clip with it.
 async function placeDoubledVideo(driver: Driver): Promise<void> {
   await importPrepared(driver, 'h264.mp4')
   await dragMedia(driver, 'h264.mp4', await driver.timelinePoint(0, 0, TRACKS_AT_START))
@@ -194,9 +180,6 @@ async function placeDoubledVideo(driver: Driver): Promise<void> {
   await driver.until(`${selector('canvas-height')}.value === '360'`, 'the height to follow the width')
 }
 
-// Edits a project the way a person does, in the panels and with the mouse, and exports after each edit, so a test can check
-// in the files that every edit really reached the output: placing, canvas size, opacity, hiding and muting a track, volume,
-// fades, speed, a cut with ripple delete, a title, and the export sizes and formats, GIF included.
 async function testEditsToOutput(driver: Driver): Promise<UiTestReport> {
   const exported: Exported = {}
   await placeDoubledVideo(driver)
@@ -242,7 +225,6 @@ async function testEditsToOutput(driver: Driver): Promise<UiTestReport> {
   await exportAs(driver, exported, 'fast.mp4')
   await undoTo(driver, 'Undo Change Canvas Size')
 
-  // The first second is cut away: split at one second, then ripple delete the first part.
   await driver.press('Return', ['meta'])
   await driver.press('.', ['control', 'shift'])
   await driver.press('.', ['control', 'shift'])
@@ -256,7 +238,6 @@ async function testEditsToOutput(driver: Driver): Promise<UiTestReport> {
   await exportAs(driver, exported, 'cut.mp4')
   await exportAs(driver, exported, 'cut.wav')
 
-  // A title typed over the first frame.
   await driver.press('Escape')
   await driver.press('Return', ['meta'])
   await driver.page.click('tab-annotations')
@@ -283,7 +264,6 @@ const GIF_EXPORTS = [
   { rate: '25/1', preset: '240p' },
 ]
 
-// Exports a GIF from the dialog at each frame rate it offers, each at another size; two seconds take well under a second.
 async function testGifExport(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   const gifs: Record<string, string> = {}
@@ -300,12 +280,10 @@ async function testGifExport(driver: Driver): Promise<UiTestReport> {
 }
 
 const SECOND = TICKS_PER_SECOND
-// A grab this far inside a clip's edge takes the edge, not the clip.
 const EDGE_GRAB_PIXELS = 2
 
 type Saved = Record<string, string>
 
-// Saves the project as it is under `name` in the output folder and keeps where it went, so a test reads the timing the edit really made.
 async function saveAs(driver: Driver, saved: Saved, name: string): Promise<void> {
   await driver.savedProject(name)
   saved[name] = join(driver.options.outputDirectory ?? '', name)
@@ -321,14 +299,9 @@ async function bottomTrackAt(driver: Driver, time: number, nudge = 0): Promise<P
   return { x: point.x + nudge, y: point.y }
 }
 
-// More edits made with the mouse and the keyboard, each exported and then undone, so a test can check the files: moving and
-// trimming on the timeline, pasting at the playhead, a picture on a higher track, rotating, cropping and dragging on the canvas,
-// a transition on a cut, separating the sound and deleting it, a fade of the sound and half speed. The project is saved after
-// each timeline edit, so the test can work out from it what each frame must show.
 async function testArrangeToOutput(driver: Driver): Promise<UiTestReport> {
   const exported: Exported = {}
   const saved: Saved = {}
-  // Imported first, so that every edit below is undone back to the canvas size.
   await importPrepared(driver, 'image-red.png')
   await placeDoubledVideo(driver)
   await saveAs(driver, saved, 'base.json')
@@ -337,14 +310,12 @@ async function testArrangeToOutput(driver: Driver): Promise<UiTestReport> {
   await playheadAtHalfSecond(driver)
   await exportAs(driver, exported, 'base.png')
 
-  // The clip is grabbed a quarter second in and dropped a second later.
   await dragOnBottomTrack(driver, await bottomTrackAt(driver, SECOND / 4), (5 * SECOND) / 4, 'Undo Move Clip')
   await saveAs(driver, saved, 'moved.json')
   await exportAs(driver, exported, 'moved.mp4')
   await exportAs(driver, exported, 'moved.wav')
   await undoTo(driver, 'Undo Change Canvas Size')
 
-  // Each edge is dragged half way in: the start onto the playhead at half a second, the end to one second.
   await dragOnBottomTrack(driver, await bottomTrackAt(driver, 0, EDGE_GRAB_PIXELS), SECOND / 2, 'Undo Trim Clip')
   await saveAs(driver, saved, 'trimmed-start.json')
   await exportAs(driver, exported, 'trimmed-start.mp4')
@@ -354,7 +325,6 @@ async function testArrangeToOutput(driver: Driver): Promise<UiTestReport> {
   await exportAs(driver, exported, 'trimmed-end.mp4')
   await undoTo(driver, 'Undo Change Canvas Size')
 
-  // Copied, then pasted with the playhead put at one second on the ruler: the clip is there, so the copy goes on the track above.
   await selectVideo(driver)
   driver.window.webContents.copy()
   await sleep(SAMPLE_INTERVAL_MS)
@@ -369,7 +339,6 @@ async function testArrangeToOutput(driver: Driver): Promise<UiTestReport> {
   await undoTo(driver, 'Undo Change Canvas Size')
   await playheadAtHalfSecond(driver)
 
-  // A red picture dropped at the start of the track above draws over the video.
   await dragMedia(driver, 'image-red.png', await driver.timelinePoint(0, 1, TRACKS_AT_START))
   await driver.untilUndoLabel('Undo Add Clip')
   await saveAs(driver, saved, 'on-top.json')
@@ -382,21 +351,18 @@ async function testArrangeToOutput(driver: Driver): Promise<UiTestReport> {
   await exportAs(driver, exported, 'turned.png')
   await undoTo(driver, 'Undo Change Canvas Size')
 
-  // Half of the 320-pixel source cropped away on the left.
   await selectVideo(driver)
   await driver.typeInto('clip-crop-left', '160')
   await driver.untilUndoLabel('Undo Crop Clip')
   await exportAs(driver, exported, 'cropped.png')
   await undoTo(driver, 'Undo Change Canvas Size')
 
-  // Dragged from the centre of the canvas 80 canvas pixels to the right.
   await driver.drag(await canvasPoint(driver, CANVAS_WIDTH, { x: 320, y: 180 }), await canvasPoint(driver, CANVAS_WIDTH, { x: 400, y: 180 }))
   await driver.untilUndoLabel('Undo Move Clip')
   await saveAs(driver, saved, 'dragged.json')
   await exportAs(driver, exported, 'dragged.png')
   await undoTo(driver, 'Undo Change Canvas Size')
 
-  // Cut at one second, with a fade through black dropped on the cut.
   await splitFirstTrackAtOneSecond(driver, TRACKS_AT_START)
   await driver.page.click('tab-transitions')
   await driver.drag(centerOf(await driver.rect('transition-fadeBlack')), await bottomTrackAt(driver, 0.8 * SECOND))
@@ -408,12 +374,10 @@ async function testArrangeToOutput(driver: Driver): Promise<UiTestReport> {
   await driver.page.click('tab-media')
   await playheadAtHalfSecond(driver)
 
-  // The sound separated from the clip's menu, then selected on its own track and deleted.
   await driver.rightClickAt(await bottomTrackAt(driver, SECOND / 4))
   await driver.until(`${selector('menu-separate-audio')} !== null`, 'the clip menu')
   await driver.page.click('menu-separate-audio')
   await driver.untilUndoLabel('Undo Separate Video and Audio')
-  // The sound went to a track of its own; which one is read back from the saved project.
   await saveAs(driver, saved, 'separated.json')
   const parsed = parseProject(await readFile(saved['separated.json'] ?? '', 'utf8'))
   if (!parsed.ok) throw new PageError(`separated.json could not be read back: ${parsed.message}`)

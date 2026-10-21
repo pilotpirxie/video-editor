@@ -4,7 +4,6 @@ import { centredStill, type NewStill } from './place.js'
 
 const OPAQUE_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
 const SMALLEST_STRENGTH = 0.1
-// New shapes are sized as parts of the canvas, so they are as easy to grab on a small canvas as on a 4K one.
 const WIDTH_SHARE = 0.3
 const HEIGHT_SHARE = 0.2
 const BLUR_PER_HEIGHT = 1 / 45
@@ -32,7 +31,6 @@ export function isShape(clip: Clip): clip is ShapeClip {
   return clip.type === 'blur' || clip.type === 'highlight'
 }
 
-// A new blur, pixelate, highlight or spotlight sits in the middle of the canvas, on a new layer above everything else, so it acts on all that is there.
 export function addShape(project: Project, added: NewShape): Project {
   const { canvas } = project
   const base = {
@@ -55,7 +53,6 @@ export function addShape(project: Project, added: NewShape): Project {
   return placeOnTrack(project, { clips: [clip], trackIndex: added.trackIndex ?? project.tracks.length, newTrack: added.newTrack })
 }
 
-// A switch that is off is left out of the clip, as the file format wants it.
 function switchValue(wanted: boolean | undefined, current: true | undefined): true | undefined {
   const isOn = wanted ?? current === true
   return isOn ? true : undefined
@@ -75,7 +72,6 @@ function styledHighlight(clip: HighlightClip, style: ShapeStyle): HighlightClip 
   return isUnchanged ? clip : { ...clip, color, isSpotlight }
 }
 
-// Changes the look of the chosen blur and highlight clips. A setting a clip does not have, a colour for a blur for example, is ignored for that clip.
 export function setShapeStyle(project: Project, clipIds: readonly string[], style: ShapeStyle): Project {
   return editClips(project, new Set(clipIds), (clip) => {
     if (!isShape(clip)) return clip

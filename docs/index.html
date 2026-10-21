@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Playback, a free video editor for macOS</title>
+  <title>Playback - a lightweight video editor for macOS</title>
   <meta name="description" content="Free video editor for Macs with Apple silicon. Multi-track timeline, keyframes, callouts, zoom and pan, effects, transitions and export to MP4, WebM and GIF.">
-  <meta property="og:title" content="Playback, a free video editor for macOS">
+  <meta property="og:title" content="Playback, a lightweight video editor for macOS">
   <meta property="og:description" content="Multi-track timeline, keyframes, callouts, zoom and pan, effects, transitions and export to MP4, WebM and GIF.">
   <meta property="og:image" content="https://pilotpirxie.github.io/video-editor/img/hero.jpg">
   <meta property="og:type" content="website">
@@ -72,7 +72,6 @@
       .wrap { padding: 0 var(--space-6); }
     }
 
-    /* Remix Icon glyphs, drawn from the sprite at the top of the body. */
     .ri {
       width: 20px;
       height: 20px;
@@ -80,7 +79,6 @@
       flex: none;
     }
 
-    /* Top bar */
     .top-bar {
       display: flex;
       align-items: center;
@@ -118,7 +116,6 @@
 
     .top-links a:hover { color: var(--text-primary); }
 
-    /* Hero */
     .hero {
       padding: var(--space-12) 0 var(--space-8);
       text-align: center;
@@ -170,7 +167,6 @@
 
     .hero .shot { margin-top: var(--space-8); }
 
-    /* Screenshots that open in the lightbox */
     .shot {
       display: block;
       width: 100%;
@@ -196,7 +192,6 @@
 
     figure { margin: 0; }
 
-    /* Features: text and screenshot side by side, swapping sides from one feature to the next. */
     .feature {
       display: grid;
       gap: var(--space-6);
@@ -204,7 +199,6 @@
       border-top: 1px solid var(--divider);
     }
 
-    /* Grid items may shrink below their content, so nothing wide pushes the page sideways. */
     .feature > * { min-width: 0; }
 
     @media (min-width: 900px) {
@@ -260,7 +254,6 @@
     .keys dt { white-space: nowrap; }
     .keys dd { margin: 0; color: var(--text-secondary); }
 
-    /* File formats and requirements, side by side on wide screens */
     .text-section {
       padding: var(--space-12) 0;
       border-top: 1px solid var(--divider);
@@ -290,7 +283,6 @@
     .facts dt { font-weight: 600; }
     .facts dd { margin: 0; color: var(--text-secondary); }
 
-    /* Footer */
     footer {
       padding: var(--space-8) 0 var(--space-12);
       border-top: 1px solid var(--divider);
@@ -302,7 +294,6 @@
     footer a { color: var(--text-secondary); }
     footer a:hover { color: var(--text-primary); }
 
-    /* Lightbox */
     .lightbox {
       max-width: 100vw;
       max-height: 100vh;
@@ -391,7 +382,7 @@
     <div class="wrap">
       <img class="app-icon" src="icon.png" width="96" height="96" alt="">
       <h1>Playback</h1>
-      <p class="lead">A free video editor for macOS, made for screen tutorials and short videos.</p>
+      <p class="lead">A lightweight video editor for macOS, made for simple editing.</p>
       <div class="actions">
         <a class="button" href="https://github.com/pilotpirxie/video-editor/releases/latest">
           <svg class="ri" aria-hidden="true"><use href="#ri-download-2-line"/></svg>
@@ -571,7 +562,6 @@
       })
     }
 
-    // Any click closes it: on the picture, on the dimmed backdrop or on the close button.
     lightbox.addEventListener('click', () => lightbox.close())
     lightbox.addEventListener('close', () => enlarged.removeAttribute('src'))
   </script>

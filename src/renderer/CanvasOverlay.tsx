@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useRef, useState, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from 'react'
-import { arrowBetween, arrowEnds, intoClip, outOfClip, setArrowStyle, setCalloutStyle } from '../editor/annotations.js'
+import { arrowBetween, arrowEnds, canvasPointToClip, clipPointToCanvas, setArrowStyle, setCalloutStyle } from '../editor/annotations.js'
 import { frameOf, type ZoomFrame } from '../editor/camera.js'
 import { locateClip } from '../editor/clips.js'
 import { addEffect } from '../editor/effects.js'
@@ -40,40 +40,32 @@ const ROTATE_HANDLE_MAX_REACH = 0.35
 const MIN_BOX_PIXELS = 6
 // The overlay reaches at least this far past the picture on every side, so the handles of a clip that fills the canvas are whole and can be grabbed. Must match the CSS.
 export const MARGIN_PIXELS = 14
-// A box this close to the edge of the picture, in canvas pixels, still counts as inside it: a clip that fills the canvas is not outlined as one that leaves it.
-const EDGE_TOLERANCE = 0.5
+const EDGE_TOLERANCE_CANVAS_PIXELS = 0.5
 
 const CORNERS = ['nw', 'ne', 'se', 'sw'] as const
 const TRANSFORM_KEYS = ['x', 'y', 'scaleX', 'scaleY', 'rotation'] as const
 const NO_PIVOT: Point = { x: 0, y: 0 }
 
-// One clip of the open tracks as it is drawn, with everything the handles need to change it. A closed group is one of them, whatever it has inside.
-type Shown = {
+type ShownClip = {
   clipId: string
-  // A picture is a video or an image, which can be cropped; a shape is a blur or a highlight, which has no picture for an effect to change.
   kind: 'picture' | 'text' | 'callout' | 'arrow' | 'shape' | 'group'
   natural: Size
   crop: Crop
-  // The transform of the clip as seen from the canvas, also when the clip lies inside an open group.
   transform: Transform
   box: Box
-  // What a press must hit to grab the clip: its box, or the box of any member of a group.
   hitBoxes: readonly Box[]
-  // From the place of the clip to the middle of its box, in the clip's own units. Only a group has its box elsewhere than around its place.
   pivot: Point
   arrowLength?: number
-  // The tip of a bubble's tail, in the callout's own units from its middle.
   tail?: Point
 }
 
 type Gesture =
-  | { kind: 'move'; from: Point; items: readonly Shown[]; others: readonly Bounds[] }
-  | { kind: 'scale' | 'crop'; item: Shown; handle: Handle; others: readonly Shown[] }
-  | { kind: 'rotate'; item: Shown; from: Point }
-  | { kind: 'arrow'; item: Shown; moves: 'start' | 'end'; fixed: Point }
-  | { kind: 'tail'; item: Shown }
-  // A dot of the motion path: the position keyframe at `time` of the open tracks, which was at `start` on the canvas.
-  | { kind: 'path'; item: Shown; time: number; from: Point; start: Point }
+  | { kind: 'move'; from: Point; items: readonly ShownClip[]; others: readonly Bounds[] }
+  | { kind: 'scale' | 'crop'; item: ShownClip; handle: Handle; others: readonly ShownClip[] }
+  | { kind: 'rotate'; item: ShownClip; from: Point }
+  | { kind: 'arrow'; item: ShownClip; moves: 'start' | 'end'; fixed: Point }
+  | { kind: 'tail'; item: ShownClip }
+  | { kind: 'path'; item: ShownClip; time: number; from: Point; start: Point }
 
 type Guides = {
   x: number | undefined
@@ -92,52 +84,46 @@ function naturalSize(layer: Layer): Size {
   return { width: measured.naturalWidth, height: measured.naturalHeight }
 }
 
-function shownLayer(layer: Layer): Shown {
+function shownLayer(layer: Layer): ShownClip {
   const natural = naturalSize(layer)
   const crop = layer.kind === 'video' || layer.kind === 'image' ? layer.crop : NO_CROP
   const box = boxOf(natural, crop, layer.transform)
-  let kind: Shown['kind'] = 'picture'
+  let kind: ShownClip['kind'] = 'picture'
   if (layer.kind === 'text' || layer.kind === 'callout' || layer.kind === 'arrow') kind = layer.kind
   if (layer.kind === 'blur' || layer.kind === 'highlight') kind = 'shape'
-  const shown: Shown = { clipId: layer.clipId, kind, natural, crop, transform: layer.transform, box, hitBoxes: [box], pivot: NO_PIVOT }
+  const shown: ShownClip = { clipId: layer.clipId, kind, natural, crop, transform: layer.transform, box, hitBoxes: [box], pivot: NO_PIVOT }
   if (layer.kind === 'arrow') shown.arrowLength = layer.look.length
   if (layer.kind === 'callout' && layer.look.tail !== undefined) shown.tail = layer.look.tail
   return shown
 }
 
-// A closed group is grabbed by any of its members and outlined by the box around them all, turned as the group is.
-function shownGroup(group: GroupClip, members: readonly Shown[], transform: Transform): Shown {
+function shownGroup(group: GroupClip, members: readonly ShownClip[], transform: Transform): ShownClip {
   const xs: number[] = []
   const ys: number[] = []
   for (const member of members) {
     for (const corner of CORNERS) {
-      const inside = intoClip(transform, handlePosition(member.box, corner))
+      const inside = canvasPointToClip(transform, handlePosition(member.box, corner))
       xs.push(inside.x)
       ys.push(inside.y)
     }
   }
   const natural = { width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) }
   const pivot = { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 }
-  const middle = outOfClip(transform, pivot)
+  const middle = clipPointToCanvas(transform, pivot)
   const box: Box = { centerX: middle.x, centerY: middle.y, width: natural.width * transform.scaleX, height: natural.height * transform.scaleY, rotation: transform.rotation }
   return { clipId: group.id, kind: 'group', natural, crop: NO_CROP, transform, box, hitBoxes: members.map((member) => member.box), pivot }
 }
 
 type Open = {
-  // The tracks that are open, in their own time, and the moment of it the playhead is on.
   project: Project
   time: number
   groups: readonly string[]
-  // How the innermost open group places its members on the canvas.
   frame: GroupFrame
 }
 
-// The clips of the open tracks at the playhead, bottom first, placed exactly where the compositor draws them.
-// What lies outside the open group is drawn but cannot be grabbed, so it is not among them.
-function shownClips(wholeProject: Project, mediaStates: MediaStates, wholeTime: number, open: Open): Shown[] {
-  // Bottom first: a clip as it is shown, or the id of a closed group at the place of its lowest member.
-  const order: (Shown | string)[] = []
-  const membersOf = new Map<string, Shown[]>()
+function shownClips(wholeProject: Project, mediaStates: MediaStates, wholeTime: number, open: Open): ShownClip[] {
+  const order: (ShownClip | string)[] = []
+  const membersOf = new Map<string, ShownClip[]>()
   for (const layer of resolveFrame(wholeProject, mediaStates, wholeTime, 1)) {
     const path = layer.groups ?? []
     if (!open.groups.every((groupId, depth) => path[depth] === groupId)) continue
@@ -155,7 +141,7 @@ function shownClips(wholeProject: Project, mediaStates: MediaStates, wholeTime: 
     }
   }
 
-  const shown: Shown[] = []
+  const shown: ShownClip[] = []
   for (const entry of order) {
     if (typeof entry !== 'string') {
       shown.push(entry)
@@ -176,7 +162,6 @@ function shownClips(wholeProject: Project, mediaStates: MediaStates, wholeTime: 
   return shown
 }
 
-// How wide the picture is on screen, in CSS pixels; the overlay around it is wider by its margin on both sides.
 export function usePictureWidth(svgRef: RefObject<SVGSVGElement | null>): number {
   const [pictureWidth, setPictureWidth] = useState(1)
 
@@ -193,7 +178,6 @@ export function usePictureWidth(svgRef: RefObject<SVGSVGElement | null>): number
   return pictureWidth
 }
 
-// How far the overlay reaches past each side of the picture, in CSS pixels.
 type Reach = {
   left: number
   top: number
@@ -203,8 +187,6 @@ type Reach = {
 
 const HANDLE_REACH: Reach = { left: MARGIN_PIXELS, top: MARGIN_PIXELS, right: MARGIN_PIXELS, bottom: MARGIN_PIXELS }
 
-// The overlay reaches to the edges of the canvas panel, so a clip moved off the canvas still shows its outline there and can be grabbed back.
-// Where the picture is larger than the panel it reaches only as far as the handles need, inside the panel's padding, so it never adds to what the panel scrolls.
 function useOverlayReach(svgRef: RefObject<SVGSVGElement | null>, areaRef: RefObject<HTMLElement | null>): { reach: Reach; pictureWidth: number } {
   const [layout, setLayout] = useState({ reach: HANDLE_REACH, pictureWidth: 1 })
 
@@ -215,7 +197,6 @@ function useOverlayReach(svgRef: RefObject<SVGSVGElement | null>, areaRef: RefOb
     const measure = (): void => {
       const shown = picture.getBoundingClientRect()
       const panel = area.getBoundingClientRect()
-      // The client box leaves out a scroll bar, which the overlay must not reach under.
       const panelLeft = panel.left + area.clientLeft
       const panelTop = panel.top + area.clientTop
       setLayout({
@@ -238,18 +219,16 @@ function useOverlayReach(svgRef: RefObject<SVGSVGElement | null>, areaRef: RefOb
   return layout
 }
 
-// The point of the canvas under a place in the window, when the picture shows `frame` of the canvas and starts `offset` CSS pixels into the overlay.
 export function pointOnCanvas(place: { clientX: number; clientY: number }, overlay: Element, frame: ZoomFrame, pictureWidth: number, offset: Point = { x: MARGIN_PIXELS, y: MARGIN_PIXELS }): Point {
   const box = overlay.getBoundingClientRect()
   const canvasPerPixel = frame.width / pictureWidth
   return { x: frame.left + (place.clientX - box.left - offset.x) * canvasPerPixel, y: frame.top + (place.clientY - box.top - offset.y) * canvasPerPixel }
 }
 
-// A clip that reaches past what the picture shows, so part or all of it would be out of sight without its outline.
 function isPastFrame(box: Box, frame: ZoomFrame): boolean {
   const bounds = boundsOf(box)
-  const isPastSide = bounds.left < frame.left - EDGE_TOLERANCE || bounds.right > frame.left + frame.width + EDGE_TOLERANCE
-  return isPastSide || bounds.top < frame.top - EDGE_TOLERANCE || bounds.bottom > frame.top + frame.height + EDGE_TOLERANCE
+  const isPastSide = bounds.left < frame.left - EDGE_TOLERANCE_CANVAS_PIXELS || bounds.right > frame.left + frame.width + EDGE_TOLERANCE_CANVAS_PIXELS
+  return isPastSide || bounds.top < frame.top - EDGE_TOLERANCE_CANVAS_PIXELS || bounds.bottom > frame.top + frame.height + EDGE_TOLERANCE_CANVAS_PIXELS
 }
 
 function lockedClipIds(project: Project): Set<string> {
@@ -269,13 +248,12 @@ function isCorner(handle: Handle): boolean {
   return CORNERS.some((corner) => corner === handle)
 }
 
-// The place a clip must have for the middle of its box to be at `middle`, when it is scaled and turned as `transform` says.
-function placeFor(item: Shown, middle: Point, transform: Transform): Point {
-  const toMiddle = outOfClip({ ...transform, x: 0, y: 0 }, item.pivot)
+function placeFor(item: ShownClip, middle: Point, transform: Transform): Point {
+  const toMiddle = clipPointToCanvas({ ...transform, x: 0, y: 0 }, item.pivot)
   return { x: middle.x - toMiddle.x, y: middle.y - toMiddle.y }
 }
 
-function sizeTargets(item: Shown, others: readonly Shown[], canvas: Size, range: number): SizeTargets {
+function sizeTargets(item: ShownClip, others: readonly ShownClip[], canvas: Size, range: number): SizeTargets {
   const fullWidth = item.natural.width - item.crop.left - item.crop.right
   const fullHeight = item.natural.height - item.crop.top - item.crop.bottom
   return {
@@ -294,8 +272,7 @@ function unionOf(boxes: readonly Bounds[]): Bounds {
   }
 }
 
-// A place on the canvas as values of a clip of the open tracks: inside a group they are measured in the group's own units.
-function valuesInOpenTracks(openGroups: readonly string[], openFrame: GroupFrame, item: Shown, placed: Partial<Transform>): PropertyValues {
+function valuesInOpenTracks(openGroups: readonly string[], openFrame: GroupFrame, item: ShownClip, placed: Partial<Transform>): PropertyValues {
   if (openGroups.length === 0) return placed
   const inside = intoGroup(openFrame, { ...item.transform, ...placed })
   const values: PropertyValues = {}
@@ -305,7 +282,6 @@ function valuesInOpenTracks(openGroups: readonly string[], openFrame: GroupFrame
   return values
 }
 
-// Selection outlines and handles over the preview. It is a layer of its own above the picture, so nothing here can end up in an export.
 export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; areaRef: RefObject<HTMLElement | null> }): ReactElement {
   const { store, actions } = useSession()
   const project = useEditorState((state) => state.project)
@@ -323,8 +299,6 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
   const [guides, setGuides] = useState<Guides>(NO_GUIDES)
   const [dropTargetId, setDropTargetId] = useState<string | undefined>(undefined)
   const { canvas } = project
-  // The picture shows what the camera shows, so the handles are laid over that part of the canvas.
-  // The camera and the picture are those of the whole project, at its own time, also while a group is open.
   const wholeTime = time + offset
   const frame = frameOf(canvas, viewAt(wholeProject.camera, wholeTime, canvas))
   const canvasPerPixel = frame.width / pictureWidth
@@ -340,10 +314,8 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
   const editedText = editing?.type === 'text' || editing?.type === 'callout' ? editing : undefined
   const onlyClip = only === undefined || editingTextId !== undefined ? undefined : locateClip(project, only.clipId)?.clip
   const path = onlyClip === undefined ? undefined : motionPath(onlyClip)
-  // The path is that of the clip's place; a closed group's box lies off its place, so the path is drawn moved by as much.
   const pathOffset = only === undefined ? NO_PIVOT : { x: only.box.centerX - only.transform.x, y: only.box.centerY - only.transform.y }
 
-  // Where a place in the open tracks is on the canvas.
   function placeOnCanvas(place: Point): Point {
     const placed = onCanvas(openFrame, { x: place.x, y: place.y, scaleX: 1, scaleY: 1, rotation: 0 })
     return { x: placed.x, y: placed.y }
@@ -358,21 +330,18 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     return pointOnCanvas(event, event.currentTarget, frame, pictureWidth, pictureOffset)
   }
 
-  function topmostAt(point: Point): Shown | undefined {
+  function topmostAt(point: Point): ShownClip | undefined {
     return shown.findLast((item) => !locked.has(item.clipId) && item.hitBoxes.some((box) => containsPoint(box, point)))
   }
 
-  // The clip an effect held at a place in the window would go to: the topmost one there that has a picture.
-  function effectTargetAt(detail: LibraryDragDetail): Shown | undefined {
+  function effectTargetAt(detail: LibraryDragDetail): ShownClip | undefined {
     const svg = svgRef.current
     if (svg === null || detail.item.kind !== 'effect') return undefined
     const point = pointOnCanvas(detail, svg, frame, pictureWidth, pictureOffset)
-    // A blur fill goes only onto a video or an image.
-    const isFitting = (item: Shown): boolean => (detail.item.kind === 'effect' && detail.item.effect === 'blurFill' ? item.kind === 'picture' : item.kind !== 'shape')
+    const isFitting = (item: ShownClip): boolean => (detail.item.kind === 'effect' && detail.item.effect === 'blurFill' ? item.kind === 'picture' : item.kind !== 'shape')
     return shown.findLast((item) => isFitting(item) && !locked.has(item.clipId) && item.hitBoxes.some((box) => containsPoint(box, point)))
   }
 
-  // Heard for every move of a drag out of the library, wherever in the window it is: one that has left the canvas no longer has a target here.
   const onLibraryDrag = useEffectEvent((event: Event) => {
     if (!isLibraryDrag(event)) return
     const isOverCanvas = event.target instanceof Node && svgRef.current?.contains(event.target) === true
@@ -383,7 +352,6 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     if (!isLibraryDrag(event)) return
     const svg = svgRef.current
     const { item } = event.detail
-    // An annotation lands where it was dropped, at the playhead; inside an open group the place is worked out in the group's own space.
     if (item.kind === 'annotation' && svg !== null) {
       const point = pointOnCanvas(event.detail, svg, frame, pictureWidth, pictureOffset)
       const inside = intoGroup(openFrame, { x: point.x, y: point.y, scaleX: 1, scaleY: 1, rotation: 0 })
@@ -394,7 +362,6 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     const target = effectTargetAt(event.detail)
     if (target === undefined) return
     const { effect } = item
-    // An effect dropped on one of several selected clips goes to all of them.
     const clipIds = selection.includes(target.clipId) ? selection : [target.clipId]
     store.apply('Add Effect', (current) => addEffect(current, clipIds, effect))
     store.select(clipIds)
@@ -416,7 +383,6 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
   }
 
   function onPointerDown(event: PointerEvent<SVGSVGElement>): void {
-    // A press inside the text being typed places the caret; it is not the start of a drag.
     if (event.button !== 0 || isPlaying || isInTextEditor(event.target)) return
     event.currentTarget.setPointerCapture(event.pointerId)
     const point = pointOf(event)
@@ -434,7 +400,6 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
       return
     }
     const dot = grabbed === 'path-point' && event.target instanceof SVGElement ? path?.dots[Number(event.target.dataset.dot)] : undefined
-    // A dot under the middle of the clip is a press on the clip: moving the clip is what keys the moment of the playhead, and for a keyframe at the playhead the two are the same.
     const dotAt = dot === undefined ? undefined : shownOnPath(dot.point)
     const isUnderClip = only !== undefined && dotAt !== undefined && Math.hypot(dotAt.x - only.box.centerX, dotAt.y - only.box.centerY) < PATH_DOT_PIXELS * canvasPerPixel
     if (only !== undefined && onlyClip !== undefined && dot !== undefined && !isUnderClip) {
@@ -486,8 +451,7 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     return isSnapping && !event.metaKey ? settings.snapRangePixels * canvasPerPixel : undefined
   }
 
-  // The values a clip needs to be drawn on the canvas as `placed` says. Inside an open group they are counted from that group.
-  function edit(item: Shown, placed: Partial<Transform>, crop: PropertyValues = {}): Edit {
+  function edit(item: ShownClip, placed: Partial<Transform>, crop: PropertyValues = {}): Edit {
     const values = { ...valuesInOpenTracks(openGroups, openFrame, item, placed), ...crop }
     return (current) => setProperties(current, [item.clipId], values, time)
   }
@@ -533,11 +497,10 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
       const { length, ...placed } = arrowBetween(ends.start, ends.end, item.transform)
       store.update((current) => setArrowStyle(edit(item, placed)(current), [item.clipId], { length }))
     } else if (gesture.kind === 'tail') {
-      const tip = intoClip(item.transform, point)
+      const tip = canvasPointToClip(item.transform, point)
       store.update((current) => setCalloutStyle(current, [item.clipId], { tail: { x: Math.round(tip.x), y: Math.round(tip.y) } }))
     } else if (gesture.kind === 'rotate') {
       const rotation = rotationFromPointer(item.box, gesture.from, point, event.shiftKey)
-      // A group turns around its own place, which is not the middle of its box; it is moved so that the box turns in place.
       const placed = item.kind === 'group' ? { ...placeFor(item, middle, { ...item.transform, rotation }), rotation } : { rotation }
       store.update(edit(item, placed))
     } else if (gesture.kind === 'crop') {
@@ -545,7 +508,6 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
       store.update(edit(item, { x: transform.x, y: transform.y }, { cropLeft: crop.left, cropTop: crop.top, cropRight: crop.right, cropBottom: crop.bottom }))
     } else {
       const targets = range === undefined ? undefined : sizeTargets(item, gesture.others, canvas, range)
-      // A group is scaled by one number, so it always keeps its shape.
       const keepsAspect = item.kind === 'group' || !event.shiftKey
       const { transform, isSnapped } = scaleFromHandle(item.natural, item.crop, { ...item.transform, ...middle }, gesture.handle, point, keepsAspect, targets)
       setGuides({ x: undefined, y: undefined, isSizeSnapped: isSnapped })
@@ -618,10 +580,8 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
         const height = Math.max(minBox, item.box.height)
         const isEdited = item.clipId === editedText?.id
         const isOnly = item === only && !isEdited
-        // An arrow is changed by its two ends, which also turn it; a group by its corners, because it keeps its shape.
         const isArrow = item.arrowLength !== undefined
         const handles = item.kind === 'group' ? HANDLES.filter(isCorner) : HANDLES
-        // The rotate handle sits inside the clip, above its centre: it stays reachable when the clip fills the canvas.
         const rotateReach = Math.min(ROTATE_HANDLE_OFFSET_PIXELS * canvasPerPixel, height * ROTATE_HANDLE_MAX_REACH)
         return (
           <g key={item.clipId} transform={`translate(${item.box.centerX} ${item.box.centerY}) rotate(${item.box.rotation})`}>

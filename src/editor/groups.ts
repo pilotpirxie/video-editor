@@ -14,12 +14,9 @@ export type NewGroup = {
 
 export type Ungrouping = {
   groupIds: readonly string[]
-  // One for every track inside the groups; a group whose tracks cannot all be named stays a group.
   newTracks: readonly NewTrack[]
 }
 
-// What is open when groups are edited from the inside: project time is the time of the open tracks plus `offset`,
-// and the innermost group shows its tracks from `from` to `to`.
 export type Scope = {
   offset: number
   from: number
@@ -35,15 +32,12 @@ function movedKeyframes(keyframes: Keyframes | undefined, x: number, y: number):
   }
 }
 
-// A member as it lies inside a new group that starts at `start` and has its middle at (x, y).
 function asMember(clip: Clip, start: number, x: number, y: number): Clip {
   if (!isVisual(clip)) return { ...clip, start: clip.start - start }
   const transform = { ...clip.transform, x: clip.transform.x - x, y: clip.transform.y - y }
   return { ...clip, start: clip.start - start, transform, keyframes: movedKeyframes(clip.keyframes, -x, -y) }
 }
 
-// Makes one clip of the chosen ones. Inside, they keep their tracks, their order and their timing; the group lies where the topmost of them was,
-// or on a new track above it when other clips are in the way. Its middle is the middle of the places of its members, so turning it turns them around that.
 export function groupClips(project: Project, grouping: NewGroup): Project {
   const wanted = new Set(grouping.clipIds)
   const members: Clip[] = []
@@ -113,7 +107,6 @@ function placeKeyframes(keyframes: Keyframes, own: Transform, frame: GroupFrame)
   return { x, y }
 }
 
-// A member as it is drawn while its group stands still at its own place, written as a clip that needs no group.
 function outOfGroup(member: Clip, group: GroupClip): Clip {
   const volume = group.volume
   let freed = member
@@ -142,8 +135,6 @@ function outOfGroup(member: Clip, group: GroupClip): Clip {
   return { ...placed, effects: placed.effects.map((effect) => scaledEffect(effect, frame.scale)) }
 }
 
-// The part of a member its group shows, at the time it has in the tracks around the group; undefined when the group shows none of it.
-// A member the group cuts into is cut as a split would cut it, so what it does at the end that is cut off does not happen at the cut.
 function shownPart(member: Clip, group: GroupClip): Clip | undefined {
   const shift = group.start - (group.contentStart ?? 0)
   const moved = { ...member, start: member.start + shift }
@@ -156,9 +147,6 @@ function isFree(track: Track, clips: readonly Clip[]): boolean {
   return clips.every((clip) => track.clips.every((other) => endOf(other) <= clip.start || other.start >= endOf(clip)))
 }
 
-// Puts the members of the chosen groups back on tracks of their own, where and as they were shown while the group stood at its own place.
-// What the group itself did is given up: its opacity, fades, effects, animations, transitions and keyframes.
-// The lowest track of a group goes where the group was when there is room; the others become new tracks directly above, in their order.
 export function ungroupClips(project: Project, ungrouping: Ungrouping): Project {
   const wanted = new Set(ungrouping.groupIds)
   const names = [...ungrouping.newTracks]
@@ -197,7 +185,6 @@ function groupIn(tracks: readonly Track[], groupId: string): GroupClip | undefin
   return undefined
 }
 
-// The groups reached by going into `openGroups` one after the other; undefined when one of them is not there (any more).
 function openedGroups(project: Project, openGroups: readonly string[]): GroupClip[] | undefined {
   const groups: GroupClip[] = []
   let tracks: readonly Track[] = project.tracks
@@ -210,8 +197,6 @@ function openedGroups(project: Project, openGroups: readonly string[]): GroupCli
   return groups
 }
 
-// The project as it is edited while groups are open: the tracks of the innermost open group, in that group's own time.
-// The camera is left out, because it lives in the time of the whole project. Undefined when a group of the path is gone.
 export function scopedProject(project: Project, openGroups: readonly string[]): Project | undefined {
   const innermost = openedGroups(project, openGroups)?.at(-1)
   if (openGroups.length === 0) return project
@@ -239,8 +224,6 @@ function withTracksAt(tracks: readonly Track[], openGroups: readonly string[], e
   })
 }
 
-// The whole project after the open tracks were edited. Media added while a group is open belongs to the whole project;
-// the canvas and the camera cannot be changed from inside a group.
 export function withScopedProject(project: Project, openGroups: readonly string[], edited: Project): Project {
   if (openGroups.length === 0) return edited
   const scoped = scopedProject(project, openGroups)
@@ -249,7 +232,6 @@ export function withScopedProject(project: Project, openGroups: readonly string[
   return { ...project, media: edited.media, tracks: withTracksAt(project.tracks, openGroups, edited.tracks) }
 }
 
-// The transform a member needs so that, inside a group placed by `frame`, it is drawn with the given transform on the canvas. The opposite of `onCanvas`.
 export function intoGroup(frame: GroupFrame, transform: Transform): Transform {
   if (frame.scale === 0) return transform
   const angle = frame.rotation * DEGREES_TO_RADIANS

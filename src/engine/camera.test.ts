@@ -11,7 +11,6 @@ function zoom(time: number, x: number, y: number, scale: number, settings: Parti
   return { time, duration: SECOND, easing: 'linear', x, y, scale, ...settings }
 }
 
-// Where a point of the canvas is on screen, measured from the middle of the view in view pixels.
 function onScreen(view: View, point: { x: number; y: number }): { x: number; y: number } {
   return { x: (point.x - view.x) * view.scale, y: (point.y - view.y) * view.scale }
 }

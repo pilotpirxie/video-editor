@@ -37,7 +37,6 @@ export function closeOnTurningAway(element: HTMLElement, close: () => void): () 
   }
 }
 
-// A context menu on the browser's top layer: it sits above everything, and a press elsewhere or Escape closes it.
 export function PopupMenu({ label, items, at, onClose }: PopupMenuProps): ReactElement {
   const menuRef = useRef<HTMLDivElement>(null)
 

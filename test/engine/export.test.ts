@@ -18,7 +18,6 @@ const SAMPLES_PER_VIDEO_FRAME = SAMPLE_RATE / 30
 const CLICK_SECONDS = CLICK_SAMPLE_44K / 44_100
 const STOP_TIMEOUT_MS = 30_000
 
-// One second of silence with a click in its middle, first at twice its speed with the pitch following, then from the third second at half its speed with the pitch kept.
 const CLICK_AT_TWO_SPEEDS: Project = {
   version: 1,
   canvas: { width: 160, height: 120, frameRate: { num: 30, den: 1 } },
@@ -70,7 +69,6 @@ function loudness(samples: Float32Array, firstFrame: number, endFrame: number): 
   return Math.sqrt(sumOfSquares / (endFrame - firstFrame))
 }
 
-// The sample with the highest level between two seconds of the timeline.
 function loudestSample(samples: Float32Array, fromSecond: number, toSecond: number): number {
   let loudest = fromSecond * SAMPLE_RATE
   for (let frame = loudest; frame < toSecond * SAMPLE_RATE; frame++) {
@@ -133,7 +131,6 @@ describe('MP4 export', () => {
     const slowClick = loudestSample(samples, 2, 4)
     expect(Math.abs(fastClick - (CLICK_SECONDS / 2) * SAMPLE_RATE)).toBeLessThanOrEqual(SAMPLES_PER_VIDEO_FRAME)
     expect(Math.abs(slowClick - (2 + CLICK_SECONDS * 2) * SAMPLE_RATE)).toBeLessThanOrEqual(SAMPLES_PER_VIDEO_FRAME)
-    // Nothing of the fast clip is left after its end, and the slow one is silent until its click.
     expect(loudness(samples, SAMPLE_RATE / 2 + SAMPLES_PER_VIDEO_FRAME, 2 * SAMPLE_RATE)).toBeLessThan(0.005)
   })
 
@@ -151,7 +148,6 @@ describe('MP4 export', () => {
     expect(result.stderr).toMatch(/--preset must be one of 120p, 240p/)
   })
 
-  // A closed output used to raise an error dialog at every progress line, which kept the app open.
   it('stops with an error when nobody reads its output any more', async () => {
     const profile = mkdtempSync(join(scratch, 'profile-'))
     const args = [ROOT, `--user-data-dir=${profile}`, '--export', projectPath('22-timelapse'), '--out', join(scratch, 'unread.mp4'), '--preset', '240p']

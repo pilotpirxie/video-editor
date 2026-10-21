@@ -28,7 +28,6 @@ async function referenceFrame(project: string, frame: number, size: { width: num
   return pictureAt(await renderFrames(project, { via: 'paused', frames: [frame], size }), 0)
 }
 
-// The steepest step between two neighbouring pixels of a row: high for a sharp edge, low for an enlarged one.
 function steepestEdge(picture: Picture): number {
   const pixels = new Uint8Array(picture.data)
   let steepest = 0
@@ -38,7 +37,6 @@ function steepestEdge(picture: Picture): number {
   return steepest
 }
 
-// The box around the pixels that are fully the red of the letters.
 function inkBounds(picture: Picture): { left: number; top: number; right: number; bottom: number } {
   const bounds = { left: picture.width, top: picture.height, right: -1, bottom: -1 }
   for (let y = 0; y < picture.height; y++) {
@@ -59,7 +57,6 @@ describe('callouts', () => {
     const picture = await frameOf('box', [[WHITE_GROUND], [calloutOf('box', at(320, 180))]])
     expectPixel(picture, 320, 180, RED)
     expectPixel(picture, 225, 135, RED)
-    // The border is 10 wide and lies outside the 200 by 100 box.
     expectPixel(picture, 215, 180, BLUE)
     expectPixel(picture, 320, 125, BLUE)
     expectPixel(picture, 205, 180, WHITE)
@@ -89,7 +86,6 @@ describe('callouts', () => {
     const worded = calloutOf('worded', at(320, 180), { text: 'several words that have to wrap', fill: '#FFFFFF', borderWidth: 0, width: 160, height: 140 })
     const picture = await frameOf('words', [[imageOf('image-white.png', 'ground', FIRST_SECOND, at(320, 180, 2))], [worded]])
     const inside = cropPicture(picture, 240, 110, 160, 140)
-    // Black letters on white: something is dark inside the box, on more than one line, and nothing outside it.
     const dark = (area: Picture): number => 1 - litFraction(area)
     expect(dark(cropPicture(inside, 0, 20, 160, 40))).toBeGreaterThan(0.01)
     expect(dark(cropPicture(inside, 0, 80, 160, 40))).toBeGreaterThan(0.01)
@@ -101,11 +97,9 @@ describe('callouts', () => {
     await expectGolden(ffmpeg, 'callouts-360p', await referenceFrame('17-callouts-arrows', 30, { width: 640, height: 360 }))
     const large = await referenceFrame('17-callouts-arrows', 30, { width: 3840, height: 2160 })
     await expectGolden(ffmpeg, 'callouts-4K', large)
-    // Drawn at the size of the output, not enlarged: the edge of a shape and of a letter is a step of one pixel.
     expect(steepestEdge(cropPicture(large, 100, 150, 900, 500))).toBeGreaterThan(150)
   })
 
-  // The GPU canvas drew a callout stretched more one way than the other a little differently on every run, so a paused frame could differ from the export.
   it('draws a stretched callout the same on every run', async () => {
     const words = { text: 'Callout', font: { family: 'Helvetica Neue', size: 108 }, color: '#14171D', fill: '#FFFFFF', borderColor: '#14171D', borderWidth: 8 }
     const stretched = calloutOf('stretched', { ...at(640, 300), scaleX: 2.36 }, { ...words, shape: 'speechBubble', width: 470, height: 432, tail: { x: -141, y: 389 } })
@@ -137,13 +131,11 @@ describe('arrows and lines', () => {
 
   it('draws a head wider than the line at the ends that have one', async () => {
     const picture = await frameOf('heads', [[WHITE_GROUND], [arrowOf('arrow', at(320, 180), { endHead: 'triangle', startHead: 'dot' })]])
-    // The triangle is 40 long and 40 high and ends in a point at the end of the arrow.
     expectPixel(picture, 385, 195, RED)
     expectPixel(picture, 385, 165, RED)
     expectPixel(picture, 415, 180, RED)
     expectPixel(picture, 415, 190, WHITE)
     expectPixel(picture, 370, 195, WHITE)
-    // The dot is 30 across, around the start.
     expectPixel(picture, 220, 190, RED)
     expectPixel(picture, 210, 180, RED)
     expectPixel(picture, 220, 200, WHITE)
@@ -155,8 +147,6 @@ describe('text styles', () => {
     const plain = await frameOf('plain', [[WHITE_GROUND], [textOf('t', 'Mg', at(320, 180))]])
     const boxed = await frameOf('boxed', [[WHITE_GROUND], [textOf('t', 'Mg', at(320, 180), { background: { color: '#0000FF' }, shadow: { color: '#000000', offsetX: 30, offsetY: 0, blur: 0 } })]])
     expectPixel(boxed, 290, 160, BLUE, 2)
-    // The shadow reaches out of the box on one side only; the letters stay where they are without it.
-    // The picture of the text is larger with a shadow, so its edges fall on other fractions of a pixel: one pixel is the most that can show.
     const before = inkBounds(plain)
     const after = inkBounds(boxed)
     for (const side of ['left', 'top', 'right', 'bottom'] as const) expect(Math.abs(after[side] - before[side]), side).toBeLessThanOrEqual(1)
@@ -201,7 +191,6 @@ describe('text styles', () => {
       }
       return rows
     }
-    // The same two letters, further apart: as many rows with ink, in a taller picture.
     expect(darkRows(spaced)).toBe(darkRows(single))
     const lowestInk = (shown: Picture): number => {
       for (let y = shown.height - 1; y >= 0; y--) {
@@ -228,7 +217,6 @@ describe('animations', () => {
     expect(dark(cropPicture(half, 0, 0, 320, 360))).toBeGreaterThan(0.005)
     expect(dark(cropPicture(half, 330, 0, 310, 360))).toBe(0)
     expect(dark(cropPicture(whole, 330, 0, 310, 360))).toBeGreaterThan(0.005)
-    // The letters that are there are the ones of the finished text, in the same place.
     expect(sameBytes(cropPicture(half, 0, 0, 300, 360), cropPicture(whole, 0, 0, 300, 360))).toBe(true)
   })
 

@@ -5,13 +5,9 @@ import { HAS_SAMPLES, exportWithReport, projectPath, scratchDirectory, type Expo
 
 const scratch = scratchDirectory('limits')
 const MAX_PEAK_MEMORY_MB = 1500
-// x264 keeps more pictures than the media engine, which Macs with 8 GB or less export with unless asked otherwise. Measured at up to 1,982 MB;
-// allowed over 1.5 GB because a small Mac uses x264 only when it is chosen in the Export dialog.
 const KNOWN_X264_4K_PEAK_MEMORY_MB = 2100
-// Timed on the export alone.
 const MIN_1080P_REAL_TIME_RATIO = 2
 const MIN_4K_REAL_TIME_RATIO = 0.5
-// Ten minutes of source at 50× within five minutes.
 const MAX_TIMELAPSE_MS = 300_000
 const EXPORT_TIMEOUT_MS = 600_000
 
@@ -28,7 +24,6 @@ describe('memory while exporting', { timeout: EXPORT_TIMEOUT_MS }, () => {
     expect((await exportReport('demo-zoom-effects', '1080p', 'x264')).peakMemoryMegabytes).toBeLessThanOrEqual(MAX_PEAK_MEMORY_MB)
   })
 
-  // Blurring, pixelating and highlighting parts of the picture takes spare pictures of the size of the output.
   it('a 4K export with blur, pixelate and highlight by the media engine stays under 1.5 GB', async () => {
     expect((await exportReport('15-blur-highlight', '4k', 'hardware')).peakMemoryMegabytes).toBeLessThanOrEqual(MAX_PEAK_MEMORY_MB)
   })

@@ -92,7 +92,6 @@ function start(): void {
   const engineReady = createEngineWhenReady(startup)
   let media: MediaConnection | undefined
 
-  // Background work of the engine that fails without a handler is told, not lost.
   addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
     event.preventDefault()
     post({ type: 'error', message: describeError(event.reason) })
@@ -113,7 +112,6 @@ function start(): void {
     } else if (command.type === 'media-port') {
       const port = event.ports[0]
       if (port === undefined) return
-      // The first port starts the engine; a later one is that of a media process that was started again.
       if (media === undefined) {
         media = createMediaClient(port)
         startup.provideMedia(media)

@@ -47,7 +47,6 @@ describe('history', () => {
     expect(history.done).toHaveLength(MAX_UNDO_STEPS)
     expect(history.done[0]?.label).toBe('Step 20')
     expect(history.done.at(-1)?.label).toBe(`Step ${MAX_UNDO_STEPS + 19}`)
-    // A lower limit drops the oldest steps at once.
     expect(record(history, { label: 'Last', before: first, after: second }, 50).done).toHaveLength(50)
   })
 

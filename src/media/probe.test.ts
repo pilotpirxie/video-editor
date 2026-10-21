@@ -140,7 +140,6 @@ describe('probeMedia', () => {
     expect(await probe('image.gif')).toMatchObject({ kind: 'image' })
   })
 
-  // Twelve pictures at ten a second. Only the GIF file states its length; the others are measured by their pictures.
   it.each(['animated.gif', 'animated.webp', 'animated.apng'])('reads %s as moving pictures of 1.2 s', async (name) => {
     const info = await probe(name)
     expect(info).toMatchObject({

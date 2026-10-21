@@ -3,9 +3,7 @@ import { dirname } from 'node:path'
 import type { SlowFrame } from '../shared/mediaProtocol.js'
 import { logError } from '../shared/log.js'
 
-// A log over this size keeps only its newer half when the editor starts.
 export const MAX_LOG_BYTES = 1024 * 1024
-// A window that keeps stalling would otherwise write a line for every frame.
 export const MAX_SLOW_FRAMES_PER_RUN = 500
 
 const NEWLINE = 0x0a
@@ -42,7 +40,6 @@ export async function appendLogLine(path: string, entry: Record<string, unknown>
   }
 }
 
-// Keeps the newer half of a log that grew over `maxBytes`, starting at a whole line. A line written while it is trimmed may be lost.
 export async function trimLogFile(path: string, maxBytes: number): Promise<void> {
   let size: number
   try {

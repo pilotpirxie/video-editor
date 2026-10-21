@@ -82,7 +82,6 @@ describe('createDiskCache', () => {
     await writeFile(join(recent, 'info.json'), '{}')
     const longAgo = new Date(Date.now() - 31 * DAY_MS)
     await utimes(join(unused, 'audio-0.f32'), longAgo, longAgo)
-    // One file used lately keeps the whole folder of its media.
     await utimes(join(recent, 'audio-0.f32'), longAgo, longAgo)
 
     const cache = createDiskCache(directory, 100 * KIBIBYTE)

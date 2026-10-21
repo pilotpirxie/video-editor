@@ -2,7 +2,6 @@ import type { MediaStates } from '../engine/resolve.js'
 import type { AudioClip, Project, VideoClip } from '../shared/project.js'
 import { hasLinkedAudio, placeOnTrack, unlockedClipIds, type NewTrack } from './clips.js'
 
-// The selected clips whose sound can be given a clip of its own.
 export function clipsToSeparate(project: Project, selection: readonly string[], mediaStates: MediaStates): string[] {
   const selected = new Set(selection)
   return unlockedClipIds(project, (clip) => selected.has(clip.id) && hasLinkedAudio(clip, mediaStates))
@@ -34,8 +33,6 @@ function pictureOf(clip: VideoClip): VideoClip {
   return picture
 }
 
-// Splits each chosen clip into a silent video clip and an audio clip that plays exactly what the video clip played.
-// `newIds` maps a clip to the id of its audio clip. The audio clips of one track share a new track directly above it; `newTracks` supplies those, one per track at most.
 export function separateAudio(project: Project, mediaStates: MediaStates, newIds: ReadonlyMap<string, string>, newTracks: readonly NewTrack[]): Project {
   let separated = project
   let usedTracks = 0

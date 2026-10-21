@@ -77,11 +77,9 @@ const CLI_FLAGS = ['project', 'export', 'frames', 'out', 'preset', 'encoder', 'v
 const DEFAULT_SELFTEST_SECONDS = 2
 const BYTES_PER_MEGABYTE = 1024 * 1024
 const SIZE_PATTERN = /^(?<width>\d+)x(?<height>\d+)$/
-// A media process that stops sooner than this after starting is started again after a wait that doubles each time, up to the longest one.
 const MEDIA_PROCESS_MIN_UPTIME_MS = 5000
 const MEDIA_RESTART_FIRST_WAIT_MS = 1000
 const MEDIA_RESTART_LONGEST_WAIT_MS = 30_000
-// The end of what the media process wrote to its error output, which says why it died.
 const MEDIA_OUTPUT_TAIL_CHARS = 4096
 const MEMORY_PRESSURE_POLL_MS = 5000
 const UNTITLED = 'Untitled'
@@ -96,12 +94,10 @@ const MEDIA_EXTENSIONS = [
   'jpg', 'jpeg', 'png', 'webp', 'gif', 'apng',
 ]
 const UNSAVED_CHOICES: readonly UnsavedChoice[] = ['save', 'discard', 'cancel']
-// A new window opens this far below and to the right of the one in front, so both can be seen.
-const CASCADE_PIXELS = 22
+const NEW_WINDOW_OFFSET_PIXELS = 22
 // Where windows of a test run open: beyond every screen, so a run does not cover the desktop. Shown there, they still draw every frame.
-const OFF_SCREEN = { x: -20_000, y: 0 }
-// A window whose page dies again this soon after it was brought back is left as it is: reloading it once more would loop.
-const RESTART_GUARD_MS = 10_000
+const OFF_SCREEN_POSITION = { x: -20_000, y: 0 }
+const RELOAD_LOOP_GUARD_MS = 10_000
 
 type WindowMode = 'editor' | 'harness' | 'headless'
 
@@ -110,27 +106,20 @@ type Editor = {
   document: DocumentInfo
   documentState: DocumentState
   isCloseConfirmed: boolean
-  // When the window was last reloaded after its page died.
   restartedAt: number | undefined
 }
 
 type AppState = {
-  // Undefined while a media process that stopped is waiting to be started again.
   mediaProcess: UtilityProcess | undefined
-  // How many times in a row the media process stopped soon after it started.
   mediaQuickExits: number
   isUnderMemoryPressure: boolean
-  // One project per window.
   editors: Editor[]
-  // The window used last, which the menu belongs to and which a menu command goes to when no window has the focus.
   activeEditor: Editor | undefined
   harnessWindow: BrowserWindow | undefined
   exportWindow: BrowserWindow | undefined
-  // The window whose export is running: its dialog follows the export, so the window stays while it runs.
   exportRequester: BrowserWindow | undefined
   jobListeners: Map<number, (event: JobEvent) => void>
   exportPathOverride: string | undefined
-  // The file the last finished export wrote, for "Show in Finder".
   lastExportPath: string | undefined
   dialogAnswers: DialogAnswers
   recoveryDirectory: string
@@ -139,19 +128,15 @@ type AppState = {
   isQuitting: boolean
   memory: MemoryMonitor | undefined
   versions: string[] | undefined
-  // Test runs open every window muted and in the background.
   isUnattended: boolean
-  // Lines written to the slow-frame log since launch.
   slowFramesLogged: number
   menuShortcuts: MenuShortcuts
   settings: AppSettings
-  // Saves of the settings, one after the other, so two never write the file at once.
   savingSettings: Promise<void>
 }
 
 class UsageError extends Error {}
 
-// On a Mac with this much memory or less, the media engine's speed and small memory use matter more than x264's smaller files.
 const SMALL_MEMORY_BYTES = 8 * 1024 ** 3
 
 const SAVED_FORMAT_NAMES: Record<ExportFormat, string> = {
@@ -179,7 +164,6 @@ function cliOptions(argv: readonly string[]): Map<string, string> {
   return options
 }
 
-// The format is the extension of `--out`. A PNG is the frame `--at`.
 function exportJobFromCli(projectPath: string, options: Map<string, string>): ExportJob {
   const preset = options.get('preset') ?? '1080p'
   const outputPath = options.get('out')
@@ -275,7 +259,6 @@ function launchMediaProcess(state: AppState): UtilityProcess {
     type: 'setup',
     setup: {
       ffmpegDirectory: app.isPackaged ? join(process.resourcesPath, 'ffmpeg') : join(app.getAppPath(), 'vendor', 'ffmpeg'),
-      // The second layout of the cache, in segments; the media process removes the first one.
       cacheDirectory: join(app.getPath('userData'), 'cache', 'v2'),
       settings: mediaSettingsOf(state.settings),
     },
@@ -302,7 +285,6 @@ function launchMediaProcess(state: AppState): UtilityProcess {
   return child
 }
 
-// Work is never lost with the media process: a new one is started and every window connects to it as it is.
 function restartMediaProcess(state: AppState, uptimeMs: number): void {
   state.mediaProcess = undefined
   state.mediaQuickExits = uptimeMs < MEDIA_PROCESS_MIN_UPTIME_MS ? state.mediaQuickExits + 1 : 0
@@ -314,7 +296,6 @@ function restartMediaProcess(state: AppState, uptimeMs: number): void {
     for (const editor of state.editors) {
       if (editor.window.isDestroyed()) continue
       const page = editor.window.webContents
-      // A page that is loading, or that died and is loaded again, connects once it has loaded.
       if (page.isLoading() || page.isCrashed()) continue
       connectToMedia(state, editor.window)
     }
@@ -329,7 +310,6 @@ function settingsPath(): string {
   return join(app.getPath('userData'), 'settings.json')
 }
 
-// A change counts at once in every window and in the media process, and is kept for the next launch.
 function changeSettings(state: AppState, value: unknown): void {
   const settings = parseSettings(value)
   state.settings = settings
@@ -337,7 +317,6 @@ function changeSettings(state: AppState, value: unknown): void {
   for (const editor of state.editors) send(editor.window, { type: 'settings', settings })
   const command: MediaProcessCommand = { type: 'settings', settings: mediaSettingsOf(settings) }
   state.mediaProcess?.postMessage(command)
-  // The Media menu ticks the sort in use, which Restore Defaults can change too.
   if (state.activeEditor !== undefined) buildEditorMenu(state)
 }
 
@@ -356,11 +335,10 @@ function writeCrashLog(entry: Record<string, unknown>): void {
   }
 }
 
-// The page loads again from its recovery file, so at most the last ten seconds of work are lost.
 function restartEditor(editor: Editor, cause: string): void {
   if (editor.window.isDestroyed()) return
   const now = Date.now()
-  if (editor.restartedAt !== undefined && now - editor.restartedAt < RESTART_GUARD_MS) {
+  if (editor.restartedAt !== undefined && now - editor.restartedAt < RELOAD_LOOP_GUARD_MS) {
     writeCrashLog({ process: 'editor', event: 'not restarted again', cause })
     return
   }
@@ -381,13 +359,11 @@ function watchForCrashes(state: AppState): void {
   // A GPU process that dies takes the drawing of every window with it; Chromium starts a new one, and each page draws again on it by itself.
   app.on('child-process-gone', (_event, details) => {
     if (state.isQuitting || details.reason === 'clean-exit') return
-    // The media process has an entry of its own, with the end of its error output.
     if (details.type === 'Utility' && details.name === 'Media') return
     writeCrashLog({ process: details.type, name: details.name ?? details.serviceName, reason: details.reason, exitCode: details.exitCode })
   })
 }
 
-// Every window keeps smaller caches while macOS is short of memory. A window opened meanwhile hears it at the next check.
 function watchMemoryPressure(state: AppState): void {
   let hasCheckFailed = false
   async function check(): Promise<void> {
@@ -427,7 +403,6 @@ function send(window: BrowserWindow, command: HostCommand): void {
 type WindowOptions = {
   mode: WindowMode
   isUnattended: boolean
-  // Where the top left corner goes; left out, the system places the window.
   position?: { x: number; y: number }
 }
 
@@ -454,7 +429,7 @@ function createWindow(state: AppState, options: WindowOptions): BrowserWindow {
     window.webContents.setAudioMuted(true)
     window.showInactive()
     // macOS keeps a window on a screen as it first shows it, so it is moved once shown.
-    if (options.position === undefined) window.setPosition(OFF_SCREEN.x, OFF_SCREEN.y)
+    if (options.position === undefined) window.setPosition(OFF_SCREEN_POSITION.x, OFF_SCREEN_POSITION.y)
   } else if (!isHeadless) {
     window.show()
   }
@@ -470,7 +445,6 @@ async function loadPage(window: BrowserWindow, mode: WindowMode): Promise<void> 
   try {
     await window.loadURL(`app://editor/index.html?mode=${mode}`)
   } catch (error) {
-    // An export that is cancelled at once closes its window while the page is still loading; that is not a failure.
     if (window.isDestroyed()) return
     logError('Could not load the window', error, { mode })
   }
@@ -546,7 +520,6 @@ function startExportFor(state: AppState, requester: BrowserWindow, job: ExportJo
     send(requester, { type: 'export-event', event: { type: 'error', message: 'Another export is already running.' } })
     return
   }
-  // The note is on disk long before the export window has loaded and the encoder opens its unfinished file.
   const outputNote = rememberExportOutput(state.recoveryDirectory, job.outputPath)
   const window = runHeadlessJob(state, job, (event) => {
     if (event.type === 'done') state.lastExportPath = job.outputPath
@@ -573,7 +546,6 @@ function showDocument(state: AppState, editor: Editor): void {
   window.setTitle(titleOf(document))
   window.setRepresentedFilename(document.path ?? '')
   window.setDocumentEdited(documentState.isDirty)
-  // The menu shows the Undo and Redo of the window in front.
   if (state.activeEditor === editor) buildEditorMenu(state)
 }
 
@@ -587,7 +559,6 @@ function documentFor(state: AppState, projectPath: string | undefined): Document
   return document
 }
 
-// The page has dealt with the unsaved changes, so the window closes without asking again.
 async function closeDocument(editor: Editor): Promise<void> {
   await discardRecovery(editor.document.recoveryPath)
   if (editor.window.isDestroyed()) return
@@ -595,7 +566,6 @@ async function closeDocument(editor: Editor): Promise<void> {
   editor.window.close()
 }
 
-// An untitled window without changes is taken over by the project opened next, as Mac apps do.
 async function openInPlace(state: AppState, editor: Editor, projectPath: string): Promise<void> {
   await discardRecovery(editor.document.recoveryPath)
   if (editor.window.isDestroyed()) return
@@ -611,7 +581,6 @@ function bringForward(state: AppState, editor: Editor): void {
   if (!state.isUnattended) editor.window.focus()
 }
 
-// A project that is open already comes to the front. Otherwise it takes over the window it was opened from when that is untitled and unchanged, or opens in a window of its own.
 async function openProject(state: AppState, projectPath: string, from: Editor | undefined): Promise<void> {
   const path = resolve(projectPath)
   const shown = state.editors.find((editor) => editor.document.path === path)
@@ -653,7 +622,6 @@ async function askUnsavedChanges(state: AppState, editor: Editor): Promise<Unsav
 }
 
 function registerDocumentIpc(state: AppState): void {
-  // A page that loads again (after Reload, or when the media process was restarted) continues from its recovery file, which holds the unsaved work.
   ipcMain.handle('document-info', (event): DocumentInfo | undefined => {
     const document = editorOf(state, event.sender)?.document
     if (document === undefined || !existsSync(document.recoveryPath)) return document
@@ -750,7 +718,6 @@ function registerDocumentIpc(state: AppState): void {
     if (editor !== undefined) void closeDocument(editor)
   })
 
-  // Every window sends the keys it was given; they are kept per Mac, so all windows send the same.
   ipcMain.on('menu-shortcuts', (event, shortcuts: unknown) => {
     if (editorOf(state, event.sender) === undefined || !isMenuShortcuts(shortcuts)) return
     state.menuShortcuts = shortcuts
@@ -828,7 +795,6 @@ function buildHarnessMenu(state: AppState): void {
 function buildEditorMenu(state: AppState): void {
   const documentState = state.activeEditor?.documentState ?? CLEAN_DOCUMENT
 
-  // A command goes to the window that has the focus, or else to the one used last.
   function editorFor(window: Electron.BaseWindow | undefined): Editor | undefined {
     return state.editors.find((editor) => editor.window === window) ?? state.activeEditor
   }
@@ -849,7 +815,6 @@ function buildEditorMenu(state: AppState): void {
     return accelerator === undefined ? item(action, label) : { ...item(action, label, accelerator), registerAccelerator: false }
   }
 
-  // The order is a setting, so the Media tab of every window follows the one ticked here.
   function sortItem(sort: MediaSort, label: string): MenuItemConstructorOptions {
     return { id: `sort-${sort}`, label, type: 'radio', checked: state.settings.mediaSort === sort, click: () => changeSettings(state, { ...state.settings, mediaSort: sort }) }
   }
@@ -977,7 +942,6 @@ function recoveredDocument(found: FoundRecovery): DocumentInfo {
   return { path: found.projectPath, loadFrom: found.recoveryPath, recoveryPath: found.recoveryPath, exportSnapshotPath: exportSnapshotPath(found.recoveryPath), hasSmallMemory: totalmem() <= SMALL_MEMORY_BYTES }
 }
 
-// The documents the first windows show: the work of every window that had unsaved changes when the editor closed, or else the project asked for.
 async function firstDocuments(state: AppState, projectPath: string | undefined): Promise<DocumentInfo[]> {
   const found = await findRecoveries(state.recoveryDirectory)
   if (found.length > 0 && (await shouldRestore(state, found))) {
@@ -994,13 +958,12 @@ function openEditor(state: AppState, document: DocumentInfo): BrowserWindow {
   let position: WindowOptions['position']
   if (front !== undefined && !front.isDestroyed()) {
     const [left = 0, top = 0] = front.getPosition()
-    position = { x: left + CASCADE_PIXELS, y: top + CASCADE_PIXELS }
+    position = { x: left + NEW_WINDOW_OFFSET_PIXELS, y: top + NEW_WINDOW_OFFSET_PIXELS }
   }
   const window = createWindow(state, { mode: 'editor', isUnattended: state.isUnattended, position })
   const editor: Editor = { window, document, documentState: CLEAN_DOCUMENT, isCloseConfirmed: false, restartedAt: undefined }
   state.editors.push(editor)
   state.activeEditor = editor
-  // The window is named after its document, not after the page it shows.
   window.on('page-title-updated', (event) => event.preventDefault())
   window.on('focus', () => {
     state.activeEditor = editor
@@ -1008,8 +971,6 @@ function openEditor(state: AppState, document: DocumentInfo): BrowserWindow {
   })
   showDocument(state, editor)
 
-  // A document with unsaved changes closes only after the page has asked the user; a crashed page cannot ask.
-  // While it exports, the window stays, as one with a sheet does: its dialog is the only place to follow the export or to stop it.
   window.on('close', (event) => {
     const isExporting = state.exportRequester === window
     const hasNothingToAsk = editor.isCloseConfirmed || !editor.documentState.isDirty
@@ -1021,7 +982,6 @@ function openEditor(state: AppState, document: DocumentInfo): BrowserWindow {
     if (!isExporting) send(window, { type: 'menu', action: 'close' })
     else if (!state.isUnattended) shell.beep()
   })
-  // For the same reason an export does not outlive the page that started it: a page that loads again has forgotten it.
   window.webContents.on('did-start-loading', () => {
     if (state.exportRequester === window) state.exportWindow?.destroy()
   })
@@ -1062,14 +1022,12 @@ type UiTestInputs = {
   projectPath: string | undefined
   outputDirectory: string | undefined
   mediaDirectory: string | undefined
-  // How long a scenario that runs for a while goes on, and the seed of one that acts at random.
   seconds: number | undefined
   seed: number | undefined
 }
 
 async function runCliUiTest(state: AppState, scenario: string, inputs: UiTestInputs): Promise<void> {
   try {
-    // A recovery file can only be there because the test left one on purpose, so it is restored without asking.
     state.dialogAnswers.restore = true
     state.isUnattended = true
     app.dock?.hide()

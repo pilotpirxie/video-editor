@@ -20,7 +20,6 @@ type Point = {
   y: number
 }
 
-// The menu of the timeline, and the volume keyframe or zoom it was opened on, if any.
 type OpenMenu = {
   at: Point
   target: MenuTarget | undefined
@@ -38,7 +37,6 @@ function easingItems(choose: (easing: Easing) => void): MenuItem[] {
   return EASINGS.map(({ easing, label }) => ({ label, testId: `menu-easing-${easing}`, onSelect: () => choose(easing) }))
 }
 
-// `onIcon` is shown while the flag is set; a muted track shows a struck-out speaker in red.
 const FLAGS: readonly { flag: TrackFlag; icon: IconName; onIcon: IconName; isDanger: boolean; on: string; off: string }[] = [
   { flag: 'locked', icon: 'lock', onIcon: 'lock', isDanger: false, on: 'Unlock Track', off: 'Lock Track' },
   { flag: 'hidden', icon: 'eye', onIcon: 'eye', isDanger: false, on: 'Show Track', off: 'Hide Track' },
@@ -69,7 +67,6 @@ function TrackHeader({ track, index }: { track: Track; index: number }): ReactEl
     dragFromRef.current = event.clientY
   }
 
-  // Dragging a header up by one row moves the track one layer up; the top row is the top layer.
   function onGripUp(event: PointerEvent<HTMLDivElement>): void {
     const from = dragFromRef.current
     dragFromRef.current = undefined
@@ -129,7 +126,6 @@ function TrackHeader({ track, index }: { track: Track; index: number }): ReactEl
   )
 }
 
-// The selected clips whose speed can change: those that play a file.
 function clipsWithSpeed(project: Project, selection: readonly string[]): string[] {
   return selection.filter((clipId) => {
     const clip = locateClip(project, clipId)?.clip
@@ -137,7 +133,6 @@ function clipsWithSpeed(project: Project, selection: readonly string[]): string[
   })
 }
 
-// A quicker way to the speed than Properties, from the menu of a clip: type the number and press Return.
 function SpeedDialog({ clipIds, onClose }: { clipIds: readonly string[]; onClose(): void }): ReactElement {
   const { store } = useSession()
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -156,7 +151,6 @@ function SpeedDialog({ clipIds, onClose }: { clipIds: readonly string[]; onClose
 
   useEffect(() => {
     dialogRef.current?.showModal()
-    // Typing replaces the speed shown, so a new one is just its digits and Return.
     inputRef.current?.select()
   }, [])
 
@@ -216,7 +210,6 @@ function SpeedDialog({ clipIds, onClose }: { clipIds: readonly string[]; onClose
   )
 }
 
-// The way into the open group, from the project down. Each step before the last closes the groups after it.
 function GroupPath({ openGroups }: { openGroups: readonly string[] }): ReactElement {
   const { store } = useSession()
   const wholeProject = useEditorState((state) => state.wholeProject)
@@ -286,7 +279,6 @@ export function Timeline(): ReactElement {
     return () => controller.dispose()
   }, [session])
 
-  // A new document and another group are another timeline, which is shown whole, from its lowest tracks.
   useEffect(() => controllerRef.current?.zoomToFit(true), [openCount, openGroups])
 
   useEffect(() => {
@@ -303,7 +295,6 @@ export function Timeline(): ReactElement {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [session])
 
-  // Worked out only while the menu is open: it looks at every selected clip.
   const canSeparateAudio = menu !== undefined && actions.canSeparateAudio()
   const withSpeed = menu === undefined ? [] : clipsWithSpeed(store.getState().project, store.getState().selection)
   const clipMenu: MenuItem[] = [
@@ -319,8 +310,6 @@ export function Timeline(): ReactElement {
     { label: 'Ripple Delete', testId: 'menu-ripple-delete', isDisabled: !hasSelection, onSelect: () => actions.deleteSelection(true) },
   ]
 
-  // The menu of a volume keyframe: how the volume gets from it to the next one, and a way to take it out.
-  // The menu of a zoom: how the camera moves to it, and a way to take it out.
   const { target } = menu ?? {}
   let targetMenu: MenuItem[] = []
   if (target?.kind === 'volume') {

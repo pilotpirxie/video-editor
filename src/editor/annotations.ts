@@ -4,7 +4,6 @@ import { centredStill, type NewStill } from './place.js'
 import { addShape, type ShapeKind } from './shapes.js'
 import { DEFAULT_FAMILY, addText, validColor } from './text.js'
 
-// New annotations are sized as parts of the canvas, so they are as easy to read and to grab on a small canvas as on a 4K one.
 const CALLOUT_WIDTH_SHARE = 0.3
 const CALLOUT_HEIGHT_SHARE = 0.2
 const CALLOUT_TEXT_PER_HEIGHT = 1 / 20
@@ -14,13 +13,11 @@ const THICKNESS_PER_HEIGHT = 1 / 135
 const CALLOUT_FILL = '#ffffff'
 const CALLOUT_INK = '#14171d'
 const ARROW_RED = '#e5484d'
-// A new tail points down and to the left of its bubble, these shares of the box away from its middle.
 const TAIL_SHARE = { x: -0.3, y: 0.9 }
 const SMALLEST_LENGTH = 1
 const DEGREES_PER_RADIAN = 180 / Math.PI
 const FULL_TURN = 360
 
-// What each callout shape is called in the editor.
 export const CALLOUT_NAMES: Record<CalloutShape, string> = {
   rectangle: 'Box',
   roundedBox: 'Rounded box',
@@ -59,7 +56,6 @@ export type CalloutStyle = {
   fill?: string
   borderColor?: string
   borderWidth?: number
-  // The tip of a bubble's tail, measured from the middle of the box. Ignored by shapes without a tail.
   tail?: Point
 }
 
@@ -75,7 +71,6 @@ function newTail(width: number, height: number): Point {
   return { x: Math.round(width * TAIL_SHARE.x), y: Math.round(height * TAIL_SHARE.y) }
 }
 
-// A new callout is a speech bubble in the middle of the canvas, on a new layer above everything else.
 export function addCallout(project: Project, added: NewStill): Project {
   const { canvas } = project
   const width = Math.round(canvas.width * CALLOUT_WIDTH_SHARE)
@@ -98,7 +93,6 @@ export function addCallout(project: Project, added: NewStill): Project {
   return placeOnTrack(project, { clips: [clip], trackIndex: added.trackIndex ?? project.tracks.length, newTrack: added.newTrack })
 }
 
-// A new arrow lies level in the middle of the canvas and points to the right; a line is the same without a head.
 export function addArrow(project: Project, added: NewStill & { kind: 'arrow' | 'line' }): Project {
   const { canvas } = project
   const clip: Clip = {
@@ -125,7 +119,6 @@ export function addAnnotation(project: Project, kind: AnnotationKind, added: New
   }
 }
 
-// A bubble always has a tail and no other shape has one, as the file format wants it.
 function tailWith(clip: CalloutClip, shape: CalloutShape, width: number, height: number, wanted: Point | undefined): Point | undefined {
   if (!hasTail(shape)) return undefined
   if (wanted === undefined) return clip.tail ?? newTail(width, height)
@@ -133,7 +126,6 @@ function tailWith(clip: CalloutClip, shape: CalloutShape, width: number, height:
   return isUnchanged ? clip.tail : { x: wanted.x, y: wanted.y }
 }
 
-// Changes the shape of the chosen callouts. Their words are styled as those of a text clip.
 export function setCalloutStyle(project: Project, clipIds: readonly string[], style: CalloutStyle): Project {
   return editClips(project, new Set(clipIds), (clip) => {
     if (clip.type !== 'callout') return clip
@@ -163,16 +155,14 @@ export function setArrowStyle(project: Project, clipIds: readonly string[], styl
   })
 }
 
-// Where a point given in a clip's own units, from its middle, lies on the canvas.
-export function outOfClip(transform: Transform, point: Point): Point {
+export function clipPointToCanvas(transform: Transform, point: Point): Point {
   const angle = transform.rotation / DEGREES_PER_RADIAN
   const x = point.x * transform.scaleX
   const y = point.y * transform.scaleY
   return { x: transform.x + x * Math.cos(angle) - y * Math.sin(angle), y: transform.y + x * Math.sin(angle) + y * Math.cos(angle) }
 }
 
-// The opposite of `outOfClip`. A clip scaled to nothing has no inside; its middle is returned.
-export function intoClip(transform: Transform, onCanvas: Point): Point {
+export function canvasPointToClip(transform: Transform, onCanvas: Point): Point {
   if (transform.scaleX === 0 || transform.scaleY === 0) return { x: 0, y: 0 }
   const angle = transform.rotation / DEGREES_PER_RADIAN
   const x = onCanvas.x - transform.x
@@ -180,13 +170,10 @@ export function intoClip(transform: Transform, onCanvas: Point): Point {
   return { x: (x * Math.cos(angle) + y * Math.sin(angle)) / transform.scaleX, y: (y * Math.cos(angle) - x * Math.sin(angle)) / transform.scaleY }
 }
 
-// The two ends of an arrow on the canvas.
 export function arrowEnds(transform: Transform, length: number): { start: Point; end: Point } {
-  return { start: outOfClip(transform, { x: -length / 2, y: 0 }), end: outOfClip(transform, { x: length / 2, y: 0 }) }
+  return { start: clipPointToCanvas(transform, { x: -length / 2, y: 0 }), end: clipPointToCanvas(transform, { x: length / 2, y: 0 }) }
 }
 
-// The place, turn and length an arrow needs to run between two points on the canvas. Its scale stays as it is.
-// The turn is the one nearest to the arrow's own, so an animated arrow does not spin the long way round.
 export function arrowBetween(start: Point, end: Point, transform: Transform): { x: number; y: number; rotation: number; length: number } {
   const across = end.x - start.x
   const down = end.y - start.y

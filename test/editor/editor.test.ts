@@ -7,9 +7,7 @@ import { MEDIA_DIRECTORY, largeProject, projectIn, projectPath, runApp, scratchD
 const SECOND = 24_000_000
 const MAX_POSTER_MS = 1000
 const POINTER_TOLERANCE = 1.5
-// The window comes back in the same state within 3 s when the UI, GPU or media process dies.
 const MAX_RETURN_SECONDS = 3
-// Undo and redo, and any single task that holds the window.
 const MAX_UNDO_MS = 50
 const MAX_TASK_MS = 50
 
@@ -39,7 +37,6 @@ describe('commands', () => {
   })
 })
 
-// One line per track, bottom first: "video 0+2" is a video clip starting at 0 s and lasting 2 s.
 function outline(project: Project): string[] {
   return project.tracks.map((track) => track.clips.map((clip) => `${clip.type} ${clip.start / SECOND}+${clip.duration / SECOND}`).join(', '))
 }
@@ -88,11 +85,9 @@ describe('canvas', () => {
     const report = await uiTest('canvas', ['--project', projectPath('02-mosaic'), '--out', join(scratch, 'canvas')])
     expect(report.selectedX).toBe('160.0')
 
-    // Released three pixels short of the canvas centre line, the clip snapped onto it.
     expect(report.xAfterMove).toBe('320.0')
     expect(projectIn(report, 'moved').tracks[0]?.clips[0]).toMatchObject({ transform: { x: 320, y: 90, scaleX: 1, scaleY: 1, rotation: 0 } })
 
-    // The corner handle keeps the aspect ratio and the opposite corner: 320x180 at (160,0) became 480x270.
     const scaled = projectIn(report, 'scaled').tracks[0]?.clips[0]
     expect(scaled).toMatchObject({ type: 'video' })
     if (scaled?.type !== 'video') return
@@ -101,7 +96,6 @@ describe('canvas', () => {
     expect(Math.abs(scaled.transform.x - 400)).toBeLessThan(POINTER_TOLERANCE)
     expect(Math.abs(scaled.transform.y - 135)).toBeLessThan(POINTER_TOLERANCE)
 
-    // Cropping 120 canvas pixels off the right hides 80 source pixels and leaves the left edge where it was.
     const cropped = projectIn(report, 'cropped').tracks[0]?.clips[0]
     if (cropped?.type !== 'video' || cropped.crop === undefined) throw new Error('The clip was not cropped')
     expect(Math.abs(cropped.crop.right - 80)).toBeLessThan(POINTER_TOLERANCE)
@@ -117,7 +111,6 @@ describe('canvas', () => {
     expect(both.tracks[3]?.clips[0]).toMatchObject({ opacity: 0.25 })
     expect(both.tracks[1]?.clips[0]).toMatchObject({ opacity: 1 })
 
-    // Dropped on the canvas, media lands at the playhead on a new top track; the scenario then selects three clips with a marquee.
     const dropped = projectIn(report, 'dropped')
     expect(dropped.tracks).toHaveLength(5)
     expect(dropped.tracks[4]).toMatchObject({ name: 'Track 5', clips: [{ type: 'video', start: 0, transform: { x: 320, y: 180, scaleX: 1, scaleY: 1 } }] })
@@ -192,7 +185,6 @@ describe('responsiveness with 4,096 clips on a 20-hour timeline', () => {
   const MAX_FRAME_INTERVAL_MS = 1000 / 60 + 4
   const MAX_DRAG_TO_FRAME_MS = 33
   const MAX_PREPARED_SEEK_MS = 150
-  // What the editor uses while a long project is edited, all its processes together.
   const MAX_TYPICAL_MEMORY_MB = 1024
 
   it('opens within 3 s, scrolls and zooms at 60 fps, follows a drag within 33 ms, undoes and redoes within 50 ms, seeks within 150 ms, never blocks for more than 50 ms and stays within 1 GB', async () => {
@@ -214,7 +206,6 @@ describe('responsiveness with 4,096 clips on a 20-hour timeline', () => {
   })
 })
 
-// A short 1080p clip, then ten minutes of 1080p from the tenth second on.
 function longRecordingProject(): Project {
   const placed = { sourceStart: 0, speedPercent: 100, transform: { x: 960, y: 540, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, volume: 1 }
   const clips: Clip[] = [
@@ -237,7 +228,6 @@ describe('responsiveness on a profile without a cache', () => {
   const MAX_UNCACHED_SEEK_MS = 150
   const MAX_CACHED_SEEK_MS = 50
   const MAX_SPACE_TO_MOTION_MS = 100
-  // The next display frame of a 60 Hz screen, and a little room for the timing itself.
   const MAX_DRAG_TO_FRAME_END_MS = 1000 / 60 + 4
 
   it('meets the responsiveness budgets for launch, scrubbing, Space, timeline drags, undo, redo and blocking tasks', async () => {

@@ -5,7 +5,6 @@ import type { Fade } from './properties.js'
 import { transitionSpans, type TransitionEdge } from './transitions.js'
 
 export const RULER_HEIGHT = 24
-// The lane under the ruler that shows the zooms of the camera. It does not scroll away with the tracks.
 export const CAMERA_LANE_HEIGHT = 22
 export const TRACKS_TOP = RULER_HEIGHT + CAMERA_LANE_HEIGHT
 export const TRACK_HEIGHT = 56
@@ -32,7 +31,6 @@ const FRAME_STEPS = [1, 2, 5, 10]
 
 export type TimelineView = {
   pixelsPerSecond: number
-  // Timeline pixels scrolled off to the left and above.
   scrollX: number
   scrollY: number
 }
@@ -56,18 +54,15 @@ export function xToTime(x: number, view: TimelineView): number {
   return ((x + view.scrollX) / view.pixelsPerSecond) * TICKS_PER_SECOND
 }
 
-// The top row shows the top layer, so rows run opposite to the track list, whose first entry is the bottom layer.
 export function trackTop(trackIndex: number, trackCount: number, view: TimelineView): number {
   return TRACKS_TOP + (trackCount - 1 - trackIndex) * TRACK_HEIGHT - view.scrollY
 }
 
-// May return an index one past the top track or below zero: rows where a drop creates a track.
 export function trackIndexAt(y: number, trackCount: number, view: TimelineView): number {
   const row = Math.floor((y - TRACKS_TOP + view.scrollY) / TRACK_HEIGHT)
   return trackCount - 1 - row
 }
 
-// Shows the whole project, or ten seconds of an empty one so the first clip has a sensible width.
 export function fitZoom(limits: ZoomLimits): number {
   const seconds = Math.max(limits.duration / TICKS_PER_SECOND, SHORTEST_FIT_SECONDS)
   return limits.viewWidth / seconds
@@ -77,13 +72,11 @@ function maxZoom(frameTicks: number): number {
   return (MAX_PIXELS_PER_FRAME * TICKS_PER_SECOND) / frameTicks
 }
 
-// The furthest zoom out leaves room beyond the last clip: the view holds ten times the project, and never less than an hour.
 function widestZoom(limits: ZoomLimits): number {
   const seconds = Math.max((ZOOM_OUT_PAST_PROJECT * limits.duration) / TICKS_PER_SECOND, SHORTEST_WIDEST_VIEW_SECONDS)
   return limits.viewWidth / seconds
 }
 
-// Zooms so that the time under `anchorX` stays under it, between far beyond the project and single frames.
 export function zoomAround(view: TimelineView, factor: number, anchorX: number, limits: ZoomLimits): TimelineView {
   const widest = Math.min(widestZoom(limits), maxZoom(limits.frameTicks))
   const pixelsPerSecond = Math.min(maxZoom(limits.frameTicks), Math.max(widest, view.pixelsPerSecond * factor))
@@ -92,7 +85,6 @@ export function zoomAround(view: TimelineView, factor: number, anchorX: number, 
   return { ...view, pixelsPerSecond, scrollX }
 }
 
-// Spacing of ruler labels, in ticks: whole frames when zoomed in, round numbers of seconds otherwise.
 export function rulerStep(pixelsPerSecond: number, frameTicks: number): number {
   for (const frames of FRAME_STEPS) {
     const step = frames * frameTicks
@@ -118,7 +110,6 @@ export function createClipIndex(): ClipIndex {
   }
 }
 
-// Which of the time-ordered, non-overlapping clips touch the span from `from` to `to`.
 export function visibleRange(inOrder: readonly Clip[], from: number, to: number): IndexRange {
   let low = 0
   let high = inOrder.length
@@ -146,7 +137,6 @@ export type ClipHit = {
   clip: Clip
   track: Track
   trackIndex: number
-  // Which edge the pointer is close enough to trim, if any.
   edge: 'start' | 'end' | undefined
 }
 
@@ -199,7 +189,6 @@ export type Band = {
   height: number
 }
 
-// Where a clip shows its picture and where its sound, inside its row. A clip with both shows the thumbnails above the waveform.
 export type ClipBands = {
   picture: Band | undefined
   sound: Band | undefined
@@ -222,8 +211,6 @@ export type FadeHandle = {
   y: number
 }
 
-// The handles that set a clip's fades: at the top corners for the picture, at the bottom corners for the sound.
-// Each sits where its fade ends, but never closer to the clip edge than its own radius, so it stays apart from the trim edge.
 export function fadeHandles(clip: Clip, makesSound: boolean, view: TimelineView, rowTop: number): FadeHandle[] {
   const left = timeToX(clip.start, view)
   const right = timeToX(endOf(clip), view)
@@ -252,7 +239,6 @@ export function fadeHandles(clip: Clip, makesSound: boolean, view: TimelineView,
   return handles
 }
 
-// Which of the handles is under the pointer, or -1. The reach is larger than the dot that is drawn, so a handle is easy to grab.
 function nearestInReach(handles: readonly { x: number; y: number }[], x: number, y: number): number {
   let nearest = -1
   let nearestDistance = HANDLE_REACH
@@ -270,19 +256,16 @@ export function fadeHandleAt(handles: readonly FadeHandle[], x: number, y: numbe
   return handles[nearestInReach(handles, x, y)]
 }
 
-// A volume keyframe of a clip, where it is drawn on the clip's sound. `index` is its place among the clip's volume keyframes.
 export type VolumePoint = {
   index: number
   x: number
   y: number
 }
 
-// The height in a band that stands for a volume: silence at the bottom, twice the recorded volume at the top.
 function volumeY(band: Band, volume: number): number {
   return band.top + band.height * (1 - volume / MAX_VOLUME)
 }
 
-// The volume a height in a band stands for, within what a clip can have.
 export function volumeAtY(band: Band, y: number): number {
   return Math.min(MAX_VOLUME, Math.max(0, (1 - (y - band.top) / band.height) * MAX_VOLUME))
 }
@@ -298,15 +281,12 @@ export function volumePointAt(points: readonly VolumePoint[], x: number, y: numb
   return points[nearestInReach(points, x, y)]
 }
 
-// A moment of a clip that has a keyframe of its picture, where its diamond is drawn. `time` is measured from the start of the clip.
 export type KeyframeDiamond = {
   time: number
   x: number
   y: number
 }
 
-// One diamond for each moment inside the clip that keys its place, size, turn, opacity or crop, along the bottom of its picture.
-// Volume keyframes have dots of their own on the volume line, and keyframes outside the clip, kept by a split, are not seen.
 export function keyframeDiamonds(clip: Clip, picture: Band | undefined, view: TimelineView): KeyframeDiamond[] {
   if (picture === undefined || clip.keyframes === undefined) return []
   const times = new Set<number>()
@@ -325,16 +305,13 @@ export function keyframeDiamondAt(diamonds: readonly KeyframeDiamond[], x: numbe
   return diamonds[nearestInReach(diamonds, x, y)]
 }
 
-// How much the volume changes when the line is dragged from one height to another.
 export function volumeChange(band: Band, fromY: number, toY: number): number {
   return ((fromY - toY) / band.height) * MAX_VOLUME
 }
 
-// The volume line of a clip at one point across it, as it is drawn: straight from keyframe to keyframe, level before the first and after the last, and level at the clip's volume when it has none.
 export type VolumeLineSpot = {
   y: number
   band: Band
-  // The keyframes at the two ends of the stretch of line there: none without keyframes, only one before the first or after the last.
   indices: number[]
 }
 
@@ -356,24 +333,20 @@ export function volumeLineAt(clip: Clip, makesSound: boolean, view: TimelineView
   return { y: before.y + (after.y - before.y) * share, band, indices: [before.index, after.index] }
 }
 
-// The stretch of volume line under the pointer, when the pointer is close enough to grab it.
 export function volumeLineNear(clip: Clip, makesSound: boolean, view: TimelineView, rowTop: number, point: { x: number; y: number }): VolumeLineSpot | undefined {
   const spot = volumeLineAt(clip, makesSound, view, rowTop, point.x)
   return spot !== undefined && Math.abs(spot.y - point.y) <= VOLUME_LINE_REACH ? spot : undefined
 }
 
-// Where a transition is drawn on its clip, and the grip that sets its length.
 export type TransitionBand = {
   edge: TransitionEdge
   left: number
   right: number
-  // The end of the band that can be dragged, at half the height of the row: the end that lies inside the clip.
   gripX: number
   gripY: number
   isOnCut: boolean
 }
 
-// `before` and `after` are the clips next to this one on its track, in time order.
 export function transitionBands(clip: Clip, before: Clip | undefined, after: Clip | undefined, view: TimelineView, rowTop: number): TransitionBand[] {
   if (!isVisual(clip) || (clip.transitionIn === undefined && clip.transitionOut === undefined)) return []
   const spans = transitionSpans(clip, before, after)
@@ -395,27 +368,23 @@ export function transitionBandAt(bands: readonly TransitionBand[], x: number, y:
   return bands[nearestInReach(grips, x, y)]
 }
 
-// A zoom on the camera lane: a bar for the time its move takes, ending where the zoom is reached.
 export type ZoomBar = {
   index: number
   from: number
   to: number
 }
 
-// A move never starts before the zoom before it has been reached, whatever length it was given.
 export function zoomBars(camera: readonly CameraKeyframe[]): ZoomBar[] {
   return camera.map((zoom, index) => ({ index, from: Math.max(zoom.time - zoom.duration, camera[index - 1]?.time ?? 0), to: zoom.time }))
 }
 
 export type ZoomHit = {
   index: number
-  // The start of the bar changes how long the move takes; anywhere else on it moves the zoom in time.
   part: 'zoom' | 'start'
 }
 
 export function hitZoom(camera: readonly CameraKeyframe[], view: TimelineView, x: number): ZoomHit | undefined {
   const bars = zoomBars(camera)
-  // The diamonds come first. A move that starts at the zoom before it has its start on that zoom's diamond, and the diamond must stay easy to grab.
   const reached = bars.findLast((bar) => Math.abs(x - timeToX(bar.to, view)) <= ZOOM_REACH)
   if (reached !== undefined) return { index: reached.index, part: 'zoom' }
   for (const bar of bars) {

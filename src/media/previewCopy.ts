@@ -14,30 +14,24 @@ const FRAME_SEAM = Buffer.from([0xff, 0xd9, 0xff, 0xd8])
 const END_OF_IMAGE_BYTES = 2
 const BYTES_PER_INDEX_FIELD = 8
 const BYTES_PER_INDEX_ENTRY = 2 * BYTES_PER_INDEX_FIELD
-// Indexes of the segments read last, kept so playback does not read one from disk for every frame.
-const REMEMBERED_INDEXES = 64
+const MAX_CACHED_SEGMENT_INDEXES = 64
 
 type FrameLocation = {
   offset: number
   length: number
 }
 
-// The frames a copy for a fast clip holds: its picture `index` is the source frame `phase + index * step` ticks after the first frame.
 type SparseFrames = Cadence & {
   frameDuration: number
 }
 
-// A preview copy is cut into segments of a fixed number of frames, each built and removed on its own, so a long source is prepared around the playhead.
-// A sparse copy holds only the frames of its cadence, so the same number of pictures covers many times as much of the source.
 export type PreviewLayout = {
   framesPerSegment: number
   segmentCount: number
-  // The long side of the pictures, in pixels.
   longSide: number
   sparse?: SparseFrames
 }
 
-// The segment being written: its first frames can be shown before it is done. `index` is where its index file will be.
 export type SegmentInProgress = {
   index: string
   dataPath: string
@@ -55,9 +49,7 @@ export type PreviewRun = {
   layout: PreviewLayout
   cache: DiskCache
   firstSegment: number
-  // The index files of the segments this run writes, from `firstSegment` on.
   claim: BuildClaim
-  // FFmpeg's threads for the build; 0 lets it use every core.
   threads: number
   signal: AbortSignal
   onFrame(inProgress: SegmentInProgress | undefined): void
@@ -123,14 +115,12 @@ export function previewLayout(video: VideoInfo, segmentSeconds: number, cadence?
   return { framesPerSegment, segmentCount: Math.max(1, Math.ceil(pictureCount / framesPerSegment)), longSide, sparse }
 }
 
-// The source frame a copy holds as its picture `index`.
 export function sourceFrameOf(layout: PreviewLayout, index: number): number {
   const { sparse } = layout
   if (sparse === undefined) return index
   return Math.floor((sparse.phase + index * sparse.step) / sparse.frameDuration)
 }
 
-// Which picture of a copy a source frame is; undefined when a sparse copy leaves it out.
 export function pictureIndexOf(layout: PreviewLayout, frame: number): number | undefined {
   const { sparse } = layout
   if (sparse === undefined) return frame
@@ -193,7 +183,7 @@ export function createPreviewReader(cache: DiskCache): PreviewReader {
     const locations = decodeIndex(await readFile(path))
     indexes.set(path, locations)
     const oldest = indexes.keys().next()
-    if (indexes.size > REMEMBERED_INDEXES && oldest.done !== true) indexes.delete(oldest.value)
+    if (indexes.size > MAX_CACHED_SEGMENT_INDEXES && oldest.done !== true) indexes.delete(oldest.value)
     return locations
   }
 
@@ -209,7 +199,6 @@ export function createPreviewReader(cache: DiskCache): PreviewReader {
       try {
         return await readAt(inProgress.dataPath, location)
       } catch (error) {
-        // The segment was finished and moved under its own name meanwhile.
         if (!isMissingFile(error)) throw error
       }
     }
@@ -221,7 +210,6 @@ export function createPreviewReader(cache: DiskCache): PreviewReader {
       cache.used(files.index)
       return picture
     } catch (error) {
-      // A segment that is not built yet, or was just removed to make room, is simply not there.
       if (!isMissingFile(error)) throw error
       indexes.delete(files.index)
       return undefined
@@ -236,7 +224,6 @@ async function discard(output: FileHandle | undefined, path: string | undefined)
   if (path !== undefined) await rm(path, { force: true })
 }
 
-// Builds consecutive segments with one FFmpeg run, so the seek before the first is paid once.
 export async function buildPreviewRun(run: PreviewRun): Promise<void> {
   const { ffmpeg, source, directory, layout, cache, firstSegment, claim, threads, signal } = run
   const segmentCount = claim.paths.length
@@ -306,7 +293,6 @@ export async function buildPreviewRun(run: PreviewRun): Promise<void> {
     }
     if (pending.length > 0) await append(pending)
     await job.done
-    // The source ended inside this segment: it is its last.
     await finishSegment()
     claim.giveUp(new Error('The source ended before this preview segment'))
   } catch (error) {

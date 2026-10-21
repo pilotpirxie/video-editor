@@ -11,9 +11,7 @@ import { LibraryTools, useLibraryDrag, useLibraryView } from './LibraryTabs.js'
 
 const SECONDS_PER_MINUTE = 60
 const PERCENT = 100
-// Numbers in names sort as numbers, as in the Finder: "clip 2" comes before "clip 10".
 const NAME_ORDER = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
-// Files that cannot be read have no date and no length, so they come last.
 const UNKNOWN_DATE = Number.MAX_SAFE_INTEGER
 const UNKNOWN_DURATION = -1
 
@@ -22,13 +20,11 @@ function createdAtOf(state: MediaState | undefined): number {
   return state.createdAt ?? UNKNOWN_DATE
 }
 
-// Still images have no length either.
 function durationOf(state: MediaState | undefined): number {
   if (state === undefined || !('info' in state) || state.info.kind === 'image') return UNKNOWN_DURATION
   return state.info.duration
 }
 
-// The sort is stable, so files that tie keep the order they were added in.
 function sortedMedia(media: readonly MediaRef[], mediaStates: Readonly<Record<string, MediaState>>, sort: MediaSort): readonly MediaRef[] {
   if (sort === 'name') return [...media].sort((first, second) => NAME_ORDER.compare(mediaFileName(first), mediaFileName(second)))
   if (sort === 'duration') return [...media].sort((first, second) => durationOf(mediaStates[second.id]) - durationOf(mediaStates[first.id]))
@@ -56,7 +52,6 @@ function Poster({ picture }: { picture: ImageBitmap }): ReactElement {
       canvas.getContext('2d')?.drawImage(picture, 0, 0)
     }
     draw()
-    // The picture is drawn again on a canvas that came back blank after the GPU process was restarted.
     canvas.addEventListener('contextrestored', draw)
     return () => canvas.removeEventListener('contextrestored', draw)
   }, [picture])
@@ -68,9 +63,7 @@ type MediaItemProps = {
   state: MediaState | undefined
   preparation: Preparation | undefined
   isSelected: boolean
-  // The one file of the list that Tab reaches; the arrow keys move on from it.
   isTabStop: boolean
-  // What a drag that starts on this file takes along: the whole selection when the file is part of it.
   draggedIds: readonly string[]
   onPress(mediaId: string, event: PointerEvent<HTMLElement>): void
   onChoose(mediaId: string, event: MouseEvent<HTMLElement>): void
@@ -83,7 +76,6 @@ function MediaItem({ reference, state, preparation, isSelected, isTabStop, dragg
   const problem = state !== undefined && 'error' in state ? state : undefined
   const info = state !== undefined && 'info' in state ? state.info : undefined
   const picture = info === undefined || info.kind === 'audio' ? undefined : thumbnails.poster(reference.id, info)
-  // Media that could not be read cannot be placed, so it cannot be dragged.
   const drag = useLibraryDrag(info === undefined ? undefined : { kind: 'media', mediaIds: draggedIds }, draggedIds.length > 1 ? `${draggedIds.length} files` : name)
 
   const isPreparing = preparation !== undefined && preparation.progress < 1 && !preparation.hasFailed
@@ -97,7 +89,6 @@ function MediaItem({ reference, state, preparation, isSelected, isTabStop, dragg
       data-testid={`media-${name}`}
       data-media-id={reference.id}
       data-selected={isSelected}
-      // Rows and tiles cut a long name short.
       data-tooltip={name}
       {...drag}
       onPointerDown={(event) => {
@@ -146,7 +137,6 @@ function hasModifier(event: { metaKey: boolean; shiftKey: boolean }): boolean {
   return event.metaKey || event.shiftKey
 }
 
-// How many files a row of the list holds: one in the list view, as many as fit across in the grid.
 function columnsOf(list: HTMLElement): number {
   const options = list.querySelectorAll<HTMLElement>('[role="option"]')
   const firstTop = options[0]?.offsetTop
@@ -158,7 +148,6 @@ function columnsOf(list: HTMLElement): number {
   return Math.max(1, columns)
 }
 
-// Where a key moves the focus to in a list of `count` files, or undefined for a key that does not move it.
 function movedTo(key: string, index: number, count: number, columns: number): number | undefined {
   let target: number
   if (key === 'ArrowRight') target = index + 1
@@ -183,8 +172,6 @@ type Rect = {
   bottom: number
 }
 
-// A box drawn from a press on the empty part of the tab: the files it crosses are added to `base`.
-// The files are measured once as the box starts, so moving it reads no layout.
 type BoxSelect = {
   from: Place
   base: readonly string[]
@@ -195,7 +182,6 @@ function rectBetween(from: Place, to: Place): Rect {
   return { left: Math.min(from.x, to.x), top: Math.min(from.y, to.y), right: Math.max(from.x, to.x), bottom: Math.max(from.y, to.y) }
 }
 
-// Where each file of the list is on screen, in the order shown.
 function filesShownIn(list: HTMLElement): BoxSelect['files'] {
   const files: { mediaId: string; shown: Rect }[] = []
   for (const option of list.querySelectorAll<HTMLElement>('[data-media-id]')) {
@@ -209,8 +195,7 @@ function crosses(first: Rect, second: Rect): boolean {
   return first.left < second.right && first.right > second.left && first.top < second.bottom && first.bottom > second.top
 }
 
-// The files from `from` to `to`, both included, in the order shown.
-function run(shownIds: readonly string[], from: string, to: string): string[] {
+function filesBetween(shownIds: readonly string[], from: string, to: string): string[] {
   const start = shownIds.indexOf(from)
   const end = shownIds.indexOf(to)
   if (start === -1 || end === -1) return [to]
@@ -228,7 +213,6 @@ export function MediaTab(): ReactElement {
   const [query, setQuery] = useState('')
   const [view, setView] = useLibraryView()
   const [selectedIds, setSelectedIds] = useState<readonly string[]>([])
-  // The file a Shift press measures its run from.
   const [anchorId, setAnchorId] = useState<string | undefined>(undefined)
   const [focusedId, setFocusedId] = useState<string | undefined>(undefined)
   const [, setPictureCount] = useState(0)
@@ -236,10 +220,8 @@ export function MediaTab(): ReactElement {
   const boxRef = useRef<BoxSelect | undefined>(undefined)
   const tabRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
-  // Whether the last press in the window was in this tab: a click on a file leaves the focus with the editor, so the focus alone cannot tell.
   const wasPressedLastRef = useRef(false)
 
-  // Posters arrive after the row is first shown, and so do the timeline's pictures; the list is drawn again at most once a frame.
   useEffect(() => {
     let redraw: number | undefined
     const unsubscribe = session.thumbnails.subscribe(() => {
@@ -260,24 +242,19 @@ export function MediaTab(): ReactElement {
   const shownIds = shown.map((reference) => reference.id)
   const isEmpty = media.length === 0 && pending.length === 0
   const selected = new Set(selectedIds)
-  // A drag takes the selected files that can be placed, in the order they are listed.
   const draggedSelection: string[] = []
   for (const reference of sorted) {
     const state = mediaStates[reference.id]
     if (selected.has(reference.id) && state !== undefined && 'info' in state) draggedSelection.push(reference.id)
   }
-  // Tab comes back to the file it left, or else to the first one picked, or else to the first one listed.
   let tabStopId = focusedId !== undefined && shownIds.includes(focusedId) ? focusedId : shownIds.find((id) => selected.has(id))
   tabStopId ??= shownIds[0]
 
-  // A press decides what a drag from it takes: Shift picks the run from the last file pressed, Cmd adds or takes away one file,
-  // and a plain press on a file that is not selected picks it alone. A plain press on a selected file keeps the selection, so all of it can be dragged.
   function press(mediaId: string, event: PointerEvent<HTMLElement>): void {
     setFocusedId(mediaId)
-    // Once the keys are in the list, a click moves them to the file clicked.
     if (event.currentTarget.parentElement?.contains(document.activeElement) === true) event.currentTarget.focus()
     if (event.shiftKey && anchorId !== undefined) {
-      setSelectedIds(run(shownIds, anchorId, mediaId))
+      setSelectedIds(filesBetween(shownIds, anchorId, mediaId))
       return
     }
     setAnchorId(mediaId)
@@ -288,17 +265,13 @@ export function MediaTab(): ReactElement {
     }
   }
 
-  // A plain click that did not become a drag picks that file alone.
   function choose(mediaId: string, event: MouseEvent<HTMLElement>): void {
     if (!hasModifier(event)) setSelectedIds([mediaId])
   }
 
-  // The keys of a list of files, as in the Finder: the arrows move and pick the file reached, with Shift they pick the run from the last file picked, and with Cmd they only move.
-  // Space adds the file in focus to the picked ones or takes it away; Return places the picked files at the playhead, as a drop on the canvas does.
   function onListKeyDown(event: KeyboardEvent<HTMLUListElement>): void {
     const option = event.target
     const mediaId = option instanceof HTMLElement && option.getAttribute('role') === 'option' ? option.dataset.mediaId : undefined
-    // The keys of a button inside a file, such as Relink, stay its own.
     if (mediaId === undefined) return
     const index = shownIds.indexOf(mediaId)
     const target = movedTo(event.key, index, shownIds.length, columnsOf(event.currentTarget))
@@ -310,7 +283,7 @@ export function MediaTab(): ReactElement {
     } else if (target !== undefined) {
       const targetId = shownIds[target] ?? mediaId
       if (event.shiftKey) {
-        setSelectedIds(run(shownIds, anchorId ?? mediaId, targetId))
+        setSelectedIds(filesBetween(shownIds, anchorId ?? mediaId, targetId))
       } else if (!event.metaKey) {
         setAnchorId(targetId)
         setSelectedIds([targetId])
@@ -320,7 +293,6 @@ export function MediaTab(): ReactElement {
     } else {
       return
     }
-    // Handled here, the keys do not also play, step or reach the timeline.
     event.preventDefault()
     event.stopPropagation()
   }
@@ -329,14 +301,12 @@ export function MediaTab(): ReactElement {
     return wasPressedLastRef.current || tabRef.current?.contains(document.activeElement) === true
   }
 
-  // Select All picks every file listed while this tab is the one in use, instead of every clip.
   const onSelectAll = useEffectEvent((event: Event) => {
     if (!isInUse()) return
     event.preventDefault()
     setSelectedIds(shownIds)
   })
 
-  // Delete takes the picked files out of the project while this tab is the one in use, instead of deleting the selected clips.
   const onDelete = useEffectEvent((event: Event) => {
     if (!isInUse() || selectedIds.length === 0) return
     event.preventDefault()
@@ -358,7 +328,6 @@ export function MediaTab(): ReactElement {
     }
   }, [])
 
-  // A press on the empty part of the tab picks nothing, or with Cmd or Shift keeps what is picked; dragging from it draws a box that picks every file it crosses.
   function startBox(event: PointerEvent<HTMLElement>): void {
     const isOnFile = event.target instanceof Element && event.target.closest('.library-item, .library-tools') !== null
     const list = listRef.current

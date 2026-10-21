@@ -1,7 +1,6 @@
 import type { CacheUsage } from './mediaProtocol.js'
 import { TICKS_PER_SECOND, TIMELINE_GRID } from './time.js'
 
-// Choices kept for the whole app, on this Mac, in userData/settings.json. Every window and the media process work by them.
 export type AppSettings = {
   cacheLimitGb: number
   previewLongSide: number
@@ -15,15 +14,12 @@ export type AppSettings = {
   mediaSort: MediaSort
 }
 
-// How many of the Mac's cores preparing media in the background may use.
 type BackgroundCores = 'all' | 'half'
 
 const MEDIA_SORTS = ['created', 'name', 'duration'] as const
 
-// The order of the Media tab: by when each file was created, oldest first; by name; or by length, longest first.
 export type MediaSort = (typeof MEDIA_SORTS)[number]
 
-// The settings the media process works by.
 export type MediaSettings = Pick<AppSettings, 'cacheLimitGb' | 'previewLongSide' | 'backgroundCores' | 'unusedMediaHours'>
 
 type NumberSetting = 'cacheLimitGb' | 'unusedMediaHours' | 'snapRangePixels' | 'stillDurationSeconds' | 'autosaveSeconds' | 'undoSteps'
@@ -54,9 +50,7 @@ export const SETTING_RANGES: Record<NumberSetting, { min: number; max: number }>
 }
 
 const BYTES_PER_GIGABYTE = 1024 ** 3
-// A larger cache never takes the last of the disk.
 const FREE_DISK_KEPT_BYTES = 5 * BYTES_PER_GIGABYTE
-// What a project needs is a guess from the copies made so far; a quarter more leaves room for it to be low.
 const OFFER_HEADROOM = 1.25
 const MILLISECONDS_PER_HOUR = 60 * 60 * 1000
 
@@ -67,7 +61,6 @@ function numberWithin(value: unknown, setting: NumberSetting, isWhole: boolean):
   return isWhole ? Math.round(clamped) : clamped
 }
 
-// Anything read from disk or sent by a window becomes valid settings: a missing or wrong value takes its default, a number out of range its nearest limit.
 export function parseSettings(value: unknown): AppSettings {
   const record: Record<string, unknown> = typeof value === 'object' && value !== null && !Array.isArray(value) ? { ...value } : {}
   const { previewLongSide, backgroundCores, isSnappingAtLaunch, mediaSort } = record
@@ -94,7 +87,6 @@ export function mediaSettingsOf(settings: AppSettings): MediaSettings {
   }
 }
 
-// On the grid the project file keeps its times on.
 export function stillDurationTicks(settings: AppSettings): number {
   return Math.round((settings.stillDurationSeconds * TICKS_PER_SECOND) / TIMELINE_GRID) * TIMELINE_GRID
 }
@@ -107,7 +99,6 @@ export function unusedMediaMs(settings: MediaSettings): number {
   return settings.unusedMediaHours * MILLISECONDS_PER_HOUR
 }
 
-// The cache limit to offer a project that needs more than the limit, in GB; undefined when it fits, or when no larger limit fits on the disk.
 export function cacheLimitOffer(usage: CacheUsage): number | undefined {
   if (usage.neededBytes <= usage.limitBytes) return undefined
   const wanted = Math.ceil((usage.neededBytes * OFFER_HEADROOM) / BYTES_PER_GIGABYTE)

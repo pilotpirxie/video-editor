@@ -10,7 +10,6 @@ const scratch = scratchDirectory('extremes')
 const MS_PER_SECOND = 1000
 const BYTES_PER_MEGABYTE = 1024 * 1024
 const EXTREME_TIMEOUT_MS = 15 * 60 * MS_PER_SECOND
-// Memory, speed and responsiveness targets.
 const MAX_PEAK_MEMORY_MB = 1500
 const MAX_TYPICAL_MEMORY_MB = 1024
 const MAX_PAUSED_FRAME_MS = 500
@@ -20,14 +19,11 @@ const MAX_OPEN_SECONDS = 3
 const MAX_FRAME_INTERVAL_MS = 1000 / 60 + 4
 const MAX_PREPARED_SEEK_MS = 150
 const MAX_IDLE_CPU_PERCENT = 2
-// Five minutes for ten minutes of source at 50×; 100× reads the same source, skipping more of it.
 const MAX_FASTEST_EXPORT_MS = 5 * 60 * MS_PER_SECOND
-// Electron and FFmpeg alone take about 365 MB.
 const MAX_INSTALLED_MEGABYTES = 400
 const INSTALLED_APP = join(ROOT, 'release', 'mac-arm64', 'Playback.app')
 const FULL_HD = { width: 1920, height: 1080 }
 const PLAY_SECONDS = '4.5'
-// The reference canvas projects last one second.
 const SHORT_PLAY_SECONDS = '0.8'
 const FASTEST_SPEED_PERCENT = 10_000
 
@@ -37,7 +33,6 @@ function writtenProject(name: string, project: Project): string {
   return path
 }
 
-// Links inside the app, such as the framework's current version, are not counted twice.
 function megabytesOf(directory: string): number {
   let bytes = 0
   for (const entry of readdirSync(directory, { recursive: true, withFileTypes: true })) {
@@ -46,18 +41,15 @@ function megabytesOf(directory: string): number {
   return bytes / BYTES_PER_MEGABYTE
 }
 
-// An 8K picture, which lasts four frames, filling a 4K canvas.
 function eightKProject(): Project {
   return projectOfTracks({ width: 3840, height: 2160 }, [[videoOf('8k.mp4', 'eight-k', { start: 0, duration: 4 * FRAME }, at(1920, 1080, 0.5))]])
 }
 
-// Ten minutes of 1080p played at 100×, which is six seconds of timeline.
 function fastestProject(): Project {
   const span = { start: 0, duration: 6 * SECOND }
   return projectOfTracks(FULL_HD, [[videoOf('timelapse-1080p.mp4', 'fastest', span, at(960, 540), { speedPercent: FASTEST_SPEED_PERCENT })]])
 }
 
-// The heaviest playback: four 1080p layers, two titles and a blur, while the camera zooms in and out again.
 function fourLayerProject(): Project {
   const span = { start: 0, duration: 5 * SECOND }
   const quarters = [at(480, 270, 0.5), at(1440, 270, 0.5), at(480, 810, 0.5), at(1440, 810, 0.5)]
@@ -136,7 +128,6 @@ describe('the app at rest and on disk', () => {
     expect(report.cpuPercent).toBeLessThanOrEqual(MAX_IDLE_CPU_PERCENT)
   })
 
-  // Built by `npm run dist`.
   it.skipIf(!existsSync(INSTALLED_APP))('takes at most 400 MB once installed', () => {
     const megabytes = megabytesOf(INSTALLED_APP)
     console.info(`installed size: ${Math.round(megabytes)} MB`)

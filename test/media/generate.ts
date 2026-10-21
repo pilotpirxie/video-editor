@@ -112,7 +112,6 @@ const WHITE: Color = { red: 255, green: 255, blue: 255 }
 export const KEY_GREEN: Color = { red: 0, green: 177, blue: 64 }
 export const SUBJECT_MAGENTA: Color = { red: 200, green: 40, blue: 160 }
 
-// An opaque card whose every pixel is painted by a rule, for checks that work a pixel out by hand.
 function paintedCard(width: number, height: number, colorAt: (x: number, y: number) => Color): Buffer {
   const pixels = Buffer.alloc(width * height * 4, 255)
   for (let y = 0; y < height; y++) {
@@ -131,7 +130,6 @@ function solidCard(color: Color): (width: number, height: number) => Buffer {
   return (width, height) => paintedCard(width, height, () => color)
 }
 
-// A grey ramp from black to white across the top half, and red, green and blue thirds below: what an HDR test file holds, so its tone-mapped picture can be compared with this one.
 export function hdrCard(width: number, height: number): Buffer {
   const bars = [
     { red: 255, green: 0, blue: 0 },
@@ -147,12 +145,10 @@ export function hdrCard(width: number, height: number): Buffer {
   })
 }
 
-// Black on the left half, white on the right: one hard edge down the middle.
 function edgeCard(width: number, height: number): Buffer {
   return paintedCard(width, height, (x) => (x < width / 2 ? BLACK : WHITE))
 }
 
-// A magenta subject in the middle of a green screen: the middle three eighths of the width and four ninths of the height.
 function greenScreenCard(width: number, height: number): Buffer {
   return paintedCard(width, height, (x, y) => {
     const isSubject = x >= width * 0.3125 && x < width * 0.6875 && y >= height * (5 / 18) && y < height * (13 / 18)
@@ -166,7 +162,6 @@ function repeatedCard(card: Buffer = alphaCard(320, 180)): Buffer {
   return Buffer.concat(Array<Buffer>(ALPHA_CLIP_FRAMES).fill(card))
 }
 
-// SDR white sits at 203 nits, where BT.2408 puts the reference white of HDR video.
 function hdrClip(name: string, transfer: 'arib-std-b67' | 'smpte2084'): Recipe {
   const toHdr = `zscale=tin=bt709:pin=bt709:min=gbr:rin=full:t=${transfer}:p=bt2020:m=bt2020nc:r=tv:npl=203,format=yuv420p10le`
   const x265 = `colorprim=bt2020:transfer=${transfer}:colormatrix=bt2020nc:log-level=error`
@@ -180,17 +175,13 @@ function hdrClip(name: string, transfer: 'arib-std-b67' | 'smpte2084'): Recipe {
   }
 }
 
-// Even frame times for ten seconds, then every other frame 13 ms late. The average rate stays 30 fps, so only the times late in the file tell.
 export const LATE_JITTER_FRAME = 300
 
-// Pictures until 9 s, none for 12 s, as a phone records a screen that does not change, then pictures again until 24 s, with a click at 23 s.
 export const GAP_START_FRAME = 270
 export const GAP_END_FRAME = 630
 export const GAP_CLICK_SECONDS = 23
-// Twenty hours of silence with a click at the same second of every minute, made by repeating one minute without re-encoding. MP4 keeps exact sample times; Matroska rounds them to the millisecond.
 export const LONG_CLICK_SECOND = 30
 export const LONG_MINUTES = 1200
-// Ten minutes of a five-second 1080p clip, made the same way, for an export at 50×.
 const TIMELAPSE_REPEATS = 120
 
 type Recipe = {
@@ -444,7 +435,6 @@ const RECIPES: readonly Recipe[] = [
   silentClip('8k.mp4', ['-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', ...BT709_TAGS], { pattern: { width: 7680, height: 4320, rate: '30' }, frames: 4 }),
   silentClip('4k-long-gop.mp4', ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '30', '-pix_fmt', 'yuv420p', '-g', '250', ...BT709_TAGS], { pattern: { width: 3840, height: 2160, rate: '30' }, frames: 300 }),
   silentClip('1080p.mp4', ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26', '-pix_fmt', 'yuv420p', '-g', '60', ...BT709_TAGS], { pattern: { width: 1920, height: 1080, rate: '30' }, frames: 150 }),
-  // Kept small: the ten minutes made from it are only decoded, never looked at closely.
   silentClip('timelapse-part.mp4', ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '40', '-pix_fmt', 'yuv420p', '-g', '60', ...BT709_TAGS], { pattern: { width: 1920, height: 1080, rate: '30' }, frames: 150 }),
   {
     name: 'timelapse-1080p.mp4',

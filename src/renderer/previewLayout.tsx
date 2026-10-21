@@ -2,7 +2,6 @@ import type { ReactElement } from 'react'
 import type { Size } from '../shared/exportPresets.js'
 import type { EngineHost } from './engineHost.js'
 
-// Fitted to the panel, or a percentage of the canvas's own pixels: at 100 % one canvas pixel is one pixel of the screen.
 export type PreviewZoom = 'fit' | number
 
 const PERCENT = 100
@@ -13,8 +12,6 @@ function previewSize(canvas: Size, stage: DOMRect, zoom: PreviewZoom): Size {
   return { width: canvas.width * scale, height: canvas.height * scale }
 }
 
-// Keeps the preview element at the project's aspect ratio and tells the engine how many device pixels to draw.
-// Above 100 % the canvas's own pixels are shown larger, each a square of screen pixels: drawing more of them would show nothing more and cost memory.
 export function keepPreviewSized(preview: HTMLCanvasElement, stage: HTMLElement, canvas: Size, zoom: PreviewZoom, engine: EngineHost): () => void {
   const isMagnified = zoom !== 'fit' && zoom > PERCENT
   function layOut(): void {

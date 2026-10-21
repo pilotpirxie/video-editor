@@ -3,7 +3,6 @@ import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { ROOT, bundledFfmpeg, probeExport, projectIn, scratchDirectory, uiTest } from '../helpers.js'
 
-// A ten-minute tutorial is built and exported through the real window. The run with a new user on an M1 with 4 GB of memory is done by hand; this is the part a machine can repeat.
 const MEDIA_DIRECTORY = join(ROOT, 'test', 'media', 'generated', 'acceptance')
 const SECOND = 24_000_000
 const TUTORIAL_SECONDS = 600
@@ -15,9 +14,7 @@ const MAX_PEAK_MEGABYTES = 1500
 const ffmpeg = bundledFfmpeg()
 const scratch = scratchDirectory('acceptance')
 
-// The sources a tutorial is made of. They take a while to make, so they are made once and kept.
 const SOURCES: readonly { name: string; args: readonly string[] }[] = [
-  // Like a screen recording: a picture that mostly stands still, with a counter that changes every frame.
   {
     name: 'screen.mp4',
     args: ['-f', 'lavfi', '-i', `testsrc=size=1920x1080:rate=30:duration=${TUTORIAL_SECONDS}`, '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-g', '60'],
@@ -56,7 +53,6 @@ describe('a ten-minute tutorial', () => {
       expect(exported.audio).toMatchObject({ codec_name: 'aac' })
       expect(Math.abs(exported.duration - TUTORIAL_SECONDS)).toBeLessThanOrEqual(FRAME_SECONDS)
 
-      // The export speed is reported, not judged: export speed is tested on its own in test/engine/limits.test.ts, and this run exports while the editor is still preparing the recording.
       const exportSpeed = TUTORIAL_SECONDS / Number(report.exportSeconds)
       // Written straight to the output: the test runner shows what a test logs only when it fails.
       process.stdout.write(`Exported ten minutes in ${Math.round(Number(report.exportSeconds))} s (${exportSpeed.toFixed(1)}x real time); peak memory ${String(report.peakMemoryMegabytes)} MB\n`)

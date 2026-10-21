@@ -4,7 +4,6 @@ import { endOf } from './clips.js'
 
 export type Snap = {
   delta: number
-  // Where the guide line goes; undefined when nothing was close enough.
   guide: number | undefined
 }
 
@@ -24,7 +23,6 @@ export function nearestWithin(value: number, targets: readonly number[], range: 
   return nearest
 }
 
-// Moves `delta` so that one of the edges lands exactly on the closest target, if any edge comes within range of one.
 export function snapDelta(edges: readonly number[], delta: number, targets: readonly number[], range: number): Snap {
   let best: Snap = { delta, guide: undefined }
   let bestDistance = Infinity
@@ -40,7 +38,6 @@ export function snapDelta(edges: readonly number[], delta: number, targets: read
   return best
 }
 
-// Everything a moving or trimmed clip edge can snap to on the timeline.
 export function timelineTargets(project: Project, movingIds: ReadonlySet<string>, playhead: number): number[] {
   const targets = new Set<number>([0, playhead])
   for (const track of project.tracks) {

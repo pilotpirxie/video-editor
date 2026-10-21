@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { FRAME, SECOND, projectOf, reopened } from '../../test/fixtures.js'
 import type { CameraKeyframe, Project } from '../shared/project.js'
-import { deleteZoom, fittedView, frameOf, moveZoom, setViewAt, setZoom, viewFromCorner, zoomIndexAt } from './camera.js'
+import { deleteZoom, clampedView, frameOf, moveZoom, setViewAt, setZoom, viewFromCorner, zoomIndexAt } from './camera.js'
 
 const CANVAS = { width: 1920, height: 1080 }
 
@@ -13,11 +13,11 @@ function zoom(time: number, scale = 2): CameraKeyframe {
   return { time, duration: SECOND, easing: 'easeInOut', x: 960, y: 540, scale }
 }
 
-describe('fittedView', () => {
+describe('clampedView', () => {
   it('keeps the frame inside the canvas and the scale between the whole canvas and ten times', () => {
-    expect(fittedView(CANVAS, { x: 0, y: 2000, scale: 2 })).toEqual({ x: 480, y: 810, scale: 2 })
-    expect(fittedView(CANVAS, { x: 300, y: 300, scale: 0.5 })).toEqual({ x: 960, y: 540, scale: 1 })
-    expect(fittedView(CANVAS, { x: 960, y: 540, scale: 50 })).toEqual({ x: 960, y: 540, scale: 10 })
+    expect(clampedView(CANVAS, { x: 0, y: 2000, scale: 2 })).toEqual({ x: 480, y: 810, scale: 2 })
+    expect(clampedView(CANVAS, { x: 300, y: 300, scale: 0.5 })).toEqual({ x: 960, y: 540, scale: 1 })
+    expect(clampedView(CANVAS, { x: 960, y: 540, scale: 50 })).toEqual({ x: 960, y: 540, scale: 10 })
   })
 
   it('shows a frame of the shape of the canvas', () => {

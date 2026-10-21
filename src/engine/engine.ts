@@ -13,9 +13,7 @@ import { cachedAudioReader, mix, soundRanges, type AudioReader } from './mixer.j
 import { pictureRanges, resolveFrame, type Layer } from './resolve.js'
 
 const AUDIO_BLOCK_SAMPLES = 2048
-// The media process prepares minutes around the playhead, so it is told again only when the playhead has moved this far.
 const WANT_AGAIN_AFTER_TICKS = 10 * TICKS_PER_SECOND
-// An edit sends the timeline again at most this often, so a drag does not send it on every frame.
 const WANT_INTERVAL_MS = 500
 
 function decodesNeeded(layers: readonly Layer[]): string {
@@ -30,9 +28,7 @@ export type EngineEvent =
   | { type: 'loaded'; duration: number; canvas: Canvas; problems: string[] }
   | { type: 'position'; time: number; isPlaying: boolean; droppedFrames: number; fullQualityMs: number | undefined }
   | { type: 'prepared' }
-  // The media process was told what the timeline needs now; how far that is prepared may have changed.
   | { type: 'wanted' }
-  // The GPU state of the preview is gone (the GPU process stopped) and is being made again.
   | { type: 'preview-lost' }
   | { type: 'preview-restored' }
   | { type: 'error'; message: string }
@@ -44,10 +40,8 @@ export type Engine = {
   load(projectPath: string, forPreview: boolean): Promise<void>
   setProject(project: LoadedProject): void
   setOutputSize(size: Size): void
-  // While the zoom tool is used, the paused picture shows the whole canvas, so any part of it can be framed. Playing always goes through the camera.
   showWholeCanvasWhenPaused(isShown: boolean): void
   attachAudio(port: MessagePort): void
-  // Under memory pressure the caches of pictures and sound keep a quarter of their usual size.
   setUnderPressure(isUnderPressure: boolean): void
   seek(time: number): void
   play(outputLatencySeconds: number): void
@@ -79,14 +73,12 @@ class EngineError extends Error {
 export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit: (event: EngineEvent) => void): Engine {
   const gl = surface.getContext('webgl2', { alpha: false, antialias: false, premultipliedAlpha: true })
   if (gl === null) throw new CompositorError('WebGL2 is not available on this machine')
-  // Made again when the GPU process has been restarted: the textures and programs of the old one are gone.
   let compositor = createCompositor(gl)
   let provider = createFrameProvider(media, compositor)
   const readFromMedia: AudioReader = (mediaId, firstSample, sampleCount, stretch) => media.audio(mediaId, firstSample, sampleCount, stretch)
   let readAudio = cachedAudioReader(readFromMedia, AUDIO_CACHE_BYTES)
   let isUnderPressure = false
   let isContextLost = false
-  // Paused pictures still being put together; textures let go meanwhile are freed after they have been drawn.
   let pausedRenders = 0
 
   let loaded: LoadedProject | undefined
@@ -125,7 +117,6 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     provider.collect()
   }
 
-  // Text is drawn for the largest size the camera's move reaches, so a zoom does not draw it anew on every frame.
   function textScale(project: LoadedProject, view: View): number {
     return outputScale(project) * view.largestScale
   }
@@ -148,7 +139,6 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     emit({ type: 'wanted' })
   }
 
-  // After an edit, or once the playhead has moved far, the media process hears what the timeline needs now; at most once per interval.
   function updateWanted(): void {
     if (loaded === undefined || wantTimer !== undefined) return
     const hasMovedFar = wantedAt === undefined || Math.abs(time - wantedAt) >= WANT_AGAIN_AFTER_TICKS
@@ -240,12 +230,10 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     }
 
     const frame = frameAt(position, frameTicks)
-    // The display may refresh several times per frame of the project; the frames ahead are asked for once per frame.
     if (frame !== playing.drawnFrame) {
       try {
         drawPlaying(project, playing, frame, frameTicks)
       } catch (error) {
-        // A frame that cannot be drawn stops playback, so the sound does not go on under a picture that stands still.
         pause()
         emit({ type: 'error', message: describeError(error) })
         return
@@ -360,9 +348,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     isUnderPressure = isNowUnderPressure
     const share = isUnderPressure ? UNDER_PRESSURE_SHARE : 1
     provider.setCacheShare(share)
-    // While paused nothing is drawn that would free the textures let go, so they are freed now, unless a picture being put together still uses them.
     if (playback === undefined && pausedRenders === 0) provider.collect()
-    // The sound already read is let go with the old cache; what plays next is read again from the media process.
     readAudio = cachedAudioReader(readFromMedia, AUDIO_CACHE_BYTES * share)
   }
 
@@ -417,7 +403,6 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     }
     emit({ type: 'loaded', duration: projectDuration(project.project), canvas: project.project.canvas, problems })
     if (!forPreview) return
-    // Sent before asking when it is prepared, so that answer counts what the timeline needs.
     void sendWanted()
     void announcePrepared(project)
     await showPaused()

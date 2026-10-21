@@ -7,12 +7,10 @@ const PROJECT: Project = { version: 1, canvas: { width: 640, height: 360, frameR
 
 type FakeMediaProcess = {
   clientPort: MessagePort
-  // The requests that arrived, by method.
   methods: string[]
   close(): void
 }
 
-// The other end of a port, answering every request but a save, which it never answers when `isSaveIgnored`.
 function fakeMediaProcess(isSaveIgnored = false): FakeMediaProcess {
   const channel = new MessageChannel()
   const methods: string[] = []

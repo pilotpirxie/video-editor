@@ -19,7 +19,6 @@ import { createTransport, isModalOpen, isTypingTarget, type Transport } from './
 
 const MS_PER_SECOND = 1000
 const PREPARATION_POLL_MS = 500
-// Chromium gives the preview back within a second or two of starting a new GPU process.
 const PREVIEW_RETURN_MS = 5_000
 
 type PreparationStates = Readonly<Record<string, Preparation>>
@@ -30,7 +29,6 @@ export type Session = {
   engine: EngineHost
   actions: Actions
   thumbnails: Thumbnails
-  // Decides which encoder an MP4 starts with.
   hasSmallMemory: boolean
   preparation(): PreparationStates
   onPreparation(listener: () => void): () => void
@@ -41,11 +39,8 @@ export type Session = {
   exportVideo(choices: ExportChoices): Promise<void>
   cancelExport(): void
   runMenuAction(action: MenuAction): void
-  // The keys of the actions, as chosen on this Mac.
   shortcuts: Shortcuts
-  // The View menu shows and hides the panels, which the window lays out.
   onPanelToggle(listener: (panel: Panel) => void): () => void
-  // Counts at once in this window; the main process keeps it and tells the other windows and the media process.
   changeSettings(settings: AppSettings): void
   cacheUsage(): Promise<CacheUsage>
   clearCache(): Promise<void>
@@ -60,12 +55,9 @@ type Shortcuts = {
 }
 
 const SHORTCUTS_KEY = 'shortcuts'
-// Sent on the window for the menu's Select All, before the clips are selected.
 export const SELECT_ALL_EVENT = 'editor-select-all'
-// Sent on the window for Delete and Ripple Delete, before the clips are deleted.
 export const DELETE_EVENT = 'editor-delete'
 
-// The keys are kept per Mac, for every window: a change in one window reaches the others through the storage they share.
 function createShortcuts(): Shortcuts {
   let bindings = parseBindings(localStorage.getItem(SHORTCUTS_KEY) ?? undefined)
   const listeners = new Set<() => void>()
@@ -107,7 +99,6 @@ type SentProject = {
   mediaStates: MediaStates
 }
 
-// A font this Mac does not have is drawn as the system font, and its name stays in the file for a Mac that has it.
 async function missingFontsNotice(project: Project): Promise<string | undefined> {
   let installed: string[]
   try {
@@ -140,13 +131,10 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   let recoveryWork: Promise<void> = Promise.resolve()
   let hasRecoveryFailed = false
   let isMediaConnected = true
-  // Set until the project has been read: one whose reading the media process did not live to finish is read again by the next one.
   let isOpenNeeded = info.loadFrom !== undefined
-  // Settles once a restarted media process knows the project's files; a file added before that would be forgotten by it.
   let mediaReopened: Promise<void> = Promise.resolve()
   let previewLostTimer: number | undefined
 
-  // Asked while copies are being made, as the guess of what the project needs grows with them. The offer is made once per window.
   async function offerLargerCache(): Promise<void> {
     if (isCacheOffered) return
     let usage: CacheUsage
@@ -162,7 +150,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     store.offerCacheLimit({ neededBytes: usage.neededBytes, offerGb })
   }
 
-  // Preparation is only asked about while something is still being prepared, so an idle editor does no work.
   async function pollPreparation(): Promise<void> {
     preparationTimer = undefined
     try {
@@ -192,7 +179,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     }
   })
 
-  // A preview that does not come back after the GPU process stopped comes back with the page, which reopens from the recovery file written here.
   async function reloadWithoutPreview(): Promise<void> {
     logError('The preview did not come back after the GPU process stopped; the window is loaded again', new Error(`waited ${PREVIEW_RETURN_MS} ms`))
     autosave()
@@ -209,7 +195,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     }
   }
 
-  // Every file is asked for at once, so the media process looks at several side by side; they join the project in the order given.
   async function importFiles(paths: readonly string[]): Promise<void> {
     await mediaReopened
     const known = new Set(store.getState().project.media.map((reference) => reference.path))
@@ -237,7 +222,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     await importFiles(await window.host.importMediaDialog())
   }
 
-  // Asks where a file went. The other missing files are looked for in the same folder, so one answer usually brings them all back.
   async function relink(mediaId: string): Promise<void> {
     const { wholeProject: project, mediaStates } = store.getState()
     const reference = project.media.find((candidate) => candidate.id === mediaId)
@@ -258,7 +242,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     }
   }
 
-  // The engine gets the whole project at most once per frame, however many pointer events arrived in between.
   function sendToEngine(): void {
     isSendScheduled = false
     const { wholeProject: project, mediaStates } = store.getState()
@@ -298,7 +281,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
       await media.saveProject(info.recoveryPath, project)
       hasRecoveryFailed = false
     } catch (error) {
-      // Written again at the next tick, even if nothing changes meanwhile.
       if (recovered === project) recovered = undefined
       logError('Could not write the recovery file', error, { recoveryPath: info.recoveryPath })
       if (!hasRecoveryFailed) store.notify(`Autosave is not working: ${describeErrorAsSentence(error)} Save with ⌘S to keep your work.`)
@@ -306,7 +288,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     }
   }
 
-  // While the media process is being restarted there is nothing to write with; the restart writes as soon as it is back.
   function autosave(): void {
     if (!isMediaConnected) return
     const project = store.committedProject()
@@ -315,7 +296,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     recoveryWork = writeRecovery(recoveryWork, project)
   }
 
-  // Undefined once the window is closing: no autosave may start after that.
   let autosaveTimer: number | undefined = window.setInterval(autosave, settings.autosaveSeconds * MS_PER_SECOND)
 
   function applySettings(next: AppSettings): void {
@@ -354,7 +334,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     return path.split('/').at(-1) ?? path
   }
 
-  // The export reads a copy of the project written at this moment. From here until its result has been read, a dialog holds the window, so nothing plays or changes behind it.
   async function exportVideo(choices: ExportChoices): Promise<void> {
     transport.pause()
     const { documentPath, selection } = store.getState()
@@ -369,7 +348,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
       store.notify(`The export could not start: ${describeErrorAsSentence(error)} Check that the disk has room, then export again.`)
       return
     }
-    // A PNG shows the frame under the playhead, which inside an open group is counted from the group's start.
     const playheadTime = transport.position().time + (store.getState().scope?.offset ?? 0)
     const frame = Math.round(playheadTime / frameDuration(snapshot.canvas.frameRate))
     const job = exportJobFor(choices, selectionRange(snapshot, selection), { projectPath: info.exportSnapshotPath, outputPath }, frame)
@@ -377,7 +355,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     window.host.startExport(job)
   }
 
-  // Nothing comes back from a cancelled export: its window is closed and its unfinished file removed.
   function cancelExport(): void {
     window.host.cancelExport()
     store.setExportStatus(undefined)
@@ -397,7 +374,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     if (exportStatus === undefined && projectDuration(wholeProject) > 0) store.showExportDialog(true)
   }
 
-  // A document with unsaved changes closes only after the user has said what happens to them.
   async function close(): Promise<void> {
     store.cancel()
     const { wholeProject, savedProject } = store.getState()
@@ -431,12 +407,10 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     else if (window.dispatchEvent(new Event(SELECT_ALL_EVENT, { cancelable: true }))) actions.selectAll()
   }
 
-  // A panel with a selection of its own cancels the event while it is the one in use, and then the clips stay as they are.
   function deleteSelection(isRipple: boolean): void {
     if (window.dispatchEvent(new Event(DELETE_EVENT, { cancelable: true }))) actions.deleteSelection(isRipple)
   }
 
-  // A menu command, chosen in the menu or with its keys.
   function runMenuAction(action: MenuAction): void {
     if (action === 'export') openExportDialog()
     else if (action === 'close') void close()
@@ -476,7 +450,6 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
       return
     }
     if (command.type !== 'menu') return
-    // Under an open dialog the project can still be saved and the window closed; every other command waits for the dialog to go.
     const isForUnderADialog = command.action === 'save' || command.action === 'save-as' || command.action === 'close'
     if (isModalOpen() && !isForUnderADialog) return
     runMenuAction(command.action)
@@ -503,10 +476,8 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
       if (fonts !== undefined) notices.push(fonts)
       if (notices.length > 0) store.notify(notices.join(' '))
     } catch (error) {
-      // The media process stopped while reading: the notice says so, and the restarted one reads the project again.
       if (!isMediaConnected) return
       isOpenNeeded = false
-      // The path is not kept: Save must ask where to write instead of replacing a file that could not be read.
       store.notify(describeError(error))
     } finally {
       store.setOpening(undefined)

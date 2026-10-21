@@ -85,7 +85,6 @@ describe('moveClips', () => {
 
     const down = moveClips(up, move({ clipIds: ['a', 'music'], trackShift: -1 }))
     expect(clipIds(down)).toEqual([['b', 'a'], ['music'], [], ['c']])
-    // Below the bottom track there is nowhere to go: the group keeps its tracks.
     expect(moveClips(down, move({ clipIds: ['a', 'music'], trackShift: -1 }))).toBe(down)
   })
 
@@ -94,7 +93,6 @@ describe('moveClips', () => {
     const nearest = moveClips(project, move({ clipIds: ['a', 'b'], trackShift: 2 }))
     expect(clipIds(nearest)).toEqual([[], ['a', 'b'], ['c']])
 
-    // With room beside the clip in the way, the wanted track is taken.
     const beside = moveClips(project, move({ clipIds: ['a', 'b'], deltaTime: 2 * SECOND, trackShift: 2 }))
     expect(clipIds(beside)).toEqual([[], [], ['c', 'a', 'b']])
     reopened(beside)

@@ -6,7 +6,6 @@ export type AnimationEdge = 'in' | 'out'
 
 export const DEFAULT_ANIMATION = TICKS_PER_SECOND / 2
 
-// What each animation is called in the editor. A slide comes in from the side it is named after, and goes out to that side.
 export const ANIMATION_NAMES: Record<AnimationType, string> = {
   fade: 'Fade',
   pop: 'Pop',
@@ -18,13 +17,11 @@ export const ANIMATION_NAMES: Record<AnimationType, string> = {
   typewriter: 'Typewriter',
 }
 
-// Only a text clip has letters to show one after the other.
 export function takesAnimation(clip: Clip, type: AnimationType): boolean {
   if (!isVisual(clip)) return false
   return type !== 'typewriter' || clip.type === 'text'
 }
 
-// Sets, changes or (with no animation) takes away how the chosen clips come in or go out. An animation is never longer than its clip.
 export function setAnimation(project: Project, clipIds: readonly string[], edge: AnimationEdge, animation: Animation | undefined): Project {
   const key = edge === 'in' ? 'animationIn' : 'animationOut'
   return editClips(project, new Set(clipIds), (clip) => {

@@ -15,7 +15,6 @@ function standInKeyOf(mediaId: string, frame: number): string {
   return `keyframe:${mediaId}:${frame}`
 }
 
-// Small pictures and waveforms for the Media tab and the timeline. Every getter answers at once from memory; what is missing is fetched in the background and announced to subscribers.
 export type Thumbnails = {
   poster(mediaId: string, info: MediaInfo): ImageBitmap | undefined
   videoFrame(mediaId: string, video: VideoInfo, frame: number): ImageBitmap | undefined
@@ -33,7 +32,6 @@ export function createThumbnails(media: MediaClient, isPlaying: () => boolean): 
   let frameRequests = 0
   let retryTimer: number | undefined
 
-  // Asks whoever shows pictures to ask again in a moment. Without it a picture that was not ready would stay missing until the next edit redraws its view.
   function askAgainLater(): void {
     retryTimer ??= window.setTimeout(() => {
       retryTimer = undefined
@@ -49,7 +47,6 @@ export function createThumbnails(media: MediaClient, isPlaying: () => boolean): 
     return false
   }
 
-  // `load` answers whether it got what it wanted; a "not yet" is asked again later, once the media is further prepared.
   async function fetchOnce(key: string, load: () => Promise<boolean>): Promise<void> {
     inFlight.add(key)
     let isReady = false
@@ -88,7 +85,6 @@ export function createThumbnails(media: MediaClient, isPlaying: () => boolean): 
     return keep(key, await createImageBitmap(new ImageData(new Uint8ClampedArray(frame.data), frame.width, frame.height)))
   }
 
-  // Until the preview copy holds a frame, the keyframe before it stands in. The frame itself is asked for again later.
   async function loadKeyframe(mediaId: string, video: VideoInfo, frame: number): Promise<void> {
     const key = standInKeyOf(mediaId, frame)
     if (pictures.get(key) !== undefined) return
@@ -108,7 +104,6 @@ export function createThumbnails(media: MediaClient, isPlaying: () => boolean): 
         await loadKeyframe(mediaId, video, frame)
         return false
       }
-      // A preview frame of a source with transparency holds the picture above its alpha plane; only the picture is kept.
       const whole = await createImageBitmap(new Blob([jpeg], { type: 'image/jpeg' }))
       const pictureHeight = video.hasAlpha ? whole.height / 2 : whole.height
       const width = Math.round((whole.width * FRAME_HEIGHT) / pictureHeight)
@@ -137,7 +132,6 @@ export function createThumbnails(media: MediaClient, isPlaying: () => boolean): 
     videoFrame(mediaId, video, frame) {
       const key = `frame:${mediaId}:${frame}`
       const known = pictures.get(key)
-      // Playback needs the media process for itself, and the timeline does not scroll by hand meanwhile.
       const mayFetch = known === undefined && !isPlaying() && frameRequests < MAX_FRAME_REQUESTS && canRequest(key)
       if (mayFetch) void fetchOnce(key, () => loadVideoFrame(key, mediaId, video, frame))
       return known ?? pictures.get(standInKeyOf(mediaId, frame))

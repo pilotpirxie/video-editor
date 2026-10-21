@@ -51,7 +51,6 @@ export function isExportQuality(name: string): name is ExportQuality {
   return EXPORT_QUALITIES.some((quality) => quality === name)
 }
 
-// Each format is also the extension of its file.
 export const EXPORT_FORMATS = ['mp4', 'webm', 'gif', 'm4a', 'mp3', 'wav', 'png'] as const
 
 export type ExportFormat = (typeof EXPORT_FORMATS)[number]
@@ -78,12 +77,10 @@ export function pixelLayoutOf(format: ExportFormat): PixelLayout {
   return format === 'mp4' || format === 'webm' ? 'yuv420p' : 'rgba'
 }
 
-// The name an export is written under until it is complete.
 export function temporaryPathFor(path: string): string {
   return `${path}.part`
 }
 
-// How an MP4 is encoded: by x264, which makes the smallest files, or by the Mac's media engine, which is much faster and uses little memory.
 export const EXPORT_ENCODERS = ['x264', 'hardware'] as const
 
 export type ExportEncoder = (typeof EXPORT_ENCODERS)[number]
@@ -101,7 +98,6 @@ export const GIF_FRAME_RATES: readonly FrameRate[] = [
 
 export const DEFAULT_GIF_FRAME_RATE: FrameRate = { num: 10, den: 1 }
 
-// Presets that keep the shape of the canvas are named after their short side.
 export function shortSideOf(preset: ExportPreset): number | undefined {
   const rule: PresetRule = PRESET_RULES[preset]
   return rule.kind === 'short-side' ? rule.shortSide : undefined

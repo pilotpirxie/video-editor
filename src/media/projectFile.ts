@@ -11,9 +11,7 @@ export class ProjectFileError extends Error {
 }
 
 export type MediaLocations = {
-  // Media id to the absolute path of the file that was actually found.
   resolvedPaths: ReadonlyMap<string, string>
-  // Directory the project was loaded from; its relative paths are relative to this.
   sourceDirectory: string | undefined
 }
 
@@ -21,7 +19,6 @@ function savedReference(reference: MediaRef, locations: MediaLocations, targetDi
   const resolved = locations.resolvedPaths.get(reference.id)
   if (resolved !== undefined) return { id: reference.id, path: resolved, relativePath: relative(targetDirectory, resolved) }
 
-  // Missing media keeps pointing at the same place, so it is found again once the file is back.
   const sourceDirectory = locations.sourceDirectory
   if (reference.relativePath === '' || sourceDirectory === undefined) return reference
   const expected = resolve(sourceDirectory, reference.relativePath)

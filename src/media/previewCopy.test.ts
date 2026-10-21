@@ -114,7 +114,6 @@ describe('sparse layout', () => {
   const LONG_VIDEO = { ...VIDEO_INFO, frameCount: 5 * 60 * 60 * 30 }
   const states: MediaStates = { video: { info: { kind: 'video', duration: LONG_VIDEO.frameCount * FRAME, containerStart: 0, video: LONG_VIDEO } } }
 
-  // A clip in a group, and the clip's own start and offset, all move the frames it shows; the copy has to hold each of them.
   it.each([
     { speedPercent: 5000, rate: { num: 30, den: 1 } },
     { speedPercent: 1234, rate: { num: 30, den: 1 } },
@@ -175,7 +174,6 @@ describe('preview segments', () => {
     }
   })
 
-  // Every seventh frame from frame 2, and a step of two and a half frames, which keeps frames 0, 2, 5, 7, 10…
   it.each([
     { name: 'a whole number of frames', cadence: { step: 7 * FRAME, phase: 2 * FRAME + FRAME / 3 } },
     { name: 'a fraction of a frame', cadence: { step: 2.5 * FRAME, phase: 0 } },

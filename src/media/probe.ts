@@ -32,11 +32,9 @@ const TRANSFERS: Record<string, VideoInfo['transfer']> = { 'arib-std-b67': 'hlg'
 const DOLBY_VISION_RECORD = 'DOVI configuration record'
 // Profile 5 holds its picture in a colour space only Dolby's own decoder turns back into one that can be shown.
 const UNSHOWABLE_DOLBY_VISION_PROFILE = 5
-// A recording may turn uneven only after its first seconds, so a longer one is also sampled in its middle and near its end.
 const LONG_ENOUGH_TO_SAMPLE_AGAIN_SECONDS = 10
 const SECONDS_BEFORE_END_SAMPLE = 5
 const INDEXED_FORMATS = /(^|,)(mov|matroska|avi)(,|$)/
-// Containers whose sound has no index, so a seek lands near the place asked for rather than on it.
 const INEXACT_AUDIO_SEEK_FORMATS = /(^|,)(mp3|aac)(,|$)/
 const UNINDEXED_SEEK_PREROLL = 10 * TICKS_PER_SECOND
 
@@ -135,7 +133,6 @@ function hasUnevenFrameTimes(stream: ProbedStream, packets: readonly ProbedPacke
   return (longest - shortest) / typical > UNEVEN_INTERVAL_TOLERANCE
 }
 
-// Each sample is a run of packets read from one place in the file; the times between runs are not frame times.
 function chooseFrameTiming(stream: ProbedStream, samples: readonly (readonly ProbedPacket[])[]): { frameDuration: number; isVariableFrameRate: boolean } {
   const nominal = parseRatio(stream.r_frame_rate)
   const average = parseRatio(stream.avg_frame_rate) ?? nominal
@@ -233,7 +230,6 @@ function videoInfo(stream: ProbedStream, output: ProbeOutput, laterPackets: read
     startOffset,
     seekPreroll,
     isVariableFrameRate: timing.isVariableFrameRate,
-    // The tone mapping of HDR pictures keeps no transparency.
     hasAlpha: transfer === 'sdr' && hasAlpha(stream),
     colorMatrix: colorMatrixOf(stream),
     colorRange: isFullRange ? 'pc' : 'tv',
@@ -264,7 +260,6 @@ function mainStreams(output: ProbeOutput): { video: ProbedStream | undefined; au
   return { video, audio }
 }
 
-// The pictures of an image file: one for a still, more for an animation.
 function imagePackets(output: ProbeOutput): ProbedPacket[] {
   const { video, audio } = mainStreams(output)
   const isImageFile = IMAGE_FORMATS.test(output.format?.format_name ?? '')
@@ -327,14 +322,12 @@ async function runProbe(ffmpeg: FfmpegRunner, args: readonly string[], path: str
   return output
 }
 
-// Reads what ffprobe says about a file, with the times of its first packets or of all of them.
 function readProbe(ffmpeg: FfmpegRunner, path: string, packets: 'first' | 'all', unreadable: string): Promise<ProbeOutput> {
   const args = ['-show_format', '-show_streams', '-show_entries', 'packet=stream_index,pts_time,duration_time']
   if (packets === 'first') args.push('-read_intervals', `%+#${TIMING_SAMPLE_PACKETS}`)
   return runProbe(ffmpeg, args, path, unreadable)
 }
 
-// The packets of the main picture from a place in the file on, for the times between its frames.
 async function readLaterPackets(ffmpeg: FfmpegRunner, path: string, fromSeconds: number, unreadable: string): Promise<ProbedPacket[]> {
   const args = ['-select_streams', 'V:0', '-show_entries', 'packet=stream_index,pts_time', '-read_intervals', `${fromSeconds}%+#${TIMING_SAMPLE_PACKETS}`]
   const output = await runProbe(ffmpeg, args, path, unreadable)
@@ -356,7 +349,6 @@ export async function probeMedia(ffmpeg: FfmpegRunner, path: string): Promise<Me
   if (!existsSync(path)) throw new ProbeError(`"${name}" was not found.`)
 
   let output = await readProbe(ffmpeg, path, 'first', unreadable)
-  // An animated image that does not state its length is as long as all its pictures together, so all of them are read. These files are small.
   const isAnimationOfUnknownLength = imagePackets(output).length > 1 && !hasDuration(output)
   if (isAnimationOfUnknownLength) output = await readProbe(ffmpeg, path, 'all', unreadable)
 

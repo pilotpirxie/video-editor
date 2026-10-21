@@ -56,20 +56,16 @@ function unexpectedAnswer(request: MediaRequest): MediaRequestError {
   return new MediaRequestError(`The media process gave an unexpected answer to ${request.method}`)
 }
 
-// A save that takes longer than this has met a media process that hangs; the window is told, so closing it never waits forever.
 const SAVE_TIMEOUT_MS = 30_000
 
 export type MediaConnection = MediaClient & {
-  // Goes on through the port of a media process that was started again.
   reconnect(port: MessagePort): void
-  // Heard when the media process stops; every request until the next port fails at once.
   onClose(listener: () => void): () => void
 }
 
 export function createMediaClient(firstPort: MessagePort): MediaConnection {
   const pending = new Map<number, Pending>()
   const closeListeners = new Set<() => void>()
-  // Undefined once the media process has stopped, until a port of the next one arrives.
   let port: MessagePort | undefined
   let nextId = 1
 

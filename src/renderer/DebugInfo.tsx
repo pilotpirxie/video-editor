@@ -5,7 +5,6 @@ import { useEditorState, usePosition, useSession } from './context.js'
 import { debugReport, type DebugReportInput } from './debugReport.js'
 import { Group } from './Properties.js'
 
-// How long the Copy button says "Copied".
 const COPIED_SHOWN_MS = 1500
 
 async function systemInfo(): Promise<DebugSystemInfo | 'unavailable'> {
@@ -17,7 +16,6 @@ async function systemInfo(): Promise<DebugSystemInfo | 'unavailable'> {
   }
 }
 
-// What the editor knows about the project, the selection and the Mac, as text to copy into a bug report. Shown from the View menu.
 export function DebugInfo(): ReactElement {
   const session = useSession()
   const { store, transport } = session
@@ -27,7 +25,6 @@ export function DebugInfo(): ReactElement {
   const mediaStates = useEditorState((state) => state.mediaStates)
   const documentPath = useEditorState((state) => state.documentPath)
   const preparation = useSyncExternalStore(session.onPreparation, session.preparation)
-  // While playing, the text would change on every frame; it follows the playhead once playback stops, and Copy reads it afresh.
   usePosition((position) => (position.isPlaying ? -1 : position.time))
   const [system, setSystem] = useState<DebugReportInput['system']>('reading')
   const [isCopied, setIsCopied] = useState(false)

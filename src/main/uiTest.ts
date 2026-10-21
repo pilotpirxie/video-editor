@@ -35,7 +35,6 @@ import { FEATURE_SCENARIOS, framesShown, pick, rowInView, seekDelays, splitFirst
 
 const AUTOSAVE_TIMEOUT_MS = 20_000
 const MS_PER_SECOND = 1000
-// Long enough for a window that would load again to have done so.
 const RELOAD_WAIT_MS = 6000
 
 async function panelSizes(driver: Driver): Promise<Record<string, number>> {
@@ -79,7 +78,6 @@ async function testOpen(driver: Driver): Promise<UiTestReport> {
   return { canvasWidth: await driver.value('canvas-width'), timecode: await driver.page.text('timecode') }
 }
 
-// Builds a small project by hand, the way a user would, and reports the saved file after each stage.
 async function testEdit(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   const names = ['h264.mp4', 'audio.wav', 'image.jpg', 'broken-garbage.mp4']
@@ -92,7 +90,6 @@ async function testEdit(driver: Driver): Promise<UiTestReport> {
   const importNotice = await driver.page.text('notice')
   const hasBrokenItem = (await driver.page.evaluate(`${selector('media-broken-garbage.mp4')} !== null`)) === true
 
-  // A new project has six empty tracks. The sound, dropped on occupied space, goes onto the empty track above.
   await dragMedia(driver, 'h264.mp4', await driver.timelinePoint(0, 0, 6))
   await driver.untilUndoLabel('Undo Add Clip')
   await dragMedia(driver, 'audio.wav', await driver.timelinePoint(second / 2, 0, 6))
@@ -101,7 +98,6 @@ async function testEdit(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('duration')}.textContent.includes('00:00:08:00')`, 'the image to make the project longer')
   const placed = await driver.savedProject('placed.json')
 
-  // The image clip is dragged a little short of the end of the video clip and snaps onto it.
   const grab = await driver.timelinePoint(4 * second, 0, 6)
   const nearVideoEnd = await driver.timelinePoint(3 * second, 0, 6)
   await driver.drag(grab, { x: nearVideoEnd.x + 5, y: grab.y })
@@ -131,7 +127,6 @@ async function testEdit(driver: Driver): Promise<UiTestReport> {
 
   await driver.press('Backspace')
   await driver.untilUndoLabel('Undo Delete Clip')
-  // The paste landed on occupied space below the sound, so it made a seventh track; that track stays when its clip is deleted.
   await driver.clickAt(await driver.timelinePoint(second / 2, 0, 7))
   await driver.press('Backspace', ['meta'])
   await driver.untilUndoLabel('Undo Ripple Delete Clip')
@@ -139,7 +134,6 @@ async function testEdit(driver: Driver): Promise<UiTestReport> {
   return { posterMilliseconds, importNotice, hasBrokenItem, placed, movedAndTrimmed, split, redoLabel, afterUndo, pasted, final }
 }
 
-// Works on the 640x360 mosaic of four 320x180 clips: selects the top-left one on the canvas and moves, scales, crops and rotates it with the handles.
 async function testCanvas(driver: Driver): Promise<UiTestReport> {
   const canvasWidth = 640
   const at = (x: number, y: number): Promise<Point> => canvasPoint(driver, canvasWidth, { x, y })
@@ -149,7 +143,6 @@ async function testCanvas(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('canvas-overlay')}.dataset.selected === '1'`, 'the clicked clip to be selected')
   const selectedX = await driver.value('clip-x')
 
-  // Dropped three pixels short of the canvas centre, the clip snaps onto it.
   await driver.drag(await at(160, 90), await at(317, 90))
   await driver.untilUndoLabel('Undo Move Clip')
   const moved = await driver.savedProject('canvas-moved.json')
@@ -167,7 +160,6 @@ async function testCanvas(driver: Driver): Promise<UiTestReport> {
   await driver.page.click('crop-mode')
   const cropped = await driver.savedProject('canvas-cropped.json')
 
-  // The rotate handle sits straight above the clip's centre; dragging it to the upper right with Shift turns the clip by 45 degrees.
   const rotateHandle = centerOf(await driver.rect('handle-rotate'))
   const center = await at(340, 135)
   const reach = center.y - rotateHandle.y
@@ -187,7 +179,6 @@ async function testCanvas(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Change Opacity')
   const both = await driver.savedProject('canvas-both.json')
 
-  // Media dropped on the canvas becomes a clip on a new top track; a marquee over the top three rows of the timeline then selects their clips.
   await dragMedia(driver, 'h264.mp4', await at(320, 180))
   await driver.until(`${selector('track-4')} !== null`, 'a fifth track for the clip dropped on the canvas')
   const dropped = await driver.savedProject('canvas-dropped.json')
@@ -204,7 +195,6 @@ async function testTracks(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('track-4')} !== null`, 'the added track')
   const addedName = await driver.page.text('track-name-4')
 
-  // Whether the timeline opens scrolled to its bottom depends on start-up timing, and a view at the bottom holds on to it, so the track added on top can be out of sight.
   await rowInView(driver, 0, 4, 5)
   await driver.doubleClickAt(centerOf(await driver.rect('track-name-4')))
   await driver.until(`${selector('track-name-input')} !== null`, 'the track name to become editable')
@@ -215,12 +205,10 @@ async function testTracks(driver: Driver): Promise<UiTestReport> {
   await driver.page.click('track-hidden-1')
   await driver.page.click('track-muted-2')
   await driver.untilUndoLabel('Undo Mute Track')
-  // The top-left clip is on the locked track, so a click on it selects nothing.
   await driver.clickAt(await canvasPoint(driver, 640, { x: 160, y: 90 }))
   await sleep(POLL_INTERVAL_MS)
   const selectedOnLockedTrack = await driver.page.evaluate(`${selector('canvas-overlay')}.dataset.selected`)
 
-  // The new track is in the top row; dragging its header two rows down puts it two layers lower.
   const header = centerOf(await driver.rect('track-name-4'))
   await driver.drag(header, { x: header.x, y: header.y + 2 * TRACK_HEIGHT })
   await driver.untilUndoLabel('Undo Reorder Tracks')
@@ -253,7 +241,6 @@ async function documentWith(driver: Driver): Promise<{ title: string; isEdited: 
   return { ...documentShown(driver), width: await driver.value('canvas-width') }
 }
 
-// One project per window: New and Open with several windows, and every answer to "save your changes?" when one closes.
 async function testDocuments(driver: Driver): Promise<UiTestReport> {
   const { answers, outputDirectory } = driver.options
   if (outputDirectory === undefined) throw new PageError('This UI test needs --out <directory>')
@@ -261,7 +248,6 @@ async function testDocuments(driver: Driver): Promise<UiTestReport> {
   const secondPath = join(outputDirectory, 'second.json')
   const start = documentShown(driver)
 
-  // New opens a window of its own; the first keeps its unsaved change.
   await driver.typeInto('canvas-width', '1280')
   await untilEdited(driver, true)
   driver.menu('new')
@@ -279,19 +265,16 @@ async function testDocuments(driver: Driver): Promise<UiTestReport> {
   await untilEdited(driver, false)
   const afterSaveAs = documentShown(driver)
 
-  // Opened from the untitled window without changes, a project takes that window over.
   answers.openProject = firstPath
   other.menu('open-project')
   await untilWidth(other, '1280')
   const afterOpenInPlace = { windows: editorWindows().length, other: await documentWith(other) }
 
-  // A project that is open already is not opened twice.
   answers.openProject = secondPath
   other.menu('open-project')
   await sleep(10 * POLL_INTERVAL_MS)
   const afterOpenOfOpen = { windows: editorWindows().length, other: documentShown(other) }
 
-  // Closing a window with unsaved changes asks: Cancel keeps it, Don't Save closes it and leaves the file as it was.
   await driver.typeInto('canvas-width', '700')
   await untilEdited(driver, true)
   answers.unsavedChanges = 'cancel'
@@ -303,7 +286,6 @@ async function testDocuments(driver: Driver): Promise<UiTestReport> {
   await untilWindowCount(1)
   const secondAfterDiscard: unknown = JSON.parse(await readFile(secondPath, 'utf8'))
 
-  // Opened from a window that holds a project, a project gets a window of its own; Save on closing writes it.
   other.menu('open-project')
   const third = await driverOfNewWindow(other, [other.window])
   await untilWidth(third, '1000')
@@ -332,11 +314,9 @@ async function untilRecoveryFiles(count: number): Promise<void> {
   }
 }
 
-// Makes an edit, waits for the autosave and then dies the hard way, as a crash or a power cut would.
 async function testCrash(driver: Driver): Promise<UiTestReport> {
   await driver.typeInto('canvas-width', '1280')
   await untilEdited(driver, true)
-  // A second window has unsaved work of its own.
   driver.menu('new')
   const other = await driverOfNewWindow(driver, [driver.window])
   await other.typeInto('canvas-width', '800')
@@ -353,8 +333,6 @@ async function crashLogEntries(): Promise<unknown[]> {
   return lines.map((line): unknown => JSON.parse(line))
 }
 
-// Seconds from a crash until the window shows the autosaved work again.
-// A promise to a page that died is never kept, so the page is not asked anything until the window has loaded it again.
 async function secondsToReturn(driver: Driver, crash: () => void): Promise<number> {
   const crashedAt = Date.now()
   const reloaded = new Promise<void>((resolve) => driver.window.webContents.once('did-finish-load', () => resolve()))
@@ -379,7 +357,6 @@ function countReloads(driver: Driver): () => number {
   return () => reloads
 }
 
-// The page dies, then the GPU process does. After the page, the window loads again with the work of its last autosave; after the GPU process, it stays as it is, with its undo, and draws again. The crash log says what happened.
 async function testPageCrash(driver: Driver): Promise<UiTestReport> {
   await driver.typeInto('canvas-width', '1280')
   await untilEdited(driver, true)
@@ -404,7 +381,6 @@ async function testPageCrash(driver: Driver): Promise<UiTestReport> {
   }
 }
 
-// The media process dies under a window with unsaved work. The window is not loaded again: it keeps its work and its undo, a new media process decodes for it, and it saves.
 async function testMediaCrash(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await driver.typeInto('canvas-width', '1280')
@@ -415,7 +391,6 @@ async function testMediaCrash(driver: Driver): Promise<UiTestReport> {
   killProcess('Utility', 'Media')
   await driver.until(`${selector('notice')}?.textContent.includes('Nothing was lost') === true`, 'the media process to be restarted')
   const secondsToRestart = (Date.now() - crashedAt) / MS_PER_SECOND
-  // A frame no cache holds yet, so only the new media process can have decoded it.
   const sinceFrames = await framesShown(driver)
   const timeline = await driver.rect('timeline')
   await driver.clickAt({ x: timeline.x + timeline.width / 2, y: timeline.y + RULER_HEIGHT / 2 })
@@ -432,7 +407,6 @@ async function testMediaCrash(driver: Driver): Promise<UiTestReport> {
   }
 }
 
-// Every window that had unsaved work comes back with it.
 async function testRestore(driver: Driver): Promise<UiTestReport> {
   const other = await driverOfNewWindow(driver, [driver.window])
   await untilEdited(driver, true)
@@ -442,8 +416,6 @@ async function testRestore(driver: Driver): Promise<UiTestReport> {
   return { ...documentShown(driver), windows: editorWindows().length, width, widths, saved: await driver.savedProject('restored.json') }
 }
 
-// Measures the responsiveness budgets on whatever project is open; the test opens a 20-hour project with 4,096 clips.
-// Hours into the 4,096-clip project, each far from the last.
 const PREPARED_SEEK_HOURS = [3, 17, 9, 14, 1, 19]
 const SECONDS_PER_HOUR = 3600
 const PROJECT_HOURS = 20
@@ -454,7 +426,6 @@ async function testBudgets(driver: Driver): Promise<UiTestReport> {
   const longTasks = await watchLongTasks(driver)
   await fullQualityFrame(driver, 0)
 
-  // Frame pacing while the timeline is zoomed and scrolled with the trackpad.
   const timeline = centerOf(await driver.rect('timeline'))
   await driver.page.evaluate(`(() => {
     window.frameTimes = []
@@ -470,7 +441,6 @@ async function testBudgets(driver: Driver): Promise<UiTestReport> {
   const frameTimes = numbersIn(await driver.page.evaluate('window.frameTimes'))
   const frameIntervals = frameTimes.slice(1).map((time, index) => time - (frameTimes[index] ?? time))
 
-  // Time from a pointer movement on the canvas to the frame that shows it.
   await driver.page.evaluate(`(() => {
     window.dragDelays = []
     let movedAt
@@ -481,7 +451,6 @@ async function testBudgets(driver: Driver): Promise<UiTestReport> {
       movedAt = undefined
     }).observe(${selector('timecode')}, { attributes: true, attributeFilter: ['data-frames'] })
   })()`)
-  // On the picture itself: the overlay also covers the space around it.
   const picture = await driver.rect('preview')
   const grab = { x: picture.x + picture.width * 0.3, y: picture.y + picture.height * 0.3 }
   await driver.clickAt(grab)
@@ -489,11 +458,9 @@ async function testBudgets(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Move Clip')
   const dragDelays = numbersIn(await driver.page.evaluate('window.dragDelays'))
 
-  // Time from Undo to the frame that shows the project as it was.
   const undoMilliseconds = await delayUntilShown(driver, { shown: 'any frame' }, () => driver.menu('undo'))
   const redoMilliseconds = await delayUntilShown(driver, { shown: 'any frame' }, () => driver.menu('redo'))
 
-  // Seeking anywhere in the twenty hours, once the media is prepared.
   await driver.page.click('timeline-zoom-fit')
   const timelineWidth = (await driver.rect('timeline')).width
   await driver.until(`JSON.parse(${selector('timeline')}.dataset.view).pixelsPerSecond * ${PROJECT_HOURS * SECONDS_PER_HOUR} < ${timelineWidth + 1}`, 'the timeline to fit the whole project')
@@ -537,8 +504,6 @@ const SCENARIOS: Record<string, Scenario> = {
   ...OUTPUT_SCENARIOS,
 }
 
-// Properties starts with only Transform and Timing unfolded. The scenarios work in the other groups as someone would who unfolded them once;
-// `controls` looks at the folding itself. Set before anything is selected, so the groups are read as they first show.
 const GROUPS_TO_UNFOLD = ['Crop', 'Group', 'Callout', 'Arrow', 'Text', 'Blur', 'Highlight', 'Opacity', 'In and out', 'Volume']
 const SCENARIOS_WITH_GROUPS_AS_AT_FIRST = new Set(['controls', 'controls-kept'])
 
@@ -552,7 +517,6 @@ export async function runUiTest(window: BrowserWindow, options: UiTestOptions): 
   try {
     return await scenario(driver)
   } finally {
-    // A picture of the window as the test left it: the first thing to look at when a UI test fails.
     await driver.picture(options.scenario)
   }
 }

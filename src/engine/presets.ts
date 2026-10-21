@@ -6,8 +6,6 @@ const POP_OVERSHOOT = 1.1
 const POP_PEAK_AT = 0.6
 const ZOOM_FROM = 0.5
 
-// What an animation changes, as keyframes in the time of its clip. Opacity and scale are multiplied with what the clip has, x and y are added;
-// `letters` is the share of a text's letters that is shown. Written as keyframes, an animation can be turned into the clip's own.
 export type AnimationCurves = {
   opacity?: Keyframe[]
   scale?: Keyframe[]
@@ -22,13 +20,11 @@ export type AnimatedClip = {
   animationOut?: Animation
 }
 
-// What the animations of a clip make of it at one moment.
 export type AnimationChange = {
   opacity: number
   scale: number
   offsetX: number
   offsetY: number
-  // Undefined when all letters are shown.
   letters: number | undefined
 }
 
@@ -36,7 +32,6 @@ function onGrid(time: number): number {
   return Math.round(time / TIMELINE_GRID) * TIMELINE_GRID
 }
 
-// An animation that brings a clip in, from time 0 of the clip.
 function curvesIn(animation: Animation, canvas: Size): AnimationCurves {
   const { type, duration } = animation
   const rise = (from: number, to: number, easing: Keyframe['easing']): Keyframe[] => [
@@ -61,7 +56,6 @@ function curvesIn(animation: Animation, canvas: Size): AnimationCurves {
 
 const MIRRORED_EASING: Record<Keyframe['easing'], Keyframe['easing']> = { linear: 'linear', easeIn: 'easeOut', easeOut: 'easeIn', easeInOut: 'easeInOut', hold: 'hold' }
 
-// The same move played backwards, ending with the clip: each stretch between two keyframes keeps its shape, turned around.
 function mirrored(keyframes: readonly Keyframe[], clipDuration: number): Keyframe[] {
   const backwards: Keyframe[] = []
   for (let index = keyframes.length - 1; index >= 0; index--) {
@@ -85,7 +79,6 @@ export function animationCurves(animation: Animation, edge: 'in' | 'out', clipDu
   return leaving
 }
 
-// The curves of both animations of a clip; where both change the same thing, a clip has two curves for it.
 function clipAnimationCurves(clip: AnimatedClip, canvas: Size): AnimationCurves[] {
   const curves: AnimationCurves[] = []
   if (clip.animationIn !== undefined) curves.push(animationCurves(clip.animationIn, 'in', clip.duration, canvas))
@@ -107,7 +100,6 @@ export function animationChangeAt(clip: AnimatedClip, localTime: number, canvas:
   return change
 }
 
-// The largest factor the animations of a clip scale it by. It decides how large a text is drawn and a video decoded.
 export function largestAnimationScale(clip: AnimatedClip): number {
   const isPopping = clip.animationIn?.type === 'pop' || clip.animationOut?.type === 'pop'
   return isPopping ? POP_OVERSHOOT : 1

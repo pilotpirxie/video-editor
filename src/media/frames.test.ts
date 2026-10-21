@@ -213,7 +213,6 @@ describe('decodeFrame applies colour, rotation, size and alpha', () => {
     expect(await frameOf('variable-rate.mkv', 20)).toMatchObject({ width: 320, height: 180 })
   })
 
-  // The test files hold an SDR card placed at HDR reference white, so tone mapping should give that card back, a little darker at the top where highlights get their room.
   it.each([
     ['hlg.mov', 0],
     ['pq.mov', 0],

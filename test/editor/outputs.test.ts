@@ -11,16 +11,12 @@ const scratch = scratchDirectory('outputs')
 const BYTES_PER_PIXEL = 4
 // The screen of a Mac converts colours to its display; the tests read the pixels the editor drew, before that conversion.
 const SRGB_SCREEN = '--force-color-profile=srgb'
-// Averaged over 8×8 blocks, the export differs from the screen by its compression only: the colour of fine detail, not what is where.
 const BLOCK = 8
 const MAX_PAUSED_BLOCK_ERROR = 2
 const MAX_CHANNEL_BIAS = 1.5
-// Playback draws from MJPEG preview copies, whose colour detail is softer; a camera zoomed to 300% magnifies that to about 5 levels.
-// Which frame is shown is checked apart from this, against the neighbouring frames.
 const PLAYING_BLOCK = 16
 const MAX_PLAYING_BLOCK_ERROR = 6
 const MIN_PLAYING_SAMPLES = 10
-// How far either side of the timecode a playing picture is matched against the export, to tell which frame it is.
 const NEIGHBOUR_FRAMES = 3
 const TIE = 0.05
 
@@ -62,7 +58,6 @@ async function decodedPng(path: string, size: Size): Promise<Picture> {
   return pictureOf(await ffmpeg.runOnce('ffmpeg', ['-i', path, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'], { timeoutMs: 30_000 }), size)
 }
 
-// The average signed difference of each colour channel: a shift of the whole picture that block errors would hide in the noise.
 function channelBias(a: Picture, b: Picture): number[] {
   const first = new Uint8Array(a.data)
   const second = new Uint8Array(b.data)
@@ -78,7 +73,6 @@ function framesPerSecond(project: Project): number {
   return Math.round(project.canvas.frameRate.num / project.canvas.frameRate.den)
 }
 
-// "00:00:01:15" as a frame number; timecodes count whole frames per second, so 23.976 fps counts 24.
 function frameOf(timecode: string, perSecond: number): number {
   const [hours = 0, minutes = 0, seconds = 0, frames = 0] = timecode.split(':').map(Number)
   return ((hours * 60 + minutes) * 60 + seconds) * perSecond + frames
@@ -92,7 +86,6 @@ function loadProject(name: string): Project {
 
 const reports = new Map<string, Promise<WysiwygReport>>()
 
-// Each project is opened, scrubbed, exported and played once; its checks share what that run saw.
 function wysiwyg(name: string): Promise<WysiwygReport> {
   let report = reports.get(name)
   if (report === undefined) {
@@ -105,7 +98,6 @@ function wysiwyg(name: string): Promise<WysiwygReport> {
   return report
 }
 
-// Which exported frame a picture shown while playing is: the closest of the frames around its timecode.
 function closestFrames(picture: Picture, exported: readonly Picture[], from: number, to: number): { inRange: number; elsewhere: number } {
   let inRange = Infinity
   let elsewhere = Infinity
@@ -139,8 +131,6 @@ async function expectPlaybackLikeExport(name: string): Promise<void> {
   }
 }
 
-// 12-4k-canvas, 15-blur-highlight and 22-timelapse are not here: at 100% their canvas is larger than the canvas panel, so panels cover
-// part of the capture. test/engine/parity.test.ts checks them.
 const PROJECTS = [
   '01-single-clip',
   '02-mosaic',
@@ -161,11 +151,9 @@ const PROJECTS = [
   '20-groups',
   '21-difficult-sources',
   '23-weird',
-  // Four typewriter titles and four videos under a tenfold zoom: what is read ahead overflows the cache of pictures on every frame.
   '24-cache-pressure',
 ]
 
-// A third of a second of layers with alpha: too short to sample while it plays, so only the paused preview is checked.
 const PAUSED_ONLY = ['10-alpha']
 
 describe('what is on screen is what is exported', () => {
@@ -175,13 +163,11 @@ describe('what is on screen is what is exported', () => {
     const perSecond = framesPerSecond(project)
     expect(report.canvas).toEqual({ width: project.canvas.width, height: project.canvas.height })
 
-    // The PNG of the current frame is exactly what the screen showed there, the first frame.
     const atStart = report.paused.at(-1)
     if (atStart === undefined) throw new Error('Nothing was captured')
     expect(atStart.timecode).toBe('00:00:00:00')
     expect(sameBytes(await decodedPng(report.still, report.canvas), captureOf(atStart)), 'the PNG equals the screen').toBe(true)
 
-    // The window draws what the headless engine draws, pixel for pixel.
     const frames = report.paused.map((capture) => frameOf(capture.timecode, perSecond))
     const engine = await renderFrames(name, { via: 'paused', frames })
     for (const [index, capture] of report.paused.entries()) {
@@ -190,7 +176,6 @@ describe('what is on screen is what is exported', () => {
       expect(sameBytes(captureOf(capture), drawn), `the screen at ${capture.timecode} equals the engine`).toBe(true)
     }
 
-    // The MP4 has the project's size and length, and at every captured moment it shows what the screen showed.
     const probed = await probeExport(report.movie)
     expect(probed.video).toMatchObject({ width: String(project.canvas.width), height: String(project.canvas.height) })
     const exported = await decodedVideo(report.movie, report.canvas)
@@ -220,7 +205,6 @@ const CANVAS = { width: 640, height: 360 }
 const SAMPLE_RATE = 48_000
 const FRAMES_PER_SECOND = 30
 const MAX_HALF_OPACITY_ERROR = 1
-// Where the title "Hi" is drawn, in the middle of the 640 x 360 canvas.
 const TITLE_AREA = { left: 290, top: 160, width: 60, height: 40 }
 const NEAR_WHITE = 230
 const MIN_TITLE_PIXELS = 50
@@ -267,7 +251,6 @@ describe('every edit made in the window reaches the exported file', () => {
     const parsed = parseProject(JSON.stringify(report.project))
     if (!parsed.ok) throw new Error(parsed.message)
     finalProject = parsed.project
-    // The undo after each edit took it back out: what is left is the cut video and the title.
     expect(finalProject.tracks.map((track) => track.clips.map((clip) => clip.type))).toEqual([['video'], ['text'], [], [], [], []])
   })
 
@@ -352,15 +335,12 @@ describe('every edit made in the window reaches the exported file', () => {
 
 const FRAME_TICKS = TICKS_PER_SECOND / FRAMES_PER_SECOND
 const CHANNELS = 2
-// Where a drag let go is a pixel or two off on the timeline; a clip lands on a whole frame within this of where it was aimed.
 const DROP_TOLERANCE_TICKS = 2 * FRAME_TICKS
 const CANVAS_DRAG = 80
 const CANVAS_DRAG_TOLERANCE = 4
 const MAX_TURNED_ERROR = 1
 const MAX_RED_ERROR = 2
-// The fade through black is at its darkest on the cut, and the picture there is all but gone.
 const MAX_DARKEST_FRACTION = 0.05
-// A linear fade over a second: through its first tenth of a second the sound is under a tenth as loud, and half way it is half as loud.
 const FIRST_TENTH = 0.1
 const MAX_FIRST_TENTH_FRACTION = 0.1
 const FADE_CHECK = { start: 0.45, end: 0.55 }
@@ -390,7 +370,6 @@ function onlyVideoClip(project: Project): VideoClip {
   return clip
 }
 
-// What each exported frame must show of the test video, worked out from the saved project: the source frame of the topmost video clip, or black.
 function expectedShown(project: Project): Shown[] {
   const shown: Shown[] = []
   for (let time = 0; time < projectDuration(project); time += FRAME_TICKS) {
@@ -410,7 +389,6 @@ function shownIn(frames: readonly Picture[]): Shown[] {
   return frames.map((frame) => (meanBrightness(frame) < 1 ? 'black' : readBarcode(frame)))
 }
 
-// The largest difference of any colour channel between a picture and what each pixel should be, over the pixels `isChecked` takes.
 function largestDifference(picture: Picture, expectedAt: (x: number, y: number) => ReturnType<typeof pixelAt>, isChecked: (x: number, y: number) => boolean): number {
   let largest = 0
   for (let y = 0; y < picture.height; y++) {
@@ -488,7 +466,6 @@ describe('moves, trims, pastes, layers, canvas edits and the sound, made in the 
     const firstSecond = Array.from({ length: FRAMES_PER_SECOND }, (_, frame) => frame)
     const copy = Array.from({ length: 2 * FRAMES_PER_SECOND }, (_, frame) => frame)
     expect(frames).toEqual([...firstSecond, ...copy])
-    // Where the two overlap the sounds are mixed; before it the clip plays alone, after it the copy.
     const sound = await decodedAudio(file('pasted.wav'))
     const base = await decodedAudio(file('base.wav'))
     const oneSecond = SAMPLE_RATE * CHANNELS
@@ -507,7 +484,6 @@ describe('moves, trims, pastes, layers, canvas edits and the sound, made in the 
     const bottom = y + (IMAGE_SIZE.height * scaleY) / 2
     const onTop = await decodedPng(file('on-top.png'), CANVAS)
     const base = await decodedPng(file('base.png'), CANVAS)
-    // A pixel's centre is half a pixel in; the one pixel on each edge that the picture only partly covers is left out.
     const isInside = (px: number, py: number): boolean => px > left && px + 1 < right && py > top && py + 1 < bottom
     const isOutside = (px: number, py: number): boolean => px + 1 < left || px > right || py + 1 < top || py > bottom
     expect(largestDifference(onTop, () => ({ red: 255, green: 0, blue: 0, alpha: 255 }), isInside)).toBeLessThanOrEqual(MAX_RED_ERROR)
@@ -526,7 +502,6 @@ describe('moves, trims, pastes, layers, canvas edits and the sound, made in the 
     const base = await decodedPng(file('base.png'), CANVAS)
     const middle = CANVAS.width / 2
     expect(largestDifference(cropped, () => BLACK, (px) => px < middle)).toBe(0)
-    // The column on the edge of the crop no longer blends in the colour cropped away beside it, so it alone may differ.
     expect(largestDifference(cropped, (px, py) => pixelAt(base, px, py), (px) => px > middle)).toBe(0)
   })
 

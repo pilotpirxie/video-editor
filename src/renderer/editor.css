@@ -20,7 +20,6 @@
   font-size: var(--text-body);
 }
 
-/* The canvas and the dialogs sit straight in the window's grid; what replaces them takes the canvas's place. */
 .editor > .panel-failed {
   grid-area: canvas;
 }
@@ -29,7 +28,6 @@
   margin: 0;
 }
 
-/* Floats over the top of the canvas; only the message itself takes the pointer. */
 .notice-area {
   grid-area: canvas;
   align-self: start;
@@ -119,7 +117,6 @@
   text-align: center;
 }
 
-/* Preview mode: the canvas has the window to itself. The panels keep their sizes for when it ends. */
 .editor.previewing {
   grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
   grid-template-rows: minmax(0, 1fr) 0 0;
@@ -152,7 +149,6 @@
   overflow: auto;
 }
 
-/* Said over the middle of the canvas while it is empty. Drops pass through to what is beneath. */
 .canvas-hint {
   position: absolute;
   inset: 0;
@@ -216,7 +212,6 @@
   accent-color: var(--primary);
 }
 
-/* Beside very wide sidebars the canvas is narrow: the project length makes room so that no button is cut off. */
 @container (max-width: 450px) {
   .timecode.total {
     display: none;
@@ -250,7 +245,6 @@
   min-height: 0;
 }
 
-/* Room above the track headers for the ruler (24px) and the camera lane (22px), which the canvas beside them draws. */
 .track-headers-viewport {
   position: relative;
   flex: none;
@@ -261,7 +255,6 @@
   background: var(--panel-background);
 }
 
-/* The name of the camera lane. It stays in place while the track headers scroll under it, and covers the strip beside the ruler above it too. */
 .camera-lane-header {
   position: absolute;
   top: 0;
@@ -347,14 +340,12 @@
   background: var(--divider);
 }
 
-/* The four tabs of the library look alike: a row of tools, one line of help, then the items as rows or as tiles. */
 .library-tab {
   display: flex;
   flex-direction: column;
   min-height: 100%;
 }
 
-/* The box drawn over the Media tab to pick every file it crosses. */
 .select-box {
   position: fixed;
   border: 1px solid var(--primary);
@@ -405,7 +396,6 @@
   min-width: 0;
 }
 
-/* A row: a small picture with the name beside it. Items are dragged out, so they show they can be grabbed. */
 .library-item {
   display: flex;
   flex: 1;
@@ -431,7 +421,6 @@
   outline-offset: 0;
 }
 
-/* Selected files get a green frame round the picture, which neither hover nor the focus ring looks like. */
 .library-item.selected {
   background: var(--raised-surface);
   box-shadow: var(--raised-edge);
@@ -461,7 +450,6 @@
   overflow: hidden;
 }
 
-/* The share already prepared sits on the picture itself, which is dimmed until the file is ready. */
 .library-thumbnail.preparing > :not(.thumbnail-progress) {
   opacity: 0.45;
 }
@@ -508,7 +496,6 @@
   display: none;
 }
 
-/* As tiles: the picture above its name, as many across as the panel is wide. */
 .library-list.grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
@@ -527,7 +514,6 @@
   aspect-ratio: 16 / 9;
 }
 
-/* A tile is narrow, so its name may take two lines: "Fade through black" and "Fade through white" must not both end in "Fade throug…". */
 .library-list.grid .library-name {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -536,7 +522,6 @@
   white-space: normal;
 }
 
-/* The pictures of effects, transitions and annotations: made-up landscapes, coloured by the illustration tokens. */
 .ink-sky {
   fill: var(--illustration-sky);
 }
@@ -706,7 +691,6 @@
   vector-effect: non-scaling-stroke;
 }
 
-/* A clip that reaches past the picture: its outline shows where it is, also in the space around the canvas. */
 .outside-box {
   fill: none;
   stroke: var(--text-secondary);
@@ -737,7 +721,6 @@
   cursor: move;
 }
 
-/* The way a keyframed clip travels; only its dots take the pointer. */
 .motion-path {
   fill: none;
   stroke: var(--primary);
@@ -775,7 +758,6 @@
   padding: var(--space-2);
 }
 
-/* Everything the camera does not show at the playhead, while the zoom tool is used. */
 .camera-dim {
   fill: var(--window-background);
   fill-opacity: 0.6;
@@ -785,7 +767,6 @@
   cursor: crosshair;
 }
 
-/* The field for typing a text clip in place. Its letters are invisible so the preview underneath stays what is seen; only the caret and the selection are drawn. */
 .text-editor-frame {
   overflow: visible;
 }
@@ -811,8 +792,6 @@
   color: transparent;
 }
 
-
-/* The way into the open group, in the timeline toolbar. */
 .group-path {
   display: flex;
   align-items: center;

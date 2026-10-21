@@ -8,7 +8,6 @@ function editTrack(project: Project, trackId: string, edit: (track: Track) => Tr
   return { ...project, tracks }
 }
 
-// Without an index the track goes on top, where a new layer is expected to appear.
 export function addTrack(project: Project, track: NewTrack, index = project.tracks.length): Project {
   const tracks = [...project.tracks]
   tracks.splice(Math.min(Math.max(index, 0), tracks.length), 0, emptyTrack(track))

@@ -81,7 +81,6 @@ describe('reservedBy and conflictsOf', () => {
     const conflicts = conflictsOf(shared)
     expect(conflicts.get('split')).toEqual(['shuttle-stop'])
     expect(conflicts.get('shuttle-stop')).toEqual(['split'])
-    // Only the first action in the list answers to a shared key.
     expect(actionFor(shared, press('KeyK'))).toBe('shuttle-stop')
   })
 })

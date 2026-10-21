@@ -1,5 +1,5 @@
 import { useRef, type PointerEvent, type ReactElement } from 'react'
-import { fittedView, frameOf, setViewAt, viewFromCorner, zoomIndexAt, type ZoomFrame, type ZoomView } from '../editor/camera.js'
+import { clampedView, frameOf, setViewAt, viewFromCorner, zoomIndexAt, type ZoomFrame, type ZoomView } from '../editor/camera.js'
 import type { Point } from '../editor/geometry.js'
 import { viewAt } from '../engine/camera.js'
 import { MARGIN_PIXELS, pointOnCanvas, usePictureWidth } from './CanvasOverlay.js'
@@ -11,7 +11,6 @@ const CORNERS = ['nw', 'ne', 'se', 'sw'] as const
 type Corner = (typeof CORNERS)[number]
 
 type Gesture =
-  // The frame grows from a corner that stays where it is: the corner opposite the one that was grabbed, or the point where a new frame was started.
   | { kind: 'corner'; anchor: Point }
   | { kind: 'move'; from: Point; view: ZoomView }
 
@@ -28,8 +27,6 @@ function oppositeOf(corner: Corner): Corner {
   return corner.includes('w') ? `${vertical}e` : `${vertical}w`
 }
 
-// The zoom tool: over the whole canvas it shows the frame the camera has at the playhead and lets it be drawn, moved and sized.
-// Every drag sets the zoom at the playhead, adding one there if there is none.
 export function CameraTool(): ReactElement {
   const svgRef = useRef<SVGSVGElement>(null)
   const gestureRef = useRef<Gesture | undefined>(undefined)
@@ -58,7 +55,6 @@ export function CameraTool(): ReactElement {
     } else if (isInside && view.scale > 1) {
       gestureRef.current = { kind: 'move', from: point, view }
     } else {
-      // A frame that is the whole canvas has nowhere to move to, so a drag inside it draws a new one.
       gestureRef.current = { kind: 'corner', anchor: point }
     }
   }
@@ -71,7 +67,7 @@ export function CameraTool(): ReactElement {
     if (gesture.kind === 'corner') {
       next = viewFromCorner(canvas, gesture.anchor, point)
     } else {
-      next = fittedView(canvas, { ...gesture.view, x: gesture.view.x + point.x - gesture.from.x, y: gesture.view.y + point.y - gesture.from.y })
+      next = clampedView(canvas, { ...gesture.view, x: gesture.view.x + point.x - gesture.from.x, y: gesture.view.y + point.y - gesture.from.y })
     }
     store.update((current) => setViewAt(current, time, next))
   }
@@ -80,7 +76,6 @@ export function CameraTool(): ReactElement {
     if (gestureRef.current === undefined) return
     gestureRef.current = undefined
     finish()
-    // The zoom that was set is the selected one, so its length and easing are at hand in Properties.
     const set = zoomIndexAt(store.getState().project, time)
     if (set !== undefined) store.selectZoom(set)
   }

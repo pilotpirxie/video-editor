@@ -12,7 +12,6 @@ function expectPoint(actual: Point, expected: Point): void {
   expect(actual.y).toBeCloseTo(expected.y, 6)
 }
 
-// Where a pixel of the source picture ends up on the canvas, by the compositor's rules.
 function sourcePointOnCanvas(source: Point, crop: Crop, transform: Transform): Point {
   const box = boxOf(NATURAL, crop, transform)
   const croppedWidth = NATURAL.width - crop.left - crop.right

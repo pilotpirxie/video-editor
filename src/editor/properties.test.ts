@@ -133,7 +133,6 @@ describe('setProperties', () => {
     })
     expect(propertyAt(clipOf(added, 'a'), 'x', 3 * SECOND)).toBe(250)
 
-    // The partner takes the easing of the keyframe it is put beside.
     const updated = setProperties(added, ['a'], { x: 0.5 }, 2 * SECOND)
     expect(clipOf(updated, 'a').keyframes?.x?.[0]).toEqual({ time: 0, value: 0.5, easing: 'easeIn' })
     expect(clipOf(updated, 'a').keyframes?.y?.[0]).toEqual({ time: 0, value: 5, easing: 'easeIn' })
@@ -146,7 +145,6 @@ describe('setProperties', () => {
   it('keys every set a change touches once one of them is animated, and changes resting values otherwise', () => {
     const sized = { scaleX: [{ time: 0, value: 1, easing: 'easeOut' as const }], scaleY: [{ time: 0, value: 1, easing: 'easeOut' as const }] }
     const animated = projectOf([track('t1', [videoClip('a', 0, 4 * SECOND, { keyframes: sized })])])
-    // A corner drag changes the size and the place together.
     const dragged = setProperties(animated, ['a'], { x: 100, y: 200, scaleX: 2, scaleY: 2 }, SECOND)
     expect(clipOf(dragged, 'a')).toMatchObject({
       transform: { x: 960, y: 540, scaleX: 1 },
@@ -206,10 +204,8 @@ describe('timing', () => {
   })
 
   it('moves the later clips of the track by as much as the speed changes the length', () => {
-    // Clip b starts two seconds after a ends; the gap keeps its length both ways.
     expect(clipOf(setSpeed(sample(), ['a'], 200), 'b').start).toBe(4 * SECOND)
     expect(clipOf(setSpeed(sample(), ['a'], 50), 'b').start).toBe(10 * SECOND)
-    // Another track stays where it is.
     expect(clipOf(setSpeed(sample(), ['a'], 200), 'music').start).toBe(0)
   })
 
@@ -360,7 +356,6 @@ describe('nearestKeyframe', () => {
     expect(nearestKeyframe(clips, 'position', SECOND, 1, FRAME)).toBe(119 * FRAME)
     expect(nearestKeyframe(clips, 'position', 119 * FRAME, 1, FRAME)).toBe(7 * SECOND)
     expect(nearestKeyframe(clips, 'position', 7 * SECOND, 1, FRAME)).toBeUndefined()
-    // The keyframe before the clip starts is not one the playhead can stand on.
     expect(nearestKeyframe(clips, 'position', 0, -1, FRAME)).toBeUndefined()
   })
 })
@@ -387,7 +382,6 @@ describe('motionPath', () => {
       { time: 0, point: { x: 0, y: 0 } },
       { time: 2 * SECOND, point: { x: 200, y: 100 } },
     ])
-    // Two stretches of sixteen steps and the end, which the keyframe after the clip decides.
     expect(path?.line).toHaveLength(33)
     expect(path?.line.at(-1)).toEqual({ x: 400, y: 200 })
     expect(path?.line.every((point) => Math.abs(point.y - point.x / 2) < 1e-9)).toBe(true)

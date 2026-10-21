@@ -83,7 +83,6 @@ describe('rulerStep', () => {
     expect(rulerStep(100, FRAME)).toBe(SECOND)
     expect(rulerStep(10, FRAME)).toBe(10 * SECOND)
     expect(rulerStep(0.014, FRAME)).toBe(7200 * SECOND)
-    // Two hundred hours across a thousand pixels: a label a day.
     expect(rulerStep(1000 / (200 * 3600), FRAME)).toBe(86_400 * SECOND)
     expect(rulerStep(600, FRAME)).toBe(5 * FRAME)
     expect(rulerStep(3000, FRAME)).toBe(FRAME)
@@ -227,7 +226,6 @@ describe('fade handles', () => {
     expect(fadeHandleAt(handles, 101, rowTop + TRACK_HEIGHT / 2)).toBeUndefined()
   })
 })
-
 
 describe('keyframe diamonds', () => {
   const flat = { pixelsPerSecond: 100, scrollX: 0, scrollY: 0 }

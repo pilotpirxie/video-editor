@@ -107,7 +107,6 @@ function listen(port: MessagePortMain, session: MediaSession, onClose: () => voi
   port.start()
 }
 
-// A window's engine worker and its UI thread each hold a port; both talk to the same session, so media the UI imports is known to the engine.
 function serve(ports: readonly MessagePortMain[], ffmpeg: FfmpegRunner, cache: DiskCache, settings: () => MediaSettings, sessions: Set<MediaSession>): void {
   const session = new MediaSession(ffmpeg, cache, undefined, settings)
   sessions.add(session)

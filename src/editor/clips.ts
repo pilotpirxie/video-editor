@@ -24,12 +24,10 @@ export function hasSource(clip: Clip): clip is VideoClip | AudioClip {
   return clip.type === 'video' || clip.type === 'audio'
 }
 
-// A clip with a volume of its own: one that plays a file, or a group, whose volume is that of everything in it.
 export function hasVolume(clip: Clip): clip is VideoClip | AudioClip | GroupClip {
   return clip.type === 'video' || clip.type === 'audio' || clip.type === 'group'
 }
 
-// Every clip on the given tracks and inside the groups on them, however deep.
 export function allClips(tracks: readonly Track[]): Clip[] {
   const clips: Clip[] = []
   for (const track of tracks) {
@@ -41,8 +39,6 @@ export function allClips(tracks: readonly Track[]): Clip[] {
   return clips
 }
 
-// A copy of a clip whose members, when it is a group, carry new ids. Two clips of a project never share an id, so a copy of a group needs one for every clip inside.
-// Nothing comes back when the map does not know a member.
 export function withMemberIds(clip: Clip, newIds: ReadonlyMap<string, string>): Clip | undefined {
   if (clip.type !== 'group') return clip
   const tracks: Track[] = []
@@ -59,17 +55,14 @@ export function withMemberIds(clip: Clip, newIds: ReadonlyMap<string, string>): 
   return { ...clip, tracks }
 }
 
-// A clip that shows or plays a media file. Text, blur and highlight clips have none.
 export function hasMedia(clip: Clip): clip is Extract<Clip, { mediaId: string }> {
   return clip.type === 'video' || clip.type === 'audio' || clip.type === 'image'
 }
 
-// Only the picture of a video or an image can be cropped: text is laid out to fit its words, and a shape has nothing to cut away.
 export function isCroppable(clip: Clip): clip is Extract<Clip, { type: 'video' | 'image' }> {
   return clip.type === 'video' || clip.type === 'image'
 }
 
-// A video clip whose sound still belongs to it: the media has sound and it was not separated.
 export function hasLinkedAudio(clip: Clip, mediaStates: MediaStates): clip is VideoClip {
   if (clip.type !== 'video' || clip.isAudioSeparated === true) return false
   const state = mediaStates[clip.mediaId]
@@ -89,8 +82,7 @@ export function locateClip(project: Project, clipId: string): ClipLocation | und
   return undefined
 }
 
-// The closest clip start or end on the given side of `time`.
-export function nearestEdit(project: Project, time: number, direction: 1 | -1): number | undefined {
+export function nearestClipEdge(project: Project, time: number, direction: 1 | -1): number | undefined {
   let nearest: number | undefined
   for (const track of project.tracks) {
     for (const clip of track.clips) {
@@ -104,7 +96,6 @@ export function nearestEdit(project: Project, time: number, direction: 1 | -1): 
   return nearest
 }
 
-// The ids of the clips on unlocked tracks that pass a test, bottom track first.
 export function unlockedClipIds(project: Project, isWanted: (clip: Clip) => boolean): string[] {
   const ids: string[] = []
   for (const track of project.tracks) {
@@ -120,7 +111,6 @@ export function emptyTrack(track: NewTrack): Track {
   return { id: track.id, name: track.name, hidden: false, locked: false, muted: false, clips: [] }
 }
 
-// An id for a new track that no track has yet, derived from `wanted` so that asking again for the same project gives the same answer.
 export function freeTrackId(project: Project, wanted: string): string {
   const taken = new Set(project.tracks.map((track) => track.id))
   let id = wanted
@@ -154,7 +144,6 @@ function fadeWithin(fade: number | undefined, duration: number): number | undefi
   return fade === undefined ? undefined : Math.min(fade, duration)
 }
 
-// A fade can never be longer than its clip, so shortening a clip shortens its fades with it.
 export function withFadesWithin(clip: Clip): Clip {
   const { duration } = clip
   if (clip.type === 'audio') {
@@ -170,7 +159,6 @@ const END_KEYS = {
   out: { fade: 'fadeOut', transition: 'transitionOut', animation: 'animationOut' },
 } as const
 
-// A clip comes in one way and goes out one way: a fade, a transition or an animation. The one kept at an end takes the others there away.
 export function withOnlyAtEnd(clip: VisualClip, edge: 'in' | 'out', kept: 'fade' | 'transition' | 'animation'): VisualClip {
   let edited = clip
   for (const kind of ['fade', 'transition', 'animation'] as const) {
@@ -180,7 +168,6 @@ export function withOnlyAtEnd(clip: VisualClip, edge: 'in' | 'out', kept: 'fade'
   return edited
 }
 
-// Applies an edit to the chosen clips on unlocked tracks; an edit that returns nothing removes the clip. Untouched tracks keep their identity.
 export function editClips(project: Project, clipIds: ReadonlySet<string>, edit: (clip: Clip) => Clip | undefined): Project {
   let hasChanged = false
   const tracks = project.tracks.map((track) => {
@@ -203,13 +190,10 @@ function isFree(track: Track, start: number, end: number, ignoredIds: ReadonlySe
 
 export type Placement = {
   clips: readonly Clip[]
-  // Row the clips were dropped on; rows past the top mean "above everything".
   trackIndex: number
   newTrack: NewTrack
 }
 
-// One rule for every drop: clips land on the row they were dropped on when it is free, otherwise on a new track directly above it.
-// An empty track already directly above is drawn at the very place in the stack a new one would be, so it is used instead, unless it would hide, silence or lock the clips.
 export function placeOnTrack(project: Project, placement: Placement): Project {
   const { clips, newTrack } = placement
   const trackIndex = Math.max(0, placement.trackIndex)

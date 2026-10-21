@@ -16,7 +16,6 @@ const SOUND_CHUNK_SAMPLES = SAMPLE_RATE
 const MS_PER_SECOND = 1000
 const NO_SOUND = new Float32Array(0)
 const NO_PICTURE = new ArrayBuffer(0)
-// Frames on their way to the encoder at once. One more hides the time each takes to cross to the media process; each holds a copy of a frame.
 const WRITES_IN_FLIGHT = 2
 
 class ExportError extends Error {
@@ -42,7 +41,6 @@ type Quality = 'stream' | 'full'
 
 type Stage = 'fetch' | 'render' | 'readback' | 'mix' | 'write'
 
-// Where the time of an export goes, in milliseconds per stage.
 type StageClock = {
   lap(stage: Stage): void
   totals(): Record<Stage, number>
@@ -61,7 +59,6 @@ function startStageClock(): StageClock {
   }
 }
 
-// Draws the picture at a moment of project time into the compositor, ready to be read.
 async function drawAt(context: RenderContext, time: number, output: Size, quality: Quality, clock?: StageClock): Promise<void> {
   const { project, media: states } = context.loaded
   const outputScale = fitCanvas(project.canvas, output).scale
@@ -85,7 +82,6 @@ function roundedTotals(clock: StageClock): Record<Stage, number> {
   }
 }
 
-// Hands an encoder all that `write` produces; on any failure the unfinished file is removed and the error says where on the timeline it stopped.
 async function encode(context: RenderContext, target: ExportTarget, write: (jobId: number) => Promise<void>, reachedTime: () => number): Promise<void> {
   const jobId = await context.media.exportStart(target)
   try {
@@ -93,7 +89,6 @@ async function encode(context: RenderContext, target: ExportTarget, write: (jobI
     await context.media.exportFinish(jobId)
   } catch (error) {
     await context.media.exportCancel(jobId)
-    // The place on the timeline tells which clip to look at.
     throw new ExportError(`The export stopped at ${timecode(reachedTime(), context.loaded.project.canvas.frameRate)}: ${describeError(error)}`, { cause: error })
   } finally {
     await context.provider.closeStreams()
@@ -165,7 +160,6 @@ async function exportPictures(context: RenderContext, job: ExportJob, format: Ex
   return { path: job.outputPath, format, frames: frameCount, ...output, realTimeRatio: Number(realTimeRatio.toFixed(2)), stageMs: roundedTotals(clock) }
 }
 
-// Sound alone needs no pictures: the mix is made a second at a time.
 async function exportSound(context: RenderContext, job: ExportJob, format: ExportFormat, onProgress: ProgressListener): Promise<JobSummary> {
   const { project, media: states } = context.loaded
   const range = job.range ?? { start: 0, end: projectDuration(project) }
@@ -192,7 +186,6 @@ async function exportSound(context: RenderContext, job: ExportJob, format: Expor
   return { path: job.outputPath, format, samples: endSample - firstSample }
 }
 
-// The picture at one frame, at the size of the project, made from the original files the way the paused preview is.
 async function exportStill(context: RenderContext, job: ExportJob): Promise<JobSummary> {
   const { project } = context.loaded
   const output: Size = { width: project.canvas.width, height: project.canvas.height }

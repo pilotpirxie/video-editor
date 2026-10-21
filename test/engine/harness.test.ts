@@ -55,7 +55,6 @@ describe('dev harness', () => {
     expect(report.droppedFrames).toBe(0)
     expect(report.fullQualityMilliseconds.afterScrub).toBeLessThanOrEqual(MAX_PAUSED_FRAME_MS)
     expect(report.fullQualityMilliseconds.atActualSize).toBeLessThanOrEqual(MAX_PAUSED_FRAME_MS)
-    // Paused under its 2x zoom the second project reads four layers at full size, which is not the typical case the limit is for; its memory is printed above and judged while exporting.
     if (project === 'demo-four-layers') expect(report.peakMemoryMegabytes).toBeLessThanOrEqual(MAX_TYPICAL_MEMORY_MB)
   })
 

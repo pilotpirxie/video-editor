@@ -10,7 +10,6 @@ const TABS = ['Performance', 'Editing', 'Shortcuts'] as const
 
 type SettingsTab = (typeof TABS)[number]
 
-// The key of an action that is waiting for its new keys: an existing one, or, at the end of the list, a new one.
 type Recording = {
   action: ShortcutAction
   slot: number
@@ -20,7 +19,6 @@ function nameOf(action: ShortcutAction): string {
   return SHORTCUT_ACTIONS.find((entry) => entry.action === action)?.name ?? action
 }
 
-// The Settings dialog. On its Shortcuts tab every action can be given up to two keys; a key is changed by pressing its button and then the new keys. Changes count at once and are kept on this Mac.
 export function ShortcutSettings(): ReactElement {
   const { store, shortcuts, changeSettings } = useSession()
   const bindings = useSyncExternalStore(shortcuts.subscribe, shortcuts.get)
@@ -50,7 +48,6 @@ export function ShortcutSettings(): ReactElement {
     setRefusal(undefined)
   }
 
-  // A key waiting for its new keys would otherwise take the next press on another tab.
   function showTab(next: SettingsTab): void {
     setTab(next)
     record(undefined)
@@ -72,7 +69,6 @@ export function ShortcutSettings(): ReactElement {
       record(undefined)
       return
     }
-    // A modifier on its own is the start of the keys, not all of them.
     const pressed = bindingOf(event)
     if (pressed === undefined) return
     const owner = reservedBy(pressed)
@@ -94,7 +90,6 @@ export function ShortcutSettings(): ReactElement {
     event.preventDefault()
   }
 
-  // Escape stops the recording, and only without one does it close the dialog.
   function onCancel(event: SyntheticEvent<HTMLDialogElement>): void {
     if (recording === undefined) return
     event.preventDefault()

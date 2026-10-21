@@ -20,7 +20,6 @@ function at(x: number, y: number, scale: number): Transform {
 const FILL = at(320, 180, 2)
 const LOW = at(320, 270, 0.5)
 
-// A red picture that gives way to a blue one, both filling the canvas.
 function redToBlue(type: TransitionType): Clip[] {
   return [imageOf('image-red.png', 'red', EARLIER, FILL), imageOf('image-blue.png', 'blue', LATER, FILL, { transitionIn: { type, duration: LENGTH } })]
 }
@@ -51,7 +50,6 @@ describe('transition arithmetic', () => {
     { footage: 'that ends with the clip', sourceStart: SECOND, shown: 59 },
     { footage: 'that goes on after the clip', sourceStart: 0, shown: 35 },
   ])('shows footage $footage past the cut: frame $shown of the file', async ({ sourceStart, shown }) => {
-    // The new picture slides in low on the canvas, so the frame number at the top of the old one stays readable.
     const tracks = [[videoOf('h264.mp4', 'old', EARLIER, FILL, { sourceStart }), imageOf('image-red.png', 'new', LATER, LOW, { transitionIn: { type: 'slide', duration: LENGTH } })]]
     const paused = await framesOf(`leaving-${shown}`, tracks, [CUT_FRAME + 5])
     const exported = await framesOf(`leaving-${shown}`, tracks, [CUT_FRAME + 5], 'export')
@@ -63,7 +61,6 @@ describe('transition arithmetic', () => {
     { footage: 'that starts with the clip', sourceStart: 0, shown: 0 },
     { footage: 'from before the clip', sourceStart: SECOND, shown: 28 },
   ])('shows footage $footage ahead of the cut: frame $shown of the file', async ({ sourceStart, shown }) => {
-    // A wipe from the top has uncovered the frame number of the new picture two frames before the cut.
     const tracks = [[imageOf('image-red.png', 'old', EARLIER, LOW), videoOf('h264.mp4', 'new', LATER, FILL, { sourceStart, transitionIn: { type: 'wipeDown', duration: LENGTH } })]]
     const paused = await framesOf(`arriving-${shown}`, tracks, [CUT_FRAME - 2])
     const exported = await framesOf(`arriving-${shown}`, tracks, [CUT_FRAME - 2], 'export')
@@ -73,7 +70,6 @@ describe('transition arithmetic', () => {
 })
 
 describe('transition golden images', () => {
-  // The reference project has one transition on each of its cuts, a second apart: eleven, then a clip on its own with one at each end, then the rest.
   const FIRST_CUTS: TransitionType[] = ['crossDissolve', 'fadeBlack', 'fadeWhite', 'wipeLeft', 'wipeRight', 'wipeUp', 'wipeDown', 'slide', 'push', 'zoom', 'circleReveal']
   const LATER_CUTS: TransitionType[] = ['wipeUpLeft', 'wipeUpRight', 'wipeDownLeft', 'wipeDownRight', 'slideRight', 'slideUp', 'slideDown', 'pushRight', 'pushUp', 'pushDown', 'shrink', 'spin', 'circleClose']
   const FIRST_LATER_CUT = 450

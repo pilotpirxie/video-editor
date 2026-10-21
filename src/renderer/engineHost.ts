@@ -8,7 +8,6 @@ declare global {
   }
 }
 
-// A window's two ends of its connection to the media process: one for the engine worker, one for the page.
 export type MediaPorts = {
   engine: MessagePort
   ui: MessagePort
@@ -18,7 +17,6 @@ export type EngineHost = {
   send(command: WorkerCommand, transfer?: Transferable[]): void
   onEvent(listener: (event: WorkerEvent) => void): () => void
   uiMediaPort: Promise<MessagePort>
-  // The ports of a media process that was started again. The first ports go straight to the engine and to `uiMediaPort`.
   onReconnect(listener: (ports: MediaPorts) => void): void
 }
 
@@ -31,14 +29,12 @@ export function startEngine(canvas: HTMLCanvasElement | undefined): EngineHost {
   const worker = new Worker(new URL('./engineWorker.ts', import.meta.url), { type: 'module' })
   let hasMediaPorts = false
   let reconnectListener: ((ports: MediaPorts) => void) | undefined
-  // Ports of a restarted media process that arrived before anyone listened for them.
   let waitingPorts: MediaPorts | undefined
 
   function send(command: WorkerCommand, transfer: Transferable[] = []): void {
     worker.postMessage(command, transfer)
   }
 
-  // An error the engine did not catch is told like any error of the engine, instead of only reaching the console.
   worker.addEventListener('error', (event) => {
     event.preventDefault()
     logError('The engine failed', new Error(event.message), { file: event.filename, line: event.lineno })

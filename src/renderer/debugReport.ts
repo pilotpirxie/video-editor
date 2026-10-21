@@ -3,13 +3,11 @@ import type { DebugSystemInfo, Preparation } from '../shared/mediaProtocol.js'
 import { projectDuration, type Clip, type Project, type Track } from '../shared/project.js'
 import { TICKS_PER_SECOND, timecode, type FrameRate } from '../shared/time.js'
 
-// Selecting every clip of a long project would make the text too long to read or paste; the rest are only counted.
 const MAX_DETAILED_CLIPS = 20
 const BYTES_PER_MEGABYTE = 1024 * 1024
 const BYTES_PER_GIGABYTE = 1024 * BYTES_PER_MEGABYTE
 
 export type DebugReportInput = {
-  // What the timeline shows: the project, or the inside of the open group.
   project: Project
   openGroups: readonly string[]
   selection: readonly string[]
@@ -17,10 +15,8 @@ export type DebugReportInput = {
   preparation: Readonly<Record<string, Preparation>>
   playhead: number
   droppedFrames: number
-  // How long the last paused frame took to come from the original files.
   fullQualityMs: number | undefined
   documentPath: string | undefined
-  // Asked of the main process when the panel opens; 'reading' until it answers.
   system: DebugSystemInfo | 'reading' | 'unavailable'
 }
 
@@ -63,7 +59,6 @@ function clipLines(clip: Clip, track: Track, input: DebugReportInput): string[] 
   return [`Clip ${clip.id} | ${clip.type} on ${track.name} | ${timing.join(' | ')}`, ...mediaLines(clip, input), `  json ${JSON.stringify(clip)}`]
 }
 
-// Plain text about the project and the selected clips, to be copied into a bug report. Times are in seconds, timecode and, in the JSON, ticks.
 export function debugReport(input: DebugReportInput): string {
   const { project } = input
   const rate = project.canvas.frameRate

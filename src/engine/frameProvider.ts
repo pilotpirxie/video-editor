@@ -24,7 +24,6 @@ type Picture = {
 type OpenStream = {
   id: Promise<number>
   shown: GpuTexture | undefined
-  // The next frame, asked for while the last one was drawn.
   ahead: { frame: number; raw: Promise<RawFrame> } | undefined
 }
 
@@ -32,9 +31,7 @@ export type FrameProvider = {
   itemsFor(layers: readonly Layer[], quality: FrameQuality, outputScale: number, signal?: AbortSignal): Promise<DrawItem[]>
   itemsNow(layers: readonly Layer[], outputScale: number): { items: DrawItem[]; lateLayers: number }
   prepare(layers: readonly Layer[], outputScale: number): Promise<void>
-  // Asks the streams for the frames of the next export frame now, so they are decoded while this one is drawn and written.
   prefetchStreams(layers: readonly Layer[]): void
-  // Keeps this part of the usual cache of pictures; what no longer fits is freed by the next `collect`.
   setCacheShare(share: number): void
   collect(): void
   closeStreams(): Promise<void>
@@ -47,7 +44,6 @@ function isDrawn(layer: PictureLayer): layer is DrawnLayer {
   return layer.kind === 'text' || layer.kind === 'callout' || layer.kind === 'arrow'
 }
 
-// Everything a drawn layer's picture depends on: what it shows, and how large it is drawn.
 function drawnKey(layer: DrawnLayer, outputScale: number): string {
   const shownLetters = layer.kind === 'text' ? layer.shownLetters : undefined
   return `${layer.kind}:${JSON.stringify([layer.look, shownLetters, layer.sharpScaleX * outputScale, layer.sharpScaleY * outputScale])}`
@@ -58,7 +54,6 @@ function videoKey(layer: VideoLayer, quality: 'preview' | 'full'): string {
   return `full:${layer.mediaId}:${layer.frame}:${layer.halvings}`
 }
 
-// Blur and highlight layers have no picture of their own: they are drawn from what is beneath them.
 function hasPicture(layer: Layer): layer is PictureLayer {
   return layer.kind !== 'blur' && layer.kind !== 'highlight'
 }
@@ -101,7 +96,6 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     else retired.push(texture)
   }
 
-  // A texture the cache let go of while it was shown is released once nothing shows it any more.
   function releaseIfLetGo(texture: GpuTexture): void {
     if (!evictedWhileShown.has(texture) || isShown(texture)) return
     evictedWhileShown.delete(texture)
@@ -291,7 +285,6 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
       drawnClips.add(layer.clipId)
       const key = playbackKey(layer, outputScale)
       let ready = pictures.get(key)
-      // Words and shapes need no media, so one the read-ahead has not drawn in time is drawn now: exactly as exported, at worst a slow frame.
       if (ready === undefined && isDrawn(layer)) {
         ready = drawnPicture(layer, outputScale)
         pictures.set(key, ready, ready.texture.bytes)

@@ -16,7 +16,6 @@ function at(x: number, y: number, scale: number, rotation = 0): Transform {
 
 const TITLE: Clip = { id: 'title', type: 'text', text: 'Sharp 清晰', font: { family: 'Helvetica Neue', size: 60 }, color: '#FFFFFF', align: 'center', ...SPAN, transform: at(700, 300, 1), opacity: 1 }
 
-// The picture a zoom shows, made without a camera: every clip enlarged and moved to where the zoom would show it.
 function zoomedByHand(clip: Clip): Clip {
   if (clip.type === 'audio') return clip
   const { transform } = clip
@@ -27,7 +26,6 @@ function zoomedByHand(clip: Clip): Clip {
 
 describe('camera', () => {
   it('draws a zoom at the zoomed size: text, a picture and 4K footage give the same bytes as when each is enlarged by hand', async () => {
-    // The footage is 4K at half size. Only when the zoom reads it at full size can it match the clip that is drawn at full size.
     const clips = [videoOf('4k-long-gop.mp4', 'footage', SPAN, at(960, 540, 0.5)), imageOf('image-alpha.png', 'card', SPAN, at(900, 500, 1.5, 12)), TITLE]
     const camera: CameraKeyframe[] = [{ time: 0, duration: FRAME, easing: 'hold', ...CENTRE, scale: ZOOM }]
     const request = { via: 'paused', frames: [3] } as const
@@ -45,7 +43,6 @@ describe('camera', () => {
   it('keeps a zoomed picture out of the bars of an output with another shape', async () => {
     const size = { width: 360, height: 360 }
     const picture = pictureAt(await renderFrames('13-camera', { via: 'paused', frames: [45], size }), 0)
-    // The 16:9 canvas fits into the square as a band 202.5 pixels high.
     expect(litFraction(cropPicture(picture, 0, 0, 360, 78))).toBe(0)
     expect(litFraction(cropPicture(picture, 0, 282, 360, 78))).toBe(0)
     expect(litFraction(cropPicture(picture, 0, 80, 360, 200))).toBeGreaterThan(0.99)

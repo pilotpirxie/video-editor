@@ -15,9 +15,7 @@ export type Clipboard = {
 export type Paste = {
   clipboard: Clipboard
   at: number
-  // One id per pasted clip, and one track per source track in case its row is taken.
   clipIds: readonly string[]
-  // The ids for the copies of the clips inside pasted groups, by the id of the clip that was copied.
   memberIds: ReadonlyMap<string, string>
   newTracks: readonly NewTrack[]
 }
@@ -26,7 +24,6 @@ export function deleteClips(project: Project, clipIds: readonly string[]): Proje
   return editClips(project, new Set(clipIds), () => undefined)
 }
 
-// Removes the clips and moves everything after each one left by its length, so no gap is left behind.
 export function rippleDelete(project: Project, clipIds: readonly string[]): Project {
   const removed = new Set(clipIds)
   const tracks = project.tracks.map((track) => {
@@ -85,8 +82,8 @@ export function pasteClips(project: Project, paste: Paste): Project {
       nextClipId += 1
       clips.push({ ...copy, id, start: copied.clip.start - firstStart + at })
     }
-    // Rows inserted for earlier groups push the later source rows up by one each.
-    const trackIndex = sourceRow + (pasted.tracks.length - project.tracks.length)
+    const rowsInsertedSoFar = pasted.tracks.length - project.tracks.length
+    const trackIndex = sourceRow + rowsInsertedSoFar
     pasted = placeOnTrack(pasted, { clips, trackIndex, newTrack })
   }
   return pasted

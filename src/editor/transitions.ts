@@ -4,7 +4,6 @@ import { editClips, endOf, isVisual, locateClip, withOnlyAtEnd } from './clips.j
 
 export const DEFAULT_TRANSITION = TICKS_PER_SECOND
 
-// What each transition is called in the editor.
 export const TRANSITION_NAMES: Record<TransitionType, string> = {
   crossDissolve: 'Cross-dissolve',
   fadeBlack: 'Fade through black',
@@ -32,7 +31,6 @@ export const TRANSITION_NAMES: Record<TransitionType, string> = {
   circleClose: 'Circle close',
 }
 
-// The start of a clip or its end. A transition at the start of a clip that touches the clip before it is the transition on their cut.
 export type TransitionEdge = 'in' | 'out'
 
 export type TransitionTarget = {
@@ -40,7 +38,6 @@ export type TransitionTarget = {
   edge: TransitionEdge
 }
 
-// Where a transition lies on the timeline: centred on a cut, otherwise inside its clip.
 type TransitionSpan = {
   from: number
   to: number
@@ -63,8 +60,6 @@ type Spans = {
   out: TransitionSpan | undefined
 }
 
-// The transitions that play at the two ends of a clip, where they lie. `before` and `after` are the clips next to it on its track, which make a cut where they touch it.
-// The end has no transition of its own while the clip after it brings one to their cut.
 export function transitionSpans(clip: VisualClip, before: Clip | undefined, after: Clip | undefined): Spans {
   const into = clip.transitionIn
   const isOnCut = before !== undefined && isVisual(before) && endOf(before) === clip.start
@@ -83,7 +78,6 @@ function spansOn(track: Track, clip: VisualClip): Spans {
   return transitionSpans(clip, touchingBefore(track, clip), touchingAfter(track, clip))
 }
 
-// Where a transition dropped at a time on a track goes: the start of the clip there in its first half; in its second half its end, or the cut with the clip that follows it.
 export function transitionTargetAt(project: Project, trackIndex: number, time: number): TransitionTarget | undefined {
   const track = project.tracks[trackIndex]
   if (track === undefined || track.locked) return undefined
@@ -94,30 +88,27 @@ export function transitionTargetAt(project: Project, trackIndex: number, time: n
   return next === undefined ? { clipId: clip.id, edge: 'out' } : { clipId: next.id, edge: 'in' }
 }
 
-// How much of a clip its transition at one end takes up.
-function taken(span: TransitionSpan | undefined, clip: Clip): number {
+function lengthInsideClip(span: TransitionSpan | undefined, clip: Clip): number {
   return span === undefined ? 0 : Math.min(span.to, endOf(clip)) - Math.max(span.from, clip.start)
 }
 
-// The longest a transition at this place can be without sharing time with another transition of the clips it touches.
 export function longestTransition(project: Project, target: TransitionTarget): number {
   const located = locateClip(project, target.clipId)
   if (located === undefined || !isVisual(located.clip)) return 0
   const { track, clip } = located
   const spans = spansOn(track, clip)
-  if (target.edge === 'out') return clip.duration - taken(spans.in, clip)
+  if (target.edge === 'out') return clip.duration - lengthInsideClip(spans.in, clip)
 
   const next = touchingAfter(track, clip)
   const cutAfter = next?.transitionIn === undefined ? 0 : next.transitionIn.duration / 2
-  const free = clip.duration - Math.max(taken(spans.out, clip), cutAfter)
+  const free = clip.duration - Math.max(lengthInsideClip(spans.out, clip), cutAfter)
   const previous = touchingBefore(track, clip)
   if (previous === undefined) return free
-  // On a cut each clip gives half of the length.
-  const freeBefore = previous.duration - taken(spansOn(track, previous).in, previous)
-  return 2 * Math.min(free, freeBefore)
+  const freeBefore = previous.duration - lengthInsideClip(spansOn(track, previous).in, previous)
+  const halfOnEachSideOfCut = Math.min(free, freeBefore)
+  return 2 * halfOnEachSideOfCut
 }
 
-// Sets or removes the transition at one end of a clip. Its length is kept to whole frames and to what the place has room for; where there is no room for even one frame, nothing is set.
 export function setTransition(project: Project, target: TransitionTarget, transition: Transition | undefined, frameTicks: number): Project {
   const longest = Math.floor(longestTransition(project, target) / frameTicks) * frameTicks
   if (transition !== undefined && longest < frameTicks) return project

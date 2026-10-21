@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactElement } from 'react'
-import { exportFrameRates, parseRememberedChoices, selectionRange, startingChoices, durationText, timeLeft, withFormat, type ExportChoices, type RememberedChoices } from '../editor/export.js'
+import { exportFrameRates, parseRememberedChoices, selectionRange, startingChoices, durationText, timeLeftMs, withFormat, type ExportChoices, type RememberedChoices } from '../editor/export.js'
 import { unlinkedMedia } from '../editor/place.js'
 import {
   EXPORT_ENCODERS,
@@ -53,7 +53,6 @@ const FORMAT_NAMES: Record<ExportFormat, string> = {
   png: 'PNG of this frame',
 }
 
-// How the summary names what will be made.
 const SUMMARY_NAMES: Record<ExportFormat, string> = { mp4: 'MP4', webm: 'WebM', gif: 'GIF', m4a: 'M4A sound', mp3: 'MP3 sound', wav: 'WAV sound', png: 'PNG' }
 
 const ENCODER_NAMES: Record<ExportEncoder, string> = { hardware: 'Apple hardware (fast)', x264: 'x264 (smallest files)' }
@@ -66,7 +65,6 @@ function ticksText(ticks: number): string {
   return durationText((ticks / TICKS_PER_SECOND) * MS_PER_SECOND)
 }
 
-// The one place where a video, a sound or a picture is made: the format, the fields that format uses, then where to save it.
 export function ExportDialog(): ReactElement {
   const session = useSession()
   const { store } = session
@@ -75,7 +73,6 @@ export function ExportDialog(): ReactElement {
   const mediaStates = useEditorState((state) => state.mediaStates)
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [choices, setChoices] = useState<ExportChoices>(() => startingChoices(project, parseRememberedChoices(localStorage.getItem(CHOICES_KEY) ?? undefined), session.hasSmallMemory))
-  // The playhead does not move while the dialog is open.
   const [playheadTime] = useState(() => session.transport.position().time)
 
   useEffect(() => {
@@ -92,7 +89,6 @@ export function ExportDialog(): ReactElement {
   const range = choices.isSelectionOnly && selected !== undefined ? selected : { start: 0, end: projectDuration(project) }
   const missingCount = unlinkedMedia(project, mediaStates).length
 
-  // The sizes that keep the shape of the project come first, then the ones with a shape of their own.
   function presetChoices(isShaped: boolean, heading: string): Choice[] {
     const presets = EXPORT_PRESETS.filter((preset) => (shortSideOf(preset) !== undefined) === isShaped)
     return presets.map((preset, index) => {
@@ -248,7 +244,6 @@ export function ExportDialog(): ReactElement {
   )
 }
 
-// Holds the window from the first frame of an export until its result has been read: how far it is, the way to stop it, then how it ended.
 export function ExportProgressDialog(): ReactElement | undefined {
   const session = useSession()
   const status = useEditorState((state) => state.exportStatus)
@@ -264,19 +259,17 @@ export function ExportProgressDialog(): ReactElement | undefined {
     dialog.focus()
   }, [])
 
-  // The result is read and then dismissed, so its button is where the focus goes.
   useEffect(() => {
     if (phase !== 'running') closeRef.current?.focus()
   }, [phase])
 
   if (status === undefined) return undefined
-  const left = status.phase === 'running' ? timeLeft(status.done, status.total, performance.now() - status.startedAt) : undefined
+  const left = status.phase === 'running' ? timeLeftMs(status.done, status.total, performance.now() - status.startedAt) : undefined
   return (
     <dialog
       ref={dialogRef}
       className="dialog"
       tabIndex={-1}
-      // Escape closes the result. It cannot close a running export, however often it is pressed: that would leave the export without its Cancel.
       closedby={status.phase === 'running' ? 'none' : 'closerequest'}
       aria-labelledby="export-progress-title"
       data-testid="export-progress-dialog"

@@ -22,7 +22,6 @@ const SAMPLES_PER_FRAME = 1600
 
 afterAll(() => rm(scratch, { recursive: true, force: true }))
 
-// Video formats take YUV 4:2:0 pictures, a GIF and a PNG take RGBA.
 function picture(format: ExportFormat, size: Size, level: number): ArrayBuffer {
   const bytesPerPixel = pixelLayoutOf(format) === 'yuv420p' ? 1.5 : 4
   return new Uint8Array(size.width * size.height * bytesPerPixel).fill(level).buffer
@@ -105,7 +104,6 @@ describe('startEncoder', () => {
   })
 })
 
-// An FFmpeg that takes every byte it is sent and ends as `done` says, so the last step of an export can be tested on its own.
 function fakeRunner(done: Promise<void>, onKill: () => void): FfmpegRunner {
   const sink = (): Writable => new Writable({ write: (_chunk, _encoding, callback) => callback() })
   const job = { stdin: sink(), pipes: [sink()], readExact: async () => undefined, readChunk: async () => undefined, done, kill: onKill }
@@ -122,7 +120,6 @@ describe('finishing an export', () => {
     const path = join(scratch, 'never-ends.mp4')
     let kills = 0
     const encoder = startEncoder(fakeRunner(new Promise(() => {}), () => (kills += 1)), { path, ...SIZE, ...DEFAULTS })
-    // 20 MB written may take up to a second more to rewrite.
     await writeFile(temporaryPathFor(path), new Uint8Array(20_000_000))
     const outcome = encoder.finish().then(
       () => 'finished',
@@ -141,7 +138,6 @@ describe('finishing an export', () => {
   })
 
   it('always lets FFmpeg read the sound to its end, which a shut-down extra pipe alone did not, about one export in twenty-five', async () => {
-    // Stands in for FFmpeg: reads all the pictures and all the sound, and writes into its output file how many bytes of sound came.
     const standIn = join(scratch, 'stand-in')
     await mkdir(standIn)
     // A job in the background of a script reads /dev/null unless told otherwise.
@@ -173,7 +169,6 @@ describe('finishing an export', () => {
     const path = join(scratch, 'fails-at-end.mp4')
     const failure = new FfmpegError('ffmpeg exited with code 1', 'Conversion failed!', 1)
     const done = Promise.reject(failure)
-    // Seen through finish(), as the job runner does; until then nothing waits on it.
     done.catch(() => {})
     const encoder = startEncoder(fakeRunner(done, () => {}), { path, ...SIZE, ...DEFAULTS })
     await writeFile(temporaryPathFor(path), new Uint8Array(1000))

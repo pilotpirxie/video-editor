@@ -54,7 +54,6 @@ type SplitterProps = {
   sizeKey: SizeKey
   size: number
   isHidden: boolean
-  // +1 when dragging right or down makes the panel larger, -1 when it makes it smaller.
   growth: 1 | -1
   onPreview(sizeKey: SizeKey, size: number): void
   onResize(sizeKey: SizeKey, size: number): void
@@ -86,7 +85,6 @@ function Splitter({ label, testId, sizeKey, size, isHidden, growth, onPreview, o
     dragRef.current = { pointer: pointerOf(event), size }
   }
 
-  // While dragging, only a CSS variable changes; the panels re-render once, on release.
   function onPointerMove(event: PointerEvent<HTMLDivElement>): void {
     const dragged = sizeAt(event)
     if (dragged !== undefined) onPreview(sizeKey, dragged)
@@ -169,7 +167,6 @@ function Sidebar(): ReactElement {
 }
 
 type PanelBoundaryProps = {
-  // Names the panel in the log.
   panel: string
   children: ReactNode
 }
@@ -179,7 +176,6 @@ type PanelBoundaryState = {
   hasFailed: boolean
 }
 
-// A panel that fails to draw says so in its place, while the rest of the window and the project keep working.
 class PanelBoundary extends Component<PanelBoundaryProps, PanelBoundaryState> {
   override state: PanelBoundaryState = { error: undefined, hasFailed: false }
 
@@ -206,7 +202,6 @@ class PanelBoundary extends Component<PanelBoundaryProps, PanelBoundaryState> {
   }
 }
 
-// A message floats over the top of the canvas until it is dismissed.
 function Notice(): ReactElement {
   const { store } = useSession()
   const notice = useEditorState((state) => state.notice)
@@ -224,7 +219,6 @@ function Notice(): ReactElement {
   )
 }
 
-// Runs the action of a shortcut and says whether it was handled here; the timeline handles its own zoom keys.
 function runShortcut({ actions, transport, runMenuAction }: Session, action: ShortcutAction): boolean {
   switch (action) {
     case 'play-pause':
@@ -282,28 +276,23 @@ function runShortcut({ actions, transport, runMenuAction }: Session, action: Sho
   }
 }
 
-// Plain keys belong to a text field that has the focus. A text field has no use for Cmd with a letter or a digit, except the standard keys, which are not shortcuts here.
 function isShortcutFor(event: globalThis.KeyboardEvent): boolean {
   if (isKeyForTheEditor(event)) return true
   const isCommandKey = event.metaKey && LETTER_OR_DIGIT_KEY.test(event.code)
   return isCommandKey && isTypingTarget(event.target) && !isModalOpen() && !event.defaultPrevented
 }
 
-// The shortcuts, as chosen on this Mac, the Escape key and the system clipboard shortcuts work on the project, unless a text field or a dialog needs the keys.
 function listenForEditingKeys(session: Session): () => void {
   const { actions, store, shortcuts } = session
 
   function onKeyDown(event: globalThis.KeyboardEvent): void {
     const action = actionFor(shortcuts.get(), event)
-    // In preview mode the clips cannot be seen, so only the transport and leaving the mode answer to keys.
     const isAllowed = !store.getState().isPreviewing || PREVIEW_ACTIONS.has(action)
     if (action !== undefined && isAllowed && isShortcutFor(event) && runShortcut(session, action)) {
       event.preventDefault()
       return
     }
     if (!isKeyForTheEditor(event) || event.key !== 'Escape') return
-    // Escape abandons a drag in progress, wherever it started; only with nothing in progress does it leave preview mode, then clear the selection.
-    // After that it leaves the group that is open.
     if (store.cancel()) event.preventDefault()
     else if (store.getState().isPreviewing) store.setPreviewing(false)
     else if (store.getState().selection.length > 0) store.select([])
@@ -344,7 +333,6 @@ function CacheOfferWhenAsked(): ReactElement | undefined {
   return offer === undefined ? undefined : <CacheLimitDialog {...offer} />
 }
 
-// First the choices, then, from the moment the export starts until its result has been read, how it is going.
 function ExportDialogWhenOpen(): ReactElement | undefined {
   const isChoosing = useEditorState((state) => state.isExportDialogOpen)
   const isExporting = useEditorState((state) => state.exportStatus !== undefined)
@@ -354,7 +342,6 @@ function ExportDialogWhenOpen(): ReactElement | undefined {
 
 export function Editor({ session, preview }: { session: Session; preview: HTMLCanvasElement }): ReactElement {
   const rootRef = useRef<HTMLDivElement>(null)
-  // The session is provided below this component, so its store is read directly.
   const isPreviewing = useSyncExternalStore(session.store.subscribe, () => session.store.getState().isPreviewing)
   const isDebugShown = useSyncExternalStore(session.store.subscribe, () => session.store.getState().isDebugShown)
   const isOpening = useSyncExternalStore(session.store.subscribe, () => session.store.getState().openingName !== undefined)
@@ -386,7 +373,6 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
     }
   }
 
-  // A sidebar grows at the cost of the canvas only: the other sidebar stays as wide as it is.
   function showSize(sizeKey: SizeKey, dragged: number): Layout {
     const wanted = sizeKey === 'timelineHeight' ? dragged : Math.min(dragged, widestSidebar(layout, sizeKey, size))
     const resized = clampLayout({ ...layout, [sizeKey]: wanted }, size)

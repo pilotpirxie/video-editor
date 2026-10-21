@@ -21,7 +21,6 @@ function runHeadless(): void {
   })
 }
 
-// An error that no panel caught has emptied the window; the log says what it was.
 function logUncaughtError(error: unknown, info: { componentStack?: string }): void {
   logError('The window stopped drawing', error, { componentStack: info.componentStack })
 }
@@ -52,7 +51,6 @@ function scriptsOf(entry: PerformanceEntry): SlowFrame['scripts'] {
   return scripts
 }
 
-// Every frame of the editor that took over 50 ms goes to a log on this Mac, with the scripts that held it, so stalls on real projects can be found.
 function logSlowFrames(): void {
   new PerformanceObserver((list) => {
     for (const entry of list.getEntries()) {

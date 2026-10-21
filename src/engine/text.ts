@@ -5,7 +5,6 @@ const MAX_RASTER_SIDE = 8192
 // 64 MB of pixels: a zoomed-in heading on a 4 GB Mac must not take a quarter of its memory, and twice that with a shadow.
 const MAX_RASTER_PIXELS = 4096 * 4096
 const FALLBACK_FAMILY = 'sans-serif'
-// A canvas shadow of blur b fades out over about this many times b.
 const SHADOW_REACH_PER_BLUR = 2
 
 export type Raster = {
@@ -28,14 +27,12 @@ function contextOf(canvas: OffscreenCanvas): OffscreenCanvasRenderingContext2D {
   return context
 }
 
-// At least one pixel, and finite even for the absurd sizes of a hand-edited file.
 function wantedPixels(units: number, pixelsPerUnit: number): number {
   const pixels = units * pixelsPerUnit
   if (Number.isNaN(pixels)) return 1
   return Math.min(Number.MAX_VALUE, Math.max(1, pixels))
 }
 
-// The pixel size of the raster for a drawing of the given size in canvas units.
 export function rasterSize(naturalWidth: number, naturalHeight: number, pixelsPerUnitX: number, pixelsPerUnitY: number): { width: number; height: number } {
   const wantedWidth = wantedPixels(naturalWidth, pixelsPerUnitX)
   const wantedHeight = wantedPixels(naturalHeight, pixelsPerUnitY)
@@ -45,7 +42,6 @@ export function rasterSize(naturalWidth: number, naturalHeight: number, pixelsPe
   return { width: Math.max(1, Math.ceil(wantedWidth * shrink)), height: Math.max(1, Math.ceil(wantedHeight * shrink)) }
 }
 
-// A canvas for a drawing of the given size in canvas units, at the given number of pixels per unit. Drawing on its context is done in canvas units.
 export function rasterOf(naturalWidth: number, naturalHeight: number, pixelsPerUnitX: number, pixelsPerUnitY: number): Raster & { context: OffscreenCanvasRenderingContext2D } {
   const size = rasterSize(naturalWidth, naturalHeight, pixelsPerUnitX, pixelsPerUnitY)
   const rasterWidth = size.width
@@ -62,7 +58,6 @@ type TextMeasure = {
   lineWidths: number[]
   ascent: number
   lineHeight: number
-  // From the top of one line to the top of the next.
   lineStep: number
   padding: number
   naturalWidth: number
@@ -71,8 +66,7 @@ type TextMeasure = {
 
 const words = new Intl.Segmenter(undefined, { granularity: 'word' })
 
-// Breaks one typed line into lines no wider than `width`. Words stay whole; a word that is wider than the box on its own is broken between letters.
-function wrapped(line: string, width: number, widthOf: (text: string) => number): string[] {
+function wrapLine(line: string, width: number, widthOf: (text: string) => number): string[] {
   const lines: string[] = []
   let current = ''
   function place(piece: string): void {
@@ -83,7 +77,6 @@ function wrapped(line: string, width: number, widthOf: (text: string) => number)
     if (current.trim() !== '') {
       lines.push(current.trimEnd())
       current = ''
-      // The space a line was broken at belongs to neither line.
       if (piece.trim() === '') return
       place(piece)
       return
@@ -100,7 +93,6 @@ function wrapped(line: string, width: number, widthOf: (text: string) => number)
   return lines
 }
 
-// The size of a text in canvas units and where its lines break. The editor's handles and hit testing use the same numbers the picture is drawn with.
 export function measureText(look: TextLook): TextMeasure {
   const family = look.font.family.replaceAll('"', '\\"')
   const weight = look.font.weight === undefined ? '' : `${look.font.weight} `
@@ -117,7 +109,7 @@ export function measureText(look: TextLook): TextMeasure {
   let lines = look.text.split('\n')
   if (look.boxWidth !== undefined) {
     const room = Math.max(1, look.boxWidth - 2 * padding)
-    lines = lines.flatMap((line) => wrapped(line, room, widthOf))
+    lines = lines.flatMap((line) => wrapLine(line, room, widthOf))
   }
   const lineWidths = lines.map(widthOf)
   const lineStep = lineHeight * (look.lineSpacing ?? 1)
@@ -134,7 +126,6 @@ export function measureText(look: TextLook): TextMeasure {
   }
 }
 
-// How far the outline and the shadow of a text reach past its box.
 function bleedOf(look: TextLook): number {
   const outline = look.outline?.width ?? 0
   const { shadow } = look
@@ -156,7 +147,6 @@ function drawLetters(context: OffscreenCanvasRenderingContext2D, look: TextLook,
     if (look.align === 'right') x = naturalWidth - padding - lineWidth
     const y = padding + ascent + index * lineStep
 
-    // A line that is only partly shown starts where the whole line starts, so its letters do not move as more of them appear.
     let shown = line
     if (left !== Infinity) {
       const parts = lettersOf(line)
@@ -174,8 +164,6 @@ function drawLetters(context: OffscreenCanvasRenderingContext2D, look: TextLook,
   }
 }
 
-// Draws the words with their outline and shadow, the box of the text starting at the origin of the context.
-// `shownLetters` leaves out all letters after that many, as a typewriter that has not come further.
 export function drawText(target: Raster & { context: OffscreenCanvasRenderingContext2D }, look: TextLook, measure: TextMeasure, shownLetters: number | undefined): void {
   const { shadow } = look
   if (shadow === undefined) {
@@ -193,7 +181,6 @@ export function drawText(target: Raster & { context: OffscreenCanvasRenderingCon
   const { context } = target
   context.save()
   context.resetTransform()
-  // A shadow is measured in pixels of the raster, whatever the scale of the drawing.
   context.shadowColor = shadow.color
   context.shadowOffsetX = shadow.offsetX * pixelsPerUnitX
   context.shadowOffsetY = shadow.offsetY * pixelsPerUnitY
@@ -204,7 +191,6 @@ export function drawText(target: Raster & { context: OffscreenCanvasRenderingCon
 
 export function rasterizeText(look: TextLook, shownLetters: number | undefined, pixelsPerUnitX: number, pixelsPerUnitY: number): Raster {
   const measure = measureText(look)
-  // The raster is larger than the box by the same amount on every side, so the middle of the text stays the middle of the picture.
   const bleed = bleedOf(look)
   const raster = rasterOf(measure.naturalWidth + 2 * bleed, measure.naturalHeight + 2 * bleed, pixelsPerUnitX, pixelsPerUnitY)
   raster.context.translate(bleed, bleed)

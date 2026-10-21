@@ -5,10 +5,8 @@ import { editClips } from './clips.js'
 const OPAQUE_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
 // The smallest length an effect can have; the file format refuses a border, a radius or a blur of nothing.
 const SMALLEST_LENGTH = 0.1
-// New effects are sized for a canvas 1080 pixels high and scaled to the canvas they are added to, so they look the same on a small and on a 4K canvas.
-const REFERENCE_HEIGHT = 1080
+const EFFECT_SIZES_CANVAS_HEIGHT = 1080
 
-// Everything with a picture of its own takes effects, and a group passes its effects on to its members. Sound has no picture, and blur and highlight clips are effects on what is beneath them.
 export function takesEffects(clip: Clip): clip is PictureClip | GroupClip {
   return clip.type !== 'audio' && clip.type !== 'blur' && clip.type !== 'highlight'
 }
@@ -21,7 +19,6 @@ function colorOr(color: string, fallback: string): string {
   return OPAQUE_COLOR_PATTERN.test(color) ? color : fallback
 }
 
-// What each effect is called in the editor.
 export const EFFECT_NAMES: Record<EffectType, string> = {
   colorAdjust: 'Colour adjust',
   blackAndWhite: 'Black and white',
@@ -40,7 +37,6 @@ export const EFFECT_NAMES: Record<EffectType, string> = {
 }
 
 type Look = Extract<Effect, { type: 'look' }>
-// The settings of a look that a preset chooses; how strongly the look is applied stays the user's.
 export type LookValues = Omit<Look, 'type' | 'strength' | 'isOff'>
 
 const NO_LOOK: LookValues = {
@@ -58,7 +54,6 @@ const NO_LOOK: LookValues = {
   highlightAmount: 0,
 }
 
-// Ready-made looks. Each one sets every setting, so choosing one after another never leaves part of the first behind.
 export const LOOK_PRESETS: readonly { name: string; label: string; values: LookValues }[] = [
   { name: 'none', label: 'None', values: NO_LOOK },
   { name: 'warm', label: 'Warm', values: { ...NO_LOOK, contrast: 0.05, temperature: 0.35, saturation: 0.1, highlightAmount: 0.15 } },
@@ -75,14 +70,13 @@ export const LOOK_PRESETS: readonly { name: string; label: string; values: LookV
   { name: 'bright', label: 'Bright', values: { ...NO_LOOK, exposure: 0.25, contrast: 0.05, highlights: -0.2, shadows: 0.3, saturation: 0.1 } },
 ]
 
-// The preset a look's settings are exactly, or 'custom' once any of them has been changed.
 export function lookPresetOf(look: Look): string {
   const preset = LOOK_PRESETS.find(({ values }) => Object.entries(values).every(([key, value]) => look[key as keyof LookValues] === value))
   return preset?.name ?? 'custom'
 }
 
 export function defaultEffect(type: EffectType, canvas: Size): Effect {
-  const sized = (length: number): number => Math.max(1, Math.round((length * canvas.height) / REFERENCE_HEIGHT))
+  const sized = (length: number): number => Math.max(1, Math.round((length * canvas.height) / EFFECT_SIZES_CANVAS_HEIGHT))
   if (type === 'colorAdjust') {
     return { type, brightness: 0, contrast: 0, saturation: 0 }
   } else if (type === 'blackAndWhite' || type === 'sepia' || type === 'invert') {
@@ -110,7 +104,6 @@ export function defaultEffect(type: EffectType, canvas: Size): Effect {
   }
 }
 
-// An effect with every setting inside what the file format accepts; a colour it would refuse is replaced by the one the effect had.
 function withinLimits(effect: Effect, before: Effect): Effect {
   if (effect.type === 'colorAdjust') {
     return { ...effect, brightness: between(effect.brightness, -1, 1), contrast: between(effect.contrast, -1, 1), saturation: between(effect.saturation, -1, 1) }
@@ -173,7 +166,6 @@ function withEffects(clip: PictureClip | GroupClip, effects: Effect[]): Clip {
   return { ...clip, effects: effects.length === 0 ? undefined : effects }
 }
 
-// Applies a change to the list of effects of the chosen clips that can have an effect of this kind. A change that returns the list it was given changes nothing.
 function editEffects(project: Project, clipIds: readonly string[], type: EffectType, edit: (effects: readonly Effect[]) => readonly Effect[]): Project {
   return editClips(project, new Set(clipIds), (clip) => {
     if (!takesEffect(clip, type)) return clip
@@ -183,13 +175,11 @@ function editEffects(project: Project, clipIds: readonly string[], type: EffectT
   })
 }
 
-// A blur fill covers the canvas with a frame-shaped picture: on text or a group it would cover it with blurred letters, or once for each member.
 export function takesEffect(clip: Clip, type: EffectType): clip is PictureClip | GroupClip {
   if (type === 'blurFill') return clip.type === 'video' || clip.type === 'image'
   return takesEffects(clip)
 }
 
-// Adds an effect at the end of each clip's list. A clip that has the effect already keeps it as it is, switched on.
 export function addEffect(project: Project, clipIds: readonly string[], type: EffectType): Project {
   const added = defaultEffect(type, project.canvas)
   return editEffects(project, clipIds, type, (effects) => {
@@ -212,7 +202,6 @@ export function setEffectOff(project: Project, clipIds: readonly string[], type:
   })
 }
 
-// Moves an effect one place toward the start of the list (-1) or toward its end (1). Effects are applied from first to last.
 export function moveEffect(project: Project, clipIds: readonly string[], type: EffectType, direction: 1 | -1): Project {
   return editEffects(project, clipIds, type, (effects) => {
     const from = effects.findIndex((effect) => effect.type === type)
@@ -226,7 +215,6 @@ export function moveEffect(project: Project, clipIds: readonly string[], type: E
   })
 }
 
-// Replaces the settings of the effect of the same kind on each clip that has it. Whether it is switched off stays as it is.
 export function setEffect(project: Project, clipIds: readonly string[], changed: Effect): Project {
   return editEffects(project, clipIds, changed.type, (effects) => {
     const existing = effects.find((effect) => effect.type === changed.type)

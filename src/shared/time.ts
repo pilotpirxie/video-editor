@@ -11,7 +11,6 @@ export const TICKS_PER_SAMPLE = TICKS_PER_SECOND / SAMPLE_RATE
 export const NORMAL_SPEED_PERCENT = 100
 export const MIN_SPEED_PERCENT = 1
 export const MAX_SPEED_PERCENT = 50_000
-// Up to this speed a clip keeps its sound; faster, the sound has to be switched on.
 export const FAST_SOUND_ABOVE_PERCENT = 400
 
 export const PROJECT_FRAME_RATES: readonly FrameRate[] = [
@@ -64,7 +63,6 @@ export function sourceTime(clip: SourceMapping, time: number): number {
   return clip.sourceStart + ((time - clip.start) / TIMELINE_GRID) * clip.speedPercent
 }
 
-// Where in a source of the given length a looping clip is at a source time: it starts over each time it reaches the end.
 export function loopedTime(time: number, sourceDuration: number, isLooping: boolean): number {
   if (!isLooping || sourceDuration <= 0 || time < sourceDuration) return time
   return time % sourceDuration

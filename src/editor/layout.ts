@@ -9,11 +9,13 @@ export type Layout = {
   isTimelineCollapsed: boolean
 }
 
+const TRACKS_HEIGHT = 280
+const TIMELINE_SCROLL_BAR_HEIGHT = 11
+
 export const DEFAULT_LAYOUT: Layout = {
   leftWidth: 300,
   rightWidth: 300,
-  // 280 for the tracks as before, plus 11 for the scroll bar under them.
-  timelineHeight: 291,
+  timelineHeight: TRACKS_HEIGHT + TIMELINE_SCROLL_BAR_HEIGHT,
   isLeftCollapsed: false,
   isRightCollapsed: false,
   isTimelineCollapsed: false,
@@ -32,8 +34,6 @@ function widthForSidebars(window: Size): number {
   return window.width - MIN_CANVAS.width - 2 * SPLITTER_SIZE
 }
 
-// Whatever was stored, the canvas keeps a usable size and no panel can be dragged out of the window.
-// A sidebar has no largest width of its own: it may take whatever the canvas and the other sidebar leave.
 export function clampLayout(layout: Layout, window: Size): Layout {
   let leftWidth = Math.max(layout.leftWidth, MIN_SIDEBAR_WIDTH)
   let rightWidth = Math.max(layout.rightWidth, MIN_SIDEBAR_WIDTH)
@@ -44,7 +44,6 @@ export function clampLayout(layout: Layout, window: Size): Layout {
   const excess = shownLeft + shownRight - widthForSidebars(window)
   const spare = leftSpare + rightSpare
   if (excess > 0 && spare > 0) {
-    // Each gives up in proportion to what it has above the narrowest width, so the canvas keeps exactly its own.
     const cut = Math.min(excess, spare)
     leftWidth -= (cut * leftSpare) / spare
     rightWidth -= (cut * rightSpare) / spare
@@ -55,7 +54,6 @@ export function clampLayout(layout: Layout, window: Size): Layout {
   return { ...layout, leftWidth: Math.floor(leftWidth), rightWidth: Math.floor(rightWidth), timelineHeight: Math.round(timelineHeight) }
 }
 
-// How wide a sidebar can be dragged: the other one stays as it is, so only the canvas gives way, down to its smallest width.
 export function widestSidebar(layout: Layout, side: 'leftWidth' | 'rightWidth', window: Size): number {
   const isOtherCollapsed = side === 'leftWidth' ? layout.isRightCollapsed : layout.isLeftCollapsed
   const otherWidth = side === 'leftWidth' ? layout.rightWidth : layout.leftWidth

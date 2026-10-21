@@ -24,11 +24,9 @@ const SMALLEST_PRESET: ExportPreset = '120p'
 const MS_PER_SECOND = 1000
 const SECONDS_PER_MINUTE = 60
 const MINUTES_PER_HOUR = 60
-// An estimate made from the first moments of an export swings wildly, so none is given until this much is done.
-const STEADY_AFTER_MS = 3000
-const STEADY_AFTER_FRACTION = 0.02
+const ESTIMATE_AFTER_MS = 3000
+const ESTIMATE_AFTER_FRACTION = 0.02
 
-// What the export dialog lets the user choose.
 export type ExportChoices = {
   format: ExportFormat
   preset: ExportPreset
@@ -39,14 +37,12 @@ export type ExportChoices = {
   hasAudio: boolean
 }
 
-// The choices worth keeping for the next export. Frame rate and range belong to one project and one moment, so they start fresh each time.
 export type RememberedChoices = Partial<Pick<ExportChoices, 'format' | 'preset' | 'quality' | 'encoder' | 'hasAudio'>>
 
 function framesPerSecond(rate: FrameRate): number {
   return rate.num / rate.den
 }
 
-// Every frame rate a format can hold, fastest first. A rate above the project's still moves keyframes, the camera and transitions more smoothly.
 export function exportFrameRates(format: ExportFormat): FrameRate[] {
   const rates = format === 'gif' ? GIF_FRAME_RATES : PROJECT_FRAME_RATES
   return [...rates].sort((a, b) => framesPerSecond(b) - framesPerSecond(a))
@@ -85,14 +81,12 @@ export function isExportJob(value: unknown): value is ExportJob {
   return !('hasAudio' in value) || value.hasAudio === undefined || typeof value.hasAudio === 'boolean'
 }
 
-// Another format keeps the frame rate when it can hold it; otherwise it starts from its own default.
 export function withFormat(choices: ExportChoices, format: ExportFormat, projectRate: FrameRate): ExportChoices {
   const canKeepRate = exportFrameRates(format).some((rate) => isSameRate(rate, choices.frameRate))
   if (canKeepRate) return { ...choices, format }
   return { ...choices, format, frameRate: format === 'gif' ? DEFAULT_GIF_FRAME_RATE : projectRate }
 }
 
-// The largest size that keeps the shape of the canvas without enlarging it.
 export function defaultPreset(canvas: Size): ExportPreset {
   const canvasShortSide = Math.min(canvas.width, canvas.height)
   let largest = SMALLEST_PRESET
@@ -104,7 +98,6 @@ export function defaultPreset(canvas: Size): ExportPreset {
   return largest
 }
 
-// Reads the choices stored after the last export. Whatever is missing or not understood is simply left out.
 export function parseRememberedChoices(text: string | undefined): RememberedChoices {
   if (text === undefined) return {}
   let stored: unknown
@@ -124,7 +117,6 @@ export function parseRememberedChoices(text: string | undefined): RememberedChoi
   return remembered
 }
 
-// With nothing remembered, an MP4 by the Mac's media engine on a Mac with little memory, otherwise by x264.
 export function startingChoices(project: Project, remembered: RememberedChoices, hasSmallMemory: boolean): ExportChoices {
   const projectRate = project.canvas.frameRate
   const choices: ExportChoices = {
@@ -139,7 +131,6 @@ export function startingChoices(project: Project, remembered: RememberedChoices,
   return withFormat(choices, remembered.format ?? 'mp4', projectRate)
 }
 
-// From the start of the first selected clip to the end of the last one.
 export function selectionRange(project: Project, selection: readonly string[]): TimeRange | undefined {
   const selected = new Set(selection)
   let start = Infinity
@@ -154,12 +145,11 @@ export function selectionRange(project: Project, selection: readonly string[]): 
   return end > start ? { start, end } : undefined
 }
 
-// Only what the format uses goes into the job. `frame` is the frame of a PNG.
-export function exportJobFor(choices: ExportChoices, range: TimeRange | undefined, paths: Pick<ExportJob, 'projectPath' | 'outputPath'>, frame: number): ExportJob {
+export function exportJobFor(choices: ExportChoices, range: TimeRange | undefined, paths: Pick<ExportJob, 'projectPath' | 'outputPath'>, pngFrame: number): ExportJob {
   const { format } = choices
   const job: ExportJob = { kind: 'export', ...paths, format, preset: choices.preset }
   if (format === 'png') {
-    job.frame = frame
+    job.frame = pngFrame
     return job
   }
   if (hasMovingPicture(format)) job.frameRate = choices.frameRate
@@ -173,14 +163,12 @@ export function exportJobFor(choices: ExportChoices, range: TimeRange | undefine
   return job
 }
 
-// How long the rest of an export will take, in milliseconds; undefined until enough is done for an honest answer.
-export function timeLeft(done: number, total: number, elapsedMs: number): number | undefined {
-  const isSteady = done > 0 && elapsedMs >= STEADY_AFTER_MS && done / total >= STEADY_AFTER_FRACTION
+export function timeLeftMs(done: number, total: number, elapsedMs: number): number | undefined {
+  const isSteady = done > 0 && elapsedMs >= ESTIMATE_AFTER_MS && done / total >= ESTIMATE_AFTER_FRACTION
   if (!isSteady) return undefined
   return (elapsedMs / done) * (total - done)
 }
 
-// "45 s", "2 min 5 s", "1 h 3 min": as exact as a person needs at that length.
 export function durationText(milliseconds: number): string {
   const totalSeconds = Math.max(0, Math.round(milliseconds / MS_PER_SECOND))
   const totalMinutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE)

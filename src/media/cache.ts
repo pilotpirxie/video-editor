@@ -5,13 +5,10 @@ import { logError } from '../shared/log.js'
 import { DEFAULT_SETTINGS, unusedMediaMs } from '../shared/settings.js'
 
 const TEMPORARY_SUFFIX = '.tmp'
-// The name, before its extension, of the file that holds what a probe found about a media file; clearing the cache keeps it.
 const MEDIA_FACTS_NAME = 'info'
-// Media folders of the first cache layout, which sat directly in the parent of this one.
-const OLD_LAYOUT_FOLDER = /^[0-9a-f]{32}$/
+const FIRST_LAYOUT_MEDIA_FOLDER = /^[0-9a-f]{32}$/
 
-// Files that are made and removed together: a preview segment's pictures and their index.
-type Unit = {
+type EvictionUnit = {
   files: Set<string>
   bytes: number
   usedAt: number
@@ -23,7 +20,6 @@ type Deferred = {
   reject(error: Error): void
 }
 
-// A claim on files a run is about to write. Each is settled once: written, or given up when the run stops.
 export type BuildClaim = {
   paths: readonly string[]
   written(path: string): void
@@ -32,33 +28,22 @@ export type BuildClaim = {
 
 export type DiskCache = {
   readonly directory: string
-  // Resolves once what earlier runs left on disk has been counted.
   readonly ready: Promise<void>
-  // A name beside `path` to write to. Renamed onto `path` when complete, so a file under its own name is always whole.
   temporaryPathFor(path: string): string
-  // Counts a file just put under its final name, then removes the least recently used files while the cache is over its limit.
   added(path: string): Promise<void>
   used(path: string): void
-  // What a session needs now is never removed. Each call replaces what that owner protected before.
   protect(owner: object, paths: ReadonlySet<string>): void
-  // Claims the files a run will write, leaving out those someone else is writing already.
   claim(paths: readonly string[]): BuildClaim
-  // Whether a whole file is in the cache, without asking the disk.
   has(path: string): boolean
-  // The build of a file in progress, if any.
   pending(path: string): Promise<void> | undefined
   totalBytes(): number
   limitBytes(): number
-  // A new limit counts at once: the cache shrinks to it if need be.
   setLimit(bytes: number): Promise<void>
-  // The size of a whole file in the cache.
   bytesOf(path: string): number | undefined
-  // Removes every file but the facts about each media file and what is being written.
   clear(): Promise<void>
   freeBytes(): Promise<number>
 }
 
-// Files that belong together share their name before the extension.
 function unitKeyOf(path: string): string {
   return join(dirname(path), basename(path, extname(path)))
 }
@@ -85,11 +70,9 @@ async function sizeOf(path: string): Promise<{ bytes: number; modifiedAt: number
   }
 }
 
-// One disk cache for the whole media process: every window's session prepares into it, and it stays under its limit by removing what was used longest ago.
-// The cache of a media file no project used for `maxUnusedMs` is removed at launch, even while the cache is under its limit.
 export function createDiskCache(directory: string, initialLimitBytes: number, maxUnusedMs = unusedMediaMs(DEFAULT_SETTINGS)): DiskCache {
   let limitBytes = initialLimitBytes
-  const units = new Map<string, Unit>()
+  const units = new Map<string, EvictionUnit>()
   const protectedBy = new Map<object, ReadonlySet<string>>()
   const building = new Map<string, Deferred>()
   let total = 0
@@ -116,7 +99,7 @@ export function createDiskCache(directory: string, initialLimitBytes: number, ma
     return false
   }
 
-  async function removeUnit(key: string, unit: Unit): Promise<void> {
+  async function removeUnit(key: string, unit: EvictionUnit): Promise<void> {
     units.delete(key)
     total -= unit.bytes
     // An index goes before its pictures, so a half-removed segment reads as missing rather than broken.
@@ -142,7 +125,6 @@ export function createDiskCache(directory: string, initialLimitBytes: number, ma
     }
   }
 
-  // A media folder is removed whole when it is empty or none of its files was used since `unusedSince`.
   async function scanMediaFolder(folder: string, unusedSince: number): Promise<void> {
     const files: { path: string; bytes: number; modifiedAt: number }[] = []
     let lastUsedAt = 0
@@ -174,7 +156,7 @@ export function createDiskCache(directory: string, initialLimitBytes: number, ma
       return
     }
     for (const name of names) {
-      if (OLD_LAYOUT_FOLDER.test(name)) await rm(join(parent, name), { recursive: true, force: true })
+      if (FIRST_LAYOUT_MEDIA_FOLDER.test(name)) await rm(join(parent, name), { recursive: true, force: true })
     }
   }
 
@@ -182,8 +164,9 @@ export function createDiskCache(directory: string, initialLimitBytes: number, ma
     let folders: string[]
     try {
       folders = await readdir(directory)
-    } catch {
-      // No cache yet: nothing to count.
+    } catch (error) {
+      const hasNoCacheYet = error instanceof Error && 'code' in error && error.code === 'ENOENT'
+      if (!hasNoCacheYet) logError('Could not read the cache folder', error, { directory })
       folders = []
     }
     const unusedSince = Date.now() - maxUnusedMs
@@ -235,7 +218,6 @@ export function createDiskCache(directory: string, initialLimitBytes: number, ma
   function bytesOf(path: string): number | undefined {
     const unit = units.get(unitKeyOf(path))
     if (unit === undefined || !unit.files.has(path)) return undefined
-    // The files of a unit are counted together; a preview segment's index is tiny beside its pictures.
     return unit.bytes
   }
 

@@ -176,12 +176,10 @@ export type Size = {
   height: number
 }
 
-// A reference project by name, or any project file by its full path.
 export function projectPath(name: string): string {
   return isAbsolute(name) ? name : join(PROJECTS_DIRECTORY, `${name}.json`)
 }
 
-// A test that launches the app twice passes the same profile, so the second launch sees what the first one stored.
 export function runApp(args: readonly string[], timeoutMs = APP_TIMEOUT_MS, keptProfile?: string): Promise<AppResult> {
   return new Promise((resolve, reject) => {
     const profile = keptProfile ?? mkdtempSync(join(tmpdir(), 'video-editor-test-'))
@@ -235,11 +233,9 @@ export async function renderFrames(project: string, request: FrameRequest): Prom
   }
 }
 
-// The clips a test draws, one list per track with the bottom track first. Each clip names its media by its file in the generated test media.
 export function projectOfTracks(canvas: Size, tracks: readonly (readonly Clip[])[], camera?: CameraKeyframe[]): Project {
   const projectTracks = tracks.map((clips, index) => ({ id: `track-${index}`, name: `Track ${index + 1}`, hidden: false, locked: false, muted: false, clips: [...clips] }))
   const media = new Map<string, MediaRef>()
-  // The members of groups use media too.
   for (const clip of allClips(projectTracks)) {
     if ('mediaId' in clip) media.set(clip.mediaId, { id: clip.mediaId, path: join(ROOT, 'test', 'media', 'generated', clip.mediaId), relativePath: '' })
   }
@@ -266,14 +262,12 @@ export function videoOf(file: string, id: string, span: Span, transform: Transfo
   return { id, type: 'video', mediaId: file, ...span, sourceStart: 0, speedPercent: 100, volume: 1, transform, opacity: 1, ...settings }
 }
 
-// Frames of a project that a test made up; it is written into `directory` first, as the editor would save it.
 export function renderProject(directory: string, name: string, project: Project, request: FrameRequest): Promise<Picture[]> {
   const path = join(directory, `${name}.json`)
   writeFileSync(path, serializeProject(project))
   return renderFrames(path, request)
 }
 
-// What the tests that work pixels out by hand share: a small canvas, clips that last its first second, and a white picture that fills it.
 export const SMALL_CANVAS = { width: 640, height: 360 }
 export const FIRST_SECOND = { start: 0, duration: SECOND }
 export const WHITE = { red: 255, green: 255, blue: 255 }
@@ -286,7 +280,6 @@ export function at(x: number, y: number, scale = 1, rotation = 0): Transform {
 
 export const WHITE_GROUND = imageOf('image-white.png', 'ground', { start: 0, duration: 2 * SECOND }, at(320, 180, 2))
 
-// One frame of the given tracks on the small canvas, the lowest track first, as the paused preview shows it.
 export async function frameOfTracks(directory: string, name: string, tracks: readonly Clip[][], frame: number): Promise<Picture> {
   return pictureAt(await renderProject(directory, name, projectOfTracks(SMALL_CANVAS, tracks), { via: 'paused', frames: [frame] }), 0)
 }
@@ -441,7 +434,6 @@ function isSelfTestReport(value: unknown): value is SelfTestReport {
   return typeof value === 'object' && value !== null && 'status' in value && 'droppedFrames' in value
 }
 
-// The dev harness plays, pauses, scrubs and exports the project by itself, then reports what it saw.
 export async function selfTestReport(path: string, extraArgs: readonly string[]): Promise<SelfTestReport> {
   const result = await runApp(['--selftest', path, ...extraArgs], SELF_TEST_TIMEOUT_MS)
   if (result.exitCode !== 0) throw new Error(`The self-test failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`)
@@ -475,7 +467,6 @@ export async function exportWithReport(path: string, outputPath: string, preset:
   return { peakMemoryMegabytes: summary.peakMemoryMegabytes, realTimeRatio: summary.realTimeRatio, progressLines, elapsedMs }
 }
 
-// 4,096 clips on four tracks, spread over just under twenty hours.
 export function largeProject(): Project {
   const clipsPerTrack = 1024
   const spacing = 2109 * FRAME
@@ -508,7 +499,6 @@ export function largeProject(): Project {
 
 const UI_TEST_TIMEOUT_MS = 300_000
 
-// Runs one scenario of the in-app UI tests and gives back what it reported.
 export async function uiTest(scenario: string, extraArgs: readonly string[] = [], profile?: string, timeoutMs = UI_TEST_TIMEOUT_MS): Promise<Record<string, unknown>> {
   const result = await runApp(['--uitest', scenario, ...extraArgs], timeoutMs, profile)
   if (result.exitCode !== 0) throw new Error(`The UI test "${scenario}" failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`)
@@ -538,8 +528,6 @@ function fieldsOf(line: string): Record<string, string> {
   return fields
 }
 
-// What ffprobe says about an exported file; a stream that is not there gives an empty record.
-// The first sound of a file as interleaved 32-bit floats.
 export async function decodedAudio(path: string): Promise<Float32Array> {
   const raw = await bundledFfmpeg().runOnce('ffmpeg', ['-i', path, '-map', '0:a:0', '-f', 'f32le', '-'], { timeoutMs: 60_000 })
   const samples = new Float32Array(raw.length / 4)

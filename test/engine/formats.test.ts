@@ -5,7 +5,6 @@ import { mediaPath } from '../media/generate.js'
 
 const ffmpeg = bundledFfmpeg()
 const scratch = scratchDirectory('formats')
-// Two seconds at 640 × 360: a clip with sound for the first second, then one without.
 const PROJECT = 'export-check'
 const SAMPLE_RATE = 48_000
 const STILL_FRAME = 45
@@ -59,7 +58,6 @@ describe('export formats', () => {
     const source = await decodedAudio(mediaPath('h264.mp4'))
     let largestDifference = 0
     for (let index = 2000; index < 2 * (SAMPLE_RATE - 1000); index++) largestDifference = Math.max(largestDifference, Math.abs((exportedSound[index] ?? 0) - (source[index] ?? 0)))
-    // A 16-bit sample is within half a step of the mixer's.
     expect(largestDifference).toBeLessThan(1 / 32_768)
     let loudestAfter = 0
     for (let index = 2 * SAMPLE_RATE; index < exportedSound.length; index++) loudestAfter = Math.max(loudestAfter, Math.abs(exportedSound[index] ?? 0))

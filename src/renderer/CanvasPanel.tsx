@@ -21,7 +21,6 @@ const ZOOM_CHOICES = [
   { value: '200', label: '200%' },
 ]
 
-// Where the pointer was when a pinch changed the zoom: that point of the picture is to stay under it.
 type PinchAnchor = {
   clientX: number
   clientY: number
@@ -33,17 +32,14 @@ function zoomKey(zoom: PreviewZoom): string {
   return zoom === 'fit' ? 'fit' : String(Math.round(zoom))
 }
 
-// The four ready-made zooms, and the one a pinch left, when it is none of them.
 function zoomChoices(zoom: PreviewZoom): { value: string; label: string }[] {
   const key = zoomKey(zoom)
   if (ZOOM_CHOICES.some((choice) => choice.value === key)) return ZOOM_CHOICES
   return [...ZOOM_CHOICES, { value: key, label: `${key}%` }]
 }
 
-// A project that opens within this time shows no words, so they never flash by.
 const OPENING_HINT_DELAY_MS = 200
 
-// What the canvas says while it has nothing to show: that a project is on its way, or how to put something on it.
 function canvasHintOf(state: EditorState): string | undefined {
   if (state.openingName !== undefined) return `Opening "${state.openingName}"…`
   if (projectDuration(state.wholeProject) > 0) return undefined
@@ -80,7 +76,6 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
   const [zoom, setZoom] = useState<PreviewZoom>('fit')
   const [isCropping, setIsCropping] = useState(false)
   const [isZoomToolOn, setIsZoomToolOn] = useState(false)
-  // The camera looks at the whole project, so it is not changed from inside a group.
   const isGroupOpen = useEditorState((state) => state.openGroups.length > 0)
   const isZooming = isZoomToolOn && !isGroupOpen
   const isBusy = isPlaying || shuttleRate !== 0
@@ -92,7 +87,6 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
     return () => window.clearTimeout(timer)
   }, [isOpening])
 
-  // While the zoom tool is used the paused picture is the whole canvas, so any part of it can be framed.
   useEffect(() => engine.send({ type: 'whole-canvas', isShown: isZooming }), [engine, isZooming])
 
   useEffect(() => {
@@ -105,7 +99,6 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
     return keepPreviewSized(preview, stage, canvas, zoom, engine)
   }, [preview, canvas, zoom, engine])
 
-  // A pinch zooms from what is shown now, also from Fit, and keeps the point under the fingers where it is.
   useEffect(() => {
     const area = areaRef.current
     if (area === null) return
@@ -126,7 +119,6 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
     return () => area.removeEventListener('wheel', onWheel)
   }, [preview, canvas.width])
 
-  // Runs after the preview has taken its new size.
   useEffect(() => {
     const anchor = pinchRef.current
     const area = areaRef.current
@@ -137,7 +129,6 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
     area.scrollTop += shown.top + anchor.shareY * shown.height - anchor.clientY
   }, [preview, zoom])
 
-  // Media dropped on the canvas starts at the playhead, on the layer above everything else; several files follow one another there.
   useEffect(() => {
     const stage = stageRef.current
     if (stage === null) return

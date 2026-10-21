@@ -7,7 +7,6 @@ const ONE_SHOT_TIMEOUT_MS = 20_000
 const STREAM_READ_TIMEOUT_MS = 20_000
 const BYTES_PER_PIXEL = 4
 const MAX_END_OVERSHOOT_FRAMES = 4
-// A stride longer than this is not decoded through: a stream sought anew for each frame costs less.
 const STREAM_RESTART_DISTANCE_FRAMES = 150
 // Pictures nobody asked for that a stream reads through before it starts anew at the frame asked for. A restart cost about as much as five 720p pictures read through (measured).
 const MAX_SKIPPED_PICTURES = 5
@@ -50,7 +49,6 @@ export function colorToRgb(video: VideoInfo): string {
   return `scale=in_color_matrix=${video.colorMatrix}:in_range=${video.colorRange}`
 }
 
-// Light made linear, colours brought into BT.709, highlights rolled off, then BT.709 gamma again, as full-range RGB.
 function toneMapFilters(video: VideoInfo, transfer: 'hlg' | 'pq'): string[] {
   const range = video.colorRange === 'pc' ? 'full' : 'limited'
   const peak = (HDR_PEAK_NITS / HDR_REFERENCE_WHITE_NITS).toFixed(4)
@@ -69,7 +67,6 @@ export function shrinkBeforeToneMapping(size: FrameSize, resizeFilter: string): 
   return [`scale=${size.width}:${size.height}:flags=${resizeFilter}`, 'format=yuv444p16le']
 }
 
-// Every decode of a source turns its pictures into full-range BT.709 RGB the same way, so the preview, the paused frame and the export agree.
 export function sourceColorFilters(video: VideoInfo): string[] {
   if (video.transfer === 'sdr') return [colorToRgb(video)]
   return toneMapFilters(video, video.transfer)
@@ -84,7 +81,6 @@ function cutOf(video: VideoInfo, frame: number): number {
   return Math.max(0, frameStartOf(video, frame) - video.frameDuration / 4)
 }
 
-// Uneven frame times are put on the even grid of the frame rate, laid from the frame asked for, so the n-th picture out is frame `frame + n` even when the seek landed later than asked.
 export function timingFilters(source: VideoSource, frame: number): string[] {
   const { video } = source
   if (!video.isVariableFrameRate) return []
@@ -106,12 +102,10 @@ function pictureFilters(video: VideoInfo, halvings: number): string[] {
   return filters
 }
 
-// Makes the count of pictures after it start at the frame a decode starts at.
 export function trimToFrame(source: VideoSource, frame: number): string {
   return `trim=start=${seconds(source.containerStart + cutOf(source.video, frame))}`
 }
 
-// A fast clip asks for every `step`-th frame. The ones between are dropped right after decoding, before their colour is converted and they are piped. The trim makes the count start at the frame asked for.
 function stepFilters(source: VideoSource, frame: number, step: number): string[] {
   if (step === 1) return []
   return [trimToFrame(source, frame), `select='not(mod(n,${step}))'`]
@@ -177,7 +171,6 @@ async function decodeExactly(ffmpeg: FfmpegRunner, source: VideoSource, frame: n
   return { ...size, data: toArrayBuffer(bytes) }
 }
 
-// The keyframe at or before `frame`, decoded on its own: a quick, rough picture for a timeline thumbnail whose preview copy is not made yet.
 export async function decodeKeyframe(ffmpeg: FfmpegRunner, source: VideoSource, frame: number, halvings: number): Promise<RawFrame> {
   const { video } = source
   const size = decodedSize(video, halvings)
@@ -204,7 +197,6 @@ export function openFrameStream(ffmpeg: FfmpegRunner, source: VideoSource, first
 
   let job: Job | undefined
   let nextIndex = firstFrame
-  // Frames from one picture FFmpeg hands over to the next. It follows the stride the stream is asked at, so a fast clip gets only the frames it shows.
   let step = 1
   let latest: { index: number; frame: RawFrame } | undefined
 
@@ -213,7 +205,6 @@ export function openFrameStream(ffmpeg: FfmpegRunner, source: VideoSource, first
     nextIndex = index
     step = newStep
     const threads = streamDecoderThreads(source.video.width * source.video.height, step)
-    // One frame is decoded ahead, while the last one is on its way to the compositor.
     job = ffmpeg.spawnJob('ffmpeg', [...decodeArguments(source, index, halvings, threads, step), '-'], { readAheadBytes: frameBytes })
     return job
   }

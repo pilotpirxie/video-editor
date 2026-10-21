@@ -9,19 +9,15 @@ const BURST_POINTS = 12
 const BURST_INNER = 0.78
 const ARROW_TIP_PER_HEIGHT = 0.5
 const BANNER_NOTCH_PER_HEIGHT = 0.35
-// The puffs of a thought bubble: how far along the way to the tip each sits, and how large it is, as shares of the bubble's short side.
 const THOUGHT_PUFFS = [
   { along: 0.45, radius: 0.09 },
   { along: 0.75, radius: 0.06 },
   { along: 1, radius: 0.035 },
 ]
-// The share of the box, around its middle, that the words of a round shape may fill without touching its edge.
 const ROUND_TEXT_SHARE = 0.7
-// An arrow's box is this many times as high as its line is thick, so there is something to grab, and its heads are that wide.
 const ARROW_HEIGHT_PER_THICKNESS = 4
 const OPEN_HEAD_ANGLE = Math.PI / 6
 const DOT_RADIUS_PER_THICKNESS = 1.5
-// The dot of an arrow reaches past its end, and round line ends do too.
 const ARROW_BLEED_PER_THICKNESS = 2
 
 type Point = {
@@ -37,7 +33,6 @@ function polygon(path: Path2D, points: readonly Point[]): void {
   path.closePath()
 }
 
-// The tail of a speech bubble: a triangle from the tip to a base that lies across the way from the middle of the box to the tip, inside the box.
 function speechTail(path: Path2D, tip: Point, shortSide: number): void {
   const reach = Math.hypot(tip.x, tip.y)
   if (reach === 0) return
@@ -54,7 +49,6 @@ function thoughtTail(path: Path2D, tip: Point, shortSide: number): void {
   }
 }
 
-// The outline of a callout around the middle of its box. Its parts may overlap; filled together they are one shape.
 function calloutOutline(look: Pick<CalloutLook, 'width' | 'height' | 'shape' | 'tail'>): Path2D {
   const { width, height, shape } = look
   const left = -width / 2
@@ -92,7 +86,6 @@ function calloutOutline(look: Pick<CalloutLook, 'width' | 'height' | 'shape' | '
   return path
 }
 
-// The part of the box the words are laid out in, around a middle that an arrow box moves away from its point.
 export function calloutTextArea(look: Pick<CalloutLook, 'width' | 'height' | 'shape'>): { centerX: number; width: number; height: number } {
   const { width, height, shape } = look
   if (shape === 'ellipse' || shape === 'thoughtBubble' || shape === 'burst') return { centerX: 0, width: width * ROUND_TEXT_SHARE, height: height * ROUND_TEXT_SHARE }
@@ -104,7 +97,6 @@ export function calloutTextArea(look: Pick<CalloutLook, 'width' | 'height' | 'sh
   return { centerX: 0, width, height }
 }
 
-// A callout is drawn around the middle of its box. The picture reaches as far to every side as its tail and border do on any, so the middle of the picture is the middle of the box.
 export function rasterizeCallout(look: CalloutLook, pixelsPerUnitX: number, pixelsPerUnitY: number): Raster {
   const halfWidth = Math.max(look.width / 2, Math.abs(look.tail?.x ?? 0)) + look.borderWidth
   const halfHeight = Math.max(look.height / 2, Math.abs(look.tail?.y ?? 0)) + look.borderWidth
@@ -137,12 +129,10 @@ export function rasterizeCallout(look: CalloutLook, pixelsPerUnitX: number, pixe
   return { canvas: raster.canvas, naturalWidth: raster.naturalWidth, naturalHeight: raster.naturalHeight }
 }
 
-// The box an arrow is grabbed by: as long as the arrow, and as high as its heads.
 export function arrowSize(look: Pick<ArrowLook, 'length' | 'thickness'>): Size {
   return { width: look.length, height: look.thickness * ARROW_HEIGHT_PER_THICKNESS }
 }
 
-// Draws the head at the end of an arrow that points along +x and ends at the origin. Returns how much of the line the head replaces.
 function drawHead(context: OffscreenCanvasRenderingContext2D, head: ArrowHead, thickness: number): number {
   const size = thickness * ARROW_HEIGHT_PER_THICKNESS
   if (head === 'triangle') {
@@ -155,15 +145,14 @@ function drawHead(context: OffscreenCanvasRenderingContext2D, head: ArrowHead, t
     return size
   }
   if (head === 'open') {
-    // The two strokes meet in a point at the very end of the arrow, so they start as far back as a mitre of this angle is long.
-    const back = thickness / 2 / Math.sin(OPEN_HEAD_ANGLE)
+    const headSetback = thickness / 2 / Math.sin(OPEN_HEAD_ANGLE)
     context.lineJoin = 'miter'
     context.beginPath()
-    context.moveTo(-back - size * Math.cos(OPEN_HEAD_ANGLE), -size * Math.sin(OPEN_HEAD_ANGLE))
-    context.lineTo(-back, 0)
-    context.lineTo(-back - size * Math.cos(OPEN_HEAD_ANGLE), size * Math.sin(OPEN_HEAD_ANGLE))
+    context.moveTo(-headSetback - size * Math.cos(OPEN_HEAD_ANGLE), -size * Math.sin(OPEN_HEAD_ANGLE))
+    context.lineTo(-headSetback, 0)
+    context.lineTo(-headSetback - size * Math.cos(OPEN_HEAD_ANGLE), size * Math.sin(OPEN_HEAD_ANGLE))
     context.stroke()
-    return back
+    return headSetback
   }
   if (head === 'dot') {
     context.beginPath()
@@ -195,7 +184,6 @@ export function rasterizeArrow(look: ArrowLook, pixelsPerUnitX: number, pixelsPe
   const startTaken = drawHead(context, look.startHead, look.thickness)
   context.restore()
 
-  // A head never takes more than its half of a short arrow.
   context.beginPath()
   context.moveTo(-half + Math.min(startTaken, half), 0)
   context.lineTo(half - Math.min(endTaken, half), 0)

@@ -15,7 +15,6 @@ function frameOf(name: string, tracks: readonly Clip[][], frame = 0): Promise<Pi
   return frameOfTracks(scratch, name, tracks, frame)
 }
 
-// Two cards of 80 by 45 (320 by 180 at a quarter): red on the left of the group's middle, blue on the right.
 const RED_CARD = imageOf('image-red.png', 'red', FIRST_SECOND, at(-100, 0, 0.25))
 const BLUE_CARD = imageOf('image-blue.png', 'blue', FIRST_SECOND, at(100, 0, 0.25))
 
@@ -35,7 +34,6 @@ describe('groups', () => {
 
   it('turns and scales its members around its middle', async () => {
     const picture = await frameOf('turned', [[WHITE_GROUND], [groupOf('group', at(320, 180, 1.5, 90), [[RED_CARD], [BLUE_CARD]])]])
-    // A quarter turn clockwise puts what was on the left at the top; the distance grows with the scale.
     expectPixel(picture, 320, 30, RED)
     expectPixel(picture, 320, 330, BLUE)
     expectPixel(picture, 170, 180, WHITE)
@@ -55,8 +53,6 @@ describe('groups', () => {
   it('places the members of a group inside a group', async () => {
     const inner = groupOf('inner', at(0, 100, 1, 90), [[RED_CARD]])
     const picture = await frameOf('nested', [[WHITE_GROUND], [groupOf('outer', at(320, 180, 1, 90), [[inner]])]])
-    // The outer quarter turn puts the inner group, 100 below its middle, 100 to the left of it, turned by a half turn in all.
-    // Half a turn puts the card, 100 to the left of the inner group, 100 to its right: in the middle of the canvas.
     expectPixel(picture, 320, 180, RED)
     expectPixel(picture, 220, 180, WHITE)
     expectPixel(picture, 320, 280, WHITE)

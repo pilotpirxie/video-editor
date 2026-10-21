@@ -1,25 +1,25 @@
 import { describe, expect, it } from 'vitest'
 import { MEDIA_STATES, SECOND, audioClip, projectOf, track, videoClip } from '../../test/fixtures.js'
-import { hasLinkedAudio, makesSound, nearestEdit, trackAboveAll } from './clips.js'
+import { hasLinkedAudio, makesSound, nearestClipEdge, trackAboveAll } from './clips.js'
 
-describe('nearestEdit', () => {
+describe('nearestClipEdge', () => {
   const project = projectOf([track('t1', [videoClip('a', SECOND, 2 * SECOND)]), track('t2', [audioClip('b', 4 * SECOND, SECOND)])])
 
   it('finds the next clip edge after a time', () => {
-    expect(nearestEdit(project, 0, 1)).toBe(SECOND)
-    expect(nearestEdit(project, SECOND, 1)).toBe(3 * SECOND)
-    expect(nearestEdit(project, 3.5 * SECOND, 1)).toBe(4 * SECOND)
+    expect(nearestClipEdge(project, 0, 1)).toBe(SECOND)
+    expect(nearestClipEdge(project, SECOND, 1)).toBe(3 * SECOND)
+    expect(nearestClipEdge(project, 3.5 * SECOND, 1)).toBe(4 * SECOND)
   })
 
   it('finds the previous clip edge before a time', () => {
-    expect(nearestEdit(project, 5 * SECOND, -1)).toBe(4 * SECOND)
-    expect(nearestEdit(project, 3 * SECOND, -1)).toBe(SECOND)
+    expect(nearestClipEdge(project, 5 * SECOND, -1)).toBe(4 * SECOND)
+    expect(nearestClipEdge(project, 3 * SECOND, -1)).toBe(SECOND)
   })
 
   it('finds nothing past the last edge', () => {
-    expect(nearestEdit(project, 5 * SECOND, 1)).toBeUndefined()
-    expect(nearestEdit(project, SECOND, -1)).toBeUndefined()
-    expect(nearestEdit(projectOf([]), 0, 1)).toBeUndefined()
+    expect(nearestClipEdge(project, 5 * SECOND, 1)).toBeUndefined()
+    expect(nearestClipEdge(project, SECOND, -1)).toBeUndefined()
+    expect(nearestClipEdge(projectOf([]), 0, 1)).toBeUndefined()
   })
 })
 

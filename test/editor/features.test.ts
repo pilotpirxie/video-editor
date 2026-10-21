@@ -14,7 +14,6 @@ const scratch = scratchDirectory('features')
 const FRAMES_PER_SECOND = 30
 const FRAME = SECOND / FRAMES_PER_SECOND
 
-// "00:00:01:15" as a number of frames, for a 30 fps project.
 function framesOf(timecode: unknown): number {
   const [hours = 0, minutes = 0, seconds = 0, frames = 0] = String(timecode).split(':').map(Number)
   return ((hours * 60 + minutes) * 60 + seconds) * FRAMES_PER_SECOND + frames
@@ -26,7 +25,6 @@ describe('transport', () => {
     expect(report.duration).toBe('/ 00:00:02:00')
     expect(report.stepMilliseconds).toBeLessThanOrEqual(MAX_STEP_MS)
 
-    // L played on from frame 15; J then ran backwards from the last frame and stopped by itself at the start.
     expect(framesOf(report.timecodeAfterForward)).toBeGreaterThan(15)
     expect(framesOf(report.timecodeWhileReversing)).toBeLessThan(framesOf('00:00:01:29'))
     expect(report.timecodeAtStart).toBe('00:00:00:00')
@@ -39,7 +37,6 @@ describe('linked clips and fades', () => {
     expect(report.cursorOverHandle).toBe('grab')
     expect(report.dragToFrameP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
 
-    // The top-left handle was dragged to half a second, the bottom-right one back to one second before the end.
     expect(projectIn(report, 'faded').tracks[0]?.clips[0]).toMatchObject({ fadeIn: SECOND / 2, volumeFadeOut: SECOND })
     const afterUndo = projectIn(report, 'afterUndo').tracks[0]?.clips[0]
     expect(afterUndo).toMatchObject({ fadeIn: SECOND / 2 })
@@ -60,7 +57,6 @@ describe('text clips', () => {
     const report = await uiTest('text', ['--out', join(scratch, 'text')])
     expect(report.typingToFrameP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
 
-    // The title goes onto the first of the six tracks a new project starts with.
     const typed = projectIn(report, 'typed')
     expect(typed.tracks).toHaveLength(6)
     expect(typed.tracks[0]?.clips[0]).toMatchObject({
@@ -74,17 +70,13 @@ describe('text clips', () => {
       transform: { x: 960, y: 540, scaleX: 1, scaleY: 1, rotation: 0 },
     })
 
-    // Every Mac has far more than twenty font families; the picker lists them all.
     expect(report.fontCount).toBeGreaterThan(20)
-    // Each font pointed at was on the canvas within the budget of a drag. Escape put the old one back, with the focus and without an undo step.
     expect(report.fontHoverSamples).toBe(5)
     expect(report.fontHoverToFrameP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
     expect(report).toMatchObject({ fontAfterEscape: 'Helvetica Neue', focusAfterEscape: 'text-font', undoLabelAfterEscape: 'Undo Edit Text' })
-    // The size pointed at in the list was only shown; the one clicked was kept.
     expect(report.sizeFromList).toBe('144')
     expect(projectIn(report, 'styled').tracks[0]?.clips[0]).toMatchObject({ text: 'Two\nlines', font: { family: 'Menlo', size: 120 }, color: '#ffcc00', align: 'left' })
 
-    // Deleting every word and leaving the text put the words back, without an undo step of its own.
     expect(report.wordsAfterEmptying).toBe('Two\nlines')
     expect(report.undoLabel).toBe('Undo Change Alignment')
   })
@@ -107,7 +99,6 @@ describe('controls', () => {
     expect(report).toMatchObject({ isSwitchBesideSearch: true, isGridByDefault: true, isListStacked: true, areTilesSideBySide: true })
     expect(report.groupsOpenAtFirst).toEqual(['Transform', 'Timing'])
 
-    // A field starts at the padding of its panel and ends at the padding, or at the room kept for the scroll bar.
     expect(report.isLabelAbove).toBe(true)
     const inset = report.fieldInset
     if (typeof inset !== 'object' || inset === null || !('left' in inset) || !('right' in inset)) throw new Error('The scenario did not report where the field is')
@@ -115,25 +106,19 @@ describe('controls', () => {
     expect(inset.right).toBeGreaterThanOrEqual(PANEL_PADDING)
     expect(inset.right).toBeLessThanOrEqual(PANEL_PADDING + WIDEST_SCROLL_BAR)
 
-    // Escape handed the focus back to the field; a value only pointed at was not kept and made no undo step.
     expect(report).toMatchObject({ focusAfterList: 'clip-volume', rotationAfterPressElsewhere: '0.0', undoLabelAfterLists: 'Undo Add Clip', isLockShownWhenFolded: true })
-    // The keyboard alone opened a list of values, moved one up from 100 and kept it.
     expect(report).toMatchObject({ opacityFromKeys: '75', focusAfterKeys: 'clip-opacity' })
 
-    // The dragged sidebar took all the canvas could spare; the other one did not move.
     expect(report.rightAfter).toBe(report.rightBefore)
     expect(report.leftWide).toBe(Number(report.windowWidth) - NARROWEST_CANVAS - SPLITTERS - Number(report.rightBefore))
     expect(report.leftWide).toBeGreaterThan(600)
     expect(report.canvasWhenWide).toBe(NARROWEST_CANVAS)
     expect(report.rightNarrow).toBe(NARROWEST_SIDEBAR)
 
-    // Zoomed out, the view holds an hour; the fit button brings the two-second project back.
     expect(Number(report.zoomedOut) * SECONDS_PER_HOUR).toBeCloseTo(Number(report.timelineWidth), 6)
     expect(report.zoomedOut).toBeLessThan(Number(report.zoomAtFit) / 100)
     expect(report.zoomAfterFit).toBe(report.zoomAtFit)
 
-    // Every press that opens a list, the 200 fonts included, shows it on the next frame; so does folding a group.
-    // Twelve lists were opened with a press, and one from the keyboard, which is not timed.
     expect(report.listSamples).toBe(12)
     expect(report.fontListSamples).toBe(5)
     expect(report.listOpenP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
@@ -145,7 +130,6 @@ describe('controls', () => {
   })
 })
 
-// Every track as its clips: what each is and the second it starts at.
 function arrangement(project: Project): string[][] {
   return project.tracks.map((track) => track.clips.map((clip) => `${clip.type} ${clip.start / SECOND}`))
 }
@@ -154,36 +138,29 @@ describe('arranging by dragging', () => {
   it('shows where held media would land, moves two clips across tracks together, and crops by typing', async () => {
     const report = await uiTest('arrange', ['--media', MEDIA_DIRECTORY, '--out', join(scratch, 'arrange')])
 
-    // The Media tab says how long or how large a file is, and no longer what kind it is or whether it is used.
     expect(report.mediaDetails).toEqual(['0:02', '0:02', '320x180'])
 
-    // Held over the first of the six empty tracks, the video shows where it would land while nothing is added, and the outline keeps up with the pointer.
     expect(report.heldOverEmpty).toEqual({ start: SECOND, trackIndex: 0, isNewTrack: false })
     expect(report.whileHeld).toEqual({ tracks: 6, undoLabel: 'unchanged' })
     expect(report.heldFrames).toBeGreaterThan(60)
     expect(report.heldFrameP95).toBeLessThanOrEqual(MAX_FRAME_INTERVAL_MS)
-    // Escape abandons the drag; let go on the timeline, the clip is where the outline was.
     expect(report.afterEscape).toEqual({ tracks: 6, undoLabel: 'unchanged' })
     expect(arrangement(projectIn(report, 'placed'))).toEqual([['video 1'], [], [], [], [], []])
 
-    // Over the video the outline showed the empty track above, and playback went on while the sound was held there.
     expect(report.heldOverTaken).toEqual({ start: 1.5 * SECOND, trackIndex: 1, isNewTrack: false })
     expect(report.isPlayingWhileHeld).toBe(true)
     expect(arrangement(projectIn(report, 'stacked'))).toEqual([['video 1'], ['audio 1.5'], [], [], [], []])
 
-    // The two clips went a second later and a track up together, the upper one onto the empty track above; then down again; then stayed, with no track below.
     expect(arrangement(projectIn(report, 'lifted'))).toEqual([[], ['video 2'], ['audio 2.5'], [], [], []])
     expect(report.groupSamples).toBeGreaterThan(4)
     expect(report.groupToFrameP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
     expect(arrangement(projectIn(report, 'lowered'))).toEqual([['video 2'], ['audio 2.5'], [], [], [], []])
     expect(projectIn(report, 'kept').tracks).toEqual(projectIn(report, 'lowered').tracks)
 
-    // A hundred pixels cropped off the left of the 320-wide picture: the centre moved right by fifty, so what is left did not move.
     expect(report.groupIcons).toEqual(['Transform 2', 'Timing 2', 'Crop 2', 'Opacity 2', 'In and out 2', 'Volume 2'])
     expect(projectIn(report, 'cropped').tracks[0]?.clips[0]).toMatchObject({ crop: { left: 100, top: 0, right: 0, bottom: 0 }, transform: { x: 210, y: 90 } })
     expect(report.widthAfterCrop).toBe('220.0')
 
-    // A click and a Cmd-click picked two files; dragged together they showed one outline and landed one after the other on an empty track.
     expect(report.selectedFiles).toEqual(['media-audio.wav', 'media-image.jpg'])
     expect(report.focusAfterClicks).not.toBe('option')
     expect(report.heldTogether).toEqual({ start: 0.5 * SECOND, trackIndex: 2, isNewTrack: false })
@@ -192,7 +169,6 @@ describe('arranging by dragging', () => {
     expect(together[0]?.start).toBe(0.5 * SECOND)
     expect(together[1]?.start).toBe((together[0]?.start ?? 0) + (together[0]?.duration ?? 0))
 
-    // With the keys alone: Right picked the sound, Shift-Right added the picture, and Return laid both at the playhead on the empty track above the others.
     expect(report.listRole).toBe('listbox true')
     expect(report.pickedByKeys).toEqual(['media-audio.wav', 'media-image.jpg'])
     expect(report.focusAfterKeys).toBe('media-image.jpg')
@@ -211,12 +187,10 @@ describe('annotations', () => {
   it('adds blur, pixelate, highlight and spotlight clips and changes them on the canvas and in Properties', async () => {
     const report = await uiTest('shapes', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'shapes')])
 
-    // A new blur is three tenths of the canvas wide and two tenths high, in the middle, on a new top track, for five seconds from the playhead.
     const added = projectIn(report, 'added')
     expect(added.tracks).toHaveLength(2)
     expect(added.tracks[1]?.clips[0]).toMatchObject({ type: 'blur', start: 0, duration: 5 * SECOND, width: 192, height: 72, shape: 'rectangle', softEdge: 0, strength: 8, transform: { x: 320, y: 180, scaleX: 1, scaleY: 1 } })
 
-    // Its corner was pulled to twice the size; shape, edge, strength and the switch to pixels came from Properties, where the strength is then called the block size.
     const styled = projectIn(report, 'styled').tracks[1]?.clips[0]
     expect(styled).toMatchObject({ type: 'blur', shape: 'ellipse', softEdge: 6, strength: 20, isPixelated: true })
     expect(styled?.type === 'blur' && Math.abs(styled.transform.scaleX - 2)).toBeLessThan(0.05)
@@ -231,7 +205,6 @@ describe('annotations', () => {
     })
     expect(kinds).toEqual(['video', 'pixelate', 'spotlight', 'pixelate', 'spotlight'])
 
-    // Undo took the last spotlight and its track away; Delete emptied the track of the pixelate clip before it.
     expect(projectIn(report, 'afterDelete').tracks.map((track) => track.clips.length)).toEqual([1, 1, 1, 0])
   })
 })
@@ -240,11 +213,9 @@ describe('callouts, arrows and lines', () => {
   it('adds them from the Annotations tab and changes them on the canvas and in Properties', async () => {
     const report = await uiTest('annotations', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'annotations')])
 
-    // A new callout is a speech bubble in the middle, three tenths of the canvas wide, with the words that were typed into it.
     const added = projectIn(report, 'added').tracks[1]?.clips[0]
     expect(added).toMatchObject({ type: 'callout', shape: 'speechBubble', text: 'Look here', start: 0, duration: 5 * SECOND, width: 192, height: 72, tail: { x: -58, y: 65 }, transform: { x: 320, y: 180 } })
 
-    // The tail was dragged to the canvas point 560, 320, which is 240 right of and 140 below the middle of the callout.
     const shaped = projectIn(report, 'shaped').tracks[1]?.clips[0]
     expect(shaped).toMatchObject({ shape: 'thoughtBubble', width: 240, fill: '#ffee00', borderWidth: 6 })
     expect(shaped?.type === 'callout' && Math.abs((shaped.tail?.x ?? 0) - 240)).toBeLessThanOrEqual(3)
@@ -254,7 +225,6 @@ describe('callouts, arrows and lines', () => {
     expect(banner).not.toHaveProperty('tail')
 
     expect(projectIn(report, 'arrowAdded').tracks[2]?.clips[0]).toMatchObject({ type: 'arrow', length: 160, thickness: 3, startHead: 'none', endHead: 'triangle', transform: { x: 320, y: 180, rotation: 0 } })
-    // Its end went from 400, 180 to 600, 40 while its start stayed at 240, 180.
     const pointed = projectIn(report, 'pointed').tracks[2]?.clips[0]
     expect(pointed).toMatchObject({ startHead: 'dot', thickness: 8 })
     if (pointed?.type !== 'arrow') throw new Error('The arrow is gone')
@@ -263,14 +233,12 @@ describe('callouts, arrows and lines', () => {
     expect(Math.abs(pointed.length - Math.hypot(360, 140))).toBeLessThanOrEqual(3)
     expect(Math.abs(pointed.transform.rotation + 21.25)).toBeLessThanOrEqual(1)
 
-    // The line was dropped on the canvas point 160, 90, at the playhead.
     const line = projectIn(report, 'withLine').tracks[3]?.clips[0]
     expect(line).toMatchObject({ type: 'arrow', start: 0, startHead: 'none', endHead: 'none' })
     expect(line !== undefined && 'transform' in line && Math.abs(line.transform.x - 160)).toBeLessThanOrEqual(2)
     expect(line !== undefined && 'transform' in line && Math.abs(line.transform.y - 90)).toBeLessThanOrEqual(2)
     expect(report.undoAfterClick).toBe('Undo Add Line')
 
-    // The title held over the video promised a track of its own, and landed there at one second.
     expect(report.titleHeld).toEqual({ start: SECOND, trackIndex: 1, isNewTrack: true })
     const withTitle = projectIn(report, 'withTitle')
     expect(withTitle.tracks).toHaveLength(5)
@@ -293,7 +261,6 @@ describe('text styling', () => {
     })
     expect(styled).not.toHaveProperty('boxWidth')
 
-    // Narrower than its words, the box breaks them into two lines and grows taller.
     expect(projectIn(report, 'wrapped').tracks[0]?.clips[0]).toMatchObject({ boxWidth: 300 })
     expect(Number(report.heightOnTwoLines)).toBeGreaterThan(Number(report.heightOnOneLine) * 1.5)
 
@@ -309,7 +276,6 @@ describe('missing fonts', () => {
     const missing = 'No Such Font Family'
     const parsed = parseProject(readFileSync(projectPath('09-text'), 'utf8'))
     if (!parsed.ok) throw new Error(parsed.message)
-    // The copy lives in the scratch folder, so its one media file is given by its full path.
     const project: Project = {
       ...parsed.project,
       media: parsed.project.media.map((reference) => ({ ...reference, path: join(MEDIA_DIRECTORY, 'h264.mp4') })),
@@ -333,7 +299,6 @@ describe('missing fonts', () => {
 describe('in and out', () => {
   it('chooses one fade, animation or transition at each end of a clip, and takes it away', async () => {
     const report = await uiTest('animations', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'animations')])
-    // A video has no letters to type.
     expect(report.offersTypewriter).toBe(false)
 
     const animated = projectIn(report, 'animated').tracks[0]?.clips[0]
@@ -354,7 +319,6 @@ describe('groups', () => {
     const original = projectPath('02-mosaic')
     const report = await uiTest('groups', ['--project', original, '--out', join(scratch, 'groups')])
 
-    // The group lies where the topmost clip was and holds the four clips on four tracks of its own, placed around its middle.
     const grouped = projectIn(report, 'grouped')
     expect(grouped.tracks.map((track) => track.clips.length)).toEqual([0, 0, 0, 1])
     const group = grouped.tracks[3]?.clips[0]
@@ -363,13 +327,11 @@ describe('groups', () => {
     expect(group.tracks.map((track) => track.clips.map((clip) => clip.id))).toEqual([['a'], ['b'], ['c'], ['d']])
     expect(group.tracks[0]?.clips[0]).toMatchObject({ transform: { x: -160, y: -90 } })
 
-    // Dragged by one member, the whole group moved; its scale is one number.
     const moved = projectIn(report, 'moved').tracks[3]?.clips[0]
     expect(moved).toMatchObject({ transform: { scaleX: 0.5, scaleY: 0.5 } })
     expect(moved?.type === 'group' && Math.abs(moved.transform.x - 360)).toBeLessThanOrEqual(2)
     expect(moved?.type === 'group' && Math.abs(moved.transform.y - 200)).toBeLessThanOrEqual(2)
 
-    // Inside, the timeline shows the group's own tracks and the camera cannot be changed. Twenty canvas pixels are forty inside a group at half its size; going down, the member comes within reach of the middle of the canvas and snaps to it.
     expect(report.tracksInside).toBe(4)
     expect(report.isCameraToolOff).toBe(true)
     const inside = projectIn(report, 'inside').tracks[3]?.clips[0]
@@ -379,7 +341,6 @@ describe('groups', () => {
     expect(dragged?.type === 'video' && Math.abs(dragged.transform.x + 120)).toBeLessThanOrEqual(4)
     expect(dragged?.type === 'video' && Math.abs(inside.transform.y + dragged.transform.y / 2 - 180)).toBeLessThanOrEqual(0.01)
 
-    // Ungrouped, the members are where and as large as the group showed them, the lowest where the group was and the others above it.
     const ungrouped = projectIn(report, 'ungrouped')
     expect(ungrouped.tracks.map((track) => track.clips.map((clip) => clip.id))).toEqual([[], [], [], ['a'], ['b'], ['c'], ['d']])
     const last = ungrouped.tracks[6]?.clips[0]
@@ -397,7 +358,6 @@ describe('volume keyframes and the sound of fast clips', () => {
   it('keys the volume in Properties, drags a keyframe on the waveform and sets how sound follows speed', async () => {
     const report = await uiTest('sound', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'sound')])
     expect(report.cursorOverLine).toBe('ns-resize')
-    // The pointer moves in whole pixels over a band 21 pixels high, so half the way down is near 50%, not exactly.
     expect(Math.abs(Number(report.lineVolume) - 50)).toBeLessThanOrEqual(3)
     expect(projectIn(report, 'keyed').tracks[0]?.clips[0]?.keyframes?.volume).toEqual([
       { time: 0, value: 1, easing: 'linear' },
@@ -414,7 +374,6 @@ describe('volume keyframes and the sound of fast clips', () => {
     const [kept] = projectIn(report, 'deleted').tracks[0]?.clips[0]?.keyframes?.volume ?? []
     expect(projectIn(report, 'deleted').tracks[0]?.clips[0]?.keyframes?.volume).toHaveLength(1)
 
-    // The added point takes the volume the line had there; a drag between the points lowers both by half the range.
     const added = projectIn(report, 'pointAdded').tracks[0]?.clips[0]?.keyframes?.volume ?? []
     expect(added.map((keyframe) => keyframe.time)).toEqual([SECOND / 2, kept?.time])
     expect(added[0]?.value).toBeCloseTo(kept?.value ?? 0, 5)
@@ -436,7 +395,6 @@ describe('canvas size', () => {
       return clip.transform
     })
 
-    // 640 x 360 to 1280 x 720 with the sides linked: everything doubles.
     const doubled = projectIn(report, 'doubled')
     expect(doubled.canvas).toMatchObject({ width: 1280, height: 720 })
     const rounded = (transform: Transform): number[] => [transform.x, transform.y, transform.scaleX, transform.scaleY].map((value) => Math.round(value * 1000) / 1000)
@@ -454,24 +412,20 @@ describe('effects', () => {
     })
 
     expect(report.noticeWithoutSelection).toBe('Select a video, an image or a text first, or drag the effect onto one.')
-    // A click with the pointer added nothing; pressed without one, the border went on both selected clips, sized for the 360 pixel high canvas.
     expect(report.isUnchangedByClick).toBe(true)
     const border = { type: 'border', width: 2, color: '#ffffff' }
     expect(effectsOf('bordered')).toEqual([[border], [border], [], []])
     expect(report.hintForTwo).toBe('Select one clip to change its effects.')
 
-    // Held over the third clip the shadow marked it and changed nothing; dropped there and on the fourth clip on the canvas, each got its effect.
     expect(report.heldOverTimeline).toMatchObject({ kind: 'effect', clipIds: ['c'], effect: 'dropShadow' })
     expect(report.undoWhileHeld).toBe('Undo Add Effect')
     expect(effectsOf('dropped')).toMatchObject([[border], [border], [{ type: 'dropShadow', offsetX: 4, opacity: 0.5 }], [{ type: 'colorAdjust', saturation: 0 }]])
 
-    // The border of the fourth clip was made 12 wide, moved before the colour adjustment and switched off.
     expect(effectsOf('changed')[3]).toEqual([{ type: 'border', width: 12, color: '#ffffff', isOff: true }, { type: 'colorAdjust', brightness: 0, contrast: 0, saturation: -1 }])
     expect(effectsOf('keyed')[3]).toMatchObject([{ type: 'border' }, { type: 'colorAdjust' }, { type: 'chromaKey', color: '#123456', tolerance: 0.4 }])
     expect(JSON.stringify(effectsOf('keyed')[3])).toContain('"chromaKey"')
     expect(effectsOf('removed')[3]).toMatchObject([{ type: 'colorAdjust' }, { type: 'chromaKey' }])
 
-    // The Cinematic look set its sliders at full strength; moving one made it custom, and undo made it Cinematic again.
     expect(effectsOf('graded')[3]).toMatchObject([{ type: 'colorAdjust' }, { type: 'chromaKey' }, { type: 'look', strength: 1, contrast: 0.15, shadowAmount: 0.35, highlightAmount: 0.3 }])
     expect(report.lookAfterEdit).toContain('Custom')
     expect(report.lookAfterUndo).toContain('Cinematic')
@@ -483,19 +437,16 @@ describe('transitions', () => {
     const report = await uiTest('transitions', ['--project', projectPath('export-check'), '--out', join(scratch, 'transitions')])
     const clipsAt = (stage: string): unknown[] => projectIn(report, stage).tracks[0]?.clips ?? []
 
-    // Held over the first clip near its end, the transition marks the cut, which belongs to the start of the second clip. Nothing changes until it is let go, and nothing after Escape.
     expect(report.heldOnCut).toMatchObject({ kind: 'transition', target: { clipId: 'second', edge: 'in' }, type: 'crossDissolve' })
     expect(report.isUnchangedWhileHeld).toBe(true)
     expect(report.isUnchangedAfterEscape).toBe(true)
     expect(report.isUnchangedByClick).toBe(true)
     expect(clipsAt('onCut')[1]).toMatchObject({ id: 'second', transitionIn: { type: 'crossDissolve', duration: SECOND } })
 
-    // The grip was pulled from half a second after the cut to 0.2 s after it: the transition is 0.4 s long, and the picture followed within the budget.
     expect(clipsAt('shortened')[1]).toMatchObject({ transitionIn: { type: 'crossDissolve', duration: 0.4 * SECOND } })
     expect(report.gripSamples).toBeGreaterThan(3)
     expect(report.gripToFrameP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
 
-    // Each one-second clip has 0.8 s left beside its half of the transition on the cut, and that is how long the transitions at the free ends became.
     expect(clipsAt('withEnds')).toMatchObject([{ transitionIn: { type: 'zoom', duration: 0.8 * SECOND } }, { transitionOut: { type: 'push', duration: 0.8 * SECOND } }])
 
     const second = clipsAt('viaProperties')[1]
@@ -511,14 +462,12 @@ describe('zoom and pan', () => {
     const zoomsAt = (stage: string): { time: number; duration: number; easing: string; x: number; y: number; scale: number }[] => projectIn(report, stage).camera ?? []
     const near = (value: number | undefined, expected: number, within: number): boolean => value !== undefined && Math.abs(value - expected) <= within
 
-    // The frame drawn over the middle half of the canvas is a zoom to 200% at the playhead, reached over a second with an eased move.
     const [drawn] = zoomsAt('drawn')
     expect(drawn).toMatchObject({ time: SECOND, duration: SECOND, easing: 'easeInOut' })
     expect(near(drawn?.scale, 2, 0.02) && near(drawn?.x, 320, 2) && near(drawn?.y, 180, 2)).toBe(true)
     expect(report.frameSamples).toBeGreaterThan(3)
     expect(report.frameToFrameP95).toBeLessThanOrEqual(MAX_CANVAS_FOLLOW_MS)
 
-    // Moved by 80 and 40, then made smaller from its bottom right corner: 240 wide, with the top left corner where it was.
     const [moved] = zoomsAt('movedFrame')
     expect(near(moved?.x, 400, 2) && near(moved?.y, 220, 2) && near(moved?.scale, 2, 0.02)).toBe(true)
     const [shaped] = zoomsAt('shaped')
@@ -527,17 +476,14 @@ describe('zoom and pan', () => {
     expect(zoomsAt('withFull')).toHaveLength(2)
     expect(zoomsAt('withFull')[1]).toMatchObject({ time: 1.5 * SECOND, x: 320, y: 180, scale: 1 })
 
-    // On the lane the first zoom went to 0.8 s and its move was cut to 0.4 s; Properties then made it 0.5 s and linear.
     expect(zoomsAt('onLane')[0]).toMatchObject({ time: 0.8 * SECOND, duration: 0.4 * SECOND })
     expect(zoomsAt('viaProperties')[0]).toMatchObject({ time: 0.8 * SECOND, duration: SECOND / 2, easing: 'linear' })
     expect(zoomsAt('afterDelete').map((zoom) => zoom.time)).toEqual([0.8 * SECOND])
 
-    // Under the zoom the clip moved by what the pointer travelled on the zoomed picture, not on the whole canvas.
     const clip = projectIn(report, 'moved').tracks[0]?.clips[0]
     const expected = 320 + (Number(report.pulled) * Number(report.canvasPerPixel)) / (zoomsAt('moved')[0]?.scale ?? 1)
     expect(clip?.type === 'video' && near(clip.transform.x, expected, 1.5)).toBe(true)
 
-    // A right click on the zoom on the lane set its easing, and then deleted it.
     expect(zoomsAt('menuEased')[0]).toMatchObject({ time: 0.8 * SECOND, easing: 'hold' })
     expect(zoomsAt('menuDeleted')).toEqual([])
   })
@@ -550,28 +496,23 @@ describe('keyframes and the motion path', () => {
     const keyframesAt = (stage: string): Partial<Record<string, Keyed[]>> => projectIn(report, stage).tracks[0]?.clips[0]?.keyframes ?? {}
     const near = (value: number | undefined, expected: number): boolean => value !== undefined && Math.abs(value - expected) <= 2
 
-    // The button on Y keyed X with it, at the playhead, holding the place the clip had.
     expect(keyframesAt('keyed')).toEqual({ x: [{ time: 0, value: 320, easing: 'linear' }], y: [{ time: 0, value: 180, easing: 'linear' }] })
     expect(report.isPositionPressed).toBe(true)
 
-    // A second later the drag from the first dot moved the clip, which keyed that second.
     const moved = keyframesAt('moved')
     expect(moved.x?.map((keyframe) => keyframe.time)).toEqual([0, SECOND])
     expect(moved.y?.map((keyframe) => keyframe.time)).toEqual([0, SECOND])
     expect(near(moved.x?.[1]?.value, 420) && near(moved.y?.[1]?.value, 230)).toBe(true)
     expect(projectIn(report, 'moved').tracks[0]?.clips[0]).toMatchObject({ transform: { x: 320, y: 180 } })
 
-    // The dragged dot moved the first keyframe only.
     const dotMoved = keyframesAt('dotMoved')
     expect(near(dotMoved.x?.[0]?.value, 200) && near(dotMoved.y?.[0]?.value, 120)).toBe(true)
     expect(dotMoved.x?.[1]).toEqual(moved.x?.[1])
     expect(dotMoved.y?.[1]).toEqual(moved.y?.[1])
 
-    // The size button on Scale keyed both scales and lit the Width and Height buttons.
     expect(report.isSizePressed).toBe(true)
     expect(keyframesAt('sized')).toMatchObject({ scaleX: [{ time: SECOND, value: 2 }], scaleY: [{ time: SECOND, value: 2 }] })
 
-    // A typed X at 1.5 s keyed the place there, Y holding its value; the button took both away again.
     const typed = keyframesAt('typed')
     expect(typed.x?.[2]).toEqual({ time: 1.5 * SECOND, value: 500, easing: 'linear' })
     expect(typed.y?.[2]).toEqual({ time: 1.5 * SECOND, value: moved.y?.[1]?.value, easing: 'linear' })
@@ -579,8 +520,6 @@ describe('keyframes and the motion path', () => {
     expect(removed.x?.map((keyframe) => keyframe.time)).toEqual([0, SECOND])
     expect(removed.y?.map((keyframe) => keyframe.time)).toEqual([0, SECOND])
 
-    // A click on a keyframe's diamond went to it; the ruler pulled the playhead onto the keyframe and the clip's end, except with ⌘ held.
-    // The clip ends the project, and the playhead stops on the project's last frame.
     expect(report.jumpedTo).toBe(SECOND)
     expect(report.snappedToKeyframe).toBe(SECOND)
     expect(report.snappedToEnd).toBe(2 * SECOND - FRAME)
@@ -597,7 +536,6 @@ describe('animated images', () => {
     expect(placed.tracks[0]?.clips[0]).toMatchObject({ type: 'video', loop: true, start: 0, duration: 5 * SECOND })
     expect(projectIn(report, 'stretched').tracks[0]?.clips[0]).toMatchObject({ loop: true, duration: 8 * SECOND })
 
-    // Without the loop the clip is one play of its twelve pictures long.
     const once = projectIn(report, 'once').tracks[0]?.clips[0]
     expect(once).toMatchObject({ duration: 1.2 * SECOND })
     expect(once).not.toHaveProperty('loop')
@@ -606,7 +544,6 @@ describe('animated images', () => {
 })
 
 describe('missing media', () => {
-  // The three files this project names are in the test media folder, not in the folder it remembers.
   const moved: Project = {
     version: 1,
     canvas: { width: 640, height: 360, frameRate: { num: 30, den: 1 } },
@@ -667,7 +604,6 @@ describe('canvas zoom and preview mode', () => {
     const everything = { left: true, right: true, timeline: true, overlay: true, zoomTool: true }
     expect(report.shownInPreview).toEqual({ left: false, right: false, timeline: false, overlay: false, zoomTool: false })
     expect(report.shownAfterEscape).toEqual(everything)
-    // The middle of the seek bar is the middle of the two-second project.
     expect(Math.abs(framesOf(report.timecodeAfterSeek) - FRAMES_PER_SECOND)).toBeLessThanOrEqual(2)
   })
 })
@@ -699,41 +635,33 @@ describe('export dialog', () => {
   it('exports from the dialog with every option, holds the window meanwhile, and cancels cleanly', async () => {
     const report = await uiTest('export', ['--project', projectPath('05-fades'), '--out', join(scratch, 'export')])
 
-    // The 640 x 360 project starts at its own size; nothing is selected yet, so there is no range to choose.
     expect(report.defaultPreset).toBe('360p')
     expect(report.summaryAtOpen).toBe('MP4, 640x360, 3s long')
     expect(report.canChooseSelection).toBe(false)
 
-    // Tab reaches every control and stays inside the dialog.
     const controls = ['export-preset', 'export-frame-rate', 'export-quality-low', 'export-quality-medium', 'export-quality-high', 'export-encoder', 'export-range-whole', 'export-audio', 'export-cancel-dialog', 'export-start', 'export-format']
     expect(report.tabStops).toEqual([...controls, ...controls.slice(0, 3)])
     expect(report.isDialogOpenAfterListEscape).toBe(true)
 
-    // The selected clip runs for two seconds: fifty frames at 25 a second, with no sound.
     const range = await probeExport(String(report.range))
     expect(range.video).toMatchObject({ codec_name: 'h264', width: '426', height: '240', r_frame_rate: '25/1', nb_frames: '50' })
     expect(range.audio).toEqual({})
     expect(Math.abs(range.duration - 2)).toBeLessThan(0.05)
 
-    // The result is read in the dialog, with the focus on the button that closes it. Behind it nothing was duplicated, pasted, selected or replaced by a new project.
     expect(report.canShowInFinder).toBe(true)
     expect(report.focusOnResult).toBe('export-done')
     expect(report.behindResult).toEqual({ undoLabel: 'Undo', selectedStart: '1.000' })
 
-    // The next export starts from the size chosen last time. While it runs, the focus is on the dialog and not on Cancel; Delete, Space, Duplicate, a click, a dropped file, Escape twice and closing the window change and stop nothing.
     expect(report.rememberedPreset).toBe('240p')
     expect(report.progressText).toMatch(/^Frame \d+ of 90/)
     expect(report.focusWhileRunning).toBe('export-progress-dialog')
     expect(report.whileRunning).toEqual({ undoLabel: 'Undo Change Opacity', selectedStart: '1.000', notice: '', hasPlayheadMoved: false, isStillRunning: true })
-    // A result is closed by Return, with the focus on its button, and by Escape.
     expect(report.resultsClosedByKeys).toEqual(['Exported "whole-low.mp4"', 'Exported "whole-high.mp4"'])
 
-    // Cancelled half way, it leaves nothing on disk; so does an export whose window loads again.
     expect(report.hadUnfinishedFile).toBe(true)
     expect(report.leftBehind).toEqual([])
     expect(report.leftAfterReload).toEqual([])
 
-    // Each format shows only the fields it uses; a WAV and a PNG come out of the same dialog.
     expect(report.fieldsByFormat).toEqual({
       webm: ['export-preset', 'export-frame-rate', 'export-quality-high', 'export-range-whole', 'export-audio'],
       gif: ['export-preset', 'export-frame-rate', 'export-range-whole'],
@@ -767,7 +695,6 @@ describe('debug info and settings', () => {
     expect(report.debugWithSelection).toContain('Selected 3')
     expect(report.debugWithSelection).toContain('h264.mp4')
 
-    // The video and the sound play twice as fast, and what follows them on the track closes up.
     const clips = projectIn(report, 'faster').tracks[0]?.clips ?? []
     const timing = clips.map((clip) => ({ type: clip.type, start: clip.start, duration: clip.duration }))
     expect(timing).toEqual([
@@ -789,16 +716,13 @@ describe('quick edits', () => {
     expect(report.startingTracks).toBe(6)
     expect(report.pickedByBox).toEqual(['media-h264.mp4', 'media-audio.wav', 'media-image.jpg'])
     expect(report.pickedBySelectAll).toEqual(['media-h264.mp4', 'media-audio.wav', 'media-image.jpg'])
-    // Dropped together on the first of the six tracks, end to end in the order of the list.
     expect(arrangement(projectIn(report, 'dropped'))).toEqual([['video 0', 'audio 2', 'image 4'], [], [], [], [], []])
-    // Select All after a press on the timeline picked the clips and left the files as they were.
     expect(report.filesAfterClipSelectAll).toEqual(['media-h264.mp4', 'media-audio.wav', 'media-image.jpg'])
 
     expect(report.startAfterSplit).toBe('1.000')
     expect(report.speedShown).toBe('100')
     const typed = projectIn(report, 'typedSpeed').tracks[0]?.clips[1]
     expect(typed).toMatchObject({ type: 'video', start: SECOND, speedPercent: 200, duration: SECOND / 2 })
-    // Escape leaves the speed as it was.
     expect(report.speedShownAgain).toBe('200')
     expect(report.undoAfterEscape).toBe('Undo Change Speed')
     expect(projectIn(report, 'escapedSpeed').tracks[0]?.clips[1]).toMatchObject({ start: SECOND, speedPercent: 200 })
@@ -810,7 +734,6 @@ describe('quick edits', () => {
 })
 
 describe('accessibility', () => {
-  // Between them these hold every kind of clip, so Properties is looked at for each.
   it.each(['17-callouts-arrows', '15-blur-highlight', '05-fades', '20-groups', '09-text'])('names every control and reaches every panel and dialog by keyboard with a visible focus ring, on %s', async (project) => {
     const report = await uiTest('accessibility', ['--project', projectPath(project), '--out', join(scratch, `accessibility-${project}`)])
     expect(report.unnamed).toEqual([])
@@ -825,7 +748,6 @@ describe('timeline scrolling and removing media', () => {
   it('scrolls with the scroll bar and the middle button, and Delete in the Media tab takes a file out with its clips', async () => {
     const report = await uiTest('timeline-scroll', ['--project', projectPath('01-single-clip'), '--out', join(scratch, 'timeline-scroll')])
     expect(report.scrolledByBar).toBe(120)
-    // Scrolling is not an edit.
     expect(report.undoAfterScrolling).toBe('Undo')
     const removed = projectIn(report, 'removed')
     expect(removed.media).toEqual([])

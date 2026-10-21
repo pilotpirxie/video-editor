@@ -30,7 +30,6 @@ export function usePosition<Selected>(select: (position: Position) => Selected):
   return useSyncExternalStore(transport.subscribe, () => select(transport.position()))
 }
 
-// The first key of an action as a tooltip writes it, following any change made in the settings.
 export function useShortcutHint(action: ShortcutAction): string | undefined {
   const { shortcuts } = useSession()
   const [first] = useSyncExternalStore(shortcuts.subscribe, shortcuts.get)[action]

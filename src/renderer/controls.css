@@ -13,7 +13,6 @@ body,
 body {
   background: var(--window-background);
   color: var(--text-primary);
-  /* The system's own parts, scroll bars above all, are drawn for a dark window. */
   color-scheme: dark;
   font: var(--text-body) var(--font-family);
   font-variant-numeric: tabular-nums;
@@ -109,7 +108,6 @@ body {
   color: var(--text-disabled);
 }
 
-/* A labelled button with its icon before the words. */
 .button.with-icon {
   display: inline-flex;
   align-items: center;
@@ -161,13 +159,11 @@ body {
   display: flex;
 }
 
-/* Buttons that share the whole row between them. */
 .segmented.wide .button {
   flex: 1;
   width: auto;
 }
 
-/* One control made of several buttons: each keeps its outline, text or icon alike, and neighbours share the line between them. */
 .segmented .button {
   border-color: var(--divider);
   border-radius: 0;
@@ -187,7 +183,6 @@ body {
   border-radius: 0 var(--radius) var(--radius) 0;
 }
 
-/* Raised above its neighbours so the whole of its outline shows. */
 .segmented .button[aria-pressed='true'] {
   position: relative;
   border-color: var(--primary);
@@ -273,7 +268,6 @@ body {
   background: var(--hover-surface);
 }
 
-/* The mark of the value in use keeps its place in every row, so the names line up. */
 .option {
   padding-left: var(--space-1);
 }
@@ -317,7 +311,6 @@ body {
   pointer-events: none;
 }
 
-/* Every control sits under its own small label and is as wide as its panel. */
 .labelled {
   display: flex;
   flex-direction: column;
@@ -343,7 +336,6 @@ legend.field-label {
   margin-bottom: 2px;
 }
 
-/* A control with the list that opens under it, and the arrow that opens the list of ready-made values. */
 .field-box {
   position: relative;
   display: flex;
@@ -389,7 +381,6 @@ legend.field-label {
   user-select: none;
 }
 
-/* A drop-down is pressed, not typed into, so it is raised like a button rather than sunken like the fields. */
 .field.picker {
   box-shadow: var(--raised-edge);
 }
@@ -583,7 +574,6 @@ legend.field-label {
   width: 360px;
 }
 
-/* One height for every tab, so the buttons stay put when the tab changes. */
 .settings-body {
   display: flex;
   flex-direction: column;
@@ -632,12 +622,10 @@ legend.field-label {
   gap: var(--space-2);
 }
 
-/* The dialog itself takes the focus while an export runs; the ring belongs on its buttons. */
 .dialog:focus {
   outline: none;
 }
 
-/* Drawn from the tokens: the system's own bar has a light track, which on this dark dialog reads as nearly done from the first frame. */
 .export-bar {
   width: 100%;
   height: 6px;
@@ -656,8 +644,6 @@ legend.field-label {
   background: var(--primary);
 }
 
-
-/* A field with the keyframe buttons of its value at the end of its line. */
 .field-row {
   display: flex;
   align-items: center;
@@ -669,7 +655,6 @@ legend.field-label {
   margin-right: var(--space-1);
 }
 
-/* Two fields side by side, such as X and Y, with the keyframe buttons they share at the end. */
 .field-pair {
   display: flex;
   align-items: flex-end;

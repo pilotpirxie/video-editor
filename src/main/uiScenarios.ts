@@ -34,18 +34,13 @@ import {
 
 const SHUTTLE_WATCH_MS = 400
 const STEPS_TO_TIME = 20
-// Thumbnails and waveforms are fetched after the media is prepared; pictures taken for a person to look at wait for them.
 const PICTURES_SETTLE_MS = 1500
-// A fade handle rests this far inside its corner of the clip; `timelinePoint` gives the middle of the row.
 const HANDLE_INSET = 7
-// Pixels above the middle of a row, where a selected sound clip at full volume has its volume line.
 const CLEAR_OF_VOLUME_LINE = 10
 // A short pinch outwards, which the page sees as a wheel delta of -20: the zoom grows by e^0.2, about a fifth. Electron's wheel input counts the other way.
 const PINCH_DELTA = 20
 const HANDLE_FROM_ROW_MIDDLE = 19
-// On a clip with sound the diamonds of its keyframes sit this far above the middle of its row, along the bottom of its picture.
 const DIAMOND_FROM_ROW_MIDDLE = 1
-// Within snapping range of a clip edge or a keyframe, which is 8 pixels.
 const NEAR_SNAP_PIXELS = 7
 const DIALOG_TAB_STOPS = 14
 const CANCEL_SETTLE_MS = 1500
@@ -60,8 +55,6 @@ const HELD_PASSES = 4
 const HELD_FRAMES = 240
 const SECONDS_PER_HOUR = 3600
 
-// Starts timing from each event of one kind until the preview shows the result; `read` gives the delays collected so far.
-// "Any frame" counts every picture drawn; "another timecode" waits for the playhead to be somewhere else.
 async function watchDelays(driver: Driver, eventType: string, shown: Shown): Promise<{ read(): Promise<number[]> }> {
   const store = `delays_${eventType}`
   await driver.page.evaluate(`(() => {
@@ -77,7 +70,6 @@ async function watchDelays(driver: Driver, eventType: string, shown: Shown): Pro
   return { read: async () => numbersIn(await driver.page.evaluate(`window.${store}`)) }
 }
 
-// Prepared media answers from its preview copy, which is what the "cached" budgets are about.
 export async function untilPrepared(driver: Driver): Promise<void> {
   await driver.until(`document.querySelector('.library-item[data-testid^="media-"]') !== null && document.querySelector('.library-item .badge.warning') === null`, 'the media to be prepared')
 }
@@ -86,7 +78,6 @@ async function untilTimecode(driver: Driver, timecode: string): Promise<void> {
   await driver.until(`${selector('timecode')}.textContent === '${timecode}'`, `the playhead at ${timecode}`)
 }
 
-// Moves through a two-second project with the keyboard alone.
 async function testTransport(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await untilPrepared(driver)
@@ -129,7 +120,6 @@ async function testTransport(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('play')}.getAttribute('aria-label') === 'Play' && ${selector('shuttle-rate')} === null`, 'K to stop')
   const timecodeAfterForward = await driver.page.text('timecode')
 
-  // From the end, so the reverse is still running when the second J comes; from where K stops, it reaches the start in about half a second.
   await driver.press('Return', ['meta', 'shift'])
   await untilTimecode(driver, '00:00:01:29')
   await driver.press('J')
@@ -143,7 +133,6 @@ async function testTransport(driver: Driver): Promise<UiTestReport> {
   return { stepSamples: steps.length, stepMilliseconds, duration, timecodeAfterForward, timecodeWhileReversing, timecodeAtStart: await driver.page.text('timecode') }
 }
 
-// Works on the one clip of a two-second project, a video with sound: fades its picture in and its sound out with the corner handles, then separates the sound.
 async function testBlocks(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   await fullQualityFrame(driver, 0)
@@ -187,8 +176,6 @@ async function testBlocks(driver: Driver): Promise<UiTestReport> {
   return { cursorOverHandle, dragSamples: delays.length, dragToFrameP95: percentile(delays, P95), faded, afterUndo, separated, canSeparateAgain }
 }
 
-// Sets a form control to a value the way a choice in its picker would, and tells the page about it.
-// Sets a control whose own picker belongs to the system, as the colour field's does.
 async function choose(driver: Driver, testId: string, value: string): Promise<void> {
   await driver.page.evaluate(`(() => {
     const control = ${selector(testId)}
@@ -205,7 +192,6 @@ function isListOpen(testId: string): string {
 // A panel that scrolls to bring a control into view tells the page so with its next frame. A person could not press sooner, and a list that opened sooner would take the scroll for a reason to close.
 const ONCE_THE_SCROLL_IS_HEARD = `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))`
 
-// The middle of a control, which is first brought into view if its panel has scrolled it away.
 async function centerInView(driver: Driver, testId: string): Promise<Point> {
   await driver.page.evaluate(`(() => {
     ${selector(testId)}.scrollIntoView({ block: 'nearest' })
@@ -218,20 +204,17 @@ async function clickOn(driver: Driver, testId: string): Promise<void> {
   await driver.clickAt(await centerInView(driver, testId))
 }
 
-// A press on a drop-down, or on the arrow of a number field, opens its list.
 async function openList(driver: Driver, pressed: string, testId: string): Promise<void> {
   await clickOn(driver, pressed)
   await driver.until(isListOpen(testId), `the list of ${testId} to open`)
 }
 
-// Where an option of an open list is, scrolled into view first.
 async function optionPoint(driver: Driver, testId: string, value: string): Promise<Point> {
   const option = `${testId}-option-${value}`
   await driver.page.evaluate(`${selector(option)}.scrollIntoView({ block: 'nearest' })`)
   return centerOf(await driver.rect(option))
 }
 
-// Chooses from a drop-down as a person would: a press opens the list, a click on the option closes it.
 export async function pick(driver: Driver, testId: string, value: string): Promise<void> {
   await openList(driver, testId, testId)
   await driver.clickAt(await optionPoint(driver, testId, value))
@@ -243,7 +226,6 @@ export async function untilTextEditor(driver: Driver, isOpen: boolean): Promise<
   await driver.until(state, isOpen ? 'the text to open for typing' : 'the text to close')
 }
 
-// Starts from an empty project: adds a title from the Annotations tab, types it on the canvas, changes its look in the properties panel.
 async function testText(driver: Driver): Promise<UiTestReport> {
   const canvasWidth = 1920
   const middle = await canvasPoint(driver, canvasWidth, { x: 960, y: 540 })
@@ -256,7 +238,6 @@ async function testText(driver: Driver): Promise<UiTestReport> {
   const typingDelays = await watchDelays(driver, 'input', 'any frame')
   await driver.typeKeys('Hello')
   await driver.until(`${selector('text-words')}?.value === 'Hello'`, 'the typed words in the properties panel')
-  // The properties panel can show the words before the canvas has drawn them; read too early, the delays are empty.
   await fullQualityFrame(driver, framesBeforeTyping)
   const delays = await typingDelays.read()
   await driver.page.evaluate(`${selector('text-editor')}.select()`)
@@ -275,7 +256,6 @@ async function testText(driver: Driver): Promise<UiTestReport> {
   await driver.clickAt(middle)
   await driver.until(`${selector('text-size')} !== null`, 'the text properties')
 
-  // Pointing at a font shows the title in it at once. Escape puts the old font back, hands the focus back and leaves no undo step.
   const fontOptions = `document.querySelectorAll('[data-testid="text-font-options"] [role="option"]').length`
   await openList(driver, 'text-font', 'text-font')
   await driver.until(`${fontOptions} > 20`, 'the installed fonts to be listed')
@@ -284,7 +264,6 @@ async function testText(driver: Driver): Promise<UiTestReport> {
   for (const family of ['Menlo', 'Georgia', 'Courier New', 'Menlo', 'Georgia']) {
     await driver.hover(await optionPoint(driver, 'text-font', family))
     await driver.until(`${selector('text-font')}.value === '${family}'`, `${family} to be shown while pointed at`)
-    // The sharper picture that follows a pause must not be taken for the answer to the next move.
     await fullQualityFrame(driver, 0)
   }
   const fontHoverDelays = await fontDelays.read()
@@ -294,7 +273,6 @@ async function testText(driver: Driver): Promise<UiTestReport> {
   const focusAfterEscape = await driver.page.evaluate(`document.activeElement?.dataset.testid`)
   const undoLabelAfterEscape = driver.menuLabel('undo')
 
-  // By keyboard: the arrow key opens the list, typing a name finds it, Return keeps it.
   await driver.press('Down')
   await driver.until(isListOpen('text-font'), 'the font list to open from the keyboard')
   await driver.typeKeys('menlo')
@@ -302,7 +280,6 @@ async function testText(driver: Driver): Promise<UiTestReport> {
   await driver.press('Return')
   await driver.untilUndoLabel('Undo Change Font')
 
-  // A ready-made size is shown while pointed at and kept with a click.
   await openList(driver, 'text-size-presets', 'text-size')
   await driver.hover(await optionPoint(driver, 'text-size', '200'))
   await driver.until(`${selector('text-size')}.value === '200'`, 'the size pointed at to be shown')
@@ -316,7 +293,6 @@ async function testText(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Change Alignment')
   const styled = await driver.savedProject('styled.json')
 
-  // Words that are deleted altogether come back when the editing ends.
   await driver.doubleClickAt(middle)
   await untilTextEditor(driver, true)
   await driver.press('Backspace')
@@ -341,7 +317,6 @@ async function testText(driver: Driver): Promise<UiTestReport> {
   }
 }
 
-// Imports an animated GIF, places it, stretches it past its own length and switches its loop off and on again.
 async function testAnimated(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   driver.options.answers.importMedia = [mediaFile(driver, 'animated.gif')]
@@ -368,7 +343,6 @@ async function testAnimated(driver: Driver): Promise<UiTestReport> {
   return { placed, stretched, once, isLoopingAfterUndo: await driver.page.evaluate(`${selector('clip-loop')}.checked`) }
 }
 
-// Opens a project whose three media files have moved: it says so, refuses a file of the wrong kind, then finds all three from one answer.
 async function testRelink(driver: Driver): Promise<UiTestReport> {
   const missingBadgeCount = `document.querySelectorAll('.library-item .badge.danger').length`
   await driver.until(`${selector('notice')} !== null`, 'the notice about missing media')
@@ -402,11 +376,8 @@ type ExportSetup = {
   hasAudio: boolean
 }
 
-// Fills in the open export dialog and starts the export with the Return key.
-// Starts the export as the dialog stands, saving it under `fileName` in the output folder.
 export async function submitExport(driver: Driver, fileName: string): Promise<string> {
   if (driver.options.outputDirectory === undefined) throw new PageError('This UI test needs --out <directory>')
-  // A save dialog only ever gives a folder that exists.
   await mkdir(driver.options.outputDirectory, { recursive: true })
   const path = join(driver.options.outputDirectory, fileName)
   driver.options.answers.exportPath = path
@@ -431,12 +402,10 @@ async function shownExportFields(driver: Driver): Promise<unknown> {
   return driver.page.evaluate(`${JSON.stringify(EXPORT_FIELDS)}.filter((id) => document.querySelector('[data-testid="' + id + '"]') !== null)`)
 }
 
-// The dialog that held the window during the export says how it ended; it goes away with a real click on its button, as a person would close it.
 export async function untilExported(driver: Driver, fileName: string, timeoutMs?: number): Promise<void> {
   try {
     await driver.until(`${selector('export-done')} !== null`, `the export of ${fileName} to end`, timeoutMs)
   } catch (error) {
-    // What the dialog showed when the wait ran out tells a hang from a slow export.
     const shown = await driver.page.evaluate(`document.querySelector('dialog[open]')?.innerText ?? 'no dialog open'`)
     throw new PageError(`${error instanceof Error ? error.message : String(error)}; the window showed: ${JSON.stringify(shown)}`)
   }
@@ -450,7 +419,6 @@ function isShown(testId: string): string {
   return `${selector(testId)}?.checkVisibility() === true`
 }
 
-// Looks at the 640 x 360 canvas at each ready-made zoom and pinches it, then watches it in preview mode, where only the canvas and the transport are left.
 async function testPreview(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   const previewWidth = `Math.round(${selector('preview')}.getBoundingClientRect().width * devicePixelRatio)`
@@ -469,7 +437,6 @@ async function testPreview(driver: Driver): Promise<UiTestReport> {
   const pinchedZoom = await driver.value('canvas-zoom')
   await pick(driver, 'canvas-zoom', 'fit')
 
-  // In preview mode the panels and the handles go away and a seek bar takes the place of the canvas tools.
   await clickOn(driver, 'preview-mode')
   await driver.until(isShown('seek-bar'), 'preview mode')
   const panels = `({ left: ${isShown('left-sidebar')}, right: ${isShown('right-sidebar')}, timeline: ${isShown('timeline-panel')}, overlay: ${isShown('canvas-overlay')}, zoomTool: ${isShown('zoom-tool')} })`
@@ -488,7 +455,6 @@ async function testPreview(driver: Driver): Promise<UiTestReport> {
   return { widths, renderingAt200, pinchedZoom, shownInPreview, timecodeAfterSeek, shownAfterEscape }
 }
 
-// Changes keys in Settings: Split takes S in place of ⌘T, a key of Save is refused, a key two actions share is flagged on both, and Restore Defaults puts every key back.
 async function testShortcuts(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   const settingsOpen = `${selector('settings-dialog')}?.open === true`
@@ -518,7 +484,6 @@ async function testShortcuts(driver: Driver): Promise<UiTestReport> {
   await clickOn(driver, 'settings-done')
   await driver.until(`${selector('settings-dialog')} === null`, 'the settings to close')
 
-  // S now splits the clip under the playhead.
   await seekOnRuler(driver, TICKS_PER_SECOND, '00:00:01:00')
   await driver.press('S')
   await driver.untilUndoLabel('Undo Split Clip')
@@ -534,7 +499,6 @@ async function testShortcuts(driver: Driver): Promise<UiTestReport> {
   return { splitHint, refusalText, isOpenAfterEscape, conflicts, split, conflictsAfterDefaults }
 }
 
-// Two windows hold two projects that share a media file: both show it at full quality, an edit in one leaves the other alone, and only one export runs at a time.
 async function testWindows(driver: Driver): Promise<UiTestReport> {
   if (driver.options.mediaDirectory === undefined) throw new PageError('This UI test needs --media <directory>')
   await fullQualityFrame(driver, 0)
@@ -548,7 +512,6 @@ async function testWindows(driver: Driver): Promise<UiTestReport> {
   await other.until(`${selector('canvas-width')}?.value === '1280'`, 'the second canvas to change')
   const first = { width: await driver.value('canvas-width'), isEdited: driver.window.isDocumentEdited() }
 
-  // A large export holds the app long enough for the second window to ask for one.
   await openExportDialog(driver)
   await startExport(driver, { fileName: 'first.mp4', preset: '4k', quality: 'high', hasAudio: true })
   await driver.until(`${selector('export-progress')} !== null`, 'the first export to run')
@@ -562,12 +525,10 @@ async function testWindows(driver: Driver): Promise<UiTestReport> {
   return { titles, first, refusal, isFirstRunning, windows: editorWindows().length }
 }
 
-// Exports the three-second fades project several ways from the dialog: a range at a lower frame rate without sound, a cancelled one, the whole timeline at two qualities, and one that ends with a reload of the window.
 async function testExport(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   await fullQualityFrame(driver, 0)
 
-  // The dialog opens from the menu, every control in it is reached with Tab, and Escape closes it.
   driver.menu('export')
   await driver.until(`${selector('export-dialog')}?.open === true`, 'the export dialog')
   const defaultPreset = await driver.value('export-preset')
@@ -578,7 +539,6 @@ async function testExport(driver: Driver): Promise<UiTestReport> {
     await driver.press('Tab')
     tabStops.push(await driver.page.evaluate(`document.activeElement?.closest('dialog') === null ? 'outside the dialog' : document.activeElement?.dataset.testid`))
   }
-  // Escape backs out one level at a time: first the open list, then the dialog.
   await driver.picture('export-dialog')
   await openList(driver, 'export-preset', 'export-preset')
   await driver.picture('export-sizes')
@@ -588,14 +548,12 @@ async function testExport(driver: Driver): Promise<UiTestReport> {
   await driver.press('Escape')
   await driver.until(`${selector('export-dialog')} === null`, 'Escape to close the dialog')
 
-  // The clip on the middle track runs from 1 s to 3 s; only that stretch is exported, at 25 frames a second, without sound.
   await driver.clickAt(await driver.timelinePoint(2.5 * second, 1, 3))
   await driver.until(`${selector('clip-start')}?.value === '1.000'`, 'the clip to be selected')
   await openExportDialog(driver)
   await pick(driver, 'export-frame-rate', '25/1')
   await driver.page.click('export-range-selection')
   const range = await startExport(driver, { fileName: 'range.mp4', preset: '240p', quality: 'low', hasAudio: false })
-  // The result stays in the dialog until it has been read, and the project behind it still answers to nothing: not to the menu, not to a paste, not to the mouse.
   await driver.until(`${selector('export-done')} !== null`, 'the export of the range to end')
   const canShowInFinder = (await driver.page.evaluate(`${selector('show-export')} !== null`)) === true
   const focusOnResult = await driver.page.evaluate(`document.activeElement?.dataset.testid`)
@@ -606,11 +564,9 @@ async function testExport(driver: Driver): Promise<UiTestReport> {
   await sleep(POLL_INTERVAL_MS)
   const behindResult = { undoLabel: driver.menuLabel('undo'), selectedStart: await driver.value('clip-start') }
   await untilExported(driver, 'range.mp4')
-  // With the dialog gone the project answers again.
   await driver.typeInto('clip-opacity', '50')
   await driver.untilUndoLabel('Undo Change Opacity')
 
-  // A large export is stopped half way: nothing of it stays on disk.
   await openExportDialog(driver)
   const rememberedPreset = await driver.value('export-preset')
   const cancelled = await startExport(driver, { fileName: 'cancelled.mp4', preset: '4k', quality: 'high', hasAudio: true })
@@ -618,7 +574,6 @@ async function testExport(driver: Driver): Promise<UiTestReport> {
   const progressText = await driver.page.text('export-progress')
   const hadUnfinishedFile = existsSync(`${cancelled}.part`)
   await driver.picture('export-running')
-  // While it runs the export has the window. Keys do not reach the project, and neither Escape, however often, nor closing the window stops it: only Cancel does.
   const focusWhileRunning = await driver.page.evaluate(`document.activeElement?.dataset.testid`)
   const timecodeBefore = await driver.page.text('timecode')
   await driver.press('Backspace')
@@ -647,7 +602,6 @@ async function testExport(driver: Driver): Promise<UiTestReport> {
   await sleep(CANCEL_SETTLE_MS)
   const leftBehind = [cancelled, `${cancelled}.part`].filter((path) => existsSync(path))
 
-  // The result is also closed without the mouse: by Return, with the focus on its button, and by Escape.
   const resultsClosedByKeys: string[] = []
   await openExportDialog(driver)
   const low = await startExport(driver, { fileName: 'whole-low.mp4', preset: '240p', quality: 'low', hasAudio: true })
@@ -662,7 +616,6 @@ async function testExport(driver: Driver): Promise<UiTestReport> {
   await driver.press('Escape')
   await driver.until(`${selector('export-progress-dialog')} === null`, 'Escape to close the result')
 
-  // Each format shows only the fields it uses. Sound alone and the picture under the playhead are exported from the same dialog.
   await openExportDialog(driver)
   const fieldsByFormat: Record<string, unknown> = {}
   for (const format of ['webm', 'gif', 'wav', 'png', 'mp4']) {
@@ -678,7 +631,6 @@ async function testExport(driver: Driver): Promise<UiTestReport> {
   const still = await submitExport(driver, 'still.png')
   await untilExported(driver, 'still.png')
 
-  // A window that loads again has forgotten its export, so the export ends with it instead of running on where nobody can stop it.
   await openExportDialog(driver)
   const reloaded = await startExport(driver, { fileName: 'reloaded.mp4', preset: '4k', quality: 'high', hasAudio: true })
   await driver.until(`/Frame [1-9]/.test(${selector('export-progress')}?.textContent ?? '')`, 'the last export to be under way')
@@ -713,7 +665,6 @@ async function testExport(driver: Driver): Promise<UiTestReport> {
   }
 }
 
-// The playhead position in ticks, read from the timecode of a 30 fps project.
 async function playheadTime(driver: Driver): Promise<number> {
   const [hours = 0, minutes = 0, seconds = 0, frames = 0] = (await driver.page.text('timecode')).split(':').map(Number)
   return (((hours * 60 + minutes) * 60 + seconds) * FRAMES_PER_SECOND + frames) * (TICKS_PER_SECOND / FRAMES_PER_SECOND)
@@ -732,10 +683,8 @@ async function noticeShown(driver: Driver): Promise<string> {
   return (await driver.page.evaluate(`${selector('notice')} !== null`)) === true ? driver.page.text('notice') : ''
 }
 
-// Builds a ten-minute tutorial the way its maker would: a screen recording, a voice track and music, a title and a logo, one cut, then an export at full size.
 async function testTutorial(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
-  // Six tracks need a taller timeline than the window starts with.
   const splitter = centerOf(await driver.rect('split-timeline'))
   await driver.drag(splitter, { x: splitter.x, y: splitter.y - TALLER_TIMELINE })
   const names = ['screen.mp4', 'voice.m4a', 'music.mp3', 'logo.png']
@@ -743,7 +692,6 @@ async function testTutorial(driver: Driver): Promise<UiTestReport> {
   driver.menu('import')
   await driver.until(names.map((name) => `${selector(`media-${name}`)} !== null`).join(' && '), 'the four files in the Media tab')
 
-  // A new project has six empty tracks. Each sound, dropped on occupied space, goes onto the empty track above; a dropped clip is selected, so its Volume field shows it landed.
   await dragMedia(driver, 'screen.mp4', await driver.timelinePoint(0, 0, 6))
   await driver.untilUndoLabel('Undo Add Clip')
   for (const [name, row] of [['voice.m4a', 0], ['music.mp3', 1]] as const) {
@@ -754,14 +702,12 @@ async function testTutorial(driver: Driver): Promise<UiTestReport> {
   }
   await driver.page.click('timeline-zoom-fit')
 
-  // The music plays quietly under the voice and fades out at the end.
   await driver.clickAt(await driver.timelinePoint(300 * second, 2, 6))
   await driver.until(`${selector('clip-volume')} !== null`, 'the music to be selected')
   await driver.typeInto('clip-volume', '30')
   await driver.typeInto('clip-volumeFadeOut', '3')
   await driver.untilUndoLabel('Undo Change Fade')
 
-  // A title over the first five seconds.
   await driver.press('Return', ['meta'])
   await driver.page.click('tab-annotations')
   await driver.page.click('annotation-text')
@@ -773,7 +719,6 @@ async function testTutorial(driver: Driver): Promise<UiTestReport> {
   await pick(driver, 'clip-out', 'fade')
   await driver.typeInto('clip-out-length', '1')
 
-  // A logo in the corner, dropped on the canvas and placed by its numbers.
   await driver.page.click('tab-media')
   await driver.until(`${selector('media-logo.png')} !== null`, 'the Media tab')
   await dragMedia(driver, 'logo.png', centerOf(await driver.rect('preview')))
@@ -784,7 +729,6 @@ async function testTutorial(driver: Driver): Promise<UiTestReport> {
   await driver.typeInto('clip-duration', '30')
   await driver.untilUndoLabel('Undo Trim Clip')
 
-  // Ten seconds in the middle of the recording are cut out, and what follows closes the gap.
   const ruler = await driver.rect('timeline')
   const middle = await driver.timelinePoint(300 * second, 0, 6)
   await driver.clickAt({ x: middle.x, y: ruler.y + RULER_HEIGHT / 2 })
@@ -825,9 +769,7 @@ async function isExpanded(driver: Driver, testId: string): Promise<boolean> {
   return (await driver.page.evaluate(`${selector(testId)}?.getAttribute('aria-expanded')`)) === 'true'
 }
 
-// Looks at the controls themselves: fields under their labels, groups that fold, the media as tiles, a very wide sidebar and a timeline zoomed far out.
 async function testControls(driver: Driver): Promise<UiTestReport> {
-  // One look at the next frame after each press: a list that is not there by then counts as late and leaves no sample.
   await driver.page.evaluate(`(() => {
     window.listDelays = []
     window.groupDelays = []
@@ -847,18 +789,15 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
     }, true)
   })()`)
 
-  // The project settings fold away; the next launch shows them again.
   await clickOn(driver, 'group-project')
   await driver.until(`${selector('canvas-width')} === null`, 'the project settings to fold away')
 
-  // As in importThreeFiles, sorted by duration the files are listed in the order they are imported.
   driver.menu('sort-duration')
   driver.options.answers.importMedia = ['h264.mp4', 'audio.wav', 'image.jpg'].map((name) => mediaFile(driver, name))
   driver.menu('import')
   await driver.until(`${selector('media-image.jpg')} !== null`, 'the import to finish')
   await untilPrepared(driver)
 
-  // The switch sits on the line of the search field. Media starts as tiles side by side; as a list, one row lies under another.
   const search = await driver.rect('media-search')
   const gridSwitch = await driver.rect('media-view-grid')
   const isSwitchBesideSearch = Math.abs(centerOf(search).y - centerOf(gridSwitch).y) < 1 && gridSwitch.x > search.x + search.width
@@ -874,14 +813,11 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   await clickOn(driver, 'media-view-grid')
   await driver.until(`${selector('media-h264.mp4')}.getBoundingClientRect().top === ${selector('media-audio.wav')}.getBoundingClientRect().top`, 'the media to be shown as tiles again')
 
-  // A tile is dragged to the timeline like a row.
   await dragMedia(driver, 'h264.mp4', await driver.timelinePoint(0, 0, 6))
   await driver.untilUndoLabel('Undo Add Clip')
   await driver.until(`${selector('clip-x')} !== null`, 'the properties of the new clip')
-  // Only Transform and Timing start unfolded.
   const groupsOpenAtFirst = await driver.page.evaluate(`[...document.querySelectorAll('.group-toggle[aria-expanded="true"]')].map((toggle) => toggle.textContent)`)
 
-  // Every field, with the keyframe buttons at the end of its line, is as wide as its panel and sits under its own label.
   const sidebar = await driver.rect('right-sidebar')
   const field = await driver.rect('clip-x')
   const lineEnd = await driver.rect('clip-position-next-keyframe')
@@ -894,7 +830,6 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   await clickOn(driver, 'group-volume')
   await driver.until(`${selector('clip-opacity')} !== null && ${selector('clip-volume')} !== null`, 'the opacity and volume groups to open')
 
-  // Each list of ready-made values opens on the press; Escape closes it and hands the focus back to its field.
   for (const testId of ['clip-scale', 'clip-rotation', 'clip-opacity', 'clip-speed', 'clip-volume']) {
     await openList(driver, `${testId}-presets`, testId)
     await driver.press('Escape')
@@ -905,13 +840,11 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   await driver.hover(await optionPoint(driver, 'clip-rotation', '90'))
   await driver.until(`${selector('clip-rotation')}.value === '90.0'`, 'the rotation pointed at to be shown')
   await driver.picture('ready-made-values')
-  // A press elsewhere closes the list and puts the old value back.
   await clickOn(driver, 'timecode')
   await driver.until(`!(${isListOpen('clip-rotation')})`, 'a press elsewhere to close the list')
   const rotationAfterPressElsewhere = await driver.value('clip-rotation')
   const undoLabelAfterLists = driver.menuLabel('undo')
 
-  // The longest list there is, every font on this Mac, opens as promptly as the short ones.
   await driver.page.click('tab-annotations')
   await driver.page.click('annotation-text')
   await untilTextEditor(driver, true)
@@ -932,7 +865,6 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   await driver.press('Escape')
   await driver.until(`!(${isListOpen('text-font')})`, 'the font list to close')
 
-  // By keyboard: Alt+Down in a number field opens its values, the arrow keys move through them, Return keeps one.
   await driver.page.evaluate(`(() => {
     ${selector('clip-opacity')}.focus()
     return ${ONCE_THE_SCROLL_IS_HEARD}
@@ -946,7 +878,6 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   const opacityFromKeys = await driver.value('clip-opacity')
   const focusAfterKeys = await driver.page.evaluate(`document.activeElement?.dataset.testid`)
 
-  // A group folds with a click and opens again from the keyboard.
   await clickOn(driver, 'group-transform')
   await driver.until(`${selector('clip-x')} === null`, 'the transform fields to fold away')
   const isLockShownWhenFolded = (await driver.page.evaluate(`${selector('aspect-lock')} !== null`)) === true
@@ -955,7 +886,6 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   await driver.press('Return')
   await driver.until(`${selector('clip-x')} !== null`, 'Return to open the group again')
 
-  // A sidebar takes all the room the canvas can spare, and the other sidebar stays as it is.
   const rightBefore = await driver.rect('right-sidebar')
   const leftSplitter = centerOf(await driver.rect('split-left'))
   await driver.drag(leftSplitter, { x: leftSplitter.x + 1200, y: leftSplitter.y })
@@ -970,7 +900,6 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   const rightNarrow = await driver.rect('right-sidebar')
   await driver.picture('narrow-properties')
 
-  // The timeline zooms out until an hour is in view, far past this two-second project, and fits it again on request.
   const timeline = await driver.rect('timeline')
   const zoomAtFit = await timelineZoom(driver)
   for (let step = 0; step < 24; step++) await driver.page.click('timeline-zoom-out')
@@ -980,7 +909,6 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   await driver.page.click('timeline-zoom-fit')
   await driver.until(`JSON.parse(${selector('timeline')}.dataset.view).pixelsPerSecond > 1`, 'the timeline to fit the project again')
   const zoomAfterFit = await timelineZoom(driver)
-  // The list is chosen last, so the next launch shows whether the choice was kept.
   await clickOn(driver, 'media-view-list')
 
   const listDelays = numbersIn(await driver.page.evaluate('window.listDelays'))
@@ -1020,7 +948,6 @@ async function testControls(driver: Driver): Promise<UiTestReport> {
   }
 }
 
-// The next launch on the same profile: the groups are folded as at first, and the media is still shown as a list.
 async function testControlsKept(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('group-project')} !== null`, 'the project settings')
   return {
@@ -1044,7 +971,6 @@ function isShownLanding(value: unknown): value is ShownLanding {
 
 const LANDING = `(${selector('timeline')}.dataset.landing ?? '')`
 
-// Where the timeline says the media held over it would land.
 async function untilLanding(driver: Driver): Promise<ShownLanding> {
   await driver.until(`${LANDING} !== ''`, 'the outline of where the held media would land')
   const landing: unknown = JSON.parse(String(await driver.page.evaluate(LANDING)))
@@ -1060,13 +986,10 @@ export async function isPlaying(driver: Driver): Promise<boolean> {
   return (await driver.page.evaluate(`${selector('play')}.getAttribute('aria-label')`)) === 'Pause'
 }
 
-// A point of a sound clip that moves it rather than its volume line.
 function clearOfVolumeLine(point: Point): Point {
   return { x: point.x, y: point.y - CLEAR_OF_VOLUME_LINE }
 }
 
-// Builds a small project by dragging: looks at where held media would land before it is let go, moves two clips across tracks together, and crops by typing.
-// Imports a video, a sound and a picture, and waits until they are ready to be dragged out.
 // Sorted by duration the files are listed in the order they are imported: the video and the sound are both 2 s long and keep that order, and the image has no length.
 // The dates the test files were created on would give an order that changes when they are made again.
 async function importThreeFiles(driver: Driver): Promise<void> {
@@ -1083,7 +1006,6 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   await importThreeFiles(driver)
   const mediaDetails = await driver.page.evaluate(`[...document.querySelectorAll('.library-item .library-details')].map((details) => details.textContent)`)
 
-  // Held over the empty first track, the video shows where it would land while nothing has been added. The pointer is then moved about, to see that the outline keeps up.
   const video = centerOf(await driver.rect('media-h264.mp4'))
   const oneSecond = await driver.timelinePoint(second, 0, 6)
   const fourSeconds = await driver.timelinePoint(4 * second, 0, 6)
@@ -1109,7 +1031,6 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   const whileHeld = { tracks: await trackCount(driver), undoLabel: driver.menuLabel('undo') === undoBefore ? 'unchanged' : driver.menuLabel('undo') }
   await driver.picture('arrange-held')
 
-  // Off the timeline the outline goes. Back on it, Escape abandons the drag, and letting go then adds nothing.
   await driver.dragOn(oneSecond, video)
   await driver.until(`${LANDING} === ''`, 'the outline to go when the pointer leaves the timeline')
   await driver.dragOn(video, oneSecond)
@@ -1120,7 +1041,6 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   await sleep(POLL_INTERVAL_MS)
   const afterEscape = { tracks: await trackCount(driver), undoLabel: driver.menuLabel('undo') === undoBefore ? 'unchanged' : driver.menuLabel('undo') }
 
-  // Let go over the timeline, the clip is where the outline was.
   driver.holdAt(video)
   await driver.dragOn(video, oneSecond)
   await untilLanding(driver)
@@ -1128,7 +1048,6 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Add Clip')
   const placed = await driver.savedProject('placed.json')
 
-  // Over a spot that is taken the outline shows the empty track above. Playback goes on while the sound is held there: holding is not an edit.
   await driver.press('Return', ['meta'])
   await driver.press('Space')
   await driver.until(`${selector('play')}.getAttribute('aria-label') === 'Pause'`, 'playback to start')
@@ -1140,13 +1059,11 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   const isPlayingWhileHeld = await isPlaying(driver)
   await driver.picture('arrange-new-track')
   await driver.releaseAt(onTheVideo)
-  // The dropped sound is selected in place of the video, so the fields of a picture go.
   await driver.until(`${selector('clip-x')} === null && ${selector('clip-volume')} !== null`, 'the sound on the track above')
   const stacked = await driver.savedProject('stacked.json')
   const ruler = await driver.rect('timeline')
   await driver.clickAt({ x: ruler.x + 8, y: ruler.y + RULER_HEIGHT / 2 })
 
-  // Selected together, the two clips go a second later and up a track together: the video takes the track of the sound and the sound the empty one above.
   await driver.clickAt(await driver.timelinePoint(1.25 * second, 0, 6))
   const onTheSound = clearOfVolumeLine(await driver.timelinePoint(2.5 * second, 1, 6))
   const aboveTheSound = clearOfVolumeLine(await driver.timelinePoint(3.5 * second, 2, 6))
@@ -1160,7 +1077,6 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   const groupDelays = await moveDelays.read()
   const lifted = await driver.savedProject('lifted.json')
 
-  // One track down they are back on their tracks; one more down there is no track, so they stay.
   await driver.drag(clearOfVolumeLine(await driver.timelinePoint(3.5 * second, 2, 6)), clearOfVolumeLine(await driver.timelinePoint(3.5 * second, 1, 6)))
   await sleep(POLL_INTERVAL_MS)
   const lowered = await driver.savedProject('lowered.json')
@@ -1168,7 +1084,6 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   await sleep(POLL_INTERVAL_MS)
   const kept = await driver.savedProject('kept.json')
 
-  // A crop typed in the properties panel hides that side of the picture; the rest stays where it is, so the centre moves by half of what went.
   const inTheVideo = await driver.timelinePoint(2.25 * second, 0, 6)
   await driver.clickAt({ x: inTheVideo.x, y: ruler.y + RULER_HEIGHT / 2 })
   await driver.clickAt(inTheVideo)
@@ -1183,11 +1098,8 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   await sleep(PICTURES_SETTLE_MS)
   await driver.picture('arrange-cropped')
 
-  // Picked with a click and a Cmd-click, two files are dragged as one: held over an empty track they show one outline,
-  // and let go they lie one after the other there, in the order of the list, in one undo step.
   await driver.clickAt(centerOf(await driver.rect('media-audio.wav')))
   await driver.clickAt(centerOf(await driver.rect('media-image.jpg')), ['meta'])
-  // Clicked, the files do not take the keys: Space still plays.
   const focusAfterClicks = await driver.page.evaluate(`document.activeElement?.getAttribute('role') ?? 'none'`)
   const selectedFiles = await driver.page.evaluate(`[...document.querySelectorAll('.library-item.selected')].map((item) => item.dataset.testid)`)
   const image = centerOf(await driver.rect('media-image.jpg'))
@@ -1200,8 +1112,6 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Add 2 Clips')
   const droppedTogether = await driver.savedProject('dropped-together.json')
 
-  // Without the mouse: in the list of files the arrows pick the next file, Shift adds the run to it, and Return places the picked files at the playhead,
-  // one after the other on the empty track above the others. The keys stay in the list: the playhead does not move.
   const listRole = await driver.page.evaluate(`(() => { const list = document.querySelector('ul[aria-label="Media"]'); return list.getAttribute('role') + ' ' + list.getAttribute('aria-multiselectable') })()`)
   const timecodeBeforeKeys = await driver.page.text('timecode')
   await driver.page.evaluate(`${selector('media-h264.mp4')}.focus()`)
@@ -1214,7 +1124,6 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
   const addedByKeys = await driver.savedProject('added-by-keys.json')
   const timecodeAfterKeys = await driver.page.text('timecode')
 
-  // A hint is as large as the text of the window, not smaller.
   await driver.hover(centerOf(await driver.rect('split')))
   await driver.until(`document.querySelector('.tooltip:not([hidden])') !== null`, 'the hint of the split button')
   const hintSize = await driver.page.evaluate(`getComputedStyle(document.querySelector('.tooltip')).fontSize`)
@@ -1255,7 +1164,6 @@ async function testArrange(driver: Driver): Promise<UiTestReport> {
 const DROP = `(${selector('timeline')}.dataset.drop ?? '')`
 const CANVAS_WIDTH = 640
 
-// What the timeline says a transition or an effect held over it would go to.
 async function untilDrop(driver: Driver): Promise<unknown> {
   await driver.until(`${DROP} !== ''`, 'the mark of where the held item would go')
   return JSON.parse(String(await driver.page.evaluate(DROP)))
@@ -1269,13 +1177,11 @@ async function untilField(driver: Driver, testId: string, value: string): Promis
   await driver.until(`${selector(testId)}?.value === ${JSON.stringify(value)}`, `${testId} to show ${value}`)
 }
 
-// Chooses a button with the keyboard alone: the focus is put on it, as Tab would, and Return presses it.
 async function pressWithKeyboard(driver: Driver, testId: string): Promise<void> {
   await driver.page.evaluate(`${selector(testId)}.focus()`)
   await driver.press('Return')
 }
 
-// Lays out the four 320 x 180 clips of the 640 x 360 mosaic from the Layout group: a grid tried before it is chosen, then aligned and spaced; then the canvas doubles and they double with it.
 async function testCanvasSize(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   const before = await driver.savedProject('before.json')
@@ -1285,7 +1191,6 @@ async function testCanvasSize(driver: Driver): Promise<UiTestReport> {
   return { before, doubled: await driver.savedProject('doubled.json') }
 }
 
-// Adds each kind of blur and highlight from the Annotations tab to a project with one clip, and changes them on the canvas and in Properties.
 async function testShapes(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await driver.page.click('tab-annotations')
@@ -1294,7 +1199,6 @@ async function testShapes(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('blur-strength')} !== null`, 'the new blur to be selected')
   const added = await driver.savedProject('blur.json')
 
-  // The new blur is 192 by 72 in the middle of the canvas. Its corner is pulled to twice that; its look is set in Properties.
   await driver.drag(centerOf(await driver.rect('handle-se')), await onCanvas(driver, 608, 288))
   await driver.untilUndoLabel('Undo Resize Clip')
   await driver.typeInto('blur-strength', '20')
@@ -1326,7 +1230,6 @@ async function testShapes(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Add Spotlight')
   const all = await driver.savedProject('all.json')
 
-  // Undo takes the last one away again; the one before it is deleted like any clip.
   driver.menu('undo')
   await driver.untilUndoLabel('Undo Add Pixelate')
   await driver.clickAt(await driver.timelinePoint(TICKS_PER_SECOND / 2, 3, 4))
@@ -1336,7 +1239,6 @@ async function testShapes(driver: Driver): Promise<UiTestReport> {
   return { added, strengthLabel, styled, spotlight, all, afterDelete: await driver.savedProject('deleted.json') }
 }
 
-// Puts effects on the four clips of a mosaic by click and by dragging onto the timeline and the canvas, then changes one clip's list in Properties.
 async function testEffects(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   await fullQualityFrame(driver, 0)
@@ -1344,7 +1246,6 @@ async function testEffects(driver: Driver): Promise<UiTestReport> {
   await driver.page.click('effect-border')
   const noticeWithoutSelection = await driver.page.waitFor('notice', (text) => text !== '', POLL_INTERVAL_MS * STEPS_TO_TIME, 'a notice that nothing is selected')
 
-  // A click with the pointer adds nothing. Pressed without one, as Return and VoiceOver do, the effect goes to every selected clip; with two selected, their settings are not offered together.
   await driver.clickAt(await driver.timelinePoint(second / 2, 0, 4))
   await driver.clickAt(await driver.timelinePoint(second / 2, 1, 4), ['shift'])
   const undoBeforeClick = driver.menuLabel('undo')
@@ -1356,7 +1257,6 @@ async function testEffects(driver: Driver): Promise<UiTestReport> {
   const hintForTwo = await driver.page.waitFor('effects-hint', (text) => text !== '', POLL_INTERVAL_MS * STEPS_TO_TIME, 'the hint to select one clip')
   const bordered = await driver.savedProject('bordered.json')
 
-  // Held over a clip on the timeline, the effect marks that clip and changes nothing yet.
   const shadow = await centerInView(driver, 'effect-dropShadow')
   const onThird = await driver.timelinePoint(second, 2, 4)
   driver.holdAt(shadow)
@@ -1367,7 +1267,6 @@ async function testEffects(driver: Driver): Promise<UiTestReport> {
   await driver.releaseAt(onThird)
   await driver.until(`${selector('effect-dropShadow-offsetX')} !== null`, 'the shadow of the third clip in Properties')
 
-  // Held over the canvas, it marks the topmost clip under the pointer: the fourth clip fills the bottom right quarter.
   const adjust = centerOf(await driver.rect('effect-colorAdjust'))
   const onFourth = await onCanvas(driver, 480, 270)
   driver.holdAt(adjust)
@@ -1377,7 +1276,6 @@ async function testEffects(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('effect-colorAdjust-brightness')} !== null`, 'the colour adjustment of the fourth clip in Properties')
   const dropped = await driver.savedProject('dropped.json')
 
-  // The fourth clip gets a border too. Its effects are changed, reordered and switched off in Properties.
   await driver.page.click('effect-border')
   await driver.until(`${selector('effect-border-width')} !== null`, 'the border of the fourth clip in Properties')
   await driver.typeInto('effect-border-width', '12')
@@ -1390,7 +1288,6 @@ async function testEffects(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Switch Effect Off')
   const changed = await driver.savedProject('changed.json')
 
-  // The key colour is picked from the screen. The system's picker is stood in for here; the key is back on with the colour it gave.
   await pressWithKeyboard(driver, 'effect-chromaKey')
   await driver.until(`${selector('effect-chromaKey-pick')} !== null`, 'the chroma key in Properties')
   await driver.page.evaluate(`void (window.EyeDropper = class { open() { return Promise.resolve({ sRGBHex: '#123456' }) } })`)
@@ -1402,7 +1299,6 @@ async function testEffects(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Remove Effect')
   const removed = await driver.savedProject('removed.json')
 
-  // A look chosen from its presets sets its sliders; a slider moved off the preset shows the look as custom, and one undo puts the preset back.
   await pressWithKeyboard(driver, 'effect-look')
   await driver.until(`${selector('effect-look-preset')} !== null`, 'the look of the fourth clip in Properties')
   await pick(driver, 'effect-look-preset', 'cinematic')
@@ -1420,7 +1316,6 @@ async function testEffects(driver: Driver): Promise<UiTestReport> {
   return { noticeWithoutSelection, isUnchangedByClick, hintForTwo, bordered, heldOverTimeline, undoWhileHeld, dropped, changed, keyed, removed, graded, lookAfterEdit, lookAfterUndo }
 }
 
-// Drags transitions onto the cut between two clips and onto their free ends, changes one by its grip and in Properties, and removes one.
 async function testTransitions(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   await fullQualityFrame(driver, 0)
@@ -1429,7 +1324,6 @@ async function testTransitions(driver: Driver): Promise<UiTestReport> {
   const beforeCut = await driver.timelinePoint(0.8 * second, 0, 1)
   const undoBefore = driver.menuLabel('undo')
 
-  // Held near the cut, the transition marks the cut and changes nothing. Escape abandons the drag.
   driver.holdAt(dissolve)
   await driver.dragOn(dissolve, beforeCut)
   const heldOnCut = await untilDrop(driver)
@@ -1440,7 +1334,6 @@ async function testTransitions(driver: Driver): Promise<UiTestReport> {
   await driver.releaseAt(beforeCut)
   await sleep(POLL_INTERVAL_MS)
   const isUnchangedAfterEscape = driver.menuLabel('undo') === undoBefore
-  // A click on a transition adds nothing: transitions are always dragged where they go.
   await driver.clickAt(dissolve)
   await sleep(POLL_INTERVAL_MS)
   const isUnchangedByClick = driver.menuLabel('undo') === undoBefore
@@ -1449,14 +1342,12 @@ async function testTransitions(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Add Transition')
   const onCut = await driver.savedProject('cut.json')
 
-  // The grip at the end of the transition sets its length: on a cut, twice as far as the grip is from the cut.
   const gripDelays = await watchDelays(driver, 'pointermove', 'any frame')
   await driver.drag(await driver.timelinePoint(1.5 * second, 0, 1), await driver.timelinePoint(1.2 * second, 0, 1))
   await driver.untilUndoLabel('Undo Change Transition')
   const gripToFrame = await gripDelays.read()
   const shortened = await driver.savedProject('shortened.json')
 
-  // The free ends take a transition each, as long as the clip has room left beside the one on the cut.
   await driver.drag(await centerInView(driver, 'transition-zoom'), await driver.timelinePoint(0.2 * second, 0, 1))
   await untilField(driver, 'clip-in', 'zoom')
   await driver.drag(await centerInView(driver, 'transition-push'), await driver.timelinePoint(1.8 * second, 0, 1))
@@ -1465,7 +1356,6 @@ async function testTransitions(driver: Driver): Promise<UiTestReport> {
   await sleep(PICTURES_SETTLE_MS)
   await driver.picture('transitions-three')
 
-  // Properties changes the kind and the length of the transition at each end of the selected clip, and takes one away.
   await pick(driver, 'clip-in', 'wipeLeft')
   await driver.untilUndoLabel('Undo Change Clip In')
   await driver.typeInto('clip-in-length', '0.3')
@@ -1474,7 +1364,6 @@ async function testTransitions(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Change Clip Out')
   const viaProperties = await driver.savedProject('properties.json')
 
-  // A click in the tab, or Return with the focus on it, puts the transition at the start of the selected clip.
   await pressWithKeyboard(driver, 'transition-circleReveal')
   await untilField(driver, 'clip-in', 'circleReveal')
   return {
@@ -1492,7 +1381,6 @@ async function testTransitions(driver: Driver): Promise<UiTestReport> {
   }
 }
 
-// Where a moment is on the camera lane.
 async function lanePoint(driver: Driver, time: number): Promise<Point> {
   const onTrack = await driver.timelinePoint(time, 0, 1)
   const timeline = await driver.rect('timeline')
@@ -1505,7 +1393,6 @@ async function seekOnRuler(driver: Driver, time: number, timecode: string): Prom
   await untilTimecode(driver, timecode)
 }
 
-// Frames a part of the canvas with the zoom tool, changes the frame, the zooms on the camera lane and their settings, and moves a clip under a zoom.
 async function testZoom(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   await fullQualityFrame(driver, 0)
@@ -1513,7 +1400,6 @@ async function testZoom(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('camera-tool')} !== null`, 'the zoom tool')
   await seekOnRuler(driver, second, '00:00:01:00')
 
-  // A frame drawn over the middle half of the canvas is a zoom to 200% at the playhead.
   const frameDelays = await watchDelays(driver, 'pointermove', 'any frame')
   await driver.drag(await onCanvas(driver, 160, 90), await onCanvas(driver, 480, 270))
   await driver.untilUndoLabel('Undo Zoom and Pan')
@@ -1522,7 +1408,6 @@ async function testZoom(driver: Driver): Promise<UiTestReport> {
   const drawn = await driver.savedProject('drawn.json')
   await driver.picture('zoom-drawn')
 
-  // Dragged by its inside the frame moves; dragged by a corner it changes size about the opposite corner.
   const drawnAt = await driver.value('zoom-x')
   await driver.drag(await onCanvas(driver, 320, 180), await onCanvas(driver, 400, 220))
   await driver.until(`${selector('zoom-x')}?.value !== '${drawnAt}'`, 'the frame to have moved')
@@ -1537,7 +1422,6 @@ async function testZoom(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Zoom to Full')
   const withFull = await driver.savedProject('full.json')
 
-  // On the camera lane a zoom is dragged to another time, and the start of its bar sets how long its move takes.
   await driver.drag(await lanePoint(driver, second), await lanePoint(driver, 0.8 * second))
   await driver.untilUndoLabel('Undo Move Zoom')
   const barStart = await lanePoint(driver, 0)
@@ -1547,7 +1431,6 @@ async function testZoom(driver: Driver): Promise<UiTestReport> {
   await sleep(PICTURES_SETTLE_MS)
   await driver.picture('zoom-lane')
 
-  // A click on a zoom selects it and goes to its time; its settings are in Properties.
   await driver.clickAt(await lanePoint(driver, 0.8 * second))
   await untilTimecode(driver, '00:00:00:24')
   await driver.typeInto('zoom-duration', '0.5')
@@ -1556,14 +1439,12 @@ async function testZoom(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Change Zoom Easing')
   const viaProperties = await driver.savedProject('properties.json')
 
-  // The Delete key removes the selected zoom.
   await driver.clickAt(await lanePoint(driver, 1.5 * second))
   await untilTimecode(driver, '00:00:01:15')
   await driver.press('Backspace')
   await driver.untilUndoLabel('Undo Delete Zoom')
   const afterDelete = await driver.savedProject('deleted.json')
 
-  // With the tool off the canvas shows the zoomed picture, and the handles lie on it: a drag moves the clip by what the pointer travels on the zoomed picture.
   await driver.page.click('zoom-tool')
   await driver.until(`${selector('canvas-overlay')} !== null`, 'the clip handles')
   await driver.clickAt(await lanePoint(driver, 0.8 * second))
@@ -1577,7 +1458,6 @@ async function testZoom(driver: Driver): Promise<UiTestReport> {
   await driver.picture('zoom-handles')
   const movedClip = await driver.savedProject('moved.json')
 
-  // A right click on a zoom offers how the camera moves to it, and a way to delete it.
   await driver.rightClickAt(await lanePoint(driver, 0.8 * second))
   await driver.page.click('menu-easing-hold')
   await driver.untilUndoLabel('Undo Change Zoom Easing')
@@ -1603,24 +1483,20 @@ async function testZoom(driver: Driver): Promise<UiTestReport> {
   }
 }
 
-// The sound of a clip is drawn in the lower part of its row. A volume keyframe sits this far below the middle of the row at the recorded volume, and the top of the sound lies this far below it.
 const VOLUME_POINT_AT_UNITY = 15.5
 const VOLUME_POINT_AT_HALF = 20.75
 const NEAR_TOP_OF_SOUND = 6
-// A quarter of the height of the sound band, so half the full volume range.
 const LINE_DRAG_PIXELS = 5.25
 
 async function timelineCursor(driver: Driver): Promise<unknown> {
   return driver.page.evaluate(`document.querySelector('[data-testid="timeline"] canvas:last-child').style.cursor`)
 }
 
-// Adds a callout, an arrow and a line from the Annotations tab, and changes them on the canvas and in Properties.
 async function testAnnotations(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await driver.page.click('tab-annotations')
   await driver.page.click('annotation-callout')
   await driver.untilUndoLabel('Undo Add Callout')
-  // A new callout opens for typing, like a new title.
   await untilTextEditor(driver, true)
   await driver.typeKeys('Look here')
   await driver.press('Escape')
@@ -1628,7 +1504,6 @@ async function testAnnotations(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Edit Text')
   const added = await driver.savedProject('callout.json')
 
-  // The tail of the bubble is dragged to the bottom right of the canvas; shape, size and colours come from Properties.
   await driver.drag(centerOf(await driver.rect('handle-tail')), await onCanvas(driver, 560, 320))
   await driver.untilUndoLabel('Undo Move Callout Tail')
   await pick(driver, 'callout-shape', 'thoughtBubble')
@@ -1644,7 +1519,6 @@ async function testAnnotations(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Change Callout Shape')
   const banner = await driver.savedProject('banner.json')
 
-  // A new arrow lies level in the middle. Its end is dragged to the top right corner, its start stays where it is.
   await driver.page.click('annotation-arrow')
   await driver.untilUndoLabel('Undo Add Arrow')
   await driver.until(`${selector('arrow-length')} !== null`, 'the new arrow to be selected')
@@ -1659,7 +1533,6 @@ async function testAnnotations(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await driver.picture('annotations')
 
-  // A line dragged onto the canvas lands where it is let go. A click on a tile adds nothing: annotations are dragged where they go.
   await driver.drag(centerOf(await driver.rect('annotation-line')), await onCanvas(driver, 160, 90))
   await driver.untilUndoLabel('Undo Add Line')
   const withLine = await driver.savedProject('line.json')
@@ -1667,7 +1540,6 @@ async function testAnnotations(driver: Driver): Promise<UiTestReport> {
   await sleep(POLL_INTERVAL_MS)
   const undoAfterClick = driver.menuLabel('undo')
 
-  // A title dragged onto the video on the timeline shows where it would land, then lies at that moment on a new track just above the video.
   const titleTile = centerOf(await driver.rect('annotation-text'))
   const onTheVideo = await driver.timelinePoint(TICKS_PER_SECOND, 0, 4)
   driver.holdAt(titleTile)
@@ -1678,7 +1550,6 @@ async function testAnnotations(driver: Driver): Promise<UiTestReport> {
   return { added, shaped, banner, arrowAdded, pointed, withLine, undoAfterClick, titleHeld, withTitle: await driver.savedProject('title.json') }
 }
 
-// Styles a title with everything the Text group of Properties offers.
 async function testTextStyle(driver: Driver): Promise<UiTestReport> {
   await driver.page.click('tab-annotations')
   await driver.page.click('annotation-text')
@@ -1705,7 +1576,6 @@ async function testTextStyle(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Change Background')
   const styled = await driver.savedProject('styled.json')
 
-  // Wrapping starts at the width the text has; made narrower, the two words stand on two lines and the box gets taller.
   await clickOn(driver, 'text-wrap')
   await driver.untilUndoLabel('Undo Wrap Text')
   const heightOnOneLine = await driver.value('clip-height')
@@ -1723,11 +1593,9 @@ async function testTextStyle(driver: Driver): Promise<UiTestReport> {
   return { styled, wrapped, heightOnOneLine, heightOnTwoLines, plain: await driver.savedProject('plain.json') }
 }
 
-// Opens a project whose title uses a font this Mac does not have: it says so on opening and in the Text group, and keeps the name.
 async function testMissingFont(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('notice')} !== null`, 'the notice about the font')
   const openNotice = await driver.page.text('notice')
-  // The title's row is below what the timeline shows of six tracks, so it is picked on the canvas.
   await driver.clickAt(await canvasPoint(driver, 640, { x: 190, y: 70 }))
   await driver.until(`${selector('text-font-missing')} !== null`, 'the warning in the Text group')
   const warning = await driver.page.text('text-font-missing')
@@ -1736,7 +1604,6 @@ async function testMissingFont(driver: Driver): Promise<UiTestReport> {
   return { openNotice, warning, fontShown, saved: await driver.savedProject('saved.json') }
 }
 
-// Gives the one clip of a project an animation at each end, and turns them into keyframes.
 async function testAnimations(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   await fullQualityFrame(driver, 0)
@@ -1756,7 +1623,6 @@ async function testAnimations(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Change Clip Out')
   const animated = await driver.savedProject('animated.json')
 
-  // One end has one way in or out: a transition chosen there takes the place of the fade, for as long.
   await pick(driver, 'clip-out', 'slideRight')
   await driver.until(`${selector('clip-out')}?.value === 'slideRight'`, 'the slide to replace the fade')
   const replaced = await driver.savedProject('replaced.json')
@@ -1765,7 +1631,6 @@ async function testAnimations(driver: Driver): Promise<UiTestReport> {
   return { offersTypewriter, animated, replaced, removed: await driver.savedProject('removed.json') }
 }
 
-// Groups the four clips of a mosaic, moves the group, changes a member from the inside, and takes the group apart again.
 async function testGroups(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   await fullQualityFrame(driver, 0)
@@ -1776,7 +1641,6 @@ async function testGroups(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('group-open')} !== null`, 'the group to be selected')
   const grouped = await driver.savedProject('grouped.json')
 
-  // On the canvas the group is one thing: a press on any member grabs it, and all four move together.
   await driver.drag(await onCanvas(driver, 160, 90), await onCanvas(driver, 200, 110))
   await driver.untilUndoLabel('Undo Move Clip')
   await driver.typeInto('clip-scale', '50')
@@ -1785,7 +1649,6 @@ async function testGroups(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await driver.picture('groups-closed')
 
-  // A double click on the timeline goes into the group: its four tracks are shown, and Properties changes one member.
   await driver.doubleClickAt(await driver.timelinePoint(second, 3, 4))
   await driver.until(`${selector('group-path')} !== null`, 'the group to open')
   const tracksInside = await driver.page.evaluate(`document.querySelectorAll('.track-header').length`)
@@ -1794,13 +1657,11 @@ async function testGroups(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('clip-opacity')} !== null`, 'a member to be selected')
   await driver.typeInto('clip-opacity', '40')
   await driver.untilUndoLabel('Undo Change Opacity')
-  // The member is dragged on the canvas, which shows the whole project with the group at half its size.
   await driver.drag(await onCanvas(driver, 280, 195), await onCanvas(driver, 300, 215))
   await driver.untilUndoLabel('Undo Move Clip')
   const inside = await driver.savedProject('inside.json')
   await driver.picture('groups-open')
 
-  // Escape first lets go of the member, then leaves the group, which is selected again.
   await driver.press('Escape')
   await driver.press('Escape')
   await driver.until(`${selector('group-path')} === null && ${selector('group-open')} !== null`, 'the group to close')
@@ -1817,7 +1678,6 @@ async function testGroups(driver: Driver): Promise<UiTestReport> {
   return { grouped, moved, tracksInside, isCameraToolOff, inside, ungrouped, undone: await driver.savedProject('undone.json') }
 }
 
-// Keys the volume of a clip in Properties, drags a keyframe on its waveform, and sets how its sound follows its speed.
 async function testSound(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   await fullQualityFrame(driver, 0)
@@ -1825,7 +1685,6 @@ async function testSound(driver: Driver): Promise<UiTestReport> {
   await driver.clickAt(await driver.timelinePoint(second / 2, 0, 1))
   await driver.until(`${selector('clip-volume-keyframe')} !== null`, 'the clip to be selected')
 
-  // Without keyframes the line stands level at the clip's volume, and dragging it changes that volume.
   const onLine = await driver.timelinePoint(0.75 * second, 0, 1)
   await driver.hover({ x: onLine.x, y: onLine.y + VOLUME_POINT_AT_UNITY })
   const cursorOverLine = await timelineCursor(driver)
@@ -1835,7 +1694,6 @@ async function testSound(driver: Driver): Promise<UiTestReport> {
   driver.menu('undo')
   await driver.until(`${selector('clip-volume')}?.value === '100'`, 'undo to put the volume back')
 
-  // A keyframe at the start holds the volume there; with one on the clip, a new volume further on makes the next.
   await clickOn(driver, 'clip-volume-keyframe')
   await driver.untilUndoLabel('Undo Add Volume Keyframe')
   await seekOnRuler(driver, second, '00:00:01:00')
@@ -1843,7 +1701,6 @@ async function testSound(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Change Volume')
   const keyed = await driver.savedProject('keyed.json')
 
-  // The second point is dragged half a second later and up to nearly the top of the sound.
   const point = await driver.timelinePoint(second, 0, 1)
   const later = await driver.timelinePoint(1.5 * second, 0, 1)
   await driver.hover({ x: point.x, y: point.y + VOLUME_POINT_AT_HALF })
@@ -1853,7 +1710,6 @@ async function testSound(driver: Driver): Promise<UiTestReport> {
   const dragged = await driver.savedProject('dragged.json')
   await driver.picture('sound-keyframes')
 
-  // A right click on the first point offers its easing and a way to delete it.
   const first = await driver.timelinePoint(0, 0, 1)
   await driver.rightClickAt({ x: first.x + 1, y: first.y + VOLUME_POINT_AT_UNITY })
   await driver.page.click('menu-easing-easeIn')
@@ -1864,7 +1720,6 @@ async function testSound(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Delete Volume Keyframe')
   const deleted = await driver.savedProject('deleted.json')
 
-  // A double click on the line adds a point there; dragging the line between two points moves both.
   const early = await driver.timelinePoint(second / 2, 0, 1)
   await driver.doubleClickAt({ x: early.x, y: early.y + NEAR_TOP_OF_SOUND })
   await driver.untilUndoLabel('Undo Add Volume Keyframe')
@@ -1874,7 +1729,6 @@ async function testSound(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Change Volume')
   const lineDragged = await driver.savedProject('line-dragged.json')
 
-  // The switch for sound above 400% is only there for a clip that fast.
   const offersFastSoundAtFirst = await driver.page.evaluate(`${selector('clip-fast-sound')} !== null`)
   await clickOn(driver, 'clip-keep-pitch')
   await driver.untilUndoLabel('Undo Let Pitch Follow Speed')
@@ -1886,27 +1740,23 @@ async function testSound(driver: Driver): Promise<UiTestReport> {
   return { cursorOverLine, lineVolume, keyed, cursorOverPoint, dragged, eased, deleted, pointAdded, lineDragged, offersFastSoundAtFirst, fast: await driver.savedProject('fast.json') }
 }
 
-// Keys a clip's place in Properties, moves it a second later so its motion path shows, drags a dot of the path, walks between the keyframes and keys its size.
 async function testKeyframes(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   await fullQualityFrame(driver, 0)
   await driver.clickAt(await driver.timelinePoint(second / 2, 0, 1))
   await driver.until(`${selector('clip-position-keyframe')} !== null`, 'the clip to be selected')
 
-  // X and Y are one set, with one button on their line.
   await clickOn(driver, 'clip-position-keyframe')
   await driver.untilUndoLabel('Undo Add Position Keyframe')
   const keyed = await driver.savedProject('keyed.json')
   const isPositionPressed = await isPressed(driver, 'clip-position-keyframe')
 
-  // A second later the clip still stands on the first dot; a drag from there moves the clip, which keys that moment.
   await seekOnRuler(driver, second, '00:00:01:00')
   await driver.drag(await onCanvas(driver, 320, 180), await onCanvas(driver, 420, 230))
   await driver.untilUndoLabel('Undo Move Clip')
   await driver.until(`${selector('motion-path')}?.dataset.dots === '2'`, 'a motion path with two dots')
   const moved = await driver.savedProject('moved.json')
 
-  // The first dot is dragged on its own; the keyframe at the playhead stays where it is.
   await driver.drag(centerOf(await driver.rect('path-point-0')), await onCanvas(driver, 200, 120))
   await driver.untilUndoLabel('Undo Move Position Keyframe')
   const dotMoved = await driver.savedProject('dot-moved.json')
@@ -1917,13 +1767,11 @@ async function testKeyframes(driver: Driver): Promise<UiTestReport> {
   await clickOn(driver, 'clip-position-next-keyframe')
   await untilTimecode(driver, '00:00:01:00')
 
-  // Width, height and scale are one set as well.
   await clickOn(driver, 'clip-scale-keyframe')
   await driver.untilUndoLabel('Undo Add Size Keyframe')
   const isSizePressed = await isPressed(driver, 'clip-size-keyframe')
   const sized = await driver.savedProject('sized.json')
 
-  // With the place animated, a typed X keys the place at the playhead, Y with it; the button then takes both away again.
   await seekOnRuler(driver, 1.5 * second, '00:00:01:15')
   await driver.typeInto('clip-x', '500')
   await driver.untilUndoLabel('Undo Move Clip')
@@ -1932,14 +1780,12 @@ async function testKeyframes(driver: Driver): Promise<UiTestReport> {
   await driver.untilUndoLabel('Undo Remove Position Keyframe')
   const removed = await driver.savedProject('removed.json')
 
-  // A click on the diamond of the keyframes at 1 s goes there.
   await seekOnRuler(driver, second / 2, '00:00:00:15')
   const diamond = await driver.timelinePoint(second, 0, 1)
   await driver.clickAt({ x: diamond.x, y: diamond.y - DIAMOND_FROM_ROW_MIDDLE })
   await untilTimecode(driver, '00:00:01:00')
   const jumpedTo = await playheadTime(driver)
 
-  // Dragged along the ruler to a few pixels past the keyframes, or short of the clip's end, the playhead lands on them; with ⌘ held it does not.
   const ruler = (await driver.rect('timeline')).y + RULER_HEIGHT / 2
   async function scrubNear(time: number, pixels: number, modifiers: readonly ('meta' | 'shift')[] = []): Promise<number> {
     await seekOnRuler(driver, second / 2, '00:00:00:15')
@@ -1955,9 +1801,7 @@ async function testKeyframes(driver: Driver): Promise<UiTestReport> {
   return { keyed, isPositionPressed, moved, dotMoved, isSizePressed, sized, typed, removed, jumpedTo, snappedToKeyframe, snappedToEnd, freeOfSnapping }
 }
 
-// Positions far into the long recording, each away from the last one and from what was prepared around it.
 const FAR_SEEK_SECONDS = [200, 350, 500, 120, 420]
-// Positions inside the short clip at the start of the project, once it is prepared.
 const NEAR_SEEK_SECONDS = [1, 3, 4, 2, 1.5, 3.5, 0.5]
 const SPACE_PASSES = 5
 const PLAY_WATCH_MS = 300
@@ -1970,7 +1814,6 @@ export async function framesShown(driver: Driver): Promise<number> {
   return Number(await driver.page.evaluate(`${selector('timecode')}.dataset.frames`))
 }
 
-// Clicks on the ruler at each position and times the first picture of it.
 export async function seekDelays(driver: Driver, positions: readonly number[]): Promise<number[]> {
   const ruler = await driver.rect('timeline')
   const delays: number[] = []
@@ -1983,7 +1826,6 @@ export async function seekDelays(driver: Driver, positions: readonly number[]): 
   return delays
 }
 
-// From a pointer move over the timeline while a button is held to the end of the next frame, which is the one that draws it.
 async function watchTimelineDrags(driver: Driver): Promise<{ read(): Promise<number[]> }> {
   await driver.page.evaluate(`(() => {
     window.timelineDelays = []
@@ -2004,14 +1846,12 @@ async function watchTimelineDrags(driver: Driver): Promise<{ read(): Promise<num
   return { read: async () => numbersIn(await driver.page.evaluate('window.timelineDelays')) }
 }
 
-// The responsiveness budgets that the 4,096-clip test does not cover, on a project of a short 1080p clip followed by ten minutes of 1080p, opened on a profile without a cache.
 async function testResponsiveness(driver: Driver): Promise<UiTestReport> {
   await driver.until(`Number(${selector('timecode')}?.dataset.frames ?? 0) > 0 && ${selector('timeline')}?.dataset.view !== undefined`, 'the project to be shown')
   const launchSeconds = process.uptime()
   const longTasks = await watchLongTasks(driver)
   await fullQualityFrame(driver, 0)
 
-  // Nothing of the long recording is prepared yet, so these pictures come from the original file.
   const uncachedSeeks = await seekDelays(driver, FAR_SEEK_SECONDS)
   await driver.until(`${selector('media-1080p.mp4')}?.querySelector('.badge.warning') === null`, 'the short clip to be prepared', PREPARE_TIMEOUT_MS)
   const cachedSeeks = await seekDelays(driver, NEAR_SEEK_SECONDS)
@@ -2026,7 +1866,6 @@ async function testResponsiveness(driver: Driver): Promise<UiTestReport> {
     await fullQualityFrame(driver, sinceFrames)
   }
 
-  // The start of the long recording, ten seconds in, is trimmed; then the whole of it is moved. The playhead stays in the short clip.
   const drags = await watchTimelineDrags(driver)
   const start = await driver.timelinePoint(LONG_CLIP_START_SECONDS * TICKS_PER_SECOND, 0, 1)
   await driver.drag({ x: start.x + 2, y: start.y }, { x: start.x + DRAG_PIXELS, y: start.y })
@@ -2061,7 +1900,6 @@ const IDLE_SETTLE_MS = 3000
 const IDLE_WATCH_SECONDS = 10
 const PERCENT = 100
 
-// The processor time the app uses while a prepared project sits paused, as a share of one core.
 async function testIdle(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await untilPrepared(driver)
@@ -2072,7 +1910,6 @@ async function testIdle(driver: Driver): Promise<UiTestReport> {
   return { cpuPercent: ((secondsAfter - secondsBefore) / IDLE_WATCH_SECONDS) * PERCENT }
 }
 
-// Roles a person can operate; each must have a name VoiceOver can read.
 const OPERABLE_ROLES = new Set(['button', 'checkbox', 'radio', 'textbox', 'searchbox', 'combobox', 'slider', 'spinbutton', 'tab', 'option', 'menuitem', 'listbox', 'switch', 'separator'])
 const MAX_TAB_STOPS = 400
 
@@ -2089,7 +1926,6 @@ function axNodesOf(answer: unknown): AxNode[] {
   return answer.nodes.filter(isAxNode)
 }
 
-// A separator is operable only when it takes the focus, as the panel splitters do.
 function isOperable(node: AxNode): boolean {
   const role = String(node.role?.value ?? '')
   if (!OPERABLE_ROLES.has(role)) return false
@@ -2097,7 +1933,6 @@ function isOperable(node: AxNode): boolean {
   return node.properties?.some((property) => property.name === 'focusable' && property.value.value === true) === true
 }
 
-// How a control is found in the page, for the report: its test id, or else its tag and class.
 async function describeNode(driver: Driver, backendNodeId: number | undefined): Promise<string> {
   if (backendNodeId === undefined) return 'a node outside the page'
   const described: unknown = await driver.window.webContents.debugger.sendCommand('DOM.describeNode', { backendNodeId })
@@ -2112,7 +1947,6 @@ async function describeNode(driver: Driver, backendNodeId: number | undefined): 
   return valueOf('data-testid') ?? `${name}.${valueOf('class') ?? ''}`
 }
 
-// The controls that VoiceOver would announce without a name, read from Chromium's accessibility tree.
 async function unnamedControls(driver: Driver): Promise<string[]> {
   const cdp = driver.window.webContents.debugger
   await cdp.sendCommand('DOM.enable')
@@ -2136,7 +1970,6 @@ function isTabStop(value: unknown): value is TabStop {
   return typeof value === 'object' && value !== null && 'id' in value && 'region' in value && 'hasRing' in value
 }
 
-// Presses Tab until the focus comes back to where it started, and says where each stop was and whether it showed the focus ring.
 async function tabStops(driver: Driver): Promise<TabStop[]> {
   const stops: TabStop[] = []
   for (let press = 0; press < MAX_TAB_STOPS; press++) {
@@ -2166,8 +1999,6 @@ function withoutRing(stops: readonly TabStop[]): string[] {
   return stops.filter((stop) => !stop.hasRing).map((stop) => `${stop.region}: ${stop.id}`)
 }
 
-// Every control has a name, and the keyboard reaches every panel and every control of the dialogs with a visible focus ring.
-// Each track's first clip is selected in turn, so the properties of every kind of clip in the project are looked at.
 async function testAccessibility(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   const unnamed = new Set(await unnamedControls(driver))
@@ -2181,7 +2012,6 @@ async function testAccessibility(driver: Driver): Promise<UiTestReport> {
     await driver.press('Escape')
     await driver.until(`${selector('canvas-width')} !== null`, 'the selection to be let go')
     await driver.clickAt(await rowInView(driver, clip.start + clip.duration / 2, index, tracks.length))
-    // With a clip selected, Properties shows it in place of the project settings; a sound clip has nothing on the canvas to count.
     await driver.until(`${selector('canvas-width')} === null`, `the ${clip.type} clip on track ${index + 1} to be selected`)
     for (const control of await unnamedControls(driver)) unnamed.add(control)
   }
@@ -2217,7 +2047,6 @@ type ClipPlace = { type: string; start: number; duration: number }
 const ROW_SCROLL_PIXELS = 40
 const MAX_ROW_SCROLLS = 50
 
-// Scrolls the tracks until the row of a track is in sight, and gives the place of a moment on it.
 export async function rowInView(driver: Driver, time: number, trackIndex: number, trackCount: number): Promise<Point> {
   const area = await driver.rect('timeline')
   const lowest = area.y + RULER_HEIGHT + CAMERA_LANE_HEIGHT + TRACK_HEIGHT / 2
@@ -2237,7 +2066,6 @@ function isProjectLike(value: unknown): value is { tracks: { clips: ClipPlace[] 
 
 const LONG_STEP_TIMEOUT_MS = 120_000
 
-// Every broken file of the media folder is imported at once. Each is refused with a message or listed with a badge, and afterwards the editor still imports, places and plays a good file.
 async function testBrokenMedia(driver: Driver): Promise<UiTestReport> {
   const { mediaDirectory } = driver.options
   if (mediaDirectory === undefined) throw new PageError('This UI test needs --media <directory>')
@@ -2262,14 +2090,12 @@ async function testBrokenMedia(driver: Driver): Promise<UiTestReport> {
 }
 
 const SOAK_MEDIA = ['h264.mp4', '1080p.mp4', 'audio.wav', 'audio.mp3', 'image.jpg', 'animated.gif']
-// Each name as often as it should be picked.
 const SOAK_ACTIONS = ['place', 'place', 'move', 'move', 'trim', 'split', 'text', 'opacity', 'undo', 'undo', 'redo', 'play', 'scrub', 'save'] as const
 const SOAK_TIMELINE_SECONDS = 20
 const SOAK_MAX_CLIPS = 40
 const SOAK_SAMPLE_INTERVAL_MS = 60_000
 const SOAK_EXPORT_INTERVAL_MS = 20 * 60_000
 const SOAK_EXPORT_TIMEOUT_MS = 10 * 60_000
-// A step that takes longer than this has hung the editor.
 const SOAK_STEP_LIMIT_MS = 15 * 60_000
 const SOAK_LOG_LENGTH = 200
 const SOAK_PLAY_MS = 2000
@@ -2286,7 +2112,6 @@ type SoakAction = (typeof SOAK_ACTIONS)[number]
 
 type SoakClip = ClipPlace & { trackIndex: number }
 
-// A small, fast generator of numbers from 0 to 1 that gives the same run again for the same seed (mulberry32).
 function seededRandom(seed: number): () => number {
   let state = seed >>> 0
   return () => {
@@ -2318,7 +2143,6 @@ function pickOf<T>(soak: Soak, items: readonly T[]): T | undefined {
   return items[Math.floor(soak.random() * items.length)]
 }
 
-// The clips as the project holds them now; reading them saves the project, which is one of the things the session does.
 async function soakClips(soak: Soak): Promise<{ clips: SoakClip[]; trackCount: number }> {
   const project = await soak.driver.savedProject('soak.json')
   if (!isProjectLike(project)) throw new PageError('The saved project has no tracks')
@@ -2376,7 +2200,6 @@ async function soakSplit(soak: Soak): Promise<void> {
 async function soakText(soak: Soak): Promise<void> {
   const { driver } = soak
   await driver.page.click('tab-annotations')
-  // On the picture itself: the overlay also covers the space around it.
   const picture = await driver.rect('preview')
   const drop = { x: picture.x + picture.width * (0.2 + soak.random() * 0.6), y: picture.y + picture.height * (0.2 + soak.random() * 0.6) }
   await driver.drag(centerOf(await driver.rect('annotation-text')), drop)
@@ -2426,7 +2249,6 @@ async function soakExport(soak: Soak): Promise<void> {
   await untilExported(driver, 'soak.mp4', SOAK_EXPORT_TIMEOUT_MS)
 }
 
-// Too many clips would slow every step down: past the limit everything is deleted and the session starts filling the timeline again.
 async function soakTrimProject(soak: Soak): Promise<void> {
   const { clips } = await soakClips(soak)
   if (clips.length <= SOAK_MAX_CLIPS) return
@@ -2461,7 +2283,6 @@ async function runSoakAction(soak: Soak, action: SoakAction): Promise<void> {
   }
 }
 
-// Nothing is left half done between steps: no text open for typing, no list or dialog open, the whole project in view.
 async function settleSoak(soak: Soak): Promise<void> {
   const { driver } = soak
   if ((await driver.page.evaluate(`${selector('text-editor')} !== null || document.querySelector('dialog[open], .options') !== null`)) === true) await driver.press('Escape')
@@ -2469,7 +2290,6 @@ async function settleSoak(soak: Soak): Promise<void> {
   await sleep(SOAK_SETTLE_MS)
 }
 
-// Random edits, playback, undo, saving and exporting for `--seconds`, from `--seed` or a seed of its own. The memory of the whole app is sampled each minute.
 async function testSoak(driver: Driver): Promise<UiTestReport> {
   const seconds = driver.options.seconds
   if (seconds === undefined) throw new PageError('This UI test needs --seconds <how long to run>')
@@ -2511,7 +2331,6 @@ async function testSoak(driver: Driver): Promise<UiTestReport> {
   return { seed, seconds, counts, memory }
 }
 
-// Puts the playhead at one second from the ruler, selects the clip of the first track half a second in, and splits it.
 export async function splitFirstTrackAtOneSecond(driver: Driver, trackCount: number): Promise<void> {
   const second = TICKS_PER_SECOND
   const ruler = await driver.rect('timeline')
@@ -2527,20 +2346,16 @@ function selectedFiles(driver: Driver): Promise<unknown> {
   return driver.page.evaluate(`[...document.querySelectorAll('.library-item.selected')].map((item) => item.dataset.testid)`)
 }
 
-// From a new window: its six tracks, files picked with a box and with Select All and dropped together, the part after a cut picked,
-// the speed set from the clip menu, and a clip off the canvas outlined and grabbed in the space around the picture.
 async function testQuickEdits(driver: Driver): Promise<UiTestReport> {
   const second = TICKS_PER_SECOND
   const startingTracks = await driver.page.evaluate(`document.querySelectorAll('[data-testid^="track-name-"]').length`)
   await importThreeFiles(driver)
 
-  // A box drawn from the empty part of the tab up over the first file picks every file it crosses.
   const library = await driver.rect('left-sidebar')
   const firstFile = await driver.rect('media-h264.mp4')
   await driver.drag({ x: library.x + library.width - 6, y: library.y + library.height - 12 }, { x: firstFile.x + 2, y: firstFile.y + 2 })
   const pickedByBox = await selectedFiles(driver)
 
-  // Select All picks every file while the Media tab was pressed last, and every clip once the timeline was.
   await driver.clickAt(centerOf(await driver.rect('media-audio.wav')))
   driver.menu('select-all')
   await driver.until(`document.querySelectorAll('.library-item.selected').length === 3`, 'Select All to pick every file')
@@ -2555,11 +2370,9 @@ async function testQuickEdits(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${selector('canvas-overlay')}.dataset.selected === '1'`, 'Select All to pick the clips')
   const filesAfterClipSelectAll = await selectedFiles(driver)
 
-  // The video, cut at one second, hands its selection to the part after the cut.
   await splitFirstTrackAtOneSecond(driver, 6)
   const startAfterSplit = await driver.value('clip-start')
 
-  // The clip menu opens the speed: a number typed and Return, or Escape to leave it as it is.
   await driver.rightClickAt(await driver.timelinePoint(1.5 * second, 0, 6))
   await driver.until(`${selector('menu-speed')} !== null`, 'the clip menu')
   await driver.page.click('menu-speed')
@@ -2581,8 +2394,6 @@ async function testQuickEdits(driver: Driver): Promise<UiTestReport> {
   const undoAfterEscape = driver.menuLabel('undo')
   const escapedSpeed = await driver.savedProject('quick-speed-escaped.json')
 
-  // At 50 % there is room around the picture. The part before the cut, moved mostly off the canvas, keeps an outline there,
-  // and a press on that outline picks it and drags it back.
   const canvasWidth = 320
   await pick(driver, 'canvas-zoom', '50')
   const ruler = await driver.rect('timeline')
@@ -2622,7 +2433,6 @@ async function testQuickEdits(driver: Driver): Promise<UiTestReport> {
 
 const TIMELINE_VIEW = `JSON.parse(${selector('timeline')}.dataset.view)`
 
-// Scrolls the timeline sideways with its scroll bar and with the middle button held, then takes the only file out of the project with Delete in the Media tab.
 async function testTimelineScroll(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   for (let step = 0; step < 6; step++) await driver.page.click('timeline-zoom-in')
@@ -2632,7 +2442,6 @@ async function testTimelineScroll(driver: Driver): Promise<UiTestReport> {
   await driver.until(`${TIMELINE_VIEW}.scrollX === 120`, 'the scroll bar to scroll the timeline')
   const scrolledByBar = await driver.page.evaluate(`${TIMELINE_VIEW}.scrollX`)
 
-  // Held down, the middle button drags the view along: moved left by 80 pixels, the timeline shows 80 pixels further on.
   const from = await driver.timelinePoint(0, 0, 1)
   const start = { x: Math.round(from.x + 300), y: Math.round(from.y) }
   const { webContents } = driver.window
@@ -2655,7 +2464,6 @@ async function testTimelineScroll(driver: Driver): Promise<UiTestReport> {
 
 const SETTINGS_SAVE_TIMEOUT_MS = 5000
 
-// The value of a setting once settings.json holds the one expected, or what it holds when that never comes.
 async function savedSetting(key: string, expected: unknown): Promise<unknown> {
   const path = join(app.getPath('userData'), 'settings.json')
   const deadline = Date.now() + SETTINGS_SAVE_TIMEOUT_MS
@@ -2672,8 +2480,6 @@ async function savedSetting(key: string, expected: unknown): Promise<unknown> {
   return found
 }
 
-// Three clips end to end get twice as fast and stay end to end; the View menu shows the debug text for the project and then for the selected clips;
-// Settings shows the cache in use and keeps a new snap range in settings.json until Restore Defaults.
 async function testDebugAndSettings(driver: Driver): Promise<UiTestReport> {
   await importThreeFiles(driver)
   await driver.clickAt(centerOf(await driver.rect('media-h264.mp4')))
@@ -2682,7 +2488,6 @@ async function testDebugAndSettings(driver: Driver): Promise<UiTestReport> {
   await driver.drag(centerOf(await driver.rect('media-h264.mp4')), await driver.timelinePoint(0, 0, 6))
   await driver.untilUndoLabel('Undo Add 3 Clips')
 
-  // The dropped clips are selected; with none, the text is about the project only.
   driver.menu('deselect-all')
   driver.menu('toggle-debug')
   await driver.until(`${selector('debug-text')}?.textContent.startsWith('Playback ') === true`, 'the debug panel with the system info')

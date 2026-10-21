@@ -1,7 +1,7 @@
 import { ANNOTATION_NAMES, addAnnotation, type AnnotationKind } from '../editor/annotations.js'
 import { deleteZoom, setViewAt, zoomIndexAt } from '../editor/camera.js'
 import { copyClips, deleteClips, pasteClips, rippleDelete, spanEnd, type Clipboard } from '../editor/clipboard.js'
-import { allClips, isVisual, locateClip, nearestEdit, nextTrackName, trackAboveAll, unlockedClipIds, type NewTrack } from '../editor/clips.js'
+import { allClips, isVisual, locateClip, nearestClipEdge, nextTrackName, trackAboveAll, unlockedClipIds, type NewTrack } from '../editor/clips.js'
 import { addEffect, takesEffect } from '../editor/effects.js'
 import { groupClips, ungroupClips } from '../editor/groups.js'
 import { dropMedia, placeableMedia, withoutMedia } from '../editor/place.js'
@@ -21,18 +21,13 @@ export type Actions = {
   selectAll(): void
   canSeparateAudio(): boolean
   separateAudio(): void
-  // Adds one at the playhead on the layer above everything else (see `trackAboveAll`), with its middle at `centre` (the middle of the canvas when left out).
   addAnnotation(kind: AnnotationKind, centre?: { x: number; y: number }): void
-  // Adds the files that can be placed at the playhead, one after another on the layer above everything else.
   addMedia(mediaIds: readonly string[]): void
-  // Takes the files out of the project, with their clips.
   removeMedia(mediaIds: readonly string[]): void
   group(): void
   ungroup(): void
-  // Goes into the selected group; Escape and the path above the timeline lead out again.
   openGroup(): void
   closeGroup(): void
-  // Both go to the selected clips, and say so in a message when no selected clip can take them.
   addEffect(type: EffectType): void
   addTransition(type: TransitionType): void
   zoomToFull(): void
@@ -52,10 +47,8 @@ function plural(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`
 }
 
-// The editing commands that the menu, the keyboard, the timeline toolbar and the context menus all share.
 export function createActions(store: EditorStore, transport: Transport): Actions {
   let clipboard: Clipboard | undefined
-  // The groups that were open when the clipboard was filled. Members are placed from the middle of their group, so they only fit where they came from.
   let clipboardPlace = ''
   let stepped: { time: number; sequence: number } | undefined
 
@@ -68,7 +61,6 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     return Math.max(0, Math.ceil(duration / frameTicks) - 1) * frameTicks
   }
 
-  // A copy of a group needs an id for every clip inside it.
   function addMemberIds(clip: Clip | undefined, newIds: Map<string, string>): void {
     if (clip?.type !== 'group') return
     for (const member of allClips(clip.tracks)) newIds.set(member.id, crypto.randomUUID())
@@ -85,7 +77,6 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     }
     if (splitIds.length === 0) return
     store.apply(`Split ${plural(splitIds.length, 'Clip')}`, (current) => splitClips(current, cut, newIds))
-    // People edit from left to right, so a selected clip that was cut hands its selection to the part after the cut.
     const laterParts = new Map(splitIds.map((clipId) => [clipId, newIds.get(clipId) ?? clipId]))
     store.select(store.getState().selection.map((clipId) => laterParts.get(clipId) ?? clipId))
   }
@@ -108,7 +99,6 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     return true
   }
 
-  // The selected clips that pass a test, in the order they were selected.
   function selectedClipIds(isWanted: (clip: Clip) => boolean): string[] {
     const { project, selection } = store.getState()
     return selection.filter((clipId) => {
@@ -117,7 +107,6 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     })
   }
 
-  // Where something new is added: the frame the playhead is on, with playback stopped so that it is seen at once.
   function playheadFrame(): number {
     const { frameTicks } = limits()
     transport.pause()
@@ -152,7 +141,6 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       const newIds = new Map<string, string>()
       for (const clipId of clipsToSeparate(project, selection, mediaStates)) newIds.set(clipId, crypto.randomUUID())
       if (newIds.size === 0) return
-      // At most every track gets a track for its sound above it.
       const newTracks: NewTrack[] = project.tracks.map((_track, index) => ({ id: crypto.randomUUID(), name: `Track ${project.tracks.length + index + 1}` }))
       store.apply('Separate Video and Audio', (current) => separateAudio(current, mediaStates, newIds, newTracks))
     },
@@ -162,7 +150,6 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       const added = { clipId: crypto.randomUUID(), start: playheadFrame(), duration, trackIndex: trackAboveAll(project), newTrack: { id: crypto.randomUUID(), name: nextTrackName(project) }, centre }
       store.apply(`Add ${ANNOTATION_NAMES[kind]}`, (current) => addAnnotation(current, kind, added))
       store.select([added.clipId])
-      // New words open for typing at once, so the usual next step needs no extra click.
       if (kind === 'text' || kind === 'callout') store.editText(added.clipId)
     },
     addMedia(mediaIds) {
@@ -177,7 +164,6 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     },
     removeMedia(mediaIds) {
       if (mediaIds.length === 0) return
-      // An open group shows only its own tracks, and the files' clips may be anywhere in the project.
       store.closeGroups(0)
       store.apply(`Remove ${plural(mediaIds.length, 'File')}`, (project) => withoutMedia(project, mediaIds))
     },
@@ -212,7 +198,6 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       if (groupId === undefined) return
       transport.pause()
       store.openGroup(groupId)
-      // Inside, the playhead starts on something the group shows.
       const { scope } = store.getState()
       const { time } = transport.position()
       if (scope !== undefined && (time < scope.from || time >= scope.to)) transport.seek(scope.from)
@@ -264,7 +249,7 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       transport.seek(end === 'start' ? 0 : lastFrameStart(limits()))
     },
     jumpToEdit(direction) {
-      const edit = nearestEdit(store.getState().project, transport.position().time, direction)
+      const edit = nearestClipEdge(store.getState().project, transport.position().time, direction)
       if (edit === undefined) return
       transport.pause()
       transport.seek(Math.min(edit, lastFrameStart(limits())))

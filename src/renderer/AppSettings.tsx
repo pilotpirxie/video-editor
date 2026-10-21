@@ -24,11 +24,9 @@ type SettingFieldProps = {
   onChange(settings: AppSettings): void
 }
 
-// A number of the settings. Scrubbing shows the value as it goes; the change counts once the field lets go.
 function SettingField({ label, setting, decimals = 0, step = 1, onChange }: SettingFieldProps): ReactElement {
   const settings = useEditorState((state) => state.settings)
   const [draft, setDraft] = useState<number | undefined>(undefined)
-  // A typed value is begun, changed and committed in one go, before the state above is updated.
   const draftRef = useRef<number | undefined>(undefined)
   const { min, max } = SETTING_RANGES[setting]
 
@@ -64,7 +62,6 @@ function gigabytes(bytes: number): string {
   return (bytes / BYTES_PER_GIGABYTE).toFixed(1)
 }
 
-// The Performance tab of the Settings dialog. The cache in use is read when the tab opens and when the limit changes; a clear reads it again itself.
 export function PerformanceSettings(): ReactElement {
   const session = useSession()
   const settings = useEditorState((state) => state.settings)
@@ -129,7 +126,6 @@ export function PerformanceSettings(): ReactElement {
   )
 }
 
-// The Editing tab of the Settings dialog.
 export function EditingSettings(): ReactElement {
   const session = useSession()
   const settings = useEditorState((state) => state.settings)
@@ -152,7 +148,6 @@ export function EditingSettings(): ReactElement {
   )
 }
 
-// Asked once when a project needs more cache than the limit allows: without it, parts are prepared again each time the playhead comes back.
 export function CacheLimitDialog({ neededBytes, offerGb }: CacheOffer): ReactElement {
   const session = useSession()
   const settings = useEditorState((state) => state.settings)

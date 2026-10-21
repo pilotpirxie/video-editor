@@ -6,7 +6,6 @@ export const MAX_SOURCE_DIMENSION = 4096
 
 export const TEXTURE_CACHE_BYTES = 128 * MEBIBYTE
 
-// The part of its usual size each cache of a window keeps while macOS reports memory pressure.
 export const UNDER_PRESSURE_SHARE = 0.25
 
 export const READ_AHEAD_FRAMES = 4
@@ -19,7 +18,6 @@ export const FRAME_DECODE_PIXEL_BUDGET = ULTRA_HD_PIXELS
 
 export const MAX_OPEN_STREAMS = 8
 
-// Preview copies and sound are made and removed in pieces of this length of their source.
 export const CACHE_SEGMENT_SECONDS = 30
 
 export function frameDecoderThreads(pixelCount: number): number {
@@ -27,7 +25,6 @@ export function frameDecoderThreads(pixelCount: number): number {
   return 2
 }
 
-// A stream that hands over every n-th frame decodes n frames for each, so it gets the threads of a single-frame decode.
 export function streamDecoderThreads(pixelCount: number, step: number): number {
   if (step > 1) return frameDecoderThreads(pixelCount)
   return 2

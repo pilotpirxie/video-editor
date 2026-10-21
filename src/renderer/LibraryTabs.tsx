@@ -32,8 +32,6 @@ type DragHandlers = {
   onClickCapture(event: MouseEvent<HTMLElement>): void
 }
 
-// Lets an element of the library be dragged out of it. The drag is drawn by a label that follows the pointer; whatever is under the pointer hears of every move, and of the drop on release.
-// Nothing is dragged while there is no item, as for media that is still being read.
 export function useLibraryDrag(item: LibraryItem | undefined, label: string): DragHandlers {
   const dragRef = useRef<Drag | undefined>(undefined)
   const wasDraggedRef = useRef(false)
@@ -53,12 +51,10 @@ export function useLibraryDrag(item: LibraryItem | undefined, label: string): Dr
     wasDraggedRef.current = true
     drag.ghost.remove()
     const under = isDropped ? document.elementFromPoint(at.clientX, at.clientY) : null
-    // Whatever showed where the item would go hears where the drag ended before the drop itself; an abandoned drag ends over no panel.
     tell(LIBRARY_DRAG_EVENT, under ?? document, at)
     if (under !== null) tell(LIBRARY_DROP_EVENT, under, at)
   }
 
-  // An element that goes away in the middle of its drag, with its media undone for example, takes the drag with it.
   useEffect(() => () => endDrag({ clientX: 0, clientY: 0 }, false), [])
 
   return {
@@ -67,7 +63,6 @@ export function useLibraryDrag(item: LibraryItem | undefined, label: string): Dr
       wasDraggedRef.current = false
       event.currentTarget.setPointerCapture(event.pointerId)
       const start = { clientX: event.clientX, clientY: event.clientY }
-      // Escape abandons the drag. It is marked as handled so it does not also clear the selection.
       function onKeyDown(pressed: KeyboardEvent): void {
         if (pressed.key !== 'Escape' || dragRef.current?.ghost === undefined) return
         pressed.preventDefault()
@@ -107,7 +102,6 @@ const VIEW_KEY = 'library-view'
 
 type LibraryView = 'list' | 'grid'
 
-// One choice for all four tabs, remembered on this Mac. Tiles unless rows were chosen.
 export function useLibraryView(): [LibraryView, (next: LibraryView) => void] {
   const [view, setView] = useState<LibraryView>(() => (localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid'))
 
@@ -124,7 +118,6 @@ export function useLibraryView(): [LibraryView, (next: LibraryView) => void] {
 }
 
 type LibraryToolsProps = {
-  // What the tab holds, in the plural, as in "Search effects".
   noun: string
   query: string
   onQuery(query: string): void
@@ -152,7 +145,6 @@ type Entry = {
   label: string
   testId: string
   preview: ReactElement
-  // Adds the item where it goes without a drag: to the selected clips, or at the playhead.
   onChoose(): void
 }
 

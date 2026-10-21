@@ -29,7 +29,6 @@ describe('findRecoveries', () => {
     const older = await recoveryWrittenAt('older.json', 60)
     const newer = await recoveryWrittenAt('newer.json', 10)
     const saved = await recoveryWrittenAt('saved.json', 30)
-    // The project lives elsewhere: everything in the recovery folder that ends in .json is a recovery file.
     const projectPath = `${directory}-project.json`
     await writeFile(projectPath, '{}')
     await rememberProjectPath(saved, projectPath)
@@ -39,7 +38,6 @@ describe('findRecoveries', () => {
       { recoveryPath: newer, projectPath: undefined },
       { recoveryPath: older, projectPath: undefined },
     ])
-    // The saved project superseded its recovery file, and no export is running at launch.
     expect((await readdir(directory)).sort()).toEqual(['newer.json', 'older.json'])
     await rm(projectPath)
   })

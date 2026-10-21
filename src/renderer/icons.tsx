@@ -64,10 +64,8 @@ type IconButtonProps = {
   icon: IconName
   label: string
   testId: string
-  // The keys that do the same, as written in the tooltip.
   shortcut?: string
   isPressed?: boolean
-  // Pressed, the icon turns red: for a switch that silences or takes something away.
   isDanger?: boolean
   isDisabled?: boolean
   onClick(): void

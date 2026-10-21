@@ -324,10 +324,8 @@ function without(path: string): string {
   })
 }
 
-// The latest time on the timeline grid that is still an exact whole number.
 const LATEST_GRID_TIME = Math.floor(Number.MAX_SAFE_INTEGER / 100) * 100
 
-// A member of the group that ends just inside exact time on its own track, and so past it on the timeline, where the group moves it later.
 function memberEndingPastExactTime(): string {
   return editedAt('tracks.3.clips.2.tracks.0.clips.0', (holder, key) => {
     const member = childOf(holder, key)

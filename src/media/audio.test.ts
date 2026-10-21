@@ -18,7 +18,6 @@ const RAMP_SAMPLES = 96_000
 const RAMP_PERIOD = 65_536
 const QUARTER_SECOND = 12_000
 const TICKS_PER_SAMPLE = 500
-// One-second segments, so every two-second test file has a seam to cross.
 const SHORT_SEGMENT_SECONDS = 1
 const WHOLE_FILE_SEGMENT_SECONDS = 100
 const PLENTY_OF_ROOM = 1024 ** 3
@@ -113,11 +112,9 @@ describe('prepared sound', () => {
     expect(Math.abs(largestDrop(samples) - RAMP_PERIOD)).toBeLessThanOrEqual(2)
   })
 
-  // Segments made by separate decodes meet without a jump: read the second segment first, so the first is decoded on its own afterwards.
   it.each(['audio.wav', 'audio.flac', 'audio-alac.m4a', 'audio.aiff', 'audio.mp3', 'audio.m4a', 'audio.ogg', 'audio.opus', 'audio-44k-click.wav', 'audio-96k-24bit.flac', 'h264.mp4', 'vp9.webm'])('joins separately decoded segments of %s as one decode', async (name) => {
     const opened = await open(name)
     await window(opened, 48_000, 1000)
-    // Lossy codecs pad their last packet; a decode that seeks may keep a little of that padding. Only the seams matter here.
     const compared = opened.totalSamples - CODEC_PADDING_SAMPLES
     const joined = await window(opened, 0, compared)
     const whole = (await allSamples(name, WHOLE_FILE_SEGMENT_SECONDS)).subarray(0, compared * 2)
@@ -225,7 +222,6 @@ describe('sound at another speed', () => {
     }
   })
 
-  // The tempo filter blends neighbouring pieces of sound, which spreads a click over some milliseconds; it must stay within a frame of where it belongs.
   it('puts a sound where it is heard at that speed, within one frame', async () => {
     const opened = await open('audio-44k-click.wav')
     const oneFrame = 1600
@@ -249,7 +245,6 @@ describe('sound at another speed', () => {
     expect(Buffer.from(first.buffer).equals(Buffer.from(second.buffer))).toBe(true)
   })
 
-  // Each stretched segment is made by its own run of the tempo filter; where two meet, a sine must go on without a jump.
   it('joins stretched segments without a jump', async () => {
     const opened = await open('audio.wav')
     for (const stretch of [{ speedPercent: 150, keepsPitch: true }, { speedPercent: 50, keepsPitch: true }, { speedPercent: 300, keepsPitch: false }]) {
@@ -259,7 +254,6 @@ describe('sound at another speed', () => {
       let largestStepElsewhere = 0
       for (let frame = 1; frame < samples.length / 2; frame++) {
         const step = Math.abs((samples[frame * 2] ?? 0) - (samples[(frame - 1) * 2] ?? 0))
-        // The ramp itself falls once per period; such a fall is not a seam.
         if (step > 1) continue
         if (Math.abs(frame - seam) < 600) largestStepAtSeam = Math.max(largestStepAtSeam, step)
         else largestStepElsewhere = Math.max(largestStepElsewhere, step)
@@ -372,7 +366,6 @@ describe('a twenty-hour project', () => {
   const SAMPLE_RATE = 48_000
   const MINUTE_SAMPLES = 60 * SAMPLE_RATE
   const SECOND_TICKS = SAMPLE_RATE * TICKS_PER_SAMPLE
-  // Room for what is needed around one playhead and a little more, so seeking far has to remove what was prepared before.
   const LIMIT_BYTES = 200 * 1024 * 1024
   const PREPARED_READ_MS = 150
 

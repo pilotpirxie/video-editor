@@ -403,7 +403,6 @@ describe('transitionChange', () => {
     { type: 'wipeDownLeft', corner: { x: 1920, y: 0 } },
     { type: 'wipeDownRight', corner: { x: 0, y: 0 } },
   ])('sweeps the edge of $type from its corner through the middle to the opposite corner', ({ type, corner }) => {
-    // How far a point is past the edge, towards the side the arriving picture is on.
     function past(reveal: ReturnType<typeof change>['reveal'], x: number, y: number): number {
       if (reveal?.kind !== 'line') throw new Error('Expected a wipe')
       return (x - reveal.x) * reveal.normalX + (y - reveal.y) * reveal.normalY

@@ -3,16 +3,11 @@ import { NORMAL_SPEED_PERCENT, TICKS_PER_SAMPLE, TICKS_PER_SECOND, frameIndexAt 
 import { audioLayout, stretchedLayout, stretchKey, type AudioLayout } from './audio.js'
 import { previewLayout, type PreviewLayout } from './previewCopy.js'
 
-// What is played within a minute behind and five minutes ahead of the playhead is needed now; the rest is prepared outward from there while the cache has room.
 const NEAR_BEFORE_TICKS = 60 * TICKS_PER_SECOND
 const NEAR_AFTER_TICKS = 300 * TICKS_PER_SECOND
-// A fast clip covers much of its file in little time; no more than ten minutes of one clip's file count as needed now.
-// A sparse copy costs by the time it plays, not by the source it covers, so it has only the window on the timeline.
 const NEAR_SOURCE_TICKS = 600 * TICKS_PER_SECOND
-// Something behind the playhead is less likely to be played next than something as far ahead.
-const BEHIND_WEIGHT = 2
+const BEHIND_PLAYHEAD_WEIGHT = 2
 
-// In order: sound needed now, waveforms, pictures needed now, then everything else by distance. Waveforms are made beside the rest, so a long one holds nothing back.
 const TIERS = { nearSound: 0, waveform: 1, nearPicture: 2, later: 3 } as const
 
 export type PreparationJob =
@@ -46,7 +41,6 @@ function sourceSpanOf(range: WantedRange, info: MediaInfo): SourceSpan {
   return { from: range.sourceStart, to: range.sourceStart + length }
 }
 
-// Where on the timeline a source time plays.
 function timelineAt(range: WantedRange, sourceTime: number): number {
   return range.timelineStart + ((sourceTime - range.sourceStart) * NORMAL_SPEED_PERCENT) / range.speedPercent
 }
@@ -55,7 +49,7 @@ function distanceOf(range: WantedRange, sourceFrom: number, sourceTo: number, pl
   const from = Math.max(range.timelineStart, range.isLooping ? range.timelineStart : timelineAt(range, sourceFrom))
   const to = Math.min(range.timelineEnd, range.isLooping ? range.timelineEnd : timelineAt(range, sourceTo))
   if (playhead < from) return from - playhead
-  if (playhead >= to) return (playhead - to) * BEHIND_WEIGHT
+  if (playhead >= to) return (playhead - to) * BEHIND_PLAYHEAD_WEIGHT
   return 0
 }
 
@@ -84,7 +78,6 @@ type PlacedSegment = {
   isNear: boolean
 }
 
-// How far from the playhead each segment of a range plays. The nearest within the window count as needed now, up to `nearSource` of source.
 function placeSegments(range: WantedRange, spans: readonly SegmentSpan[], playhead: number, nearSource: number): PlacedSegment[] {
   const candidates: Candidate[] = []
   for (const { segment, sourceFrom, sourceTo } of spans) {
@@ -100,7 +93,6 @@ function placeSegments(range: WantedRange, spans: readonly SegmentSpan[], playhe
   return placed
 }
 
-// The segments of a full copy a stretch of source falls in, and the source each covers.
 function fullSpans(info: Extract<MediaInfo, { kind: 'video' }>, layout: PreviewLayout, span: SourceSpan): SegmentSpan[] {
   const firstFrame = frameIndexAt(info.video, span.from)
   const lastFrame = frameIndexAt(info.video, Math.max(span.from, span.to - 1))
@@ -113,7 +105,6 @@ function fullSpans(info: Extract<MediaInfo, { kind: 'video' }>, layout: PreviewL
   return spans
 }
 
-// The same for a sparse copy, whose pictures lie one step of source apart.
 function sparseSpans(info: Extract<MediaInfo, { kind: 'video' }>, layout: PreviewLayout, cadence: Cadence, span: SourceSpan): SegmentSpan[] {
   const { startOffset } = info.video
   const firstPicture = Math.max(0, Math.ceil((span.from - startOffset - cadence.phase) / cadence.step))
@@ -147,7 +138,6 @@ function soundJobs(range: WantedRange, info: MediaInfo, layout: AudioLayout, pla
   const span = sourceSpanOf(range, info)
   const stretch = range.stretch
   const segmentLayout = stretch === undefined ? layout : stretchedLayout(layout, stretch)
-  // Samples of a stretched sound are counted at its speed.
   const speed = stretch?.speedPercent ?? NORMAL_SPEED_PERCENT
   function toSample(sourceTime: number): number {
     return (sourceTime * NORMAL_SPEED_PERCENT) / speed / TICKS_PER_SAMPLE
@@ -171,7 +161,6 @@ function soundJobs(range: WantedRange, info: MediaInfo, layout: AudioLayout, pla
   return jobs
 }
 
-// A file in the project that no clip uses yet is prepared from its start, after what the timeline needs now, so it plays at once when placed.
 function unusedRange(media: PreparableMedia, use: WantedRange['use']): WantedRange {
   return { mediaId: media.id, use, timelineStart: NEAR_AFTER_TICKS, timelineEnd: 2 * NEAR_AFTER_TICKS, sourceStart: 0, speedPercent: NORMAL_SPEED_PERCENT, isLooping: false }
 }
@@ -182,7 +171,6 @@ function jobKey(job: PreparationJob): string {
   return `sound:${job.mediaId}:${job.stretch === undefined ? '' : stretchKey(job.stretch)}:${job.segment}`
 }
 
-// Everything to prepare, most urgent first. A segment several ranges want is kept once, at its most urgent.
 export function planPreparation(wanted: Wanted | undefined, media: readonly PreparableMedia[], segmentSeconds: number): PreparationJob[] {
   const playhead = wanted?.playhead ?? 0
   const byId = new Map(media.map((item) => [item.id, item]))

@@ -11,7 +11,6 @@ const PROJECT_VERSION = 1
 
 export type Easing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'hold'
 
-// How far a move has come once its easing has shaped the time that has passed; both run from 0 to 1.
 export function ease(easing: Easing, progress: number): number {
   if (easing === 'hold') {
     return 0
@@ -38,7 +37,6 @@ export type Keyframe = {
 // The value a list of keyframes gives at a time measured from the start of its clip; before the first keyframe its value, after the last one its value.
 // The list is in time order, which loading a file checks. A binary search keeps it cheap where the mixer asks once per audio sample.
 export function valueAt(keyframes: readonly Keyframe[], localTime: number): number | undefined {
-  // The first keyframe later than `localTime` is at `later`, or `later` is the length of the list when there is none.
   let earlier = 0
   let later = keyframes.length
   while (earlier < later) {
@@ -93,7 +91,6 @@ type ClipTiming = {
   keyframes?: Keyframes
 }
 
-// A wipe, a slide and a push are named after the way they move; 'slide' and 'push' move to the left.
 export type TransitionType =
   | 'crossDissolve'
   | 'fadeBlack'
@@ -127,7 +124,6 @@ export type Transition = {
 
 export type AnimationType = 'fade' | 'pop' | 'slideLeft' | 'slideRight' | 'slideUp' | 'slideDown' | 'zoom' | 'typewriter'
 
-// A ready-made move at the start or the end of a clip. A slide is named after the side of the canvas the clip comes from, or leaves to.
 export type Animation = {
   type: AnimationType
   duration: number
@@ -138,19 +134,16 @@ type VisualSettings = {
   opacity: number
   fadeIn?: number
   fadeOut?: number
-  // At the start of a clip that touches the clip before it on the same track, this is the transition on that cut.
   transitionIn?: Transition
   transitionOut?: Transition
   animationIn?: Animation
   animationOut?: Animation
 }
 
-// Every effect can be switched off without losing its settings.
 type EffectSwitch = {
   isOff?: true
 }
 
-// Lengths are canvas pixels; amounts run from 0 to 1, the three colour adjustments from -1 to 1 with 0 changing nothing.
 export type Effect =
   | (EffectSwitch & { type: 'colorAdjust'; brightness: number; contrast: number; saturation: number })
   | (EffectSwitch & { type: 'blackAndWhite'; amount: number })
@@ -162,9 +155,7 @@ export type Effect =
   | (EffectSwitch & { type: 'sepia'; amount: number })
   | (EffectSwitch & { type: 'invert'; amount: number })
   | (EffectSwitch & { type: 'tint'; color: string; amount: number })
-  // `size` is the share of the way from the middle of the clip to its corners that stays clear.
   | (EffectSwitch & { type: 'vignette'; amount: number; size: number })
-  // A colour grade. Exposure is in stops; the colours tint the shadows and the highlights by their amounts; strength mixes the whole grade with the picture as it was.
   | (EffectSwitch & {
       type: 'look'
       strength: number
@@ -181,14 +172,11 @@ export type Effect =
       highlightColor: string
       highlightAmount: number
     })
-  // `amount` runs from 0 to 2.
   | (EffectSwitch & { type: 'sharpen'; amount: number; radius: number })
-  // A blurred copy of the clip that covers the canvas behind it. Only video and image clips have it.
   | (EffectSwitch & { type: 'blurFill'; strength: number; darken: number })
 
 export type EffectType = Effect['type']
 
-// Applied from first to last; a clip has each kind at most once.
 type EffectSettings = {
   effects?: Effect[]
 }
@@ -197,9 +185,7 @@ type SourceSettings = {
   mediaId: string
   sourceStart: number
   speedPercent: number
-  // The sound gets higher or lower with the speed, as a tape does. Left out, it keeps its pitch.
   changesPitch?: true
-  // Above four times the speed a clip is silent unless this is set.
   hasFastSound?: true
 }
 
@@ -216,9 +202,7 @@ export type VideoClip = ClipTiming &
   VolumeSettings & {
     type: 'video'
     crop?: Crop
-    // Its sound was moved to an audio clip of its own, so this clip is silent.
     isAudioSeparated?: true
-    // An animated image starts over when it reaches its end.
     loop?: true
   }
 
@@ -238,7 +222,6 @@ type ImageClip = ClipTiming &
 
 export type TextAlign = 'left' | 'center' | 'right'
 
-// Lengths are canvas pixels. `weight` is the CSS font weight, 400 when left out; `lineSpacing` multiplies the line height of the font, 1 when left out.
 export type TextSettings = {
   text: string
   font: { family: string; size: number; weight?: number }
@@ -249,7 +232,6 @@ export type TextSettings = {
   lineSpacing?: number
 }
 
-// Without `boxWidth` the box is as wide as the longest line; with it the words wrap at that width and the height follows the lines.
 export type TextClip = ClipTiming &
   VisualSettings &
   EffectSettings &
@@ -261,7 +243,6 @@ export type TextClip = ClipTiming &
 
 export type CalloutShape = 'rectangle' | 'roundedBox' | 'ellipse' | 'speechBubble' | 'thoughtBubble' | 'arrowBox' | 'banner' | 'burst'
 
-// A filled shape with words in it. The words may be empty. `tail` is the tip a bubble points with, measured from the middle of the box.
 export type CalloutClip = ClipTiming &
   VisualSettings &
   EffectSettings &
@@ -278,7 +259,6 @@ export type CalloutClip = ClipTiming &
 
 export type ArrowHead = 'none' | 'triangle' | 'open' | 'dot'
 
-// A straight line of `length` along the clip's own horizontal, through its middle; turning and moving the clip places its two ends.
 export type ArrowClip = ClipTiming &
   VisualSettings &
   EffectSettings & {
@@ -292,7 +272,6 @@ export type ArrowClip = ClipTiming &
 
 export type Shape = 'rectangle' | 'ellipse'
 
-// A clip without a picture of its own: it changes what is drawn beneath it, inside a shape whose edge fades over `softEdge` canvas pixels.
 type ShapeSettings = {
   width: number
   height: number
@@ -300,7 +279,6 @@ type ShapeSettings = {
   softEdge: number
 }
 
-// `strength` is the blur in canvas pixels, as in CSS blur(); pixelated, it is the side of one block.
 export type BlurClip = ClipTiming &
   VisualSettings &
   ShapeSettings & {
@@ -309,7 +287,6 @@ export type BlurClip = ClipTiming &
     isPixelated?: true
   }
 
-// Multiplies what is beneath by its colour inside the shape, as a marker pen does; as a spotlight, everything outside the shape.
 export type HighlightClip = ClipTiming &
   VisualSettings &
   ShapeSettings & {
@@ -318,8 +295,6 @@ export type HighlightClip = ClipTiming &
     isSpotlight?: true
   }
 
-// Clips that are moved, faded and changed as one. Its tracks have a time of their own: the group shows them from `contentStart` on (0 when left out).
-// The members are placed relative to the group's `transform`, which is scaled by one number: scaleX and scaleY are always equal.
 export type GroupClip = ClipTiming &
   VisualSettings &
   EffectSettings &
@@ -355,7 +330,6 @@ export type Canvas = {
   frameRate: FrameRate
 }
 
-// The view centred on (x, y) and enlarged `scale` times is reached at `time`, after a move from the view before it that takes `duration`.
 export type CameraKeyframe = {
   time: number
   duration: number
@@ -370,7 +344,6 @@ export type Project = {
   canvas: Canvas
   media: MediaRef[]
   tracks: Track[]
-  // Zooms in time order. Before the first one the camera shows the whole canvas.
   camera?: CameraKeyframe[]
 }
 
@@ -627,7 +600,6 @@ function parseKeyframeList(value: unknown, path: string, property: AnimatablePro
   let previousTime = -Infinity
   for (const [index, entry] of value.entries()) {
     const fields = readFields(entry, `${path}[${index}]`, ['time', 'value', 'easing'])
-    // Keyframes may sit before the clip start or after its end: a trimmed or split clip keeps the whole curve, so it renders exactly as before the edit.
     const keyframe: Keyframe = {
       time: fields.anyGridTime('time'),
       value: fields.number('value', valueRule(property)),
@@ -730,7 +702,6 @@ function effectSettings(type: EffectType, fields: Fields): Effect {
   }
 }
 
-// Only a video or an image clip has a picture of the shape of a frame to fill the canvas behind it with.
 function parseEffects(value: unknown, path: string, canFill = false): Effect[] {
   if (!Array.isArray(value) || value.length === 0) fail(path, 'must be a list with at least one effect; leave it out instead')
 
@@ -765,9 +736,7 @@ const OPTIONAL_TEXT_KEYS = ['outline', 'shadow', 'lineSpacing']
 type ParseContext = {
   mediaIds: ReadonlySet<string>
   clipIds: Set<string>
-  // How many groups the clips being read are inside.
   depth: number
-  // Project time minus the time of the track being read; 0 outside groups.
   shift: number
 }
 
@@ -790,11 +759,9 @@ function parseTiming(fields: Fields, context: ParseContext, animatable: readonly
   return timing
 }
 
-// Like a transition, an animation may be longer than its clip.
 function parseAnimation(fields: Fields, key: string): Animation {
   const animation = readFields(fields.raw(key), fields.at(key), ['type', 'duration'])
   const type = animation.oneOf('type', ANIMATION_TYPES)
-  // Only a text clip has letters to show one after the other.
   if (type === 'typewriter' && fields.raw('type') !== 'text') fail(animation.at('type'), 'can only be "typewriter" on a text clip')
   return { type, duration: animation.gridTime('duration', 'positive') }
 }
@@ -935,7 +902,6 @@ function parseTextClip(value: unknown, path: string, context: ParseContext): Tex
   return clip
 }
 
-// The shapes that point at something with a tail.
 export function hasTail(shape: CalloutShape): boolean {
   return shape === 'speechBubble' || shape === 'thoughtBubble'
 }
@@ -1004,7 +970,6 @@ function parseGroupClip(value: unknown, path: string, context: ParseContext): Gr
     ...parseVolume(fields, timing.duration),
     tracks: parseTracks(fields.array('tracks'), fields.at('tracks'), memberContext),
   }
-  // The members keep their shapes only when the group is scaled by one number.
   const hasSameScaleKeyframes = JSON.stringify(timing.keyframes?.scaleX) === JSON.stringify(timing.keyframes?.scaleY)
   const isEvenlyScaled = clip.transform.scaleX === clip.transform.scaleY && hasSameScaleKeyframes
   if (!isEvenlyScaled) fail(fields.at('transform'), 'of a group must have the same scaleX and scaleY, in its keyframes too')
@@ -1119,7 +1084,6 @@ function parseCamera(value: unknown, path: string): CameraKeyframe[] {
     const fields = readFields(entry, `${path}[${index}]`, ['time', 'duration', 'easing', 'x', 'y', 'scale'])
     const zoom: CameraKeyframe = {
       time: fields.gridTime('time', 'zero or more'),
-      // A view that is to be there at once has the easing "hold"; a move of no length would be a second way to say the same.
       duration: fields.gridTime('duration', 'positive'),
       easing: fields.oneOf('easing', EASINGS),
       x: fields.number('x'),

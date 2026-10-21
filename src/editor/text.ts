@@ -5,7 +5,6 @@ import { centredStill, type NewStill } from './place.js'
 const DEFAULT_TEXT = 'Text'
 export const DEFAULT_FAMILY = 'Helvetica Neue'
 const DEFAULT_COLOR = '#ffffff'
-// A new title is one twelfth of the canvas high, so it reads the same on a small and on a 4K canvas.
 const LINES_PER_CANVAS_HEIGHT = 12
 const MIN_FONT_SIZE = 1
 const MAX_FONT_SIZE = 2000
@@ -18,22 +17,18 @@ const TIGHTEST_LINES = 0.5
 const WIDEST_LINES = 3
 const SMALLEST_LENGTH = 0.1
 const NARROWEST_BOX = 1
-// A new outline and a new shadow are sized to the letters, so they show on a small title and do not drown a large one.
 const OUTLINE_PER_FONT_SIZE = 1 / 20
 const SHADOW_PER_FONT_SIZE = 1 / 16
 const DEFAULT_LINE_COLOR = '#000000'
 const DEFAULT_SHADE = '#000000aa'
 
-
 export type TextStyle = {
   text?: string
   family?: string
   size?: number
-  // Whole hundreds from 100 to 900; 400 is the regular weight.
   weight?: number
   color?: string
   align?: TextAlign
-  // Line height as a share of the font's own; 1 is the font's.
   lineSpacing?: number
   hasOutline?: boolean
   outlineColor?: string
@@ -43,17 +38,14 @@ export type TextStyle = {
   shadowOffsetX?: number
   shadowOffsetY?: number
   shadowBlur?: number
-  // The two below are for text clips only; a callout has its own shape and size.
   hasBackground?: boolean
   backgroundColor?: string
-  // 'auto' lets the box follow the longest line again.
   boxWidth?: number | 'auto'
 }
 
 type Outline = NonNullable<TextSettings['outline']>
 type Shadow = NonNullable<TextSettings['shadow']>
 
-// A new text clip sits in the middle of the canvas, on a new layer above everything else.
 export function addText(project: Project, added: NewStill): Project {
   const { canvas } = project
   const clip: Clip = {
@@ -110,7 +102,6 @@ function shadowWith(current: Shadow | undefined, style: TextStyle, fontSize: num
   return isUnchanged ? base : shadow
 }
 
-// The settings every clip with words has, with the wanted ones changed. Parts that stay the same keep their identity.
 function settingsWith(clip: TextSettings, style: TextStyle): TextSettings {
   const font = fontWith(clip.font, style)
   let lineSpacing = clip.lineSpacing
@@ -160,14 +151,12 @@ export function setTextStyle(project: Project, clipIds: readonly string[], style
   })
 }
 
-// The fonts that words of these clips are set in and this Mac does not have, in alphabetical order. Their words are drawn in the system font, and the names stay in the file for a Mac that has them.
 export function missingFonts(clips: readonly Clip[], installed: readonly string[]): string[] {
-  // Font names are matched as CSS matches them, without regard to case.
-  const known = new Set(installed.map((family) => family.toLowerCase()))
+  const installedLowercase = new Set(installed.map((family) => family.toLowerCase()))
   const missing = new Set<string>()
   for (const clip of clips) {
     if (clip.type !== 'text' && clip.type !== 'callout') continue
-    if (!known.has(clip.font.family.toLowerCase())) missing.add(clip.font.family)
+    if (!installedLowercase.has(clip.font.family.toLowerCase())) missing.add(clip.font.family)
   }
   return [...missing].sort((a, b) => a.localeCompare(b))
 }

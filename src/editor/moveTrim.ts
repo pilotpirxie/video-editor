@@ -6,7 +6,6 @@ import { editClips, emptyTrack, endOf, hasSource, locateClip, placeOnTrack, shif
 export type Move = {
   clipIds: readonly string[]
   deltaTime: number
-  // Rows the pointer has travelled from the row of the grabbed clip, counted in the project the move starts from; up is positive.
   trackShift: number
   isRipple: boolean
   newTrack: NewTrack
@@ -40,8 +39,7 @@ function inTimeOrder(clips: readonly Clip[]): Clip[] {
   return [...clips].sort((a, b) => a.start - b.start)
 }
 
-// Whether a clip of one time-ordered list shares time with a clip of the other.
-function overlap(arriving: readonly Clip[], staying: readonly Clip[]): boolean {
+function overlapsInTime(arriving: readonly Clip[], staying: readonly Clip[]): boolean {
   let arrivingIndex = 0
   let stayingIndex = 0
   for (;;) {
@@ -54,16 +52,14 @@ function overlap(arriving: readonly Clip[], staying: readonly Clip[]): boolean {
   }
 }
 
-// Several clips moved by whole tracks as well as in time. Nothing comes back when they do not fit: a row is missing or locked, or a clip would land on one that stays.
 function shiftedAcrossTracks(project: Project, moving: ReadonlySet<string>, deltaTime: number, trackShift: number, newTrack: NewTrack): Project | undefined {
   const leaving = project.tracks.map((track) => track.clips.filter((clip) => moving.has(clip.id)))
   let earliestStart = Infinity
   for (const clip of leaving.flat()) earliestStart = Math.min(earliestStart, clip.start)
   const delta = Math.max(deltaTime, -earliestStart)
 
-  // One row more than there are tracks: a group dragged above the top track gets a new one there, as a single clip does.
-  const rows = [...project.tracks, emptyTrack(newTrack)]
-  const arriving: Clip[][] = rows.map(() => [])
+  const rowsWithNewTop = [...project.tracks, emptyTrack(newTrack)]
+  const arriving: Clip[][] = rowsWithNewTop.map(() => [])
   for (const [trackIndex, clips] of leaving.entries()) {
     if (clips.length === 0) continue
     const target = arriving[trackIndex + trackShift]
@@ -72,7 +68,7 @@ function shiftedAcrossTracks(project: Project, moving: ReadonlySet<string>, delt
   }
 
   const tracks: Track[] = []
-  for (const [rowIndex, row] of rows.entries()) {
+  for (const [rowIndex, row] of rowsWithNewTop.entries()) {
     const arrived = arriving[rowIndex] ?? []
     const isTouched = arrived.length > 0 || (leaving[rowIndex] ?? []).length > 0
     if (!isTouched) {
@@ -80,14 +76,13 @@ function shiftedAcrossTracks(project: Project, moving: ReadonlySet<string>, delt
       continue
     }
     const staying = row.clips.filter((clip) => !moving.has(clip.id))
-    const isTaken = arrived.length > 0 && (row.locked || overlap(inTimeOrder(arrived), inTimeOrder(staying)))
+    const isTaken = arrived.length > 0 && (row.locked || overlapsInTime(inTimeOrder(arrived), inTimeOrder(staying)))
     if (isTaken) return undefined
     tracks.push({ ...row, clips: [...staying, ...arrived] })
   }
   return { ...project, tracks }
 }
 
-// Several clips that keep their tracks stop at the first clip in their way, so the group never lands on top of anything.
 function unobstructedDelta(project: Project, moving: ReadonlySet<string>, deltaTime: number): number {
   let delta = deltaTime
   for (const track of project.tracks) {
@@ -110,9 +105,8 @@ export function moveClips(project: Project, move: Move): Project {
   if (onlyId === undefined) return project
 
   if (moving.size > 1) {
-    // A group goes as far toward the pointer as it fits: the wanted row first, then one row closer to where it was each time.
-    const farthest = project.tracks.length
-    const wanted = move.isRipple ? 0 : Math.max(-farthest, Math.min(farthest, move.trackShift))
+    const maxTrackShift = project.tracks.length
+    const wanted = move.isRipple ? 0 : Math.max(-maxTrackShift, Math.min(maxTrackShift, move.trackShift))
     for (let shift = wanted; shift !== 0; shift -= Math.sign(wanted)) {
       const shifted = shiftedAcrossTracks(project, moving, move.deltaTime, shift, move.newTrack)
       if (shifted !== undefined) return shifted
@@ -142,7 +136,6 @@ function neighbours(track: Track, clip: Clip): { previousEnd: number; nextStart:
   return { previousEnd, nextStart }
 }
 
-// How much source a clip can draw on; undefined when nothing limits it, as for a clip that loops or whose media is unknown.
 export function sourceDuration(clip: Clip, mediaStates: MediaStates): number | undefined {
   if (!hasSource(clip) || (clip.type === 'video' && clip.loop === true)) return undefined
   const state = mediaStates[clip.mediaId]
@@ -150,13 +143,11 @@ export function sourceDuration(clip: Clip, mediaStates: MediaStates): number | u
   return state.info.duration
 }
 
-// Longest stretch of timeline a span of source can fill at the clip's speed, on the time grid.
 export function timelineSpan(sourceSpan: number, speedPercent: number): number {
   return Math.floor(sourceSpan / speedPercent) * TIMELINE_GRID
 }
 
-// How much earlier a clip could start: as far as its file, or the content of a group, reaches back.
-function headroom(clip: Clip): number {
+function roomToStartEarlier(clip: Clip): number {
   if (hasSource(clip)) return timelineSpan(clip.sourceStart, clip.speedPercent)
   return clip.type === 'group' ? (clip.contentStart ?? 0) : Infinity
 }
@@ -166,7 +157,6 @@ function trimmedStart(clip: Clip, start: number): Clip {
   const timing = { start, duration: clip.duration - delta, keyframes: shiftedKeyframes(clip.keyframes, -delta) }
   if (hasSource(clip)) return withFadesWithin({ ...clip, ...timing, sourceStart: sourceTime(clip, start) })
   if (clip.type !== 'group') return withFadesWithin({ ...clip, ...timing })
-  // A group shows its members from later on, or from earlier; the members themselves stay as they are.
   const contentStart = (clip.contentStart ?? 0) + delta
   return withFadesWithin({ ...clip, ...timing, contentStart: contentStart === 0 ? undefined : contentStart })
 }
@@ -196,12 +186,11 @@ export function trimClip(project: Project, trim: Trim): Project {
     return trim.isRipple ? shiftLater(trimmed, track, endOf(clip), end - endOf(clip), clip.id) : trimmed
   }
 
-  const earliest = trim.isRipple ? clip.start - headroom(clip) : Math.max(clip.start - headroom(clip), previousEnd)
+  const earliest = trim.isRipple ? clip.start - roomToStartEarlier(clip) : Math.max(clip.start - roomToStartEarlier(clip), previousEnd)
   const start = Math.min(endOf(clip) - trim.frameTicks, Math.max(trim.time, earliest))
   if (start === clip.start) return project
   if (!trim.isRipple) return editClips(project, only, (found) => trimmedStart(found, start))
 
-  // A ripple trim keeps the clip where it starts and pulls everything after it along.
   const delta = start - clip.start
   const trimmed = editClips(project, only, (found) => ({ ...trimmedStart(found, start), start: found.start }))
   return shiftLater(trimmed, track, endOf(clip), -delta, clip.id)

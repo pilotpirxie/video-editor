@@ -1,5 +1,5 @@
 # video-editor
-Free video editor for macOS on Apple silicon, written in TypeScript with Electron, React, WebGL2 and FFmpeg. Make screen tutorials and short marketing videos with a multi-track timeline, keyframes and a zoom-and-pan camera. For commandline video editor check my previous project [json-to-ffmpeg](https://github.com/pilotpirxie/json-to-ffmpeg).
+Lightweight video editor for macOS on Apple silicon, written in TypeScript with Electron, React, WebGL2 and FFmpeg. Edit videos with a multi-track timeline, keyframes and a zoom-and-pan camera. For commandline video editor check my previous project [json-to-ffmpeg](https://github.com/pilotpirxie/json-to-ffmpeg).
 
 ### Features
 * Multi-track timeline, any clip on any track

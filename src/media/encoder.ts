@@ -6,12 +6,10 @@ import { SAMPLE_RATE } from '../shared/time.js'
 import { FfmpegError, writeAll, type FfmpegRunner } from './ffmpeg.js'
 
 const AUDIO_PIPE = 'pipe:3'
-// x264's constant rate factor: lower keeps more detail and makes larger files.
-const X264_QUALITY: Record<ExportQuality, number> = { low: 30, medium: 25, high: 20 }
+const X264_CRF: Record<ExportQuality, number> = { low: 30, medium: 25, high: 20 }
 // The media engine's constant quality, 1 to 100: higher keeps more detail. Chosen to give files of about the size x264 makes.
 const HARDWARE_QUALITY: Record<ExportQuality, number> = { low: 45, medium: 55, high: 65 }
-// VP9's constant quality, 0 to 63: lower keeps more detail.
-const VP9_QUALITY: Record<ExportQuality, number> = { low: 40, medium: 34, high: 28 }
+const VP9_CRF: Record<ExportQuality, number> = { low: 40, medium: 34, high: 28 }
 const AAC_BITRATE = '192k'
 const OPUS_BITRATE = '128k'
 const MP3_BITRATE = '192k'
@@ -54,7 +52,7 @@ function h264Arguments(target: ExportTarget, limits: EncoderLimits): string[] {
     '-preset',
     'veryfast',
     '-crf',
-    String(X264_QUALITY[target.quality]),
+    String(X264_CRF[target.quality]),
     '-profile:v',
     'high',
     '-threads',
@@ -67,7 +65,7 @@ function h264Arguments(target: ExportTarget, limits: EncoderLimits): string[] {
 // The picture codec and the container, named outright: the file being written ends in .part, which says nothing of its format.
 function formatArguments(target: ExportTarget, limits: EncoderLimits): string[] {
   if (target.format === 'webm') {
-    return ['-vf', VIDEO_COLOR_TAGS, '-c:v', 'libvpx-vp9', '-row-mt', '1', '-deadline', 'good', '-cpu-used', '4', '-crf', String(VP9_QUALITY[target.quality]), '-b:v', '0', '-threads', String(limits.threads), '-f', 'webm']
+    return ['-vf', VIDEO_COLOR_TAGS, '-c:v', 'libvpx-vp9', '-row-mt', '1', '-deadline', 'good', '-cpu-used', '4', '-crf', String(VP9_CRF[target.quality]), '-b:v', '0', '-threads', String(limits.threads), '-f', 'webm']
   }
   if (target.format === 'gif') return ['-vf', GIF_FILTER, '-loop', '0', '-f', 'gif']
   if (target.format === 'png') return ['-frames:v', '1', '-pix_fmt', 'rgb24', '-c:v', 'png', '-update', '1', '-f', 'image2']
@@ -89,7 +87,6 @@ export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encode
   const pictureBytes = layout === 'yuv420p' ? (target.width * target.height * 3) / 2 : target.width * target.height * 4
   const inputs: string[] = []
   if (hasPicture) inputs.push('-thread_queue_size', '1', '-f', 'rawvideo', '-pix_fmt', layout, '-s', `${target.width}x${target.height}`, '-framerate', `${target.frameRate.num}/${target.frameRate.den}`, '-i', 'pipe:0')
-  // Sound alone comes in on the standard input; beside pictures it has a pipe of its own.
   if (isHeard) inputs.push('-f', 'f32le', '-ar', String(SAMPLE_RATE), '-ch_layout', 'stereo', '-i', hasPicture ? AUDIO_PIPE : 'pipe:0')
   const maps: string[] = []
   if (hasPicture) maps.push('-map', '0:v')
@@ -122,7 +119,6 @@ export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encode
     try {
       writtenBytes = (await stat(temporaryPath)).size
     } catch (error) {
-      // FFmpeg has not made the file yet, so there is nothing to rewrite.
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error
     }
     const limitMs = FINISH_BASE_MS + writtenBytes / SLOWEST_REWRITE_BYTES_PER_MS

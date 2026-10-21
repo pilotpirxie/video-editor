@@ -27,14 +27,11 @@ export type AudioInfo = {
   seeksExactly: boolean
 }
 
-// An animated GIF, WebP or APNG is moving pictures like any video; `isAnimatedImage` only says it came from an image file, so it may loop and is shown as an image.
 export type MediaInfo =
   | { kind: 'video'; duration: number; containerStart: number; video: VideoInfo; audio?: AudioInfo; isAnimatedImage?: true }
   | { kind: 'audio'; duration: number; containerStart: number; audio: AudioInfo }
   | { kind: 'image'; width: number; height: number; hasAlpha: boolean }
 
-// `isMissing` tells a file that is not where the project expects it from one that is there but cannot be read.
-// `createdAt` is when the file was created on disk, in milliseconds since 1970; only the Media tab sorts by it.
 export type MediaState = { info: MediaInfo; createdAt?: number } | { error: string; isMissing: boolean }
 
 export type LoadedProject = {
@@ -48,7 +45,6 @@ export type AddedMedia = {
   createdAt: number
 }
 
-// What the clips of a project use a media file for. A file relinked in its place has to offer the same.
 export type MediaUse = 'video' | 'image' | 'sound'
 
 export type UnlinkedMedia = {
@@ -68,21 +64,16 @@ export type Preparation = {
   hasFailed: boolean
 }
 
-// Lowest and highest sample of each bucket, as Int8 pairs.
 export type WaveformLevel = {
   samplesPerBucket: number
   peaks: Int8Array
 }
 
-// The sound of a file played at another speed. With the pitch kept the voice stays a voice; without, it rises and falls with the speed.
 export type AudioStretch = {
   speedPercent: number
   keepsPitch: boolean
 }
 
-// A part of a media file the timeline uses, and where it plays, so the media process prepares what is nearest the playhead first.
-// A fast clip shows only some frames of its source: those at `phase + k * step` ticks after the source's first frame, for whole k.
-// Such a clip gets a preview copy of just those frames.
 export type Cadence = {
   step: number
   phase: number
@@ -129,18 +120,15 @@ export type TimeRange = {
 
 export type MediaClient = {
   loadProject(path: string, forPreview: boolean): Promise<LoadedProject>
-  // Opens again the media of the project a window shows, in a media process that was started anew. Relative paths are read beside `projectPath`.
   openMedia(media: readonly MediaRef[], projectPath: string | undefined): Promise<Record<string, MediaState>>
   whenPrepared(): Promise<void>
   readImage(mediaId: string): Promise<ArrayBuffer>
   previewFrame(mediaId: string, frame: number): Promise<ArrayBuffer | undefined>
   fullFrame(mediaId: string, frame: number, halvings: number, signal?: AbortSignal): Promise<RawFrame>
-  // The keyframe at or before `frame`: a quick stand-in for a timeline thumbnail until the preview copy holds the frame.
   keyframeThumbnail(mediaId: string, frame: number, halvings: number): Promise<RawFrame>
   openStream(mediaId: string, frame: number, halvings: number): Promise<number>
   streamFrame(streamId: number, frame: number): Promise<RawFrame>
   closeStream(streamId: number): Promise<void>
-  // With a `stretch`, the samples are counted in the stretched sound, not in the file.
   audio(mediaId: string, firstSample: number, sampleCount: number, stretch?: AudioStretch): Promise<Float32Array | undefined>
   exportStart(target: ExportTarget): Promise<number>
   exportWrite(jobId: number, pixels: ArrayBuffer, audio: Float32Array): Promise<void>
@@ -150,21 +138,17 @@ export type MediaClient = {
   addMedia(path: string): Promise<AddedMedia>
   relinkMedia(path: string, wanted: UnlinkedMedia, others: readonly UnlinkedMedia[]): Promise<RelinkedMedia[]>
   preparation(): Promise<Record<string, Preparation>>
-  // Tells the media process what the timeline uses and where the playhead is; it prepares in that order.
   want(wanted: Wanted): Promise<void>
   waveform(mediaId: string): Promise<WaveformLevel[] | undefined>
   saveProject(path: string, project: Project): Promise<void>
   cacheUsage(): Promise<CacheUsage>
-  // Removes every cached copy no build is writing; what the timeline needs is made again.
   clearCache(): Promise<void>
 }
 
 export type CacheUsage = {
   usedBytes: number
   limitBytes: number
-  // What this project's copies would take, from the size of those already made; 0 until one is.
   neededBytes: number
-  // Free space on the disk the cache is on.
   freeBytes: number
 }
 
@@ -208,8 +192,6 @@ export type MediaProcessCommand = { type: 'setup'; setup: MediaProcessSetup } | 
 
 export type MediaProcessReport = { type: 'versions'; ffmpeg: string; ffprobe: string }
 
-// What is left out takes its default: an MP4 by x264 at the project's frame rate (10 fps for a GIF), high quality, the whole timeline, with sound.
-// A PNG is the picture at `frame`, at the size of the project.
 export type ExportJob = {
   kind: 'export'
   projectPath: string
@@ -266,7 +248,6 @@ export type MenuAction =
   | 'preview-mode'
   | 'settings'
 
-// The keys the menu shows for the commands whose keys can be changed, as Electron accelerators. The page itself answers to those keys.
 export type MenuShortcuts = Partial<Record<MenuAction, string>>
 
 export type HostCommand =
@@ -274,18 +255,14 @@ export type HostCommand =
   | { type: 'run-job'; job: HeadlessJob }
   | { type: 'export-event'; event: JobEvent }
   | { type: 'menu'; action: MenuAction }
-  // macOS reports that memory is short (or no longer is): the caches of the window shrink, or grow back.
   | { type: 'memory-pressure'; isUnderPressure: boolean }
   | { type: 'settings'; settings: AppSettings }
 
-// `loadFrom` is the file to read (the project, or its recovery file after a crash); `path` is where Save writes.
 export type DocumentInfo = {
   path: string | undefined
   loadFrom: string | undefined
   recoveryPath: string
-  // Where the project is written for an export to read: the export works on that copy while editing goes on.
   exportSnapshotPath: string
-  // An MP4 is made by the Mac's media engine unless the user chose otherwise.
   hasSmallMemory: boolean
 }
 
@@ -297,22 +274,18 @@ export type DocumentState = {
 
 export type UnsavedChoice = 'save' | 'discard' | 'cancel'
 
-// A frame of the editor window that took over 50 ms, and the scripts that ran in it.
 export type SlowFrame = {
   durationMs: number
   blockingMs: number
   scripts: { invoker: string; functionName: string; sourceUrl: string; durationMs: number }[]
 }
 
-// What the debug panel tells about the app and the Mac it runs on.
 export type DebugSystemInfo = {
   appVersion: string
-  // Electron, Chromium, FFmpeg and FFprobe, once the media process has reported them.
   versions: string[]
   macOS: string
   cpu: string
   totalMemoryBytes: number
-  // The app and every process it started, together; undefined when macOS could not tell.
   footprintBytes: number | undefined
 }
 
@@ -332,7 +305,6 @@ export type Host = {
   chooseMediaFile(name: string): Promise<string | undefined>
   showLastExport(): void
   confirmUnsavedChanges(): Promise<UnsavedChoice>
-  // Closes the window once its unsaved changes have been dealt with.
   closeDocument(): void
   discardRecovery(): void
   setMenuShortcuts(shortcuts: MenuShortcuts): void
