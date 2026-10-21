@@ -203,7 +203,7 @@ type Reach = {
 
 const HANDLE_REACH: Reach = { left: MARGIN_PIXELS, top: MARGIN_PIXELS, right: MARGIN_PIXELS, bottom: MARGIN_PIXELS }
 
-// The overlay reaches to the edges of the canvas panel, so a clip moved off the canvas still shows its outline there and can be grabbed back, as in Camtasia.
+// The overlay reaches to the edges of the canvas panel, so a clip moved off the canvas still shows its outline there and can be grabbed back.
 // Where the picture is larger than the panel it reaches only as far as the handles need, inside the panel's padding, so it never adds to what the panel scrolls.
 function useOverlayReach(svgRef: RefObject<SVGSVGElement | null>, areaRef: RefObject<HTMLElement | null>): { reach: Reach; pictureWidth: number } {
   const [layout, setLayout] = useState({ reach: HANDLE_REACH, pictureWidth: 1 })
@@ -621,7 +621,7 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
         // An arrow is changed by its two ends, which also turn it; a group by its corners, because it keeps its shape.
         const isArrow = item.arrowLength !== undefined
         const handles = item.kind === 'group' ? HANDLES.filter(isCorner) : HANDLES
-        // As in Camtasia the rotate handle sits inside the clip, above its centre: it stays reachable when the clip fills the canvas.
+        // The rotate handle sits inside the clip, above its centre: it stays reachable when the clip fills the canvas.
         const rotateReach = Math.min(ROTATE_HANDLE_OFFSET_PIXELS * canvasPerPixel, height * ROTATE_HANDLE_MAX_REACH)
         return (
           <g key={item.clipId} transform={`translate(${item.box.centerX} ${item.box.centerY}) rotate(${item.box.rotation})`}>

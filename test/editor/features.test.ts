@@ -21,7 +21,7 @@ function framesOf(timecode: unknown): number {
 }
 
 describe('transport', () => {
-  it('steps, jumps and shuttles with the Camtasia keys', async () => {
+  it('steps, jumps and shuttles with the default keys', async () => {
     const report = await uiTest('transport', ['--project', projectPath('01-single-clip')])
     expect(report.duration).toBe('/ 00:00:02:00')
     expect(report.stepMilliseconds).toBeLessThanOrEqual(MAX_STEP_MS)

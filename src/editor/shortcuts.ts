@@ -83,7 +83,7 @@ function key(code: string, ...modifiers: Modifier[]): Binding {
   return { code, modifiers }
 }
 
-// The defaults of Camtasia for Mac, plus the arrow keys and K, which editors share.
+// Keys common to Mac video editors, plus the arrow keys and K.
 export const DEFAULT_BINDINGS: Bindings = {
   'play-pause': [key('Space')],
   'step-back': [key('Comma'), key('ArrowLeft')],

@@ -10,7 +10,7 @@ describe('actionFor with the default keys', () => {
     return actionFor(DEFAULT_BINDINGS, press(code, held))
   }
 
-  it('maps the Camtasia transport keys', () => {
+  it('maps the default transport keys', () => {
     expect(defaultFor('Space')).toBe('play-pause')
     expect(defaultFor('Comma')).toBe('step-back')
     expect(defaultFor('Period')).toBe('step-forward')
