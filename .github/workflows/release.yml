@@ -34,6 +34,9 @@ jobs:
 
       - run: npm ci
 
+      # Electron fetches its binary on first use rather than at install, and the DMG copies Electron's licences from it.
+      - run: npx install-electron
+
       - name: Build the DMG
         run: npm run dist
         env:
