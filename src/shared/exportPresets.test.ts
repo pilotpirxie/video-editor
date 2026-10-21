@@ -6,7 +6,7 @@ const CLASSIC = { width: 1440, height: 1080 }
 const TALL = { width: 1080, height: 1920 }
 
 describe('exportSize', () => {
-  it('gives the §9 sizes for a 16:9 project', () => {
+  it('gives the preset sizes for a 16:9 project', () => {
     expect(exportSize('120p', WIDE)).toEqual({ width: 214, height: 120 })
     expect(exportSize('240p', WIDE)).toEqual({ width: 426, height: 240 })
     expect(exportSize('360p', WIDE)).toEqual({ width: 640, height: 360 })

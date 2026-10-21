@@ -2004,7 +2004,7 @@ async function watchTimelineDrags(driver: Driver): Promise<{ read(): Promise<num
   return { read: async () => numbersIn(await driver.page.evaluate('window.timelineDelays')) }
 }
 
-// The §3 budgets that the 4,096-clip test does not cover, on a project of a short 1080p clip followed by ten minutes of 1080p, opened on a profile without a cache.
+// The responsiveness budgets that the 4,096-clip test does not cover, on a project of a short 1080p clip followed by ten minutes of 1080p, opened on a profile without a cache.
 async function testResponsiveness(driver: Driver): Promise<UiTestReport> {
   await driver.until(`Number(${selector('timecode')}?.dataset.frames ?? 0) > 0 && ${selector('timeline')}?.dataset.view !== undefined`, 'the project to be shown')
   const launchSeconds = process.uptime()
@@ -2061,7 +2061,7 @@ const IDLE_SETTLE_MS = 3000
 const IDLE_WATCH_SECONDS = 10
 const PERCENT = 100
 
-// §12: the processor time the app uses while a prepared project sits paused, as a share of one core.
+// The processor time the app uses while a prepared project sits paused, as a share of one core.
 async function testIdle(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
   await untilPrepared(driver)
@@ -2166,7 +2166,7 @@ function withoutRing(stops: readonly TabStop[]): string[] {
   return stops.filter((stop) => !stop.hasRing).map((stop) => `${stop.region}: ${stop.id}`)
 }
 
-// T-86: every control has a name, and the keyboard reaches every panel and every control of the dialogs with a visible focus ring.
+// Every control has a name, and the keyboard reaches every panel and every control of the dialogs with a visible focus ring.
 // Each track's first clip is selected in turn, so the properties of every kind of clip in the project are looked at.
 async function testAccessibility(driver: Driver): Promise<UiTestReport> {
   await fullQualityFrame(driver, 0)
@@ -2237,7 +2237,7 @@ function isProjectLike(value: unknown): value is { tracks: { clips: ClipPlace[] 
 
 const LONG_STEP_TIMEOUT_MS = 120_000
 
-// T-88: every broken file of the media folder is imported at once. Each is refused with a message or listed with a badge, and afterwards the editor still imports, places and plays a good file.
+// Every broken file of the media folder is imported at once. Each is refused with a message or listed with a badge, and afterwards the editor still imports, places and plays a good file.
 async function testBrokenMedia(driver: Driver): Promise<UiTestReport> {
   const { mediaDirectory } = driver.options
   if (mediaDirectory === undefined) throw new PageError('This UI test needs --media <directory>')
@@ -2469,7 +2469,7 @@ async function settleSoak(soak: Soak): Promise<void> {
   await sleep(SOAK_SETTLE_MS)
 }
 
-// T-88: random edits, playback, undo, saving and exporting for `--seconds`, from `--seed` or a seed of its own. The memory of the whole app is sampled each minute.
+// Random edits, playback, undo, saving and exporting for `--seconds`, from `--seed` or a seed of its own. The memory of the whole app is sampled each minute.
 async function testSoak(driver: Driver): Promise<UiTestReport> {
   const seconds = driver.options.seconds
   if (seconds === undefined) throw new PageError('This UI test needs --seconds <how long to run>')

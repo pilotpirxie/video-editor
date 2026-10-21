@@ -20,7 +20,7 @@ const GIF_FILTER = 'split[pictures][stats];[stats]palettegen=stats_mode=single[p
 // The engine sends video pictures already in BT.709 TV range; this only labels them so players read the colours right.
 const VIDEO_COLOR_TAGS = 'setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv'
 // After the last frame FFmpeg empties its encoders, and an MP4 is rewritten once to put its index first, so the time that may take grows with the file.
-// Past it the export fails instead of waiting for ever (§12). A slow external drive still rewrites faster than 20 MB a second.
+// Past it the export fails instead of waiting for ever. A slow external drive still rewrites faster than 20 MB a second.
 const FINISH_BASE_MS = 60_000
 const SLOWEST_REWRITE_BYTES_PER_MS = 20_000
 const MS_PER_SECOND = 1000

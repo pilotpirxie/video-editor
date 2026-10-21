@@ -1,5 +1,6 @@
 appId: com.opensource.playback
 productName: Playback
+copyright: "Copyright © 2026 pilotpirxie. Free software under the GNU GPL version 3 or later, with no warranty. Licences are in Playback.app/Contents/Resources/licenses."
 directories:
   output: release
 files:
@@ -14,6 +15,19 @@ extraResources:
     filter:
       - ffmpeg
       - ffprobe
+  - from: LICENSE
+    to: licenses/LICENSE.txt
+  - from: node_modules/electron/dist/LICENSE
+    to: licenses/Electron-LICENSE.txt
+  - from: node_modules/electron/dist/LICENSES.chromium.html
+    to: licenses/Chromium-LICENSES.html
+  # React DOM and scheduler carry the same licence file as React.
+  - from: node_modules/react/LICENSE
+    to: licenses/React-LICENSE.txt
+  - from: node_modules/vite/LICENSE.md
+    to: licenses/Vite-LICENSE.txt
+  - from: node_modules/rolldown/LICENSE
+    to: licenses/Rolldown-LICENSE.txt
 electronLanguages:
   - en
 mac:

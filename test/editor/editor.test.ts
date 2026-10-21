@@ -7,9 +7,9 @@ import { MEDIA_DIRECTORY, largeProject, projectIn, projectPath, runApp, scratchD
 const SECOND = 24_000_000
 const MAX_POSTER_MS = 1000
 const POINTER_TOLERANCE = 1.5
-// §12: the window comes back in the same state within 3 s when the UI, GPU or media process dies.
+// The window comes back in the same state within 3 s when the UI, GPU or media process dies.
 const MAX_RETURN_SECONDS = 3
-// §3: undo and redo, and any single task that holds the window.
+// Undo and redo, and any single task that holds the window.
 const MAX_UNDO_MS = 50
 const MAX_TASK_MS = 50
 
@@ -192,7 +192,7 @@ describe('responsiveness with 4,096 clips on a 20-hour timeline', () => {
   const MAX_FRAME_INTERVAL_MS = 1000 / 60 + 4
   const MAX_DRAG_TO_FRAME_MS = 33
   const MAX_PREPARED_SEEK_MS = 150
-  // §12: what the editor uses while a long project is edited, all its processes together.
+  // What the editor uses while a long project is edited, all its processes together.
   const MAX_TYPICAL_MEMORY_MB = 1024
 
   it('opens within 3 s, scrolls and zooms at 60 fps, follows a drag within 33 ms, undoes and redoes within 50 ms, seeks within 150 ms, never blocks for more than 50 ms and stays within 1 GB', async () => {
@@ -240,7 +240,7 @@ describe('responsiveness on a profile without a cache', () => {
   // The next display frame of a 60 Hz screen, and a little room for the timing itself.
   const MAX_DRAG_TO_FRAME_END_MS = 1000 / 60 + 4
 
-  it('meets the §3 budgets for launch, scrubbing, Space, timeline drags, undo, redo and blocking tasks', async () => {
+  it('meets the responsiveness budgets for launch, scrubbing, Space, timeline drags, undo, redo and blocking tasks', async () => {
     const path = join(scratch, 'long-recording.json')
     writeFileSync(path, serializeProject(longRecordingProject()))
     const report = await uiTest('responsiveness', ['--project', path])

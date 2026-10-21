@@ -3,6 +3,7 @@
   "productName": "Playback",
   "version": "0.1.0",
   "description": "Lightweight non-linear video editor",
+  "license": "GPL-3.0-or-later",
   "private": true,
   "type": "module",
   "main": "dist/node/src/main/main.js",

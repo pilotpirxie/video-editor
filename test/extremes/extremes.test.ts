@@ -5,12 +5,12 @@ import { serializeProject, type CameraKeyframe, type Clip, type Project } from '
 import { FRAME, SECOND, textClip } from '../fixtures.js'
 import { ROOT, at, exportWithReport, largeProject, projectOfTracks, projectPath, scratchDirectory, selfTestReport, uiTest, videoOf } from '../helpers.js'
 
-// T-89, run by hand with `npm run test:extremes` on the §12 reference Mac; it is not part of `npm test`.
+// Run by hand with `npm run test:extremes` on an M1 with 4 GB of memory; it is not part of `npm test`.
 const scratch = scratchDirectory('extremes')
 const MS_PER_SECOND = 1000
 const BYTES_PER_MEGABYTE = 1024 * 1024
 const EXTREME_TIMEOUT_MS = 15 * 60 * MS_PER_SECOND
-// §12 and §3.
+// Memory, speed and responsiveness targets.
 const MAX_PEAK_MEMORY_MB = 1500
 const MAX_TYPICAL_MEMORY_MB = 1024
 const MAX_PAUSED_FRAME_MS = 500
@@ -20,9 +20,9 @@ const MAX_OPEN_SECONDS = 3
 const MAX_FRAME_INTERVAL_MS = 1000 / 60 + 4
 const MAX_PREPARED_SEEK_MS = 150
 const MAX_IDLE_CPU_PERCENT = 2
-// §13 allows five minutes for ten minutes of source at 50×; 100× reads the same source, skipping more of it.
+// Five minutes for ten minutes of source at 50×; 100× reads the same source, skipping more of it.
 const MAX_FASTEST_EXPORT_MS = 5 * 60 * MS_PER_SECOND
-// §12 asks for 250 MB; the user accepted the ~365 MB that Electron and FFmpeg need on 2026-10-14.
+// Electron and FFmpeg alone take about 365 MB.
 const MAX_INSTALLED_MEGABYTES = 400
 const INSTALLED_APP = join(ROOT, 'release', 'mac-arm64', 'Playback.app')
 const FULL_HD = { width: 1920, height: 1080 }
@@ -57,7 +57,7 @@ function fastestProject(): Project {
   return projectOfTracks(FULL_HD, [[videoOf('timelapse-1080p.mp4', 'fastest', span, at(960, 540), { speedPercent: FASTEST_SPEED_PERCENT })]])
 }
 
-// §12's first playback row: four 1080p layers, two titles and a blur, while the camera zooms in and out again.
+// The heaviest playback: four 1080p layers, two titles and a blur, while the camera zooms in and out again.
 function fourLayerProject(): Project {
   const span = { start: 0, duration: 5 * SECOND }
   const quarters = [at(480, 270, 0.5), at(1440, 270, 0.5), at(480, 810, 0.5), at(1440, 810, 0.5)]
@@ -106,7 +106,7 @@ describe('extreme canvas sizes and sources', { timeout: EXTREME_TIMEOUT_MS }, ()
   })
 })
 
-describe('the heaviest projects of §12', { timeout: EXTREME_TIMEOUT_MS }, () => {
+describe('the heaviest projects', { timeout: EXTREME_TIMEOUT_MS }, () => {
   it('plays four 1080p layers, two titles and a blur under a zooming camera without dropping a frame, and exports them at twice real time', async () => {
     const path = writtenProject('four-layers', fourLayerProject())
     const played = await selfTestReport(path, ['--seconds', PLAY_SECONDS, '--report-memory'])

@@ -442,7 +442,7 @@ async function testRestore(driver: Driver): Promise<UiTestReport> {
   return { ...documentShown(driver), windows: editorWindows().length, width, widths, saved: await driver.savedProject('restored.json') }
 }
 
-// Measures the §3 budgets on whatever project is open; the test opens a 20-hour project with 4,096 clips.
+// Measures the responsiveness budgets on whatever project is open; the test opens a 20-hour project with 4,096 clips.
 // Hours into the 4,096-clip project, each far from the last.
 const PREPARED_SEEK_HOURS = [3, 17, 9, 14, 1, 19]
 const SECONDS_PER_HOUR = 3600
@@ -493,7 +493,7 @@ async function testBudgets(driver: Driver): Promise<UiTestReport> {
   const undoMilliseconds = await delayUntilShown(driver, { shown: 'any frame' }, () => driver.menu('undo'))
   const redoMilliseconds = await delayUntilShown(driver, { shown: 'any frame' }, () => driver.menu('redo'))
 
-  // §12: seeking anywhere in the twenty hours, once the media is prepared.
+  // Seeking anywhere in the twenty hours, once the media is prepared.
   await driver.page.click('timeline-zoom-fit')
   const timelineWidth = (await driver.rect('timeline')).width
   await driver.until(`JSON.parse(${selector('timeline')}.dataset.view).pixelsPerSecond * ${PROJECT_HOURS * SECONDS_PER_HOUR} < ${timelineWidth + 1}`, 'the timeline to fit the whole project')

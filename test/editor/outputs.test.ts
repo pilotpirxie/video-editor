@@ -15,7 +15,7 @@ const SRGB_SCREEN = '--force-color-profile=srgb'
 const BLOCK = 8
 const MAX_PAUSED_BLOCK_ERROR = 2
 const MAX_CHANNEL_BIAS = 1.5
-// Playback draws from MJPEG preview copies, whose colour detail is softer (§7); a camera zoomed to 300% magnifies that to about 5 levels.
+// Playback draws from MJPEG preview copies, whose colour detail is softer; a camera zoomed to 300% magnifies that to about 5 levels.
 // Which frame is shown is checked apart from this, against the neighbouring frames.
 const PLAYING_BLOCK = 16
 const MAX_PLAYING_BLOCK_ERROR = 6

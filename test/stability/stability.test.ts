@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { MEDIA_DIRECTORY, scratchDirectory, uiTest } from '../helpers.js'
 
-// T-88, run by hand with `npm run test:stability`; it is not part of `npm test`.
+// Run by hand with `npm run test:stability`; it is not part of `npm test`.
 // STABILITY_HOURS sets the length of the random session (8 by default); STABILITY_SEED repeats the session a failure reported.
 const SECONDS_PER_HOUR = 3600
 const MS_PER_SECOND = 1000
@@ -12,7 +12,7 @@ const SEED = process.env.STABILITY_SEED
 // Room for the last step and the export that may be running when the time is up.
 const SESSION_MARGIN_MS = 30 * 60 * MS_PER_SECOND
 const BROKEN_MEDIA_TIMEOUT_MS = 10 * 60 * MS_PER_SECOND
-// §12: at most 1.5 GB, and memory that stays flat over the session.
+// At most 1.5 GB, and memory that stays flat over the session.
 const MAX_PEAK_MEGABYTES = 1500
 const MAX_GROWTH_FACTOR = 1.1
 const MAX_GROWTH_MEGABYTES = 50

@@ -1,45 +1,19 @@
-# video-editor
+# Playback
 
-Lightweight non-linear video editor for macOS on Apple silicon. The specification and ticket
-list are in [AGENTS.md](AGENTS.md). What exists so far is ticket group 1, the core rendering
-engine, and group 2, the basic editor: the window with its layout, undo, project files,
-autosave, media import and relink, the timeline with linked clips and fade handles, canvas
-handles, text clips, animated images, the properties panel, the transport with Camtasia-like
-keys, and the export dialog. From group 3 there are the camera zoom (T-48, T-49), transitions
-(T-50), blur and pixelate clips (T-51), highlight and spotlight clips (T-52) and effects
-(T-53), each with the controls to add and change it: the zoom tool and the camera lane, the
-Effects and Transitions tabs, and the Annotations tab. Also from group 3 are
-callouts, arrows and lines (T-54), text styling (T-55), animation presets (T-56), groups
-(T-57), sound that follows the speed of its clip (T-58) and volume keyframes (T-59), again
-with their controls: the Annotations tab, handles for an arrow's ends and a bubble's tail,
-the text and animation fields in Properties, groups that open on a double click, and volume
-points on the waveform. From group 4 there are keyframe buttons on every animatable field in
-Properties (T-65), the motion path of a keyframed clip on the canvas with dots that drag its
-position keyframes (T-68), and a right-click menu on the zooms of the camera lane (T-67). X and
-Y, the width, height and scale, and the four crop sides are each keyed as one. The four tabs of
-the library look alike, as tiles by default, with a still picture for each effect, transition and
-annotation; all of them are dragged onto the canvas or the timeline, several media files at once
-when picked with Cmd or Shift. Panels are shown and hidden from the View menu, Export sits at the
-right of the timeline toolbar, and projects and exports can run at 120 and 160 fps. Also from
-group 4: a font the Mac does not have is named on opening and in the Text group (T-72); the
-Layout group in Properties aligns and spaces the selected clips and arranges them in a 2×2 or
-3×3 grid, one large and three small, or picture in picture (T-74); every clip with sound shows
-its volume line, which drags on a selected clip and takes a point on a double click (T-76); the
-canvas zooms to 50, 100 and 200 % or by pinching, and preview mode leaves only the canvas and
-the transport (T-77); each project has a window of its own (T-78); a new canvas size scales
-everything on it to fit (T-79); and the keys can be changed in Settings (T-81). Packaging a
-project (T-80) is dropped: media stays where it is. The end-to-end run of T-47 with a new user
-on the 4 GB reference Mac is still to be done by hand. From group 5 the §3 responsiveness budgets
-and the §12 memory targets are measured by the tests (T-82, T-83); every control has its hover,
-pressed, focus and disabled look, and the canvas, timeline and library say what to do when
-empty (T-84, T-85); every control has a name for VoiceOver and a focus ring, and Tab reaches
-every panel and dialog (T-86); a window reloads by itself after its page crashes and keeps its
-work and undo when the GPU or media process dies, and crashes go to a local log (T-88); and the
-app has its icon (T-90). Sample projects
-(T-87) and offline help (T-91) are skipped. The stability and extremes suites, the checks on the
-4 GB reference Mac and a pass with VoiceOver are run by hand.
+A free video editor for macOS on Apple silicon, made for screen tutorials and short marketing
+videos. It works fully offline.
 
-To see the new features at once, open `test/projects/demo-zoom-effects.json` with File, Open.
+- A multi-track timeline where any clip goes on any track, with snapping, split, ripple edits
+  and linked video and audio
+- A canvas that shows the exported picture, with handles to move, scale, rotate and crop
+- Keyframes with easing, motion paths, and presets that fade, pop, slide or zoom clips in and out
+- A zoom-and-pan camera over the whole picture, set by drawing a frame on the canvas
+- Text, callouts, arrows, highlights, spotlights, blur and pixelate, transitions and effects
+- Groups, volume keyframes, and speeds from 1% to 50,000%
+- Export to MP4, WebM, animated GIF, M4A, MP3, WAV or a PNG of the current frame
+
+To see most of it at once, open `test/projects/demo-zoom-effects.json` with File, Open. It uses
+the recordings in `samples/`; without them its clips show as missing.
 
 ## Commands
 
@@ -58,7 +32,7 @@ FFprobe binaries into `vendor/ffmpeg` and checks their SHA-256.
 | `npm test` | All of the above |
 | `npm run test:acceptance` | Builds a ten-minute tutorial through the editor window and exports it at 1080p; takes several minutes and is not part of `npm test` |
 | `npm run test:stability` | An eight-hour random session of edits, playback, undo, saves and exports, and every broken test file imported; `STABILITY_HOURS` shortens it and `STABILITY_SEED` repeats a session a failure printed. Run by hand, not part of `npm test` |
-| `npm run test:extremes` | 120p and 4K projects, an 8K source, 100× speed, 4,096 clips over twenty hours, §12's heaviest playback, CPU at rest and the installed size (after `npm run dist`). Run by hand on the reference Mac, not part of `npm test` |
+| `npm run test:extremes` | 120p and 4K projects, an 8K source, 100× speed, 4,096 clips over twenty hours, the heaviest playback, CPU at rest and the installed size (after `npm run dist`). Run by hand on an M1 with 4 GB of memory, not part of `npm test` |
 | `npm run dist` | Builds `release/Playback-<version>-arm64.dmg` |
 
 `UPDATE_GOLDEN=1 npm run test:engine` rewrites the golden images in `test/golden`.
@@ -165,6 +139,19 @@ one JSON line each to `logs/crash.log` in the same data folder; nothing leaves t
 `npm test` generates its own media into `test/media/generated` (every supported container and
 codec, alpha, 8K, 120 and 240 fps, variable frame rate, HLG and PQ, twenty hours of sound, ten
 minutes of 1080p for a 50× export, broken files). Real recordings dropped into
-`samples/` are used by the demo project and the benchmarks, which are skipped without them.
+`samples/` (not in the repository) are used by the demo projects and the benchmarks, which are
+skipped without them.
 Recordings that cannot be synthesised (OBS captures, iPhone HDR clips) are probed and decoded
 by the tests when they are placed in `test/media/real`.
+
+## Installing
+
+The DMG is ad-hoc signed, so macOS blocks the first launch: open Playback once, then choose Open
+Anyway in System Settings, Privacy & Security.
+
+## Licence
+
+Playback is free software under the GNU General Public License version 3 or later
+([LICENSE](LICENSE)). The bundled FFmpeg is under GPLv3 too, and the source of that build is
+published with each release. `npm run dist` copies the licences of FFmpeg, Electron, Chromium,
+React, Vite and Rolldown into `Playback.app/Contents/Resources/licenses`.

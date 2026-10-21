@@ -6,12 +6,12 @@ import { HAS_SAMPLES, exportWithReport, projectPath, scratchDirectory, type Expo
 const scratch = scratchDirectory('limits')
 const MAX_PEAK_MEMORY_MB = 1500
 // x264 keeps more pictures than the media engine, which Macs with 8 GB or less export with unless asked otherwise. Measured at up to 1,982 MB;
-// the user accepted this over 1.5 GB on 2026-10-14, as a choice made in the Export dialog on a small Mac.
+// allowed over 1.5 GB because a small Mac uses x264 only when it is chosen in the Export dialog.
 const KNOWN_X264_4K_PEAK_MEMORY_MB = 2100
-// §12, timed on the export alone.
+// Timed on the export alone.
 const MIN_1080P_REAL_TIME_RATIO = 2
 const MIN_4K_REAL_TIME_RATIO = 0.5
-// §13: ten minutes of source at 50× within five minutes.
+// Ten minutes of source at 50× within five minutes.
 const MAX_TIMELAPSE_MS = 300_000
 const EXPORT_TIMEOUT_MS = 600_000
 
