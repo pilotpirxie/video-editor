@@ -10,7 +10,8 @@ const VERSION_TIMEOUT_MS = 10_000
 const VERSION_PATTERN = /version (?<version>\d[\w.]*)/
 
 function isCommand(value: unknown): value is MediaProcessCommand {
-  return typeof value === 'object' && value !== null && 'type' in value && (value.type === 'setup' || value.type === 'connect' || value.type === 'settings')
+  if (typeof value !== 'object' || value === null || !('type' in value)) return false
+  return value.type === 'setup' || value.type === 'connect' || value.type === 'settings'
 }
 
 function isMessage(value: unknown): value is MediaMessage {

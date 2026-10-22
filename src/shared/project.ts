@@ -7,7 +7,7 @@ import {
   type FrameRate,
 } from './time.js'
 
-const PROJECT_VERSION = 1
+export const PROJECT_VERSION = 1
 
 export type Easing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'hold'
 
@@ -353,6 +353,7 @@ export const MAX_CAMERA_SCALE = 10
 const MAX_VOLUME = 2
 const MAX_GROUP_DEPTH = 8
 const FONT_WEIGHT_STEP = 100
+const FONT_WEIGHT = { min: 100, max: 900 }
 const LINE_SPACING: NumberRule = { min: 0.5, max: 3 }
 
 const EASINGS: readonly Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut', 'hold']
@@ -651,7 +652,12 @@ const EFFECT_KEYS: Record<EffectType, readonly string[]> = {
 
 function effectSettings(type: EffectType, fields: Fields): Effect {
   if (type === 'colorAdjust') {
-    return { type, brightness: fields.number('brightness', ADJUSTMENT), contrast: fields.number('contrast', ADJUSTMENT), saturation: fields.number('saturation', ADJUSTMENT) }
+    return {
+      type,
+      brightness: fields.number('brightness', ADJUSTMENT),
+      contrast: fields.number('contrast', ADJUSTMENT),
+      saturation: fields.number('saturation', ADJUSTMENT),
+    }
   } else if (type === 'blackAndWhite' || type === 'sepia' || type === 'invert') {
     return { type, amount: fields.number('amount', AMOUNT) }
   } else if (type === 'dropShadow') {
@@ -695,7 +701,13 @@ function effectSettings(type: EffectType, fields: Fields): Effect {
   } else if (type === 'blurFill') {
     return { type, strength: fields.number('strength', { above: 0 }), darken: fields.number('darken', AMOUNT) }
   } else {
-    return { type, color: fields.opaqueColor('color'), tolerance: fields.number('tolerance', AMOUNT), softness: fields.number('softness', AMOUNT), spill: fields.number('spill', AMOUNT) }
+    return {
+      type,
+      color: fields.opaqueColor('color'),
+      tolerance: fields.number('tolerance', AMOUNT),
+      softness: fields.number('softness', AMOUNT),
+      spill: fields.number('spill', AMOUNT),
+    }
   }
 }
 
@@ -853,8 +865,8 @@ function parseFont(value: unknown, path: string): TextSettings['font'] {
   const fields = readFields(value, path, ['family', 'size'], ['weight'])
   const font: TextSettings['font'] = { family: fields.nonEmptyString('family'), size: fields.number('size', { above: 0 }) }
   if (fields.has('weight')) {
-    const weight = fields.integer('weight', { min: 100, max: 900 })
-    if (weight % FONT_WEIGHT_STEP !== 0) fail(fields.at('weight'), 'must be a whole hundred from 100 to 900')
+    const weight = fields.integer('weight', FONT_WEIGHT)
+    if (weight % FONT_WEIGHT_STEP !== 0) fail(fields.at('weight'), `must be a whole hundred from ${FONT_WEIGHT.min} to ${FONT_WEIGHT.max}`)
     font.weight = weight
   }
   return font
@@ -873,14 +885,21 @@ function parseTextSettings(fields: Fields, text: string): TextSettings {
   }
   if (fields.has('shadow')) {
     const shadow = readFields(fields.raw('shadow'), fields.at('shadow'), ['color', 'offsetX', 'offsetY', 'blur'])
-    settings.shadow = { color: shadow.color('color'), offsetX: shadow.number('offsetX'), offsetY: shadow.number('offsetY'), blur: shadow.number('blur', { min: 0 }) }
+    settings.shadow = {
+      color: shadow.color('color'),
+      offsetX: shadow.number('offsetX'),
+      offsetY: shadow.number('offsetY'),
+      blur: shadow.number('blur', { min: 0 }),
+    }
   }
   if (fields.has('lineSpacing')) settings.lineSpacing = fields.number('lineSpacing', LINE_SPACING)
   return settings
 }
 
 function parseTextClip(value: unknown, path: string, context: ParseContext): TextClip {
-  const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, ...TEXT_KEYS], [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_TEXT_KEYS, 'background', 'boxWidth'])
+  const required = [...TIMING_KEYS, ...VISUAL_KEYS, ...TEXT_KEYS]
+  const optional = [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_TEXT_KEYS, 'background', 'boxWidth']
+  const fields = readFields(value, path, required, optional)
   const timing = parseTiming(fields, context, TRANSFORM_PROPERTIES)
   const clip: TextClip = {
     type: 'text',
@@ -927,7 +946,8 @@ function parseCalloutClip(value: unknown, path: string, context: ParseContext): 
 }
 
 function parseArrowClip(value: unknown, path: string, context: ParseContext): ArrowClip {
-  const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, 'length', 'thickness', 'color', 'startHead', 'endHead'], OPTIONAL_PICTURE_KEYS)
+  const required = [...TIMING_KEYS, ...VISUAL_KEYS, 'length', 'thickness', 'color', 'startHead', 'endHead']
+  const fields = readFields(value, path, required, OPTIONAL_PICTURE_KEYS)
   const timing = parseTiming(fields, context, TRANSFORM_PROPERTIES)
   const clip: ArrowClip = {
     type: 'arrow',
@@ -954,10 +974,13 @@ function parseTracks(value: readonly unknown[], path: string, context: ParseCont
 
 function parseGroupClip(value: unknown, path: string, context: ParseContext): GroupClip {
   if (context.depth >= MAX_GROUP_DEPTH) fail(path, `is a group inside more than ${MAX_GROUP_DEPTH} groups`)
-  const fields = readFields(value, path, [...TIMING_KEYS, ...VISUAL_KEYS, 'volume', 'tracks'], [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_VOLUME_KEYS, 'contentStart'])
+  const required = [...TIMING_KEYS, ...VISUAL_KEYS, 'volume', 'tracks']
+  const optional = [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_VOLUME_KEYS, 'contentStart']
+  const fields = readFields(value, path, required, optional)
   const timing = parseTiming(fields, context, [...TRANSFORM_PROPERTIES, 'volume'])
   const contentStart = fields.has('contentStart') ? fields.gridTime('contentStart', 'positive') : undefined
-  const memberContext: ParseContext = { ...context, depth: context.depth + 1, shift: context.shift + timing.start - (contentStart ?? 0) }
+  const memberShift = context.shift + timing.start - (contentStart ?? 0)
+  const memberContext: ParseContext = { ...context, depth: context.depth + 1, shift: memberShift }
   const clip: GroupClip = {
     type: 'group',
     ...timing,

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode
 import { ANIMATION_NAMES, DEFAULT_ANIMATION, setAnimation, takesAnimation } from '../editor/animations.js'
 import { CALLOUT_NAMES, setArrowStyle, setCalloutStyle } from '../editor/annotations.js'
 import { deleteZoom, setZoom, type ZoomChanges } from '../editor/camera.js'
-import { allClips, freeTrackId, hasMedia, hasSource, isCroppable, isVisual, makesSound, nextTrackName } from '../editor/clips.js'
+import { allClips, coversTime, freeTrackId, hasMedia, hasSource, isCroppable, isVisual, makesSound, nextTrackName } from '../editor/clips.js'
 import { cropFromValue } from '../editor/geometry.js'
 import { moveClips } from '../editor/moveTrim.js'
 import {
@@ -22,6 +22,7 @@ import {
   sharedValue,
   type Fade,
   type KeyframeSet,
+  type PropertyValues,
 } from '../editor/properties.js'
 import { setShapeStyle, type ShapeStyle } from '../editor/shapes.js'
 import { missingFonts, setTextStyle, type TextStyle } from '../editor/text.js'
@@ -63,12 +64,15 @@ import { useEditorState, usePosition, useSession } from './context.js'
 import { installedFontFamilies } from './fonts.js'
 import { Icon, IconButton, type IconName } from './icons.js'
 import { NumberField } from './NumberField.js'
-import { Picker } from './Picker.js'
+import { Picker, type Choice } from './Picker.js'
 import { updateStep, type Edit } from './store.js'
 import { endTextEdit, typeText } from './TextEditor.js'
 
 const FRAME_RATE_DECIMALS = 3
+const SECONDS_DECIMALS = 3
 const PERCENT = 100
+const MAX_VOLUME_PERCENT = 200
+const MIN_OUTLINE_WIDTH = 0.1
 const MAX_POSITION = 100_000
 const MAX_SECONDS = 24 * 60 * 60
 const MAX_ROTATION = 36_000
@@ -195,7 +199,7 @@ export function ColorField({ label, testId, command, value, edit }: ColorFieldPr
   useEffect(() => {
     const field = fieldRef.current
     if (field === null) return
-    const endPicking = (): void => {
+    function endPicking(): void {
       if (!isPickingRef.current) return
       isPickingRef.current = false
       store.commit()
@@ -214,10 +218,11 @@ export function ColorField({ label, testId, command, value, edit }: ColorFieldPr
     isPickingRef.current = true
   }
 
+  const opaqueColor = (value ?? '').slice(0, OPAQUE_COLOR_LENGTH)
   return (
     <label className="labelled">
       <span className="field-label">{label}</span>
-      <input ref={fieldRef} className="color-field" type="color" data-testid={testId} value={(value ?? '').slice(0, OPAQUE_COLOR_LENGTH)} onChange={(event) => onColor(event.target.value)} />
+      <input ref={fieldRef} className="color-field" type="color" data-testid={testId} value={opaqueColor} onChange={(event) => onColor(event.target.value)} />
     </label>
   )
 }
@@ -226,7 +231,8 @@ export function Group({ title, icon, actions, isOpenAtStart = false, children }:
   const storageKey = `group-${title}`
   const [isOpen, setIsOpen] = useState(() => {
     const stored = sessionStorage.getItem(storageKey)
-    return stored === null ? isOpenAtStart : stored === 'open'
+    if (stored === null) return isOpenAtStart
+    return stored === 'open'
   })
 
   function toggle(): void {
@@ -238,10 +244,11 @@ export function Group({ title, icon, actions, isOpenAtStart = false, children }:
     }
   }
 
+  const toggleTestId = `group-${title.toLowerCase().replaceAll(' ', '-')}`
   return (
     <section className="group" aria-label={title}>
       <div className="group-header">
-        <button type="button" className="group-toggle focusable" aria-expanded={isOpen} data-testid={`group-${title.toLowerCase().replaceAll(' ', '-')}`} onClick={toggle}>
+        <button type="button" className="group-toggle focusable" aria-expanded={isOpen} data-testid={toggleTestId} onClick={toggle}>
           <Icon name={isOpen ? 'chevronDown' : 'chevronRight'} />
           <Icon name={icon} />
           {title}
@@ -266,13 +273,18 @@ function ProjectSettings(): ReactElement {
   function setSide(side: 'width' | 'height'): (value: number) => Edit {
     return (value) => (project) => {
       const { width, height } = project.canvas
-      if (side === 'width') return setCanvasSize(project, { width: value, height: keepsAspect ? (value * height) / width : height })
-      return setCanvasSize(project, { width: keepsAspect ? (value * width) / height : width, height: value })
+      if (side === 'width') {
+        const keptHeight = keepsAspect ? (value * height) / width : height
+        return setCanvasSize(project, { width: value, height: keptHeight })
+      }
+      const keptWidth = keepsAspect ? (value * width) / height : width
+      return setCanvasSize(project, { width: keptWidth, height: value })
     }
   }
 
+  const aspectLock = <IconButton icon="link" label="Keep the aspect ratio" testId="canvas-aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />
   return (
-    <Group title="Project" icon="film" isOpenAtStart actions={<IconButton icon="link" label="Keep the aspect ratio" testId="canvas-aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />}>
+    <Group title="Project" icon="film" isOpenAtStart actions={aspectLock}>
       <EditField label="Width" testId="canvas-width" command="Change Canvas Size" value={canvas.width} min={MIN_CANVAS.width} max={MAX_CANVAS.width} edit={setSide('width')} />
       <EditField label="Height" testId="canvas-height" command="Change Canvas Size" value={canvas.height} min={MIN_CANVAS.height} max={MAX_CANVAS.height} edit={setSide('height')} />
       <div className="labelled">
@@ -352,7 +364,9 @@ function withAlphaOf(current: string | undefined, picked: string): string {
 }
 
 function placementAt(clip: Clip, time: number): { crop: Crop; transform: Transform } {
-  const at = (property: AnimatableProperty): number => propertyAt(clip, property, time) ?? 0
+  function at(property: AnimatableProperty): number {
+    return propertyAt(clip, property, time) ?? 0
+  }
   return {
     crop: { left: at('cropLeft'), top: at('cropTop'), right: at('cropRight'), bottom: at('cropBottom') },
     transform: { x: at('x'), y: at('y'), scaleX: at('scaleX'), scaleY: at('scaleY'), rotation: at('rotation') },
@@ -370,7 +384,8 @@ function isHighlight(clip: Clip): clip is HighlightClip {
 function isAnimatedImage(clip: Clip, mediaStates: MediaStates): clip is VideoClip {
   if (clip.type !== 'video') return false
   const state = mediaStates[clip.mediaId]
-  return state !== undefined && 'info' in state && state.info.kind === 'video' && state.info.isAnimatedImage === true
+  if (state === undefined || !('info' in state)) return false
+  return state.info.kind === 'video' && state.info.isAnimatedImage === true
 }
 
 type WordsClip = TextClip | CalloutClip
@@ -401,11 +416,27 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
   }
 
   function wrap(isOn: boolean): void {
-    store.apply(isOn ? 'Wrap Text' : 'Stop Wrapping Text', (project) => {
+    const command = isOn ? 'Wrap Text' : 'Stop Wrapping Text'
+    store.apply(command, (project) => {
       let edited = project
-      for (const clip of boxed) edited = setTextStyle(edited, [clip.id], { boxWidth: isOn ? Math.ceil(measureText(clip).naturalWidth) : 'auto' })
+      for (const clip of boxed) {
+        const boxWidth = isOn ? Math.ceil(measureText(clip).naturalWidth) : 'auto'
+        edited = setTextStyle(edited, [clip.id], { boxWidth })
+      }
       return edited
     })
+  }
+
+  function switchOutline(isOn: boolean): void {
+    style(isOn ? 'Add Outline' : 'Remove Outline', { hasOutline: isOn })
+  }
+
+  function switchShadow(isOn: boolean): void {
+    style(isOn ? 'Add Shadow' : 'Remove Shadow', { hasShadow: isOn })
+  }
+
+  function switchBackground(isOn: boolean): void {
+    style(isOn ? 'Add Background' : 'Remove Background', { hasBackground: isOn })
   }
 
   const isShownRef = useRef(true)
@@ -441,7 +472,10 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
   function withColor(colorOf: (clip: WordsClip) => string | undefined, styleOf: (color: string) => TextStyle): (picked: string) => Edit {
     return (picked) => (project) => {
       let edited = project
-      for (const clip of clips) edited = setTextStyle(edited, [clip.id], styleOf(withAlphaOf(colorOf(clip), picked)))
+      for (const clip of clips) {
+        const color = withAlphaOf(colorOf(clip), picked)
+        edited = setTextStyle(edited, [clip.id], styleOf(color))
+      }
       return edited
     }
   }
@@ -462,8 +496,15 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
     isTryingFontRef.current = false
   }
 
-  const families = [...new Set([...clips.map((clip) => clip.font.family), ...installed])].sort((a, b) => a.localeCompare(b))
+  const fontNames = new Set(installed)
+  for (const clip of clips) fontNames.add(clip.font.family)
+  const families = [...fontNames].sort((a, b) => a.localeCompare(b))
   const missing = installed.length === 0 ? [] : missingFonts(clips, installed)
+  const fontChoices: Choice[] = []
+  for (const name of families) {
+    const label = missing.includes(name) ? `${name} (not installed)` : name
+    fontChoices.push({ value: name, label })
+  }
   return (
     <>
       <label className="labelled">
@@ -488,7 +529,7 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
         <Picker
           label="Font"
           testId="text-font"
-          choices={families.map((name) => ({ value: name, label: missing.includes(name) ? `${name} (not installed)` : name }))}
+          choices={fontChoices}
           value={family}
           onPreview={tryFont}
           onChoose={chooseFont}
@@ -570,7 +611,7 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
           edit={set((boxWidth) => ({ boxWidth }))}
         />
       )}
-      <SwitchField label="Outline" testId="text-outline" isOn={hasOutline} onSwitch={(isOn) => style(isOn ? 'Add Outline' : 'Remove Outline', { hasOutline: isOn })} />
+      <SwitchField label="Outline" testId="text-outline" isOn={hasOutline} onSwitch={switchOutline} />
       {hasOutline && (
         <>
           <ColorField
@@ -588,14 +629,14 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
             testId="text-outline-width"
             command="Change Outline"
             value={sharedValue(clips.map((clip) => clip.outline?.width))}
-            min={0.1}
+            min={MIN_OUTLINE_WIDTH}
             max={MAX_FONT_SIZE}
             decimals={1}
             edit={set((outlineWidth) => ({ outlineWidth }))}
           />
         </>
       )}
-      <SwitchField label="Shadow" testId="text-shadow" isOn={hasShadow} onSwitch={(isOn) => style(isOn ? 'Add Shadow' : 'Remove Shadow', { hasShadow: isOn })} />
+      <SwitchField label="Shadow" testId="text-shadow" isOn={hasShadow} onSwitch={switchShadow} />
       {hasShadow && (
         <>
           <ColorField
@@ -640,7 +681,7 @@ function TextFields({ clips }: { clips: readonly WordsClip[] }): ReactElement {
           />
         </>
       )}
-      {boxed.length > 0 && <SwitchField label="Background box" testId="text-background" isOn={hasBackground} onSwitch={(isOn) => style(isOn ? 'Add Background' : 'Remove Background', { hasBackground: isOn })} />}
+      {boxed.length > 0 && <SwitchField label="Background box" testId="text-background" isOn={hasBackground} onSwitch={switchBackground} />}
       {hasBackground && (
         <ColorField
           label="Background colour"
@@ -674,11 +715,19 @@ function CalloutFields({ clips }: { clips: readonly CalloutClip[] }): ReactEleme
     }
   }
 
+  const fill = sharedValue(clips.map((clip) => clip.fill)) ?? clips[0]?.fill
+  const borderColor = sharedValue(clips.map((clip) => clip.borderColor)) ?? clips[0]?.borderColor
   return (
     <>
       <div className="labelled">
         <span className="field-label">Shape</span>
-        <Picker label="Shape" testId="callout-shape" choices={CALLOUT_SHAPES.map((shape) => ({ value: shape, label: CALLOUT_NAMES[shape] }))} value={sharedValue(clips.map((clip) => clip.shape))} onChoose={onShape} />
+        <Picker
+          label="Shape"
+          testId="callout-shape"
+          choices={CALLOUT_SHAPES.map((shape) => ({ value: shape, label: CALLOUT_NAMES[shape] }))}
+          value={sharedValue(clips.map((clip) => clip.shape))}
+          onChoose={onShape}
+        />
       </div>
       <EditField
         label="Box width"
@@ -700,8 +749,8 @@ function CalloutFields({ clips }: { clips: readonly CalloutClip[] }): ReactEleme
         decimals={1}
         edit={(height) => (project) => setCalloutStyle(project, ids, { height })}
       />
-      <ColorField label="Fill" testId="callout-fill" command="Change Callout Fill" value={sharedValue(clips.map((clip) => clip.fill)) ?? clips[0]?.fill} edit={withColor('fill')} />
-      <ColorField label="Border colour" testId="callout-border-color" command="Change Callout Border" value={sharedValue(clips.map((clip) => clip.borderColor)) ?? clips[0]?.borderColor} edit={withColor('borderColor')} />
+      <ColorField label="Fill" testId="callout-fill" command="Change Callout Fill" value={fill} edit={withColor('fill')} />
+      <ColorField label="Border colour" testId="callout-border-color" command="Change Callout Border" value={borderColor} edit={withColor('borderColor')} />
       <EditField
         label="Border width"
         testId="callout-border-width"
@@ -754,7 +803,10 @@ function ArrowFields({ clips }: { clips: readonly ArrowClip[] }): ReactElement {
         value={sharedValue(clips.map((clip) => clip.color)) ?? clips[0]?.color}
         edit={(picked) => (project) => {
           let edited = project
-          for (const clip of clips) edited = setArrowStyle(edited, [clip.id], { color: withAlphaOf(clip.color, picked) })
+          for (const clip of clips) {
+            const color = withAlphaOf(clip.color, picked)
+            edited = setArrowStyle(edited, [clip.id], { color })
+          }
           return edited
         }}
       />
@@ -791,8 +843,13 @@ function ZoomProperties({ index }: { index: number }): ReactElement | undefined 
     if (easing !== undefined) store.apply('Change Zoom Easing', (project) => setZoom(project, index, { easing }, frameTicks))
   }
 
+  function removeZoom(): void {
+    store.apply('Delete Zoom', (project) => deleteZoom(project, index))
+  }
+
+  const deleteButton = <IconButton icon="trash" label="Delete zoom" testId="zoom-delete" onClick={removeZoom} />
   return (
-    <Group title="Zoom" icon="zoom" isOpenAtStart actions={<IconButton icon="trash" label="Delete zoom" testId="zoom-delete" onClick={() => store.apply('Delete Zoom', (project) => deleteZoom(project, index))} />}>
+    <Group title="Zoom" icon="zoom" isOpenAtStart actions={deleteButton}>
       <EditField
         label="Scale (%)"
         testId="zoom-scale"
@@ -814,13 +871,19 @@ function ZoomProperties({ index }: { index: number }): ReactElement | undefined 
         min={frameSeconds}
         max={MAX_SECONDS}
         step={frameSeconds}
-        decimals={3}
+        decimals={SECONDS_DECIMALS}
         presets={MOVE_SECONDS}
         edit={set((length) => ({ duration: length * TICKS_PER_SECOND }))}
       />
       <div className="labelled">
         <span className="field-label">Easing</span>
-        <Picker label="Easing" testId="zoom-easing" choices={EASINGS.map(({ easing, label }) => ({ value: easing, label }))} value={zoom.easing} onChoose={onEasing} />
+        <Picker
+          label="Easing"
+          testId="zoom-easing"
+          choices={EASINGS.map(({ easing, label }) => ({ value: easing, label }))}
+          value={zoom.easing}
+          onChoose={onEasing}
+        />
       </div>
     </Group>
   )
@@ -893,13 +956,15 @@ function InOutFields({ edge, label, clips, frameTicks }: InOutProps): ReactEleme
     { value: FADE, label: 'Fade' },
   ]
   for (const type of OFFERED_ANIMATIONS) {
-    if (clips.every((clip) => takesAnimation(clip, type))) choices.push({ value: `${ANIMATION_PREFIX}${type}`, label: ANIMATION_NAMES[type] })
+    const isTakenByAll = clips.every((clip) => takesAnimation(clip, type))
+    if (isTakenByAll) choices.push({ value: `${ANIMATION_PREFIX}${type}`, label: ANIMATION_NAMES[type] })
   }
   for (const type of TRANSITION_TYPES) choices.push({ value: type, label: TRANSITION_NAMES[type] })
   for (const end of current) {
-    const animation = end === undefined ? undefined : animationOf(end.value)
-    const isListed = choices.some((choice) => choice.value === end?.value)
-    if (end !== undefined && animation !== undefined && !isListed) choices.push({ value: end.value, label: ANIMATION_NAMES[animation] })
+    if (end === undefined) continue
+    const animation = animationOf(end.value)
+    const isListed = choices.some((choice) => choice.value === end.value)
+    if (animation !== undefined && !isListed) choices.push({ value: end.value, label: ANIMATION_NAMES[animation] })
   }
 
   function onChoose(chosen: string): void {
@@ -908,7 +973,10 @@ function InOutFields({ edge, label, clips, frameTicks }: InOutProps): ReactEleme
       if ((end?.value ?? NONE) === chosen) return project
       if (chosen === NONE) return withEnd(project, clip, edge, undefined, frameTicks)
       let duration = end?.duration
-      if (duration === undefined) duration = TRANSITION_TYPES.some((type) => type === chosen) ? DEFAULT_TRANSITION : DEFAULT_ANIMATION
+      if (duration === undefined) {
+        const isTransition = TRANSITION_TYPES.some((type) => type === chosen)
+        duration = isTransition ? DEFAULT_TRANSITION : DEFAULT_ANIMATION
+      }
       return withEnd(project, clip, edge, { value: chosen, duration }, frameTicks)
     })
     store.apply(command, edit)
@@ -927,7 +995,13 @@ function InOutFields({ edge, label, clips, frameTicks }: InOutProps): ReactEleme
     <>
       <div className="labelled">
         <span className="field-label">{label}</span>
-        <Picker label={`How the clip comes ${edge}`} testId={`clip-${edge}`} choices={choices} value={sharedValue(current.map((end) => end?.value ?? NONE))} onChoose={onChoose} />
+        <Picker
+          label={`How the clip comes ${edge}`}
+          testId={`clip-${edge}`}
+          choices={choices}
+          value={sharedValue(current.map((end) => end?.value ?? NONE))}
+          onChoose={onChoose}
+        />
       </div>
       {current.some((end) => end !== undefined) && (
         <EditField
@@ -938,7 +1012,7 @@ function InOutFields({ edge, label, clips, frameTicks }: InOutProps): ReactEleme
           min={frameSeconds}
           max={MAX_SECONDS}
           step={frameSeconds}
-          decimals={3}
+          decimals={SECONDS_DECIMALS}
           presets={MOVE_SECONDS}
           edit={setLength}
         />
@@ -951,13 +1025,18 @@ function ShapeFields({ clips }: { clips: readonly ShapeClip[] }): ReactElement {
   const { store } = useSession()
   const ids = clips.map((clip) => clip.id)
   const current = sharedValue(clips.map((clip) => clip.shape))
+
+  function chooseShape(shape: Shape): void {
+    store.apply('Change Shape', (project) => setShapeStyle(project, ids, { shape }))
+  }
+
   return (
     <>
       <div className="labelled">
         <span className="field-label">Shape</span>
         <div className="segmented wide" role="group" aria-label="Shape">
           {SHAPES.map(({ shape, label }) => (
-            <button key={shape} type="button" className="button" data-testid={`shape-${shape}`} aria-pressed={current === shape} onClick={() => store.apply('Change Shape', (project) => setShapeStyle(project, ids, { shape }))}>
+            <button key={shape} type="button" className="button" data-testid={`shape-${shape}`} aria-pressed={current === shape} onClick={() => chooseShape(shape)}>
               {label}
             </button>
           ))}
@@ -1012,7 +1091,7 @@ type KeyframeButtonsProps = {
 }
 
 function clipsUnder(clips: readonly Clip[], time: number): Clip[] {
-  return clips.filter((clip) => time >= clip.start && time < clip.start + clip.duration)
+  return clips.filter((clip) => coversTime(clip, time))
 }
 
 function KeyframeButtons({ clips, set, testId }: KeyframeButtonsProps): ReactElement {
@@ -1041,7 +1120,8 @@ function KeyframeButtons({ clips, set, testId }: KeyframeButtonsProps): ReactEle
   function toggleKeyframe(): void {
     const { time } = transport.position()
     const ids = clipsUnder(clips, time).map((clip) => clip.id)
-    store.apply(isKeyed ? `Remove ${name} Keyframe` : `Add ${name} Keyframe`, (project) => setKeyframesAt(project, ids, set, time, !isKeyed))
+    const command = isKeyed ? `Remove ${name} Keyframe` : `Add ${name} Keyframe`
+    store.apply(command, (project) => setKeyframesAt(project, ids, set, time, !isKeyed))
   }
 
   return (
@@ -1113,10 +1193,12 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
         const size = shownSize(clip, mediaStates, time)
         const before = propertyAt(clip, axis, time)
         const other = propertyAt(clip, otherAxis, time)
-        if (size === undefined || before === undefined || other === undefined || size[side] <= 0) continue
+        if (size === undefined || size[side] <= 0) continue
+        if (before === undefined || other === undefined) continue
         const scale = value / size[side]
-        const follows = keepsAspect && before > 0 ? { [otherAxis]: (other * scale) / before } : {}
-        edited = setProperties(edited, [clip.id], { [axis]: scale, ...follows }, time)
+        const changes: PropertyValues = { [axis]: scale }
+        if (keepsAspect && before > 0) changes[otherAxis] = (other * scale) / before
+        edited = setProperties(edited, [clip.id], changes, time)
       }
       return edited
     }
@@ -1128,7 +1210,8 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
       visual.map((clip) => {
         const size = shownSize(clip, mediaStates, time)
         const scale = propertyAt(clip, axis, time)
-        return size === undefined || scale === undefined ? undefined : size[side] * scale
+        if (size === undefined || scale === undefined) return undefined
+        return size[side] * scale
       }),
     )
   }
@@ -1141,7 +1224,8 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
         if (natural === undefined) continue
         const { crop, transform } = placementAt(clip, time)
         const cropped = cropFromValue(natural, crop, transform, side, value)
-        edited = setProperties(edited, [clip.id], { [property]: cropped.crop[side], x: cropped.transform.x, y: cropped.transform.y }, time)
+        const changes = { [property]: cropped.crop[side], x: cropped.transform.x, y: cropped.transform.y }
+        edited = setProperties(edited, [clip.id], changes, time)
       }
       return edited
     }
@@ -1153,7 +1237,8 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
       let edited = project
       for (const clip of clips) {
         const newTrack = { id: freeTrackId(edited, `${clip.id}-track`), name: nextTrackName(edited) }
-        edited = moveClips(edited, { clipIds: [clip.id], deltaTime: start - clip.start, trackShift: 0, isRipple: false, newTrack })
+        const move = { clipIds: [clip.id], deltaTime: start - clip.start, trackShift: 0, isRipple: false, newTrack }
+        edited = moveClips(edited, move)
       }
       return edited
     }
@@ -1169,20 +1254,50 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
         min={0}
         max={MAX_SECONDS}
         step={frameTicks / TICKS_PER_SECOND}
-        decimals={3}
+        decimals={SECONDS_DECIMALS}
         presets={FADE_SECONDS}
         edit={(next) => (project) => setFade(project, ids, fade, wholeFrames(next))}
       />
     )
   }
 
+  function setScale(percent: number): Edit {
+    const scale = percent / PERCENT
+    return (project) => setProperties(project, ids, { scaleX: scale, scaleY: scale }, time)
+  }
+
+  function keepPitch(isOn: boolean): void {
+    const command = isOn ? 'Keep Pitch' : 'Let Pitch Follow Speed'
+    store.apply(command, (project) => setSoundSwitches(project, ids, { changesPitch: !isOn }))
+  }
+
+  function playFastSound(isOn: boolean): void {
+    const command = isOn ? 'Play Fast Sound' : 'Mute Fast Sound'
+    store.apply(command, (project) => setSoundSwitches(project, ids, { hasFastSound: isOn }))
+  }
+
+  function switchLoop(isOn: boolean): void {
+    const command = isOn ? 'Loop Clip' : 'Stop Looping'
+    store.apply(command, (project) => setLoop(project, ids, isOn, mediaStates))
+  }
+
+  function pixelate(isOn: boolean): void {
+    styleShapes(isOn ? 'Pixelate' : 'Blur', { isPixelated: isOn })
+  }
+
+  function spotlight(isOn: boolean): void {
+    styleShapes(isOn ? 'Make Spotlight' : 'Make Highlight', { isSpotlight: isOn })
+  }
+
   const scaleX = shared('scaleX')
-  const uniformScale = scaleX !== undefined && scaleX === shared('scaleY') ? scaleX * PERCENT : undefined
+  const isUniform = scaleX !== undefined && scaleX === shared('scaleY')
+  const uniformScale = isUniform ? scaleX * PERCENT : undefined
   const frameSeconds = frameTicks / TICKS_PER_SECOND
+  const aspectLock = <IconButton icon="link" label="Keep the aspect ratio" testId="aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />
   return (
     <>
       {visual.length > 0 && (
-        <Group title="Transform" icon="move" isOpenAtStart actions={<IconButton icon="link" label="Keep the aspect ratio" testId="aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />}>
+        <Group title="Transform" icon="move" isOpenAtStart actions={aspectLock}>
           <div className="field-pair">
             <EditField label="X" testId="clip-x" command="Move Clip" value={shared('x')} min={-MAX_POSITION} max={MAX_POSITION} decimals={1} edit={set('x')} />
             <EditField label="Y" testId="clip-y" command="Move Clip" value={shared('y')} min={-MAX_POSITION} max={MAX_POSITION} decimals={1} edit={set('y')} />
@@ -1205,7 +1320,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
             decimals={1}
             presets={SCALES}
             keyframes={<KeyframeButtons clips={visual} set="size" testId="clip-scale" />}
-            edit={(percent) => (project) => setProperties(project, ids, { scaleX: percent / PERCENT, scaleY: percent / PERCENT }, time)}
+            edit={setScale}
           />
           <EditField
             label="Rotation (°)"
@@ -1222,7 +1337,17 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
         </Group>
       )}
       <Group title="Timing" icon="clock" isOpenAtStart>
-        <EditField label="Start (s)" testId="clip-start" command="Move Clip" value={seconds(sharedValue(clips.map((clip) => clip.start)))} min={0} max={MAX_SECONDS} step={frameSeconds} decimals={3} edit={setStart} />
+        <EditField
+          label="Start (s)"
+          testId="clip-start"
+          command="Move Clip"
+          value={seconds(sharedValue(clips.map((clip) => clip.start)))}
+          min={0}
+          max={MAX_SECONDS}
+          step={frameSeconds}
+          decimals={SECONDS_DECIMALS}
+          edit={setStart}
+        />
         <EditField
           label="Duration (s)"
           testId="clip-duration"
@@ -1231,7 +1356,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
           min={frameSeconds}
           max={MAX_SECONDS}
           step={frameSeconds}
-          decimals={3}
+          decimals={SECONDS_DECIMALS}
           edit={(next) => (project) => setDuration(project, ids, wholeFrames(next), frameTicks, mediaStates)}
         />
         {sourced.length > 0 && (
@@ -1244,7 +1369,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
               min={0}
               max={MAX_SECONDS}
               step={frameSeconds}
-              decimals={3}
+              decimals={SECONDS_DECIMALS}
               edit={(next) => (project) => setSourceStart(project, ids, next * TICKS_PER_SECOND, mediaStates)}
             />
             <EditField
@@ -1264,15 +1389,15 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
             label="Keep pitch"
             testId="clip-keep-pitch"
             isOn={stretched.every((clip) => clip.changesPitch !== true)}
-            onSwitch={(isOn) => store.apply(isOn ? 'Keep Pitch' : 'Let Pitch Follow Speed', (project) => setSoundSwitches(project, ids, { changesPitch: !isOn }))}
+            onSwitch={keepPitch}
           />
         )}
         {fast.length > 0 && (
           <SwitchField
-            label="Sound above 400%"
+            label={`Sound above ${FAST_SOUND_ABOVE_PERCENT}%`}
             testId="clip-fast-sound"
             isOn={fast.every((clip) => clip.hasFastSound === true)}
-            onSwitch={(isOn) => store.apply(isOn ? 'Play Fast Sound' : 'Mute Fast Sound', (project) => setSoundSwitches(project, ids, { hasFastSound: isOn }))}
+            onSwitch={playFastSound}
           />
         )}
         {loopable.length > 0 && (
@@ -1281,7 +1406,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
               type="checkbox"
               data-testid="clip-loop"
               checked={isLooping}
-              onChange={(event) => store.apply(event.target.checked ? 'Loop Clip' : 'Stop Looping', (project) => setLoop(project, ids, event.target.checked, mediaStates))}
+              onChange={(event) => switchLoop(event.target.checked)}
             />
             Loop
           </label>
@@ -1343,14 +1468,20 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
             decimals={1}
             edit={(strength) => (project) => setShapeStyle(project, ids, { strength })}
           />
-          <SwitchField label="Pixelate" testId="blur-pixelate" isOn={isPixelated} onSwitch={(isOn) => styleShapes(isOn ? 'Pixelate' : 'Blur', { isPixelated: isOn })} />
+          <SwitchField label="Pixelate" testId="blur-pixelate" isOn={isPixelated} onSwitch={pixelate} />
         </Group>
       )}
       {highlights.length > 0 && (
         <Group title="Highlight" icon="marker">
           <ShapeFields clips={highlights} />
-          <ColorField label="Colour" testId="highlight-color" command="Change Highlight Colour" value={sharedValue(highlights.map((clip) => clip.color))} edit={(color) => (project) => setShapeStyle(project, ids, { color })} />
-          <SwitchField label="Spotlight" testId="highlight-spotlight" isOn={isSpotlight} onSwitch={(isOn) => styleShapes(isOn ? 'Make Spotlight' : 'Make Highlight', { isSpotlight: isOn })} />
+          <ColorField
+            label="Colour"
+            testId="highlight-color"
+            command="Change Highlight Colour"
+            value={sharedValue(highlights.map((clip) => clip.color))}
+            edit={(color) => (project) => setShapeStyle(project, ids, { color })}
+          />
+          <SwitchField label="Spotlight" testId="highlight-spotlight" isOn={isSpotlight} onSwitch={spotlight} />
         </Group>
       )}
       {visual.length > 0 && (
@@ -1382,7 +1513,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
             command="Change Volume"
             value={sharedValue(sounding.map((clip) => (propertyAt(clip, 'volume', time) ?? 1) * PERCENT))}
             min={0}
-            max={2 * PERCENT}
+            max={MAX_VOLUME_PERCENT}
             presets={VOLUMES}
             keyframes={<KeyframeButtons clips={sounding} set="volume" testId="clip-volume" />}
             edit={(percent) => (project) => setProperties(project, soundingIds, { volume: percent / PERCENT }, time)}

@@ -94,8 +94,10 @@ export function startEncoder(ffmpeg: FfmpegRunner, target: ExportTarget): Encode
     }
     const limitMs = FINISH_BASE_MS + writtenBytes / SLOWEST_REWRITE_BYTES_PER_MS
     let timer: NodeJS.Timeout | undefined
+    const limitSeconds = Math.round(limitMs / MS_PER_SECOND)
     const timedOut = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new EncoderError(`The encoder did not finish the file within ${Math.round(limitMs / MS_PER_SECOND)} s of the last frame`)), limitMs)
+      const tooSlow = new EncoderError(`The encoder did not finish the file within ${limitSeconds} s of the last frame`)
+      timer = setTimeout(() => reject(tooSlow), limitMs)
     })
     try {
       await Promise.race([job.done, timedOut])

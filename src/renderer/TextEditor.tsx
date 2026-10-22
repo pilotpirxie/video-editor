@@ -45,7 +45,7 @@ export function TextEditor({ clip }: { clip: TextClip | CalloutClip }): ReactEle
     if (field === null) return
     field.focus()
     field.select()
-    const leave = (): void => {
+    function leave(): void {
       finish()
       store.editText(undefined)
     }

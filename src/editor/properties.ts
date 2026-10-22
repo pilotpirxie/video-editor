@@ -22,7 +22,9 @@ function rescaledList(list: readonly Keyframe[] | undefined, map: (value: number
 
 function rescaledKeyframes(keyframes: Keyframes | undefined, rescale: Rescale): Keyframes | undefined {
   if (keyframes === undefined) return undefined
-  const byScale = (value: number): number => value * rescale.scale
+  function byScale(value: number): number {
+    return value * rescale.scale
+  }
   const rescaled: Keyframes = { ...keyframes }
   if (keyframes.x !== undefined) rescaled.x = rescaledList(keyframes.x, rescale.x)
   if (keyframes.y !== undefined) rescaled.y = rescaledList(keyframes.y, rescale.y)
@@ -36,10 +38,18 @@ function rescaledClip(clip: Clip, rescale: Rescale): Clip {
   const { transform } = clip
   const placed = {
     ...clip,
-    transform: { ...transform, x: rescale.x(transform.x), y: rescale.y(transform.y), scaleX: transform.scaleX * rescale.scale, scaleY: transform.scaleY * rescale.scale },
+    transform: {
+      ...transform,
+      x: rescale.x(transform.x),
+      y: rescale.y(transform.y),
+      scaleX: transform.scaleX * rescale.scale,
+      scaleY: transform.scaleY * rescale.scale,
+    },
     keyframes: rescaledKeyframes(clip.keyframes, rescale),
   }
-  if (placed.type === 'blur') return { ...placed, strength: placed.strength * rescale.scale, softEdge: placed.softEdge * rescale.scale }
+  if (placed.type === 'blur') {
+    return { ...placed, strength: placed.strength * rescale.scale, softEdge: placed.softEdge * rescale.scale }
+  }
   if (placed.type === 'highlight') return { ...placed, softEdge: placed.softEdge * rescale.scale }
   if (placed.effects === undefined) return placed
   return { ...placed, effects: placed.effects.map((effect) => scaledEffect(effect, rescale.scale)) }
@@ -56,7 +66,10 @@ export function setCanvasSize(project: Project, size: Size): Project {
     x: (value) => width / 2 + (value - canvas.width / 2) * scale,
     y: (value) => height / 2 + (value - canvas.height / 2) * scale,
   }
-  const tracks = project.tracks.map((track) => ({ ...track, clips: track.clips.map((clip) => rescaledClip(clip, rescale)) }))
+  const tracks = project.tracks.map((track) => {
+    const clips = track.clips.map((clip) => rescaledClip(clip, rescale))
+    return { ...track, clips }
+  })
   const camera = project.camera?.map((zoom) => ({ ...zoom, x: rescale.x(zoom.x), y: rescale.y(zoom.y) }))
   return { ...project, canvas: { ...canvas, width, height }, tracks, camera }
 }
@@ -150,8 +163,10 @@ function isAnimated(clip: Clip, properties: readonly AnimatableProperty[]): bool
 function keyTimeAt(clip: Clip, properties: readonly AnimatableProperty[], time: number, frameTicks: number): number {
   const local = localGridTime(clip, time)
   for (const property of properties) {
-    const inFrame = clip.keyframes?.[property]?.find((keyframe) => keyframe.time >= local && keyframe.time < local + frameTicks)
-    if (inFrame !== undefined) return inFrame.time
+    for (const keyframe of clip.keyframes?.[property] ?? []) {
+      const isInFrame = keyframe.time >= local && keyframe.time < local + frameTicks
+      if (isInFrame) return keyframe.time
+    }
   }
   return local
 }
@@ -202,7 +217,11 @@ function changedSets(clip: Clip, values: PropertyValues, time: number): Animatab
     let isChanged = false
     for (const property of properties) {
       const wanted = values[property]
-      if (wanted !== undefined && limited(property, wanted) !== propertyAt(clip, property, time)) isChanged = true
+      if (wanted === undefined) continue
+      if (limited(property, wanted) !== propertyAt(clip, property, time)) {
+        isChanged = true
+        break
+      }
     }
     if (isChanged) changed.push(properties)
   }
@@ -227,7 +246,12 @@ export function setProperties(project: Project, clipIds: readonly string[], valu
     const isKeyed = changed.some((properties) => isAnimated(clip, properties))
     let edited = clip
     for (const properties of changed) {
-      edited = isKeyed ? withSetKeyed(edited, properties, wanted, keyTimeAt(edited, properties, time, frameTicks)) : withBaseValues(edited, properties, wanted, time)
+      if (isKeyed) {
+        const keyTime = keyTimeAt(edited, properties, time, frameTicks)
+        edited = withSetKeyed(edited, properties, wanted, keyTime)
+      } else {
+        edited = withBaseValues(edited, properties, wanted, time)
+      }
     }
     return edited
   })
@@ -267,8 +291,14 @@ export function setKeyframesAt(project: Project, clipIds: readonly string[], set
 
 export function hasKeyframesAt(clip: Clip, set: KeyframeSet, time: number, frameTicks: number): boolean {
   const properties = propertiesOf(clip, set)
+  if (properties.length === 0) return false
   const local = keyTimeAt(clip, properties, time, frameTicks)
-  return properties.length > 0 && properties.every((property) => clip.keyframes?.[property]?.some((keyframe) => keyframe.time === local) === true)
+  for (const property of properties) {
+    const keyframes = clip.keyframes?.[property] ?? []
+    const isKeyedHere = keyframes.some((keyframe) => keyframe.time === local)
+    if (!isKeyedHere) return false
+  }
+  return true
 }
 
 export function keyframeFrame(clip: Clip, localTime: number, frameTicks: number): number {
@@ -312,7 +342,10 @@ export function motionPath(clip: Clip): MotionPath | undefined {
   for (const keyframe of keyframes) {
     if (keyframe.time >= 0 && keyframe.time <= clip.duration) keyTimes.add(keyframe.time)
   }
-  const times = [...new Set([0, ...keyTimes, clip.duration])].sort((a, b) => a - b)
+  const pathTimes = new Set(keyTimes)
+  pathTimes.add(0)
+  pathTimes.add(clip.duration)
+  const times = [...pathTimes].sort((a, b) => a - b)
   const line: Point[] = []
   for (let index = 1; index < times.length; index += 1) {
     const from = times[index - 1] ?? 0
@@ -321,7 +354,8 @@ export function motionPath(clip: Clip): MotionPath | undefined {
   }
   line.push(placeAt(clip.duration))
 
-  const dots = [...keyTimes].sort((a, b) => a - b).map((time) => ({ time, point: placeAt(time) }))
+  const dotTimes = [...keyTimes].sort((a, b) => a - b)
+  const dots = dotTimes.map((time) => ({ time, point: placeAt(time) }))
   return { line, dots }
 }
 
@@ -365,8 +399,10 @@ export type SoundSwitches = {
 export function setSoundSwitches(project: Project, clipIds: readonly string[], switches: SoundSwitches): Project {
   return editClips(project, new Set(clipIds), (clip) => {
     if (!hasSource(clip)) return clip
-    const changesPitch = (switches.changesPitch ?? clip.changesPitch === true) ? true : undefined
-    const hasFastSound = (switches.hasFastSound ?? clip.hasFastSound === true) ? true : undefined
+    const isPitchChanging = switches.changesPitch ?? clip.changesPitch === true
+    const isFastSoundOn = switches.hasFastSound ?? clip.hasFastSound === true
+    const changesPitch = isPitchChanging ? true : undefined
+    const hasFastSound = isFastSoundOn ? true : undefined
     const isUnchanged = changesPitch === clip.changesPitch && hasFastSound === clip.hasFastSound
     return isUnchanged ? clip : { ...clip, changesPitch, hasFastSound }
   })
@@ -377,7 +413,8 @@ export function setDuration(project: Project, clipIds: readonly string[], durati
   for (const clipId of clipIds) {
     const located = locateClip(edited, clipId)
     if (located === undefined) continue
-    edited = trimClip(edited, { clipId, edge: 'end', time: located.clip.start + duration, isRipple: false, frameTicks, mediaStates })
+    const trim = { clipId, edge: 'end' as const, time: located.clip.start + duration, isRipple: false, frameTicks, mediaStates }
+    edited = trimClip(edited, trim)
   }
   return edited
 }
@@ -399,11 +436,15 @@ export function setSpeed(project: Project, clipIds: readonly string[], speedPerc
   for (const clipId of clipIds) {
     // Located again each time: an earlier clip of the same track may have moved this one.
     const located = locateClip(edited, clipId)
-    if (located === undefined || !hasSource(located.clip) || located.clip.speedPercent === speed) continue
+    if (located === undefined || !hasSource(located.clip)) continue
+    if (located.clip.speedPercent === speed) continue
     const { clip, track } = located
     const used = (clip.duration / TIMELINE_GRID) * clip.speedPercent
     const duration = Math.max(TIMELINE_GRID, Math.floor(used / speed) * TIMELINE_GRID)
-    edited = editClips(edited, new Set([clipId]), (found) => (hasSource(found) ? withFadesWithin({ ...found, speedPercent: speed, duration }) : found))
+    edited = editClips(edited, new Set([clipId]), (found) => {
+      if (!hasSource(found)) return found
+      return withFadesWithin({ ...found, speedPercent: speed, duration })
+    })
     edited = shiftLater(edited, track, endOf(clip), duration - clip.duration, clipId)
   }
   return edited
@@ -411,9 +452,12 @@ export function setSpeed(project: Project, clipIds: readonly string[], speedPerc
 
 export function setLoop(project: Project, clipIds: readonly string[], isLooping: boolean, mediaStates: MediaStates): Project {
   return editClips(project, new Set(clipIds), (clip) => {
-    if (clip.type !== 'video' || (clip.loop === true) === isLooping) return clip
+    if (clip.type !== 'video') return clip
+    const isAlreadySet = (clip.loop === true) === isLooping
+    if (isAlreadySet) return clip
     const state = mediaStates[clip.mediaId]
-    if (state === undefined || 'error' in state || state.info.kind !== 'video' || state.info.isAnimatedImage !== true) return clip
+    if (state === undefined || 'error' in state) return clip
+    if (state.info.kind !== 'video' || state.info.isAnimatedImage !== true) return clip
     if (isLooping) return { ...clip, loop: true }
 
     const { loop: _loop, ...once } = clip
@@ -428,12 +472,15 @@ function withFade(clip: Clip, fade: Fade, length: number | undefined): Clip {
   if (isVolumeFade) return hasVolume(clip) ? { ...clip, [fade]: length } : clip
   if (!isVisual(clip)) return clip
   const faded = { ...clip, [fade]: length }
-  return length === undefined ? faded : withOnlyAtEnd(faded, fade === 'fadeIn' ? 'in' : 'out', 'fade')
+  if (length === undefined) return faded
+  const edge = fade === 'fadeIn' ? 'in' : 'out'
+  return withOnlyAtEnd(faded, edge, 'fade')
 }
 
 export function setFade(project: Project, clipIds: readonly string[], fade: Fade, length: number): Project {
   return editClips(project, new Set(clipIds), (clip) => {
-    const onGrid = Math.round(Math.min(clip.duration, Math.max(0, length)) / TIMELINE_GRID) * TIMELINE_GRID
+    const inClip = Math.min(clip.duration, Math.max(0, length))
+    const onGrid = Math.round(inClip / TIMELINE_GRID) * TIMELINE_GRID
     return withFade(clip, fade, onGrid === 0 ? undefined : onGrid)
   })
 }

@@ -62,7 +62,9 @@ type Playback = {
 }
 
 function isOutputReport(value: unknown): value is OutputReport {
-  return typeof value === 'object' && value !== null && 'type' in value && value.type === 'consumed' && 'samples' in value && typeof value.samples === 'number'
+  if (typeof value !== 'object' || value === null) return false
+  if (!('type' in value) || value.type !== 'consumed') return false
+  return 'samples' in value && typeof value.samples === 'number'
 }
 
 class EngineError extends Error {
@@ -194,7 +196,9 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     playing.isMixing = true
     try {
       const queueTarget = AUDIO_QUEUE_SECONDS * SAMPLE_RATE
-      while (playback === playing && playing.mixedUntil - (playing.startSample + playing.consumedSamples) < queueTarget) {
+      while (playback === playing) {
+        const queuedSamples = playing.mixedUntil - (playing.startSample + playing.consumedSamples)
+        if (queuedSamples >= queueTarget) break
         const samples = await mix(project.project, project.media, playing.mixedUntil, AUDIO_BLOCK_SAMPLES, readAudio)
         if (playback !== playing) return
         const command: OutputCommand = { type: 'samples', samples }
@@ -253,8 +257,10 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
   function drawPlaying(project: LoadedProject, playing: Playback, frame: number, frameTicks: number): void {
     const skipped = playing.drawnFrame === undefined ? 0 : frame - playing.drawnFrame - 1
     const view = cameraAt(project, frame * frameTicks)
-    const { items, lateLayers } = provider.itemsNow(layersAt(project, frame * frameTicks), textScale(project, view))
-    droppedFrames += Math.max(0, skipped) + (lateLayers > 0 ? 1 : 0)
+    const layers = layersAt(project, frame * frameTicks)
+    const { items, lateLayers } = provider.itemsNow(layers, textScale(project, view))
+    droppedFrames += Math.max(0, skipped)
+    if (lateLayers > 0) droppedFrames += 1
     playing.drawnFrame = frame
     time = frame * frameTicks
     draw(project, view, items)

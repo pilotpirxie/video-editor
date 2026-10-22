@@ -261,7 +261,9 @@ export class MediaSession implements MediaClient {
       if (job.kind === 'waveform') continue
       const path = this.jobPath(job)
       if (path === undefined) continue
-      const variant = job.kind === 'picture' ? `${job.cadence?.step}:${job.cadence?.phase}` : JSON.stringify(job.stretch)
+      let variant: string
+      if (job.kind === 'picture') variant = `${job.cadence?.step}:${job.cadence?.phase}`
+      else variant = JSON.stringify(job.stretch)
       const key = `${job.kind}:${job.mediaId}:${variant}`
       const kind = kinds.get(key) ?? { madeBytes: 0, made: 0, missing: 0 }
       const bytes = this.cache.bytesOf(path)
@@ -355,7 +357,14 @@ export class MediaSession implements MediaClient {
     await this.cache.ready
     const { signal } = this.project.lifetime
     const segmentLayout = stretch === undefined ? layout : stretchedLayout(layout, stretch)
-    return readSegmentedAudio(entry.directory, segmentLayout, firstSample, sampleCount, (segment) => this.ensureSound(entry, layout, segment, stretch, signal), stretch)
+    return readSegmentedAudio(
+      entry.directory,
+      segmentLayout,
+      firstSample,
+      sampleCount,
+      (segment) => this.ensureSound(entry, layout, segment, stretch, signal),
+      stretch,
+    )
   }
 
   async exportStart(target: ExportTarget): Promise<number> {
@@ -470,20 +479,8 @@ export class MediaSession implements MediaClient {
 
   private async infoOf(path: string, directory: string): Promise<MediaInfo> {
     const infoPath = join(directory, INFO_FILE)
-    if (existsSync(infoPath)) {
-      const cachedText = await readFile(infoPath, 'utf8')
-      let cached: unknown
-      try {
-        cached = JSON.parse(cachedText)
-      } catch (error) {
-        logError('Ignoring an unreadable media info cache', error, { infoPath })
-      }
-      if (isMediaInfo(cached)) {
-        const now = new Date()
-        utimes(infoPath, now, now).catch((error: unknown) => logError('Could not mark a media info cache as used', error, { infoPath }))
-        return cached
-      }
-    }
+    const cached = await readCachedInfo(infoPath)
+    if (cached !== undefined) return cached
     const info = await this.probes.run(1, () => probeMedia(this.ffmpeg, path))
     await writeFile(infoPath, JSON.stringify(info))
     await this.cache.added(infoPath)
@@ -528,7 +525,9 @@ export class MediaSession implements MediaClient {
   private readinessOf(job: PreparationJob): number {
     const entry = this.project.media.get(job.mediaId)
     const path = this.jobPath(job)
-    if (entry === undefined || path === undefined || entry.hasFailed || this.cache.has(path) || entry.silentSegmentPaths.has(path)) return 1
+    if (entry === undefined || path === undefined || entry.hasFailed) return 1
+    const isReady = this.cache.has(path) || entry.silentSegmentPaths.has(path)
+    if (isReady) return 1
     const inProgress = this.inProgress
     const layout = this.layoutOf(entry, undefined)
     const isBeingWritten = job.kind === 'picture' && inProgress?.index === path
@@ -560,7 +559,8 @@ export class MediaSession implements MediaClient {
       const entry = this.project.media.get(job.mediaId)
       const path = this.jobPath(job)
       if (entry === undefined || entry.hasFailed || path === undefined) continue
-      if (this.cache.has(path) || this.cache.pending(path) !== undefined || entry.silentSegmentPaths.has(path)) continue
+      const isMadeOrMaking = this.cache.has(path) || this.cache.pending(path) !== undefined || entry.silentSegmentPaths.has(path)
+      if (isMadeOrMaking) continue
       return job
     }
     return undefined
@@ -652,6 +652,8 @@ export class MediaSession implements MediaClient {
       paths.push(index)
     }
     const claim = this.cache.claim(paths)
+    let threads = 0
+    if (this.settings().backgroundCores === 'half') threads = Math.max(1, Math.ceil(availableParallelism() / 2))
     await buildPreviewRun({
       ffmpeg: this.ffmpeg,
       source: videoSource(entry),
@@ -660,7 +662,7 @@ export class MediaSession implements MediaClient {
       cache: this.cache,
       firstSegment,
       claim,
-      threads: this.settings().backgroundCores === 'half' ? Math.max(1, Math.ceil(availableParallelism() / 2)) : 0,
+      threads,
       signal,
       onFrame: (inProgress) => {
         this.inProgress = inProgress
@@ -684,6 +686,7 @@ export class MediaSession implements MediaClient {
       await this.buildBaseSound(entry, layout, segment, signal)
       return
     }
+    const ensureBaseSegment = (baseSegment: number): Promise<void> => this.ensureSound(entry, layout, baseSegment, undefined, signal)
     await buildStretchedSegment({
       ffmpeg: this.ffmpeg,
       directory: entry.directory,
@@ -692,7 +695,7 @@ export class MediaSession implements MediaClient {
       stretch,
       segment,
       claim: this.cache.claim([path]),
-      readBase: (firstSample, sampleCount) => readSegmentedAudio(entry.directory, layout, firstSample, sampleCount, (baseSegment) => this.ensureSound(entry, layout, baseSegment, undefined, signal)),
+      readBase: (firstSample, sampleCount) => readSegmentedAudio(entry.directory, layout, firstSample, sampleCount, ensureBaseSegment),
       signal,
     })
   }
@@ -709,7 +712,17 @@ export class MediaSession implements MediaClient {
     }
     const claim = this.cache.claim(paths)
     const last = layout.seeksExactly ? segment + paths.length - 1 : lastSegment
-    const silentSegmentPaths = await buildAudioRun({ ffmpeg: this.ffmpeg, source: audioSource(entry), directory: entry.directory, layout, cache: this.cache, firstSegment, lastSegment: last, claim, signal })
+    const silentSegmentPaths = await buildAudioRun({
+      ffmpeg: this.ffmpeg,
+      source: audioSource(entry),
+      directory: entry.directory,
+      layout,
+      cache: this.cache,
+      firstSegment,
+      lastSegment: last,
+      claim,
+      signal,
+    })
     for (const path of silentSegmentPaths) entry.silentSegmentPaths.add(path)
   }
 
@@ -755,6 +768,21 @@ function offers(info: MediaInfo, use: MediaUse): boolean {
   if (use === 'video') return info.kind === 'video'
   if (use === 'image') return info.kind === 'image'
   return info.kind === 'audio' || (info.kind === 'video' && info.audio !== undefined)
+}
+
+async function readCachedInfo(infoPath: string): Promise<MediaInfo | undefined> {
+  if (!existsSync(infoPath)) return undefined
+  const cachedText = await readFile(infoPath, 'utf8')
+  let cached: unknown
+  try {
+    cached = JSON.parse(cachedText)
+  } catch (error) {
+    logError('Ignoring an unreadable media info cache', error, { infoPath })
+  }
+  if (!isMediaInfo(cached)) return undefined
+  const now = new Date()
+  utimes(infoPath, now, now).catch((error: unknown) => logError('Could not mark a media info cache as used', error, { infoPath }))
+  return cached
 }
 
 function cadencesOf(wanted: Wanted | undefined): Map<string, Cadence[]> {

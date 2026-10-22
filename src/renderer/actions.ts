@@ -9,7 +9,7 @@ import { clipsToSeparate, separateAudio } from '../editor/separate.js'
 import { clipsToSplit, splitClips } from '../editor/split.js'
 import { addTrack } from '../editor/tracks.js'
 import { DEFAULT_TRANSITION, setTransition } from '../editor/transitions.js'
-import { projectDuration, type Clip, type EffectType, type TransitionType } from '../shared/project.js'
+import { projectDuration, type Clip, type EffectType, type Project, type TransitionType } from '../shared/project.js'
 import { stillDurationTicks } from '../shared/settings.js'
 import { frameAt, frameDuration } from '../shared/time.js'
 import type { EditorStore } from './store.js'
@@ -45,6 +45,14 @@ export type Actions = {
 
 function plural(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`
+}
+
+function nextNumberedTracks(project: Project, count: number): NewTrack[] {
+  const tracks: NewTrack[] = []
+  for (let index = 0; index < count; index++) {
+    tracks.push({ id: crypto.randomUUID(), name: `Track ${project.tracks.length + index + 1}` })
+  }
+  return tracks
 }
 
 export function createActions(store: EditorStore, transport: Transport): Actions {
@@ -86,7 +94,7 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     const clipIds = copied.clips.map(() => crypto.randomUUID())
     const memberIds = new Map<string, string>()
     for (const { clip } of copied.clips) addMemberIds(clip, memberIds)
-    const newTracks: NewTrack[] = copied.clips.map((_clip, index) => ({ id: crypto.randomUUID(), name: `Track ${project.tracks.length + index + 1}` }))
+    const newTracks = nextNumberedTracks(project, copied.clips.length)
     store.apply(label, (current) => pasteClips(current, { clipboard: copied, at, clipIds, memberIds, newTracks }))
     store.select(clipIds)
   }
@@ -101,10 +109,13 @@ export function createActions(store: EditorStore, transport: Transport): Actions
 
   function selectedClipIds(isWanted: (clip: Clip) => boolean): string[] {
     const { project, selection } = store.getState()
-    return selection.filter((clipId) => {
+    const clipIds: string[] = []
+    for (const clipId of selection) {
       const located = locateClip(project, clipId)
-      return located !== undefined && !located.track.locked && isWanted(located.clip)
-    })
+      if (located === undefined || located.track.locked) continue
+      if (isWanted(located.clip)) clipIds.push(clipId)
+    }
+    return clipIds
   }
 
   function playheadFrame(): number {
@@ -141,13 +152,15 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       const newIds = new Map<string, string>()
       for (const clipId of clipsToSeparate(project, selection, mediaStates)) newIds.set(clipId, crypto.randomUUID())
       if (newIds.size === 0) return
-      const newTracks: NewTrack[] = project.tracks.map((_track, index) => ({ id: crypto.randomUUID(), name: `Track ${project.tracks.length + index + 1}` }))
+      const newTracks = nextNumberedTracks(project, project.tracks.length)
       store.apply('Separate Video and Audio', (current) => separateAudio(current, mediaStates, newIds, newTracks))
     },
     addAnnotation(kind, centre) {
       const { project } = store.getState()
       const duration = stillDurationTicks(store.getState().settings)
-      const added = { clipId: crypto.randomUUID(), start: playheadFrame(), duration, trackIndex: trackAboveAll(project), newTrack: { id: crypto.randomUUID(), name: nextTrackName(project) }, centre }
+      const start = playheadFrame()
+      const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
+      const added = { clipId: crypto.randomUUID(), start, duration, trackIndex: trackAboveAll(project), newTrack, centre }
       store.apply(`Add ${ANNOTATION_NAMES[kind]}`, (current) => addAnnotation(current, kind, added))
       store.select([added.clipId])
       if (kind === 'text' || kind === 'callout') store.editText(added.clipId)
@@ -159,7 +172,11 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
       const start = transport.position().time
       const stillDuration = stillDurationTicks(settings)
-      store.apply(media.length === 1 ? 'Add Clip' : `Add ${media.length} Clips`, (current) => dropMedia(current, { media, start, trackIndex: trackAboveAll(current), newTrack, stillDuration }))
+      const label = media.length === 1 ? 'Add Clip' : `Add ${media.length} Clips`
+      store.apply(label, (current) => {
+        const drop = { media, start, trackIndex: trackAboveAll(current), newTrack, stillDuration }
+        return dropMedia(current, drop)
+      })
       store.select(media.map((dropped) => dropped.clipId))
     },
     removeMedia(mediaIds) {
@@ -181,15 +198,16 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       const groupIds = selectedClipIds((clip) => clip.type === 'group')
       if (groupIds.length === 0) return
       const memberIds: string[] = []
-      const newTracks: NewTrack[] = []
+      let innerTrackCount = 0
       for (const groupId of groupIds) {
         const group = locateClip(project, groupId)?.clip
         if (group?.type !== 'group') continue
         for (const inner of group.tracks) {
-          newTracks.push({ id: crypto.randomUUID(), name: `Track ${project.tracks.length + newTracks.length + 1}` })
-          memberIds.push(...inner.clips.map((clip) => clip.id))
+          innerTrackCount += 1
+          for (const clip of inner.clips) memberIds.push(clip.id)
         }
       }
+      const newTracks = nextNumberedTracks(project, innerTrackCount)
       store.apply(`Ungroup ${plural(groupIds.length, 'Clip')}`, (current) => ungroupClips(current, { groupIds, newTracks }))
       store.select(memberIds)
     },
@@ -209,7 +227,9 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     addEffect(type) {
       const clipIds = selectedClipIds((clip) => takesEffect(clip, type))
       if (clipIds.length === 0) {
-        store.notify(type === 'blurFill' ? 'Select a video or an image first, or drag the effect onto one.' : 'Select a video, an image or a text first, or drag the effect onto one.')
+        let hint = 'Select a video, an image or a text first, or drag the effect onto one.'
+        if (type === 'blurFill') hint = 'Select a video or an image first, or drag the effect onto one.'
+        store.notify(hint)
         return
       }
       store.apply('Add Effect', (project) => addEffect(project, clipIds, type))
@@ -221,9 +241,10 @@ export function createActions(store: EditorStore, transport: Transport): Actions
         return
       }
       const { frameTicks } = limits()
+      const transition = { type, duration: DEFAULT_TRANSITION }
       store.apply('Add Transition', (project) => {
         let edited = project
-        for (const clipId of clipIds) edited = setTransition(edited, { clipId, edge: 'in' }, { type, duration: DEFAULT_TRANSITION }, frameTicks)
+        for (const clipId of clipIds) edited = setTransition(edited, { clipId, edge: 'in' }, transition, frameTicks)
         return edited
       })
     },

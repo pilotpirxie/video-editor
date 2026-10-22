@@ -229,11 +229,13 @@ export function fadeHandles(clip: Clip, makesSound: boolean, view: TimelineView,
   const handles: FadeHandle[] = []
   if (clip.type !== 'audio' && bands.picture !== undefined) {
     const y = bands.picture.top + FADE_HANDLE_INSET
-    handles.push({ fade: 'fadeIn', x: fadeInX(clip.fadeIn), y }, { fade: 'fadeOut', x: fadeOutX(clip.fadeOut), y })
+    handles.push({ fade: 'fadeIn', x: fadeInX(clip.fadeIn), y })
+    handles.push({ fade: 'fadeOut', x: fadeOutX(clip.fadeOut), y })
   }
   if (hasVolume(clip) && bands.sound !== undefined) {
     const y = bands.sound.top + bands.sound.height - FADE_HANDLE_INSET
-    handles.push({ fade: 'volumeFadeIn', x: fadeInX(clip.volumeFadeIn), y }, { fade: 'volumeFadeOut', x: fadeOutX(clip.volumeFadeOut), y })
+    handles.push({ fade: 'volumeFadeIn', x: fadeInX(clip.volumeFadeIn), y })
+    handles.push({ fade: 'volumeFadeOut', x: fadeOutX(clip.volumeFadeOut), y })
   }
   return handles
 }
@@ -374,7 +376,12 @@ export type ZoomBar = {
 }
 
 export function zoomBars(camera: readonly CameraKeyframe[]): ZoomBar[] {
-  return camera.map((zoom, index) => ({ index, from: Math.max(zoom.time - zoom.duration, camera[index - 1]?.time ?? 0), to: zoom.time }))
+  const bars: ZoomBar[] = []
+  for (const [index, zoom] of camera.entries()) {
+    const previousTime = camera[index - 1]?.time ?? 0
+    bars.push({ index, from: Math.max(zoom.time - zoom.duration, previousTime), to: zoom.time })
+  }
+  return bars
 }
 
 export type ZoomHit = {

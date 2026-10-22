@@ -58,17 +58,24 @@ export function groupClips(project: Project, grouping: NewGroup): Project {
   let x = project.canvas.width / 2
   let y = project.canvas.height / 2
   if (placed.length > 0) {
-    x = (Math.min(...placed.map((clip) => clip.transform.x)) + Math.max(...placed.map((clip) => clip.transform.x))) / 2
-    y = (Math.min(...placed.map((clip) => clip.transform.y)) + Math.max(...placed.map((clip) => clip.transform.y))) / 2
+    const xs = placed.map((clip) => clip.transform.x)
+    const ys = placed.map((clip) => clip.transform.y)
+    x = (Math.min(...xs) + Math.max(...xs)) / 2
+    y = (Math.min(...ys) + Math.max(...ys)) / 2
   }
 
   const inner: Track[] = []
-  const tracks = project.tracks.map((track) => {
-    if (track.locked || !track.clips.some((clip) => wanted.has(clip.id))) return track
-    const taken = track.clips.filter((clip) => wanted.has(clip.id))
-    inner.push({ ...emptyTrack({ id: `track-${inner.length + 1}`, name: track.name }), clips: taken.map((clip) => asMember(clip, start, x, y)) })
-    return { ...track, clips: track.clips.filter((clip) => !wanted.has(clip.id)) }
-  })
+  const tracks: Track[] = []
+  for (const track of project.tracks) {
+    const taken = track.locked ? [] : track.clips.filter((clip) => wanted.has(clip.id))
+    if (taken.length === 0) {
+      tracks.push(track)
+      continue
+    }
+    const innerClips = taken.map((clip) => asMember(clip, start, x, y))
+    inner.push({ ...emptyTrack({ id: `track-${inner.length + 1}`, name: track.name }), clips: innerClips })
+    tracks.push({ ...track, clips: track.clips.filter((clip) => !wanted.has(clip.id)) })
+  }
   const group: GroupClip = {
     id: grouping.groupId,
     type: 'group',
@@ -89,7 +96,10 @@ function scaledKeyframes(list: Keyframe[] | undefined, factor: number, added: nu
 function placeKeyframes(keyframes: Keyframes, own: Transform, frame: GroupFrame): Pick<Keyframes, 'x' | 'y'> {
   if (keyframes.x === undefined && keyframes.y === undefined) return {}
   if (frame.rotation === 0) {
-    return { x: scaledKeyframes(keyframes.x, frame.scale, frame.x, Infinity), y: scaledKeyframes(keyframes.y, frame.scale, frame.y, Infinity) }
+    return {
+      x: scaledKeyframes(keyframes.x, frame.scale, frame.x, Infinity),
+      y: scaledKeyframes(keyframes.y, frame.scale, frame.y, Infinity),
+    }
   }
   const across = keyframes.x ?? []
   const down = keyframes.y ?? []
@@ -99,7 +109,8 @@ function placeKeyframes(keyframes: Keyframes, own: Transform, frame: GroupFrame)
   const y: Keyframe[] = []
   for (const time of [...times].sort((a, b) => a - b)) {
     const at = onCanvas(frame, { ...own, x: valueAt(across, time) ?? own.x, y: valueAt(down, time) ?? own.y })
-    const easing = across.find((keyframe) => keyframe.time === time)?.easing ?? down.find((keyframe) => keyframe.time === time)?.easing ?? 'linear'
+    const keyed = across.find((keyframe) => keyframe.time === time) ?? down.find((keyframe) => keyframe.time === time)
+    const easing = keyed?.easing ?? 'linear'
     x.push({ time, value: at.x, easing })
     y.push({ time, value: at.y, easing })
   }
@@ -110,7 +121,9 @@ function outOfGroup(member: Clip, group: GroupClip): Clip {
   const volume = group.volume
   let freed = member
   if (hasVolume(freed) && volume !== 1) {
-    const keyframes = freed.keyframes?.volume === undefined ? freed.keyframes : { ...freed.keyframes, volume: scaledKeyframes(freed.keyframes.volume, volume, 0, MAX_VOLUME) }
+    let keyframes = freed.keyframes
+    const volumeKeys = freed.keyframes?.volume
+    if (volumeKeys !== undefined) keyframes = { ...freed.keyframes, volume: scaledKeyframes(volumeKeys, volume, 0, MAX_VOLUME) }
     freed = { ...freed, volume: Math.min(MAX_VOLUME, freed.volume * volume), keyframes }
   }
   if (!isVisual(freed)) return freed
@@ -128,7 +141,9 @@ function outOfGroup(member: Clip, group: GroupClip): Clip {
     }
   }
   const placed = { ...freed, transform: onCanvas(frame, own), keyframes }
-  if (placed.type === 'blur') return { ...placed, strength: placed.strength * frame.scale, softEdge: placed.softEdge * frame.scale }
+  if (placed.type === 'blur') {
+    return { ...placed, strength: placed.strength * frame.scale, softEdge: placed.softEdge * frame.scale }
+  }
   if (placed.type === 'highlight') return { ...placed, softEdge: placed.softEdge * frame.scale }
   if (placed.effects === undefined) return placed
   return { ...placed, effects: placed.effects.map((effect) => scaledEffect(effect, frame.scale)) }
@@ -143,7 +158,22 @@ function shownPart(member: Clip, group: GroupClip): Clip | undefined {
 }
 
 function isFree(track: Track, clips: readonly Clip[]): boolean {
-  return clips.every((clip) => track.clips.every((other) => endOf(other) <= clip.start || other.start >= endOf(clip)))
+  for (const clip of clips) {
+    for (const other of track.clips) {
+      const overlaps = endOf(other) > clip.start && other.start < endOf(clip)
+      if (overlaps) return false
+    }
+  }
+  return true
+}
+
+function freedMembers(inner: Track, group: GroupClip): Clip[] {
+  const freed: Clip[] = []
+  for (const member of inner.clips) {
+    const shown = shownPart(member, group)
+    if (shown !== undefined) freed.push(outOfGroup(shown, group))
+  }
+  return freed
 }
 
 export function ungroupClips(project: Project, ungrouping: Ungrouping): Project {
@@ -152,22 +182,24 @@ export function ungroupClips(project: Project, ungrouping: Ungrouping): Project 
   const tracks: Track[] = []
   let hasChanged = false
   for (const track of project.tracks) {
+    if (track.locked) {
+      tracks.push(track)
+      continue
+    }
     const above: Track[] = []
     let clips = track.clips
     for (const group of track.clips) {
-      if (track.locked || group.type !== 'group' || !wanted.has(group.id) || names.length < group.tracks.length) continue
+      if (group.type !== 'group' || !wanted.has(group.id)) continue
+      if (names.length < group.tracks.length) continue
       hasChanged = true
       clips = clips.filter((clip) => clip !== group)
       for (const inner of group.tracks) {
-        const freed: Clip[] = []
-        for (const member of inner.clips) {
-          const shown = shownPart(member, group)
-          if (shown !== undefined) freed.push(outOfGroup(shown, group))
-        }
+        const freed = freedMembers(inner, group)
         const name = names.shift()
         if (freed.length === 0 || name === undefined) continue
         const isSameKind = inner.hidden === track.hidden && inner.muted === track.muted
-        if (inner === group.tracks[0] && isSameKind && isFree({ ...track, clips }, freed)) clips = [...clips, ...freed]
+        const fitsOnTrack = inner === group.tracks[0] && isSameKind && isFree({ ...track, clips }, freed)
+        if (fitsOnTrack) clips = [...clips, ...freed]
         else above.push({ ...emptyTrack(name), hidden: inner.hidden, muted: inner.muted, clips: freed })
       }
     }
@@ -218,7 +250,10 @@ function withTracksAt(tracks: readonly Track[], openGroups: readonly string[], e
   if (groupId === undefined) return edited
   return tracks.map((track) => {
     if (!track.clips.some((clip) => clip.id === groupId)) return track
-    const clips = track.clips.map((clip) => (clip.id === groupId && clip.type === 'group' ? { ...clip, tracks: withTracksAt(clip.tracks, deeper, edited) } : clip))
+    const clips = track.clips.map((clip) => {
+      if (clip.id !== groupId || clip.type !== 'group') return clip
+      return { ...clip, tracks: withTracksAt(clip.tracks, deeper, edited) }
+    })
     return { ...track, clips }
   })
 }

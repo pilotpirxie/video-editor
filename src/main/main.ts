@@ -93,7 +93,13 @@ const MEDIA_EXTENSIONS = [
   'mp3', 'm4a', 'aac', 'wav', 'aiff', 'aif', 'flac', 'ogg', 'opus',
   'jpg', 'jpeg', 'png', 'webp', 'gif', 'apng',
 ]
-const UNSAVED_CHOICES: readonly UnsavedChoice[] = ['save', 'discard', 'cancel']
+const UNSAVED_ANSWERS: readonly { choice: UnsavedChoice; label: string }[] = [
+  { choice: 'save', label: 'Save' },
+  { choice: 'discard', label: "Don't Save" },
+  { choice: 'cancel', label: 'Cancel' },
+]
+const RESTORE_ANSWER = 0
+const DISCARD_ANSWER = 1
 const NEW_WINDOW_OFFSET_PIXELS = 22
 const OFF_SCREEN_POSITION = { x: -20_000, y: 0 }
 const RELOAD_LOOP_GUARD_MS = 10_000
@@ -204,23 +210,30 @@ function isDocumentState(value: unknown): value is DocumentState {
   if (!('isDirty' in value) || typeof value.isDirty !== 'boolean') return false
   const undoLabel = 'undoLabel' in value ? value.undoLabel : undefined
   const redoLabel = 'redoLabel' in value ? value.redoLabel : undefined
-  const isLabel = (label: unknown): boolean => label === undefined || typeof label === 'string'
+  function isLabel(label: unknown): boolean {
+    return label === undefined || typeof label === 'string'
+  }
   return isLabel(undoLabel) && isLabel(redoLabel)
 }
 
 function isMenuShortcuts(value: unknown): value is MenuShortcuts {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const known = new Set<string>(MENU_SHORTCUT_ACTIONS)
-  return Object.entries(value).every(([action, accelerator]) => known.has(action) && typeof accelerator === 'string')
+  for (const [action, accelerator] of Object.entries(value)) {
+    if (!known.has(action) || typeof accelerator !== 'string') return false
+  }
+  return true
 }
 
 function isVersionReport(value: unknown): value is MediaProcessReport {
-  return typeof value === 'object' && value !== null && 'type' in value && value.type === 'versions'
+  if (typeof value !== 'object' || value === null) return false
+  return 'type' in value && value.type === 'versions'
 }
 
 function serveRenderer(): void {
   protocol.handle('app', async (request) => {
-    const filePath = join(RENDERER_DIRECTORY, normalize(decodeURIComponent(new URL(request.url).pathname)))
+    const requestedPath = decodeURIComponent(new URL(request.url).pathname)
+    const filePath = join(RENDERER_DIRECTORY, normalize(requestedPath))
     if (!filePath.startsWith(RENDERER_DIRECTORY)) return new Response('Not found', { status: NOT_FOUND_STATUS })
     try {
       const body = await readFile(filePath)
@@ -278,7 +291,11 @@ function launchMediaProcess(state: AppState): UtilityProcess {
 function restartMediaProcess(state: AppState, uptimeMs: number): void {
   state.mediaProcess = undefined
   state.mediaQuickExits = uptimeMs < MEDIA_PROCESS_MIN_UPTIME_MS ? state.mediaQuickExits + 1 : 0
-  const waitMs = state.mediaQuickExits === 0 ? 0 : Math.min(MEDIA_RESTART_LONGEST_WAIT_MS, MEDIA_RESTART_FIRST_WAIT_MS * 2 ** (state.mediaQuickExits - 1))
+  let waitMs = 0
+  if (state.mediaQuickExits > 0) {
+    const backedOffMs = MEDIA_RESTART_FIRST_WAIT_MS * 2 ** (state.mediaQuickExits - 1)
+    waitMs = Math.min(MEDIA_RESTART_LONGEST_WAIT_MS, backedOffMs)
+  }
   if (waitMs > 0) logError('The media process keeps stopping', new Error(`it ran for ${uptimeMs} ms`), { restartsInMs: waitMs })
   setTimeout(() => {
     if (state.isQuitting) return
@@ -300,10 +317,19 @@ function settingsPath(): string {
   return join(app.getPath('userData'), 'settings.json')
 }
 
+async function saveSettingsAfter(earlier: Promise<void>, settings: AppSettings): Promise<void> {
+  await earlier
+  try {
+    await writeSettings(settingsPath(), settings)
+  } catch (error) {
+    logError('Could not save the settings', error)
+  }
+}
+
 function changeSettings(state: AppState, value: unknown): void {
   const settings = parseSettings(value)
   state.settings = settings
-  state.savingSettings = state.savingSettings.then(() => writeSettings(settingsPath(), settings)).catch((error: unknown) => logError('Could not save the settings', error))
+  state.savingSettings = saveSettingsAfter(state.savingSettings, settings)
   for (const editor of state.editors) send(editor.window, { type: 'settings', settings })
   const command: MediaProcessCommand = { type: 'settings', settings: mediaSettingsOf(settings) }
   state.mediaProcess?.postMessage(command)
@@ -470,7 +496,10 @@ function exitWhenOutputCloses(state: AppState): void {
 
 async function finish(state: AppState, result: Record<string, unknown>): Promise<void> {
   const report = { ...result }
-  if (state.memory !== undefined) report.peakMemoryMegabytes = Math.round((await state.memory.stop()) / BYTES_PER_MEGABYTE)
+  if (state.memory !== undefined) {
+    const peakBytes = await state.memory.stop()
+    report.peakMemoryMegabytes = Math.round(peakBytes / BYTES_PER_MEGABYTE)
+  }
   process.stdout.write(`${JSON.stringify(report)}\n`)
   exit(state, 0)
 }
@@ -522,14 +551,14 @@ function startExportFor(state: AppState, requester: BrowserWindow, job: ExportJo
   })
 }
 
-function titleOf(document: DocumentInfo): string {
-  return document.path === undefined ? UNTITLED : basename(document.path)
+function titleOf(path: string | undefined): string {
+  return path === undefined ? UNTITLED : basename(path)
 }
 
 function showDocument(state: AppState, editor: Editor): void {
   const { window, document, documentState } = editor
   if (window.isDestroyed()) return
-  window.setTitle(titleOf(document))
+  window.setTitle(titleOf(document.path))
   window.setRepresentedFilename(document.path ?? '')
   window.setDocumentEdited(documentState.isDirty)
   if (state.activeEditor === editor) buildEditorMenu(state)
@@ -598,13 +627,13 @@ async function askUnsavedChanges(state: AppState, editor: Editor): Promise<Unsav
   if (state.dialogAnswers.unsavedChanges !== undefined) return state.dialogAnswers.unsavedChanges
   const answer = await dialog.showMessageBox(editor.window, {
     type: 'warning',
-    message: `Do you want to save the changes you made to "${titleOf(editor.document)}"?`,
+    message: `Do you want to save the changes you made to "${titleOf(editor.document.path)}"?`,
     detail: 'Your changes will be lost if you do not save them.',
-    buttons: ['Save', "Don't Save", 'Cancel'],
-    defaultId: 0,
-    cancelId: 2,
+    buttons: UNSAVED_ANSWERS.map((choice) => choice.label),
+    defaultId: UNSAVED_ANSWERS.findIndex((choice) => choice.choice === 'save'),
+    cancelId: UNSAVED_ANSWERS.findIndex((choice) => choice.choice === 'cancel'),
   })
-  return UNSAVED_CHOICES[answer.response] ?? 'cancel'
+  return UNSAVED_ANSWERS[answer.response]?.choice ?? 'cancel'
 }
 
 function registerDocumentIpc(state: AppState): void {
@@ -745,7 +774,8 @@ function registerIpc(state: AppState): void {
       return
     }
     logError('Refused an export job from a window', new Error('a choice in it is not one the dialog offers'), { job })
-    send(requester, { type: 'export-event', event: { type: 'error', message: 'The export settings were not understood. Choose them again and export once more.' } })
+    const message = 'The export settings were not understood. Choose them again and export once more.'
+    send(requester, { type: 'export-event', event: { type: 'error', message } })
   })
 
   ipcMain.on('cancel-export', () => state.exportWindow?.destroy())
@@ -797,11 +827,18 @@ function buildEditorMenu(state: AppState): void {
   // The page handles these keys, so a single key never fires inside a text field.
   function rebindable(action: MenuAction, label: string): MenuItemConstructorOptions {
     const accelerator = state.menuShortcuts[action]
-    return accelerator === undefined ? item(action, label) : { ...item(action, label, accelerator), registerAccelerator: false }
+    if (accelerator === undefined) return item(action, label)
+    return { ...item(action, label, accelerator), registerAccelerator: false }
   }
 
   function sortItem(sort: MediaSort, label: string): MenuItemConstructorOptions {
-    return { id: `sort-${sort}`, label, type: 'radio', checked: state.settings.mediaSort === sort, click: () => changeSettings(state, { ...state.settings, mediaSort: sort }) }
+    return {
+      id: `sort-${sort}`,
+      label,
+      type: 'radio',
+      checked: state.settings.mediaSort === sort,
+      click: () => changeSettings(state, { ...state.settings, mediaSort: sort }),
+    }
   }
 
   function withLabel(verb: string, label: string | undefined): string {
@@ -911,20 +948,27 @@ function openHarness(state: AppState, projectPath: string | undefined, isUnatten
 
 async function shouldRestore(state: AppState, found: readonly FoundRecovery[]): Promise<boolean> {
   if (state.dialogAnswers.restore !== undefined) return state.dialogAnswers.restore
-  const names = found.map((each) => `"${each.projectPath === undefined ? UNTITLED : basename(each.projectPath)}"`).join(', ')
+  const names = found.map((each) => `"${titleOf(each.projectPath)}"`).join(', ')
+  let message = `The editor closed unexpectedly while ${found.length} projects had unsaved changes: ${names}.`
+  if (found.length === 1) message = `The editor closed unexpectedly while ${names} had unsaved changes.`
   const answer = await dialog.showMessageBox({
     type: 'question',
-    message: found.length === 1 ? `The editor closed unexpectedly while ${names} had unsaved changes.` : `The editor closed unexpectedly while ${found.length} projects had unsaved changes: ${names}.`,
+    message,
     detail: 'Restore brings back your work as it was at most 10 seconds before the editor closed.',
     buttons: ['Restore', 'Discard'],
-    defaultId: 0,
-    cancelId: 1,
+    defaultId: RESTORE_ANSWER,
+    cancelId: DISCARD_ANSWER,
   })
-  return answer.response === 0
+  return answer.response === RESTORE_ANSWER
 }
 
 function recoveredDocument(found: FoundRecovery): DocumentInfo {
-  return { path: found.projectPath, loadFrom: found.recoveryPath, recoveryPath: found.recoveryPath, exportSnapshotPath: exportSnapshotPath(found.recoveryPath) }
+  return {
+    path: found.projectPath,
+    loadFrom: found.recoveryPath,
+    recoveryPath: found.recoveryPath,
+    exportSnapshotPath: exportSnapshotPath(found.recoveryPath),
+  }
 }
 
 async function firstDocuments(state: AppState, projectPath: string | undefined): Promise<DocumentInfo[]> {

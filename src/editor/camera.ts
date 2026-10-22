@@ -66,7 +66,8 @@ export function setViewAt(project: Project, time: number, view: ZoomView): Proje
   const existing = camera.find((zoom) => zoom.time === time)
   if (existing !== undefined) {
     const isUnchanged = existing.x === fitted.x && existing.y === fitted.y && existing.scale === fitted.scale
-    return isUnchanged ? project : { ...project, camera: camera.map((zoom) => (zoom === existing ? { ...zoom, ...fitted } : zoom)) }
+    if (isUnchanged) return project
+    return { ...project, camera: camera.map((zoom) => (zoom === existing ? { ...zoom, ...fitted } : zoom)) }
   }
   const added: CameraKeyframe = { time, duration: DEFAULT_MOVE, easing: DEFAULT_EASING, ...fitted }
   return { ...project, camera: [...camera, added].sort((a, b) => a.time - b.time) }
@@ -87,11 +88,15 @@ export function setZoom(project: Project, index: number, changes: ZoomChanges, f
   const camera = project.camera ?? []
   const zoom = camera[index]
   if (zoom === undefined) return project
-  const view = clampedView(project.canvas, { x: changes.x ?? zoom.x, y: changes.y ?? zoom.y, scale: changes.scale ?? zoom.scale })
-  const duration = Math.max(frameTicks, Math.round((changes.duration ?? zoom.duration) / frameTicks) * frameTicks)
+  const wanted = { x: changes.x ?? zoom.x, y: changes.y ?? zoom.y, scale: changes.scale ?? zoom.scale }
+  const view = clampedView(project.canvas, wanted)
+  const wholeFrames = Math.round((changes.duration ?? zoom.duration) / frameTicks)
+  const duration = Math.max(frameTicks, wholeFrames * frameTicks)
   const changed: CameraKeyframe = { ...zoom, ...view, duration, easing: changes.easing ?? zoom.easing }
-  const isUnchanged = changed.x === zoom.x && changed.y === zoom.y && changed.scale === zoom.scale && changed.duration === zoom.duration && changed.easing === zoom.easing
-  return isUnchanged ? project : { ...project, camera: camera.map((other) => (other === zoom ? changed : other)) }
+  const isSameView = changed.x === zoom.x && changed.y === zoom.y && changed.scale === zoom.scale
+  const isUnchanged = isSameView && changed.duration === zoom.duration && changed.easing === zoom.easing
+  if (isUnchanged) return project
+  return { ...project, camera: camera.map((other) => (other === zoom ? changed : other)) }
 }
 
 export function deleteZoom(project: Project, index: number): Project {

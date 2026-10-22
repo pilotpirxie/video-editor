@@ -160,7 +160,8 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
 
   async function loadFull(layer: VideoLayer, signal: AbortSignal | undefined): Promise<Picture> {
     const frame = await media.fullFrame(layer.mediaId, layer.frame, layer.halvings, signal)
-    return { texture: compositor.uploadPixels(frame), naturalWidth: layer.video.width, naturalHeight: layer.video.height, hasAlphaBelow: false }
+    const texture = compositor.uploadPixels(frame)
+    return { texture, naturalWidth: layer.video.width, naturalHeight: layer.video.height, hasAlphaBelow: false }
   }
 
   async function loadPreview(layer: VideoLayer): Promise<Picture | undefined> {
@@ -187,17 +188,25 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
   function streamOf(layer: VideoLayer): OpenStream {
     const known = streams.get(layer.clipId)
     if (known !== undefined) return known
-    const opened: OpenStream = { id: media.openStream(layer.mediaId, layer.frame, layer.halvings), shown: undefined, ahead: undefined }
+    const id = media.openStream(layer.mediaId, layer.frame, layer.halvings)
+    const opened: OpenStream = { id, shown: undefined, ahead: undefined }
     streams.set(layer.clipId, opened)
     return opened
+  }
+
+  async function streamFrameOf(stream: OpenStream, frame: number): Promise<RawFrame> {
+    const id = await stream.id
+    return media.streamFrame(id, frame)
   }
 
   async function nextStreamFrame(layer: VideoLayer): Promise<Picture> {
     const stream = streamOf(layer)
     const ahead = stream.ahead
     stream.ahead = undefined
-    const frame = ahead?.frame === layer.frame ? await ahead.raw : await media.streamFrame(await stream.id, layer.frame)
-    stream.shown = stream.shown === undefined ? compositor.uploadPixels(frame) : compositor.refillPixels(stream.shown, frame)
+    const raw = ahead?.frame === layer.frame ? ahead.raw : streamFrameOf(stream, layer.frame)
+    const frame = await raw
+    if (stream.shown === undefined) stream.shown = compositor.uploadPixels(frame)
+    else stream.shown = compositor.refillPixels(stream.shown, frame)
     return { texture: stream.shown, naturalWidth: layer.video.width, naturalHeight: layer.video.height, hasAlphaBelow: false }
   }
 
@@ -219,7 +228,7 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     for (const layer of layers) {
       if (layer.kind !== 'video') continue
       const stream = streamOf(layer)
-      const raw = stream.id.then((id) => media.streamFrame(id, layer.frame))
+      const raw = streamFrameOf(stream, layer.frame)
       // A frame asked for ahead that is never drawn is not needed; one that is drawn reports its failure there.
       raw.catch(() => {})
       stream.ahead = { frame: layer.frame, raw }
@@ -251,7 +260,8 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
 
   async function itemsFor(layers: readonly Layer[], quality: FrameQuality, outputScale: number, signal?: AbortSignal): Promise<DrawItem[]> {
     if (quality === 'stream') await closeEndedStreams(layers)
-    const loaded = await Promise.all(layers.map((layer) => (hasPicture(layer) ? pictureFor(layer, quality, outputScale, signal) : undefined)))
+    const loading = layers.map((layer) => (hasPicture(layer) ? pictureFor(layer, quality, outputScale, signal) : undefined))
+    const loaded = await Promise.all(loading)
     if (quality === 'full') holdPausedVideo(layers, loaded)
     const items: DrawItem[] = []
     for (const [index, layer] of layers.entries()) {

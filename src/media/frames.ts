@@ -172,9 +172,28 @@ export async function decodeKeyframe(ffmpeg: FfmpegRunner, source: VideoSource, 
   const size = decodedSize(video, halvings)
   const args = ['-threads', '1', '-skip_frame', 'nokey', '-noaccurate_seek']
   if (video.alphaDecoder !== undefined) args.push('-c:v', video.alphaDecoder)
-  args.push('-ss', seconds(frameStartOf(video, frame)), '-i', source.path, '-map', '0:v:0', '-fps_mode', 'passthrough', '-frames:v', '1', '-vf', pictureFilters(video, halvings).join(','), '-f', 'rawvideo', '-pix_fmt', 'rgba', '-')
+  args.push(
+    '-ss',
+    seconds(frameStartOf(video, frame)),
+    '-i',
+    source.path,
+    '-map',
+    '0:v:0',
+    '-fps_mode',
+    'passthrough',
+    '-frames:v',
+    '1',
+    '-vf',
+    pictureFilters(video, halvings).join(','),
+    '-f',
+    'rawvideo',
+    '-pix_fmt',
+    'rgba',
+    '-',
+  )
   const bytes = await ffmpeg.runOnce('ffmpeg', args, { timeoutMs: ONE_SHOT_TIMEOUT_MS })
-  if (bytes.length !== size.width * size.height * BYTES_PER_PIXEL) throw new FfmpegError(`ffmpeg found no keyframe before frame ${frame} of ${source.path}`, '', undefined)
+  const expectedBytes = size.width * size.height * BYTES_PER_PIXEL
+  if (bytes.length !== expectedBytes) throw new FfmpegError(`ffmpeg found no keyframe before frame ${frame} of ${source.path}`, '', undefined)
   return { ...size, data: toArrayBuffer(bytes) }
 }
 

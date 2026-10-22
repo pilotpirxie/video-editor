@@ -162,13 +162,26 @@ function soundJobs(range: WantedRange, info: MediaInfo, layout: AudioLayout, pla
 }
 
 function unusedRange(media: PreparableMedia, use: WantedRange['use']): WantedRange {
-  return { mediaId: media.id, use, timelineStart: NEAR_AFTER_TICKS, timelineEnd: 2 * NEAR_AFTER_TICKS, sourceStart: 0, speedPercent: NORMAL_SPEED_PERCENT, isLooping: false }
+  return {
+    mediaId: media.id,
+    use,
+    timelineStart: NEAR_AFTER_TICKS,
+    timelineEnd: 2 * NEAR_AFTER_TICKS,
+    sourceStart: 0,
+    speedPercent: NORMAL_SPEED_PERCENT,
+    isLooping: false,
+  }
 }
 
 function jobKey(job: PreparationJob): string {
   if (job.kind === 'waveform') return `waveform:${job.mediaId}`
-  if (job.kind === 'picture') return job.cadence === undefined ? `picture:${job.mediaId}:${job.segment}` : `picture:${job.mediaId}:${job.cadence.step}:${job.cadence.phase}:${job.segment}`
-  return `sound:${job.mediaId}:${job.stretch === undefined ? '' : stretchKey(job.stretch)}:${job.segment}`
+  if (job.kind === 'picture') {
+    const { cadence } = job
+    if (cadence === undefined) return `picture:${job.mediaId}:${job.segment}`
+    return `picture:${job.mediaId}:${cadence.step}:${cadence.phase}:${job.segment}`
+  }
+  const stretch = job.stretch === undefined ? '' : stretchKey(job.stretch)
+  return `sound:${job.mediaId}:${stretch}:${job.segment}`
 }
 
 export function planPreparation(wanted: Wanted | undefined, media: readonly PreparableMedia[], segmentSeconds: number): PreparationJob[] {

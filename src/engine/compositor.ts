@@ -49,8 +49,12 @@ const TONE_LIFT_REACH = 0.25
 const FADE_LIFT = 0.2
 const SHADOWS_REACH = 0.8
 const HIGHLIGHTS_REACH = 0.4
+const ENDLESS_RADIUS = 1e9
 const NO_LINE = [0, 0, -1] as const
-const NO_CIRCLE = [0, 0, 1e9, 1] as const
+const NO_CIRCLE = [0, 0, ENDLESS_RADIUS, 1] as const
+const REC709_LUMA = { red: 0.2126, green: 0.7152, blue: 0.0722 }
+const QUAD_VERTEX_COUNT = 4
+const YUV420_BYTES_PER_PIXEL = 1.5
 
 export class CompositorError extends Error {
   constructor(message: string) {
@@ -193,7 +197,9 @@ function linkProgram(gl: WebGL2RenderingContext, fragmentShader: string): Progra
 }
 
 function rgbOf(color: string): Rgb {
-  const channel = (at: number): number => Number.parseInt(color.slice(at, at + 2), 16) / COLOR_CHANNEL_MAX
+  function channel(at: number): number {
+    return Number.parseInt(color.slice(at, at + 2), 16) / COLOR_CHANNEL_MAX
+  }
   return { red: channel(1), green: channel(3), blue: channel(5) }
 }
 
@@ -202,7 +208,7 @@ function isAreaEffect(effect: Effect): effect is AreaEffect {
 }
 
 function lumaOf(color: Rgb): number {
-  return 0.2126 * color.red + 0.7152 * color.green + 0.0722 * color.blue
+  return REC709_LUMA.red * color.red + REC709_LUMA.green * color.green + REC709_LUMA.blue * color.blue
 }
 
 function lookNumbers(look: Look): LookNumbers {
@@ -215,8 +221,9 @@ function lookNumbers(look: Look): LookNumbers {
   const shadowLuma = lumaOf(shadow)
   const exposure = 2 ** look.exposure
   const strength = look.strength
-  const channel = (key: keyof Rgb): { gain: number; lift: number } => {
-    const toned = brightest > 0 ? 1 + (highlight[key] / brightest - 1) * look.highlightAmount * TONE_GAIN_REACH : 1
+  function channel(key: keyof Rgb): { gain: number; lift: number } {
+    let toned = 1
+    if (brightest > 0) toned = 1 + (highlight[key] / brightest - 1) * look.highlightAmount * TONE_GAIN_REACH
     const gain = exposure * (balance[key] / balanceLuma) * toned
     const lift = look.fade * FADE_LIFT + (shadow[key] - shadowLuma) * look.shadowAmount * TONE_LIFT_REACH
     return { gain: 1 + (gain - 1) * strength, lift: lift * strength }
@@ -287,10 +294,10 @@ function boxOf(width: number, height: number, transform: Transform, mapping: Out
   }
 }
 
-const quad = new Float32Array(4 * FLOATS_PER_VERTEX)
+const quad = new Float32Array(QUAD_VERTEX_COUNT * FLOATS_PER_VERTEX)
 
 function quadVertices(box: Box, margin: number): Float32Array {
-  for (let index = 0; index < 4; index++) {
+  for (let index = 0; index < QUAD_VERTEX_COUNT; index++) {
     const localX = (index % 2 === 0 ? -1 : 1) * (box.halfWidth + margin)
     const localY = (index < 2 ? -1 : 1) * (box.halfHeight + margin)
     quad[index * FLOATS_PER_VERTEX] = box.centerX + localX * box.cosine - localY * box.sine
@@ -312,7 +319,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
   const vertexBuffer = gl.createBuffer()
   gl.bindVertexArray(vertexArray)
   gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer)
-  gl.bufferData(gl.ARRAY_BUFFER, 4 * FLOATS_PER_VERTEX * Float32Array.BYTES_PER_ELEMENT, gl.DYNAMIC_DRAW)
+  gl.bufferData(gl.ARRAY_BUFFER, quad.byteLength, gl.DYNAMIC_DRAW)
   const stride = FLOATS_PER_VERTEX * Float32Array.BYTES_PER_ELEMENT
   gl.enableVertexAttribArray(0)
   gl.vertexAttribPointer(0, 2, gl.FLOAT, false, stride, 0)
@@ -419,7 +426,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
   function drawQuad(box: Box, margin: number): void {
     gl.uniform2f(at('uOutputSize'), output.width, output.height)
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, quadVertices(box, margin))
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, QUAD_VERTEX_COUNT)
   }
 
   function sendReveal(look: TransitionLook | undefined): void {
@@ -561,12 +568,18 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
     }
     gl.uniform2f(at('uTexel'), 1 / source.width, 1 / source.height)
-    gl.uniform2f(at('uStep'), isHorizontal ? plan.spacing / source.width : 0, isHorizontal ? 0 : plan.spacing / source.height)
+    const stepX = isHorizontal ? plan.spacing / source.width : 0
+    const stepY = isHorizontal ? 0 : plan.spacing / source.height
+    gl.uniform2f(at('uStep'), stepX, stepY)
     gl.uniform2f(at('uShift'), pass.shiftX, pass.shiftY)
     gl.uniform1f(at('uLevel'), isHorizontal ? plan.level : 0)
     gl.uniform1fv(at('uWeights'), plan.weights)
-    const color = shadow === undefined || isHorizontal ? undefined : rgbOf(shadow.color)
-    gl.uniform4f(at('uShadow'), color?.red ?? 0, color?.green ?? 0, color?.blue ?? 0, color === undefined ? 0 : (shadow?.opacity ?? 0))
+    if (shadow === undefined || isHorizontal) {
+      gl.uniform4f(at('uShadow'), 0, 0, 0, 0)
+    } else {
+      const color = rgbOf(shadow.color)
+      gl.uniform4f(at('uShadow'), color.red, color.green, color.blue, shadow.opacity)
+    }
     gl.uniform1f(at('uGain'), isHorizontal ? 1 : pass.gain)
     drawQuad(pass.box, pass.margin)
     // A mipmap filter on a texture without mipmaps samples black.
@@ -603,13 +616,32 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     }
     const isShadow = effect.type === 'dropShadow'
     if (isShadow && !(effect.opacity > 0)) return reach
-    const plan = blurPlan((isShadow ? effect.softness : effect.strength) * mapping.scale)
+    const blurLength = isShadow ? effect.softness : effect.strength
+    const plan = blurPlan(blurLength * mapping.scale)
     const shiftX = isShadow ? effect.offsetX * mapping.scale : 0
     const shiftY = isShadow ? effect.offsetY * mapping.scale : 0
     const reachAfterBlur = reach + Math.hypot(shiftX, shiftY) + plan.reach * Math.SQRT2
     const common = { box, plan, shadow: isShadow ? effect : undefined, gain }
-    blurPass({ ...common, source: picture, target: other, blend: 'replace', margin: reachAfterBlur + plan.reach, isHorizontal: true, shiftX: -shiftX, shiftY: -shiftY })
-    blurPass({ ...common, source: other, target: picture, blend: isShadow ? 'under' : 'replace', margin: reachAfterBlur, isHorizontal: false, shiftX: 0, shiftY: 0 })
+    blurPass({
+      ...common,
+      source: picture,
+      target: other,
+      blend: 'replace',
+      margin: reachAfterBlur + plan.reach,
+      isHorizontal: true,
+      shiftX: -shiftX,
+      shiftY: -shiftY,
+    })
+    blurPass({
+      ...common,
+      source: other,
+      target: picture,
+      blend: isShadow ? 'under' : 'replace',
+      margin: reachAfterBlur,
+      isHorizontal: false,
+      shiftX: 0,
+      shiftY: 0,
+    })
     return reachAfterBlur
   }
 
@@ -844,12 +876,11 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     return readBack.buffer
   }
 
-  const readbackBuffers = [gl.createBuffer(), gl.createBuffer()]
-  const readbackSizes = [0, 0]
-  let nextReadback = 0
+  let nextReadback = { buffer: gl.createBuffer(), byteLength: 0 }
+  let laterReadback = { buffer: gl.createBuffer(), byteLength: 0 }
 
   function drawYuv(): { target: Target; byteLength: number } {
-    const byteLength = (frame.width * frame.height * 3) / 2
+    const byteLength = frame.width * frame.height * YUV420_BYTES_PER_PIXEL
     const rowTexels = frame.width
     const rows = Math.ceil(byteLength / (rowTexels * BYTES_PER_PIXEL))
     yuv ??= createTarget()
@@ -864,23 +895,25 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     gl.uniform2f(at('uOutputSize'), rowTexels, rows)
     gl.bindVertexArray(vertexArray)
     gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer)
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, quadVertices({ centerX: rowTexels / 2, centerY: rows / 2, halfWidth: rowTexels / 2, halfHeight: rows / 2, cosine: 1, sine: 0 }, 0))
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4)
+    const wholeTarget: Box = { centerX: rowTexels / 2, centerY: rows / 2, halfWidth: rowTexels / 2, halfHeight: rows / 2, cosine: 1, sine: 0 }
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, quadVertices(wholeTarget, 0))
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, QUAD_VERTEX_COUNT)
     gl.viewport(0, 0, output.width, output.height)
     return { target, byteLength }
   }
 
   function startReadback(layout: PixelLayout): () => Promise<ArrayBuffer> {
-    const source = layout === 'yuv420p' ? drawYuv() : { target: frame, byteLength: frame.width * frame.height * BYTES_PER_PIXEL }
+    let source = { target: frame, byteLength: frame.width * frame.height * BYTES_PER_PIXEL }
+    if (layout === 'yuv420p') source = drawYuv()
     const { target, byteLength } = source
     const bufferBytes = target.width * target.height * BYTES_PER_PIXEL
-    const slot = nextReadback
-    nextReadback = 1 - nextReadback
-    const buffer = readbackBuffers[slot] ?? null
-    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer)
-    if (readbackSizes[slot] !== bufferBytes) {
+    const readback = nextReadback
+    nextReadback = laterReadback
+    laterReadback = readback
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, readback.buffer)
+    if (readback.byteLength !== bufferBytes) {
       gl.bufferData(gl.PIXEL_PACK_BUFFER, bufferBytes, gl.STREAM_READ)
-      readbackSizes[slot] = bufferBytes
+      readback.byteLength = bufferBytes
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer)
     gl.readPixels(0, 0, target.width, target.height, gl.RGBA, gl.UNSIGNED_BYTE, 0)
@@ -894,7 +927,7 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
       }
       gl.deleteSync(fence)
       if (readBack.length !== byteLength) readBack = new Uint8Array(byteLength)
-      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer)
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, readback.buffer)
       gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, readBack)
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null)
       return readBack.buffer

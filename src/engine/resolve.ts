@@ -305,11 +305,16 @@ export function transitionChange(part: TransitionPart, canvas: Size): Transition
     const tint: Tint = { color: type === 'fadeBlack' ? 'black' : 'white', amount: Math.min(1, 2 * (1 - presence)) }
     return { ...still, opacity: Math.min(1, 2 * presence), tint }
   } else if (movesFrom !== undefined) {
-    if (isArriving) return { ...still, offsetX: movesFrom.x * canvas.width * (1 - moved), offsetY: movesFrom.y * canvas.height * (1 - moved) }
+    if (isArriving) {
+      const remaining = 1 - moved
+      return { ...still, offsetX: movesFrom.x * canvas.width * remaining, offsetY: movesFrom.y * canvas.height * remaining }
+    }
     const staysPut = slideFrom !== undefined && part.isOnCut
-    return staysPut ? still : { ...still, offsetX: -movesFrom.x * canvas.width * moved, offsetY: -movesFrom.y * canvas.height * moved }
+    if (staysPut) return still
+    return { ...still, offsetX: -movesFrom.x * canvas.width * moved, offsetY: -movesFrom.y * canvas.height * moved }
   } else if (type === 'zoom') {
-    const scale = isArriving ? ZOOM_IN_START_SCALE + (1 - ZOOM_IN_START_SCALE) * moved : 1 + (ZOOM_OUT_END_SCALE - 1) * moved
+    let scale = 1 + (ZOOM_OUT_END_SCALE - 1) * moved
+    if (isArriving) scale = ZOOM_IN_START_SCALE + (1 - ZOOM_IN_START_SCALE) * moved
     return { ...still, opacity: presence, scale }
   } else if (type === 'shrink' || type === 'spin') {
     const turn = type === 'spin' ? FULL_TURN : 0
@@ -385,7 +390,9 @@ export function onCanvas(frame: GroupFrame, transform: Transform): Transform {
 
 export function scaledEffect(effect: Effect, factor: number): Effect {
   if (factor === 1) return effect
-  if (effect.type === 'dropShadow') return { ...effect, offsetX: effect.offsetX * factor, offsetY: effect.offsetY * factor, softness: effect.softness * factor }
+  if (effect.type === 'dropShadow') {
+    return { ...effect, offsetX: effect.offsetX * factor, offsetY: effect.offsetY * factor, softness: effect.softness * factor }
+  }
   if (effect.type === 'border') return { ...effect, width: effect.width * factor }
   if (effect.type === 'roundedCorners') return { ...effect, radius: effect.radius * factor }
   if (effect.type === 'clipBlur') return { ...effect, strength: effect.strength * factor }
@@ -405,8 +412,10 @@ function effectsOf(clip: { effects?: Effect[] }, frame: Frame): Effect[] {
 function largestZoom(clip: VisualClip, track: Track, project: Project, shift: number): number {
   if (project.camera === undefined) return 1
   const end = clip.start + clip.duration
-  const cutIn = cutTransition(track.clips.find((other) => other.start + other.duration === clip.start), clip)
-  const cutOut = cutTransition(clip, track.clips.find((other) => other.start === end))
+  const previous = track.clips.find((other) => other.start + other.duration === clip.start)
+  const next = track.clips.find((other) => other.start === end)
+  const cutIn = cutTransition(previous, clip)
+  const cutOut = cutTransition(clip, next)
   const from = clip.start + shift - (cutIn?.duration ?? 0) / 2
   const to = end + shift + (cutOut?.duration ?? 0) / 2
   return largestScaleBetween(project.camera, from, to, project.canvas)
@@ -432,7 +441,13 @@ function placementOf(clip: VisualClip, localTime: number, frame: Frame, canvas: 
   const animation = animationChangeAt(clip, localTime, canvas)
   if (animation !== undefined) {
     opacity *= animation.opacity
-    moved = { ...own, x: own.x + animation.offsetX, y: own.y + animation.offsetY, scaleX: own.scaleX * animation.scale, scaleY: own.scaleY * animation.scale }
+    moved = {
+      ...own,
+      x: own.x + animation.offsetX,
+      y: own.y + animation.offsetY,
+      scaleX: own.scaleX * animation.scale,
+      scaleY: own.scaleY * animation.scale,
+    }
   }
 
   let drawn = onCanvas(frame, moved)
@@ -441,10 +456,20 @@ function placementOf(clip: VisualClip, localTime: number, frame: Frame, canvas: 
     const change = transitionChange(played.part, canvas)
     opacity *= change.opacity
     drawn = movedBy(drawn, change, canvas)
-    look = { tint: change.tint ?? frame.look?.tint, reveal: change.reveal ?? frame.look?.reveal, mixKey: played.mixKey }
+    look = {
+      tint: change.tint ?? frame.look?.tint,
+      reveal: change.reveal ?? frame.look?.reveal,
+      mixKey: played.mixKey,
+    }
   }
   const isMoved = animation !== undefined || played !== undefined
-  return { transform: onCanvas(frame, own), placed: isMoved ? drawn : undefined, opacity, look, letters: animation?.letters }
+  return {
+    transform: onCanvas(frame, own),
+    placed: isMoved ? drawn : undefined,
+    opacity,
+    look,
+    letters: animation?.letters,
+  }
 }
 
 function frameInside(group: GroupClip, frame: Frame, placement: Placement): Frame {
@@ -504,9 +529,29 @@ function layersOf(clip: VisualClip, track: Track, drawing: Drawing, frame: Frame
   if (frame.groups.length > 0) base.groups = frame.groups
 
   if (clip.type === 'blur') {
-    return [{ ...base, kind: 'blur', width: clip.width, height: clip.height, shape: clip.shape, softEdge: clip.softEdge * frame.scale, strength: clip.strength * frame.scale, isPixelated: clip.isPixelated === true }]
+    const blur: Layer = {
+      ...base,
+      kind: 'blur',
+      width: clip.width,
+      height: clip.height,
+      shape: clip.shape,
+      softEdge: clip.softEdge * frame.scale,
+      strength: clip.strength * frame.scale,
+      isPixelated: clip.isPixelated === true,
+    }
+    return [blur]
   } else if (clip.type === 'highlight') {
-    return [{ ...base, kind: 'highlight', width: clip.width, height: clip.height, shape: clip.shape, softEdge: clip.softEdge * frame.scale, color: clip.color, isSpotlight: clip.isSpotlight === true }]
+    const highlight: Layer = {
+      ...base,
+      kind: 'highlight',
+      width: clip.width,
+      height: clip.height,
+      shape: clip.shape,
+      softEdge: clip.softEdge * frame.scale,
+      color: clip.color,
+      isSpotlight: clip.isSpotlight === true,
+    }
+    return [highlight]
   }
 
   const effects = effectsOf(clip, frame)
@@ -519,14 +564,18 @@ function layersOf(clip: VisualClip, track: Track, drawing: Drawing, frame: Frame
       sharpScaleY: largestValue(clip.keyframes, 'scaleY', clip.transform.scaleY) * largestAnimated,
     }
     if (clip.type === 'arrow') {
-      return [{ ...drawn, kind: 'arrow', look: { length: clip.length, thickness: clip.thickness, color: clip.color, startHead: clip.startHead, endHead: clip.endHead } }]
+      const { length, thickness, color, startHead, endHead } = clip
+      return [{ ...drawn, kind: 'arrow', look: { length, thickness, color, startHead, endHead } }]
     }
     if (clip.type === 'callout') {
       const { width, height, shape, fill, borderColor, borderWidth, tail } = clip
       return [{ ...drawn, kind: 'callout', look: { width, height, shape, fill, borderColor, borderWidth, tail, text: textLookOf(clip) } }]
     }
     const text: TextLayer = { ...drawn, kind: 'text', look: textClipLook(clip) }
-    if (placement.letters !== undefined) text.shownLetters = Math.floor(placement.letters * lettersOf(clip.text.replaceAll('\n', '')).length)
+    if (placement.letters !== undefined) {
+      const letterCount = lettersOf(clip.text.replaceAll('\n', '')).length
+      text.shownLetters = Math.floor(placement.letters * letterCount)
+    }
     return [text]
   }
 
@@ -540,14 +589,16 @@ function layersOf(clip: VisualClip, track: Track, drawing: Drawing, frame: Frame
   }
 
   if (info.kind !== 'video') return []
+  const shownTime = loopedTime(sourceTime(clip, time), info.duration, clip.loop === true)
+  const largestShownScale = drawing.outputScale * largestZoom(clip, track, project, frame.shift) * largestAnimated
   return [
     {
       ...picture,
       kind: 'video',
       mediaId: clip.mediaId,
       video: info.video,
-      frame: frameIndexAt(info.video, loopedTime(sourceTime(clip, time), info.duration, clip.loop === true)),
-      halvings: sourceHalvings(info.video, clip, drawing.outputScale * largestZoom(clip, track, project, frame.shift) * largestAnimated),
+      frame: frameIndexAt(info.video, shownTime),
+      halvings: sourceHalvings(info.video, clip, largestShownScale),
       crop: cropAt(clip, localTime),
     },
   ]
@@ -584,10 +635,12 @@ function trackLayers(track: Track, drawing: Drawing, frame: Frame, time: number)
   const isInCutOut = cutOut !== undefined && untilEnd <= cutOut.duration / 2
   const playsCutOut = isInCutOut && (!isInCutIn || untilEnd < sinceStart)
   if (playsCutOut && cutOut !== undefined && next !== undefined && next.type !== 'audio') {
-    return cutLayers(shown, next, cutOut, (cutOut.duration / 2 - untilEnd) / cutOut.duration, track, drawing, frame, time)
+    const progress = (cutOut.duration / 2 - untilEnd) / cutOut.duration
+    return cutLayers(shown, next, cutOut, progress, track, drawing, frame, time)
   }
   if (isInCutIn && cutIn !== undefined && previous !== undefined && previous.type !== 'audio') {
-    return cutLayers(previous, shown, cutIn, (cutIn.duration / 2 + sinceStart) / cutIn.duration, track, drawing, frame, time)
+    const progress = (cutIn.duration / 2 + sinceStart) / cutIn.duration
+    return cutLayers(previous, shown, cutIn, progress, track, drawing, frame, time)
   }
 
   const out = cutOut === undefined ? shown.transitionOut : undefined
@@ -598,7 +651,8 @@ function trackLayers(track: Track, drawing: Drawing, frame: Frame, time: number)
   } else if (into !== undefined && sinceStart < into.duration) {
     part = { type: into.type, progress: sinceStart / into.duration, isArriving: true, isOnCut: false }
   }
-  return layersOf(shown, track, drawing, frame, time, part === undefined ? undefined : { part, mixKey: undefined })
+  if (part === undefined) return layersOf(shown, track, drawing, frame, time, undefined)
+  return layersOf(shown, track, drawing, frame, time, { part, mixKey: undefined })
 }
 
 export function resolveFrame(project: Project, media: MediaStates, time: number, outputScale: number): Layer[] {
@@ -631,7 +685,9 @@ export function forEachPlacedClip(tracks: readonly Track[], window: { from: numb
       const to = Math.min(window.to, clip.start + clip.duration + shift)
       if (from >= to) continue
       if (clip.type === 'group') {
-        forEachPlacedClip(clip.tracks, { from, to }, isLeftOut, visit, shift + clip.start - (clip.contentStart ?? 0), [...groups, { group: clip, shift }])
+        const innerShift = shift + clip.start - (clip.contentStart ?? 0)
+        const enclosing = [...groups, { group: clip, shift }]
+        forEachPlacedClip(clip.tracks, { from, to }, isLeftOut, visit, innerShift, enclosing)
       } else {
         visit({ clip, shift, from, to, groups })
       }
@@ -656,7 +712,15 @@ export function pictureRanges(project: Project, media: MediaStates): WantedRange
     if (clip.type !== 'video') return
     const state = media[clip.mediaId]
     if (state === undefined || 'error' in state || state.info.kind !== 'video') return
-    const range: WantedRange = { mediaId: clip.mediaId, use: 'picture', timelineStart: from, timelineEnd: to, sourceStart: sourceTime(clip, from - shift), speedPercent: clip.speedPercent, isLooping: clip.loop === true }
+    const range: WantedRange = {
+      mediaId: clip.mediaId,
+      use: 'picture',
+      timelineStart: from,
+      timelineEnd: to,
+      sourceStart: sourceTime(clip, from - shift),
+      speedPercent: clip.speedPercent,
+      isLooping: clip.loop === true,
+    }
     const cadence = cadenceOf(clip, shift, state.info.video, frameTicks)
     if (cadence !== undefined) range.cadence = cadence
     found.push(range)

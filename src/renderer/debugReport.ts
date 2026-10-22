@@ -6,6 +6,7 @@ import { TICKS_PER_SECOND, timecode, type FrameRate } from '../shared/time.js'
 const MAX_DETAILED_CLIPS = 20
 const BYTES_PER_MEGABYTE = 1024 * 1024
 const BYTES_PER_GIGABYTE = 1024 * BYTES_PER_MEGABYTE
+const PERCENT = 100
 
 export type DebugReportInput = {
   project: Project
@@ -32,6 +33,10 @@ function systemLine(system: DebugReportInput['system']): string {
   return [`Playback ${system.appVersion}`, ...system.versions, `macOS ${system.macOS}`, system.cpu, memory, `using ${used}`].join(' | ')
 }
 
+function yesOrNo(isOn: boolean): string {
+  return isOn ? 'yes' : 'no'
+}
+
 function trackLine(track: Track, rate: FrameRate): string {
   let start = Infinity
   let end = 0
@@ -40,7 +45,7 @@ function trackLine(track: Track, rate: FrameRate): string {
     end = Math.max(end, clip.start + clip.duration)
   }
   const span = track.clips.length === 0 ? 'empty' : `${timeText(start, rate)} to ${timeText(end, rate)}`
-  const flags = `locked ${track.locked ? 'yes' : 'no'} | hidden ${track.hidden ? 'yes' : 'no'} | muted ${track.muted ? 'yes' : 'no'}`
+  const flags = `locked ${yesOrNo(track.locked)} | hidden ${yesOrNo(track.hidden)} | muted ${yesOrNo(track.muted)}`
   return `${track.name} [${track.id}] | ${track.clips.length} clips | ${span} | ${flags}`
 }
 
@@ -48,8 +53,13 @@ function mediaLines(clip: Clip, input: DebugReportInput): string[] {
   if (!('mediaId' in clip)) return []
   const reference = input.project.media.find((media) => media.id === clip.mediaId)
   const preparation = input.preparation[clip.mediaId]
-  const prepared = preparation === undefined ? 'unknown' : `${Math.round(preparation.progress * 100)}%${preparation.hasFailed ? ' (failed)' : ''}`
-  return [`  media ${reference?.path ?? clip.mediaId} | prepared ${prepared}`, `  info ${JSON.stringify(input.mediaStates[clip.mediaId] ?? 'unknown')}`]
+  let prepared = 'unknown'
+  if (preparation !== undefined) {
+    const failure = preparation.hasFailed ? ' (failed)' : ''
+    prepared = `${Math.round(preparation.progress * PERCENT)}%${failure}`
+  }
+  const info = JSON.stringify(input.mediaStates[clip.mediaId] ?? 'unknown')
+  return [`  media ${reference?.path ?? clip.mediaId} | prepared ${prepared}`, `  info ${info}`]
 }
 
 function clipLines(clip: Clip, track: Track, input: DebugReportInput): string[] {

@@ -141,7 +141,9 @@ export type OverlayScene = {
 
 export function readColors(element: Element): TimelineColors {
   const style = getComputedStyle(element)
-  const token = (name: string): string => style.getPropertyValue(name).trim()
+  function token(name: string): string {
+    return style.getPropertyValue(name).trim()
+  }
   return {
     background: token('--window-background'),
     panel: token('--panel-background'),
@@ -401,7 +403,8 @@ function drawClipDetails(context: CanvasRenderingContext2D, shape: ClipShape, sc
     if (clip.type === 'video' && media !== undefined && picture !== undefined) drawThumbnail(context, clip, media, scene, left, picture)
     const state = hasMedia(clip) ? scene.mediaStates[clip.mediaId] : undefined
     const isAvailable = state !== undefined && 'info' in state
-    if ((clip.type === 'audio' || clip.type === 'video') && sound !== undefined && isAvailable) drawWaveform(context, clip, scene, sound.top, sound.height)
+    const hasSound = clip.type === 'audio' || clip.type === 'video'
+    if (hasSound && sound !== undefined && isAvailable) drawWaveform(context, clip, scene, sound.top, sound.height)
   }
   if (clip.type !== 'audio' && picture !== undefined) {
     drawRamp(context, picture, left, clip.fadeIn, 1, scene)

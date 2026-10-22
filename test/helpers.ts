@@ -15,6 +15,7 @@ export const HAS_SAMPLES = existsSync(join(ROOT, 'samples', 'kangaroo1920.mp4'))
 const FFMPEG_DIR = join(ROOT, 'vendor', 'ffmpeg')
 
 const BYTES_PER_PIXEL = 4
+const MS_PER_SECOND = 1000
 const WHITE_THRESHOLD = 128
 const PEAK_SQUARED = 255 * 255
 
@@ -232,10 +233,13 @@ export async function renderFrames(project: string, request: FrameRequest): Prom
 }
 
 export function projectOfTracks(canvas: Size, tracks: readonly (readonly Clip[])[], camera?: CameraKeyframe[]): Project {
-  const projectTracks = tracks.map((clips, index) => ({ id: `track-${index}`, name: `Track ${index + 1}`, hidden: false, locked: false, muted: false, clips: [...clips] }))
+  const projectTracks = tracks.map((clips, index) => {
+    return { id: `track-${index}`, name: `Track ${index + 1}`, hidden: false, locked: false, muted: false, clips: [...clips] }
+  })
   const media = new Map<string, MediaRef>()
   for (const clip of allClips(projectTracks)) {
-    if ('mediaId' in clip) media.set(clip.mediaId, { id: clip.mediaId, path: join(ROOT, 'test', 'media', 'generated', clip.mediaId), relativePath: '' })
+    if (!('mediaId' in clip)) continue
+    media.set(clip.mediaId, { id: clip.mediaId, path: join(MEDIA_DIRECTORY, clip.mediaId), relativePath: '' })
   }
   const project: Project = {
     version: 1,
@@ -301,7 +305,9 @@ export function expectPixel(picture: Picture, x: number, y: number, expected: Rg
 }
 
 function isSize(value: unknown): value is Size {
-  return typeof value === 'object' && value !== null && 'width' in value && typeof value.width === 'number' && 'height' in value && typeof value.height === 'number'
+  if (typeof value !== 'object' || value === null) return false
+  if (!('width' in value) || !('height' in value)) return false
+  return typeof value.width === 'number' && typeof value.height === 'number'
 }
 
 export function sameBytes(a: Picture, b: Picture): boolean {
@@ -460,7 +466,8 @@ export async function exportWithReport(path: string, outputPath: string, preset:
   const summary = lastJsonLine(result.stdout)
   if (!isExportSummary(summary)) throw new Error(`The export did not report its memory and speed: ${result.stdout}`)
   const elapsedMs = performance.now() - startedAt
-  console.info(`export ${path} at ${preset}: peak memory ${summary.peakMemoryMegabytes} MB, ${summary.realTimeRatio}× real time, ${(elapsedMs / 1000).toFixed(1)} s`)
+  const elapsedSeconds = (elapsedMs / MS_PER_SECOND).toFixed(1)
+  console.info(`export ${path} at ${preset}: peak memory ${summary.peakMemoryMegabytes} MB, ${summary.realTimeRatio}× real time, ${elapsedSeconds} s`)
   const progressLines = result.stdout.split('\n').filter((line) => line.startsWith('progress '))
   return { peakMemoryMegabytes: summary.peakMemoryMegabytes, realTimeRatio: summary.realTimeRatio, progressLines, elapsedMs }
 }

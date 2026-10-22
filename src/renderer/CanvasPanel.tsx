@@ -110,7 +110,12 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
       if (shown.width === 0 || shown.height === 0) return
       const percent = (shown.width * devicePixelRatio * PERCENT) / canvas.width
       const next = Math.min(MAX_ZOOM_PERCENT, Math.max(MIN_ZOOM_PERCENT, percent * Math.exp(-event.deltaY * PINCH_ZOOM_RATE)))
-      pinchRef.current = { clientX: event.clientX, clientY: event.clientY, shareX: (event.clientX - shown.left) / shown.width, shareY: (event.clientY - shown.top) / shown.height }
+      pinchRef.current = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        shareX: (event.clientX - shown.left) / shown.width,
+        shareY: (event.clientY - shown.top) / shown.height,
+      }
       setZoom(next)
     }
 

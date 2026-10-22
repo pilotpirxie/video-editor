@@ -48,8 +48,13 @@ function isPreparationRecord(value: unknown): value is Record<string, Preparatio
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function isWaveformLevel(level: unknown): level is WaveformLevel {
+  if (typeof level !== 'object' || level === null) return false
+  return 'peaks' in level && level.peaks instanceof Int8Array
+}
+
 function isWaveform(value: unknown): value is WaveformLevel[] {
-  return Array.isArray(value) && value.every((level) => typeof level === 'object' && level !== null && 'peaks' in level && level.peaks instanceof Int8Array)
+  return Array.isArray(value) && value.every(isWaveformLevel)
 }
 
 function unexpectedAnswer(request: MediaRequest): MediaRequestError {

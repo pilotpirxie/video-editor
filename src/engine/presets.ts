@@ -34,10 +34,12 @@ function onGrid(time: number): number {
 
 function curvesIn(animation: Animation, canvas: Size): AnimationCurves {
   const { type, duration } = animation
-  const rise = (from: number, to: number, easing: Keyframe['easing']): Keyframe[] => [
-    { time: 0, value: from, easing },
-    { time: duration, value: to, easing: 'linear' },
-  ]
+  function rise(from: number, to: number, easing: Keyframe['easing']): Keyframe[] {
+    return [
+      { time: 0, value: from, easing },
+      { time: duration, value: to, easing: 'linear' },
+    ]
+  }
   if (type === 'fade') return { opacity: rise(0, 1, 'linear') }
   if (type === 'zoom') return { opacity: rise(0, 1, 'linear'), scale: rise(ZOOM_FROM, 1, 'easeOut') }
   if (type === 'typewriter') return { letters: rise(0, 1, 'linear') }
@@ -62,7 +64,8 @@ function mirrored(keyframes: readonly Keyframe[], clipDuration: number): Keyfram
     const keyframe = keyframes[index]
     const earlier = keyframes[index - 1]
     if (keyframe === undefined) continue
-    backwards.push({ time: clipDuration - keyframe.time, value: keyframe.value, easing: earlier === undefined ? 'linear' : MIRRORED_EASING[earlier.easing] })
+    const easing = earlier === undefined ? 'linear' : MIRRORED_EASING[earlier.easing]
+    backwards.push({ time: clipDuration - keyframe.time, value: keyframe.value, easing })
   }
   return backwards
 }

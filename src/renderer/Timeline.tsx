@@ -72,15 +72,38 @@ function TrackHeader({ track, index }: { track: Track; index: number }): ReactEl
     dragFromRef.current = undefined
     if (from === undefined) return
     const rows = Math.round((event.clientY - from) / TRACK_HEIGHT)
-    if (rows !== 0) store.apply('Reorder Tracks', (project) => moveTrack(project, track.id, index - rows))
+    if (rows !== 0) moveBy(-rows)
+  }
+
+  function cancelGrip(): void {
+    dragFromRef.current = undefined
+  }
+
+  function moveBy(rows: number): void {
+    store.apply('Reorder Tracks', (project) => moveTrack(project, track.id, index + rows))
+  }
+
+  function addTrackAbove(): void {
+    store.apply('Add Track', (project) => {
+      const newTrack = { id: crypto.randomUUID(), name: `Track ${project.tracks.length + 1}` }
+      return addTrack(project, newTrack, index + 1)
+    })
+  }
+
+  function removeTrack(): void {
+    store.apply('Delete Track', (project) => deleteTrack(project, track.id))
+  }
+
+  function switchFlag(flag: TrackFlag, label: string): void {
+    store.apply(label, (project) => setTrackFlag(project, track.id, flag, !track[flag]))
   }
 
   const menuItems: MenuItem[] = [
-    { label: 'Add Track Above', testId: 'track-add-above', onSelect: () => store.apply('Add Track', (project) => addTrack(project, { id: crypto.randomUUID(), name: `Track ${project.tracks.length + 1}` }, index + 1)) },
-    { label: 'Move Up', testId: 'track-move-up', onSelect: () => store.apply('Reorder Tracks', (project) => moveTrack(project, track.id, index + 1)) },
-    { label: 'Move Down', testId: 'track-move-down', isDisabled: index === 0, onSelect: () => store.apply('Reorder Tracks', (project) => moveTrack(project, track.id, index - 1)) },
+    { label: 'Add Track Above', testId: 'track-add-above', onSelect: addTrackAbove },
+    { label: 'Move Up', testId: 'track-move-up', onSelect: () => moveBy(1) },
+    { label: 'Move Down', testId: 'track-move-down', isDisabled: index === 0, onSelect: () => moveBy(-1) },
     { label: 'Rename', testId: 'track-rename', onSelect: () => setDraftName(track.name) },
-    { label: 'Delete Track', testId: 'track-delete', onSelect: () => store.apply('Delete Track', (project) => deleteTrack(project, track.id)) },
+    { label: 'Delete Track', testId: 'track-delete', onSelect: removeTrack },
   ]
 
   return (
@@ -92,7 +115,7 @@ function TrackHeader({ track, index }: { track: Track; index: number }): ReactEl
         setMenuAt({ x: event.clientX, y: event.clientY })
       }}
     >
-      <div className="track-grip" onPointerDown={onGripDown} onPointerUp={onGripUp} onPointerCancel={() => (dragFromRef.current = undefined)} onDoubleClick={() => setDraftName(track.name)}>
+      <div className="track-grip" onPointerDown={onGripDown} onPointerUp={onGripUp} onPointerCancel={cancelGrip} onDoubleClick={() => setDraftName(track.name)}>
         {draftName === undefined ? (
           <span className="track-name" data-testid={`track-name-${index}`}>
             {track.name}
@@ -110,17 +133,21 @@ function TrackHeader({ track, index }: { track: Track; index: number }): ReactEl
           />
         )}
       </div>
-      {FLAGS.map(({ flag, icon, onIcon, isDanger, on, off }) => (
-        <IconButton
-          key={flag}
-          icon={track[flag] ? onIcon : icon}
-          label={track[flag] ? on : off}
-          testId={`track-${flag}-${index}`}
-          isPressed={track[flag]}
-          isDanger={isDanger}
-          onClick={() => store.apply(track[flag] ? on : off, (project) => setTrackFlag(project, track.id, flag, !track[flag]))}
-        />
-      ))}
+      {FLAGS.map(({ flag, icon, onIcon, isDanger, on, off }) => {
+        const isOn = track[flag]
+        const label = isOn ? on : off
+        return (
+          <IconButton
+            key={flag}
+            icon={isOn ? onIcon : icon}
+            label={label}
+            testId={`track-${flag}-${index}`}
+            isPressed={isOn}
+            isDanger={isDanger}
+            onClick={() => switchFlag(flag, label)}
+          />
+        )
+      })}
       {menuAt !== undefined && <PopupMenu label="Track" items={menuItems} at={menuAt} onClose={closeMenu} />}
     </div>
   )
@@ -309,20 +336,32 @@ export function Timeline(): ReactElement {
     { label: 'Ripple Delete', testId: 'menu-ripple-delete', isDisabled: !hasSelection, onSelect: () => actions.deleteSelection(true) },
   ]
 
-  const { target } = menu ?? {}
-  let targetMenu: MenuItem[] = []
+  const target = menu?.target
+  let menuLabel = 'Clip'
+  let menuItems = clipMenu
   if (target?.kind === 'volume') {
-    targetMenu = [
-      ...easingItems((easing) => store.apply('Change Keyframe Easing', (project) => changeKeyframe(project, target.clipId, 'volume', target.index, { easing }))),
-      { label: 'Delete Keyframe', testId: 'menu-keyframe-delete', onSelect: () => store.apply('Delete Volume Keyframe', (project) => removeKeyframe(project, target.clipId, 'volume', target.index)) },
+    const { clipId, index } = target
+    menuLabel = 'Volume keyframe'
+    menuItems = [
+      ...easingItems((easing) => {
+        store.apply('Change Keyframe Easing', (project) => changeKeyframe(project, clipId, 'volume', index, { easing }))
+      }),
+      {
+        label: 'Delete Keyframe',
+        testId: 'menu-keyframe-delete',
+        onSelect: () => store.apply('Delete Volume Keyframe', (project) => removeKeyframe(project, clipId, 'volume', index)),
+      },
     ]
   } else if (target?.kind === 'zoom') {
-    targetMenu = [
-      ...easingItems((easing) => store.apply('Change Zoom Easing', (project) => setZoom(project, target.index, { easing }, frameDuration(project.canvas.frameRate)))),
-      { label: 'Delete Zoom', testId: 'menu-zoom-delete', onSelect: () => store.apply('Delete Zoom', (project) => deleteZoom(project, target.index)) },
+    const { index } = target
+    menuLabel = 'Zoom'
+    menuItems = [
+      ...easingItems((easing) => {
+        store.apply('Change Zoom Easing', (project) => setZoom(project, index, { easing }, frameDuration(project.canvas.frameRate)))
+      }),
+      { label: 'Delete Zoom', testId: 'menu-zoom-delete', onSelect: () => store.apply('Delete Zoom', (project) => deleteZoom(project, index)) },
     ]
   }
-  const menuLabel = target?.kind === 'zoom' ? 'Zoom' : 'Volume keyframe'
 
   return (
     <div className="timeline">
@@ -365,7 +404,7 @@ export function Timeline(): ReactElement {
       <div className="timeline-scrollbar" ref={scrollbarRef} data-testid="timeline-scrollbar">
         <div ref={scrollSpanRef} />
       </div>
-      {menu !== undefined && <PopupMenu label={target === undefined ? 'Clip' : menuLabel} items={target === undefined ? clipMenu : targetMenu} at={menu.at} onClose={closeMenu} />}
+      {menu !== undefined && <PopupMenu label={menuLabel} items={menuItems} at={menu.at} onClose={closeMenu} />}
       {speedClipIds !== undefined && <SpeedDialog clipIds={speedClipIds} onClose={() => setSpeedClipIds(undefined)} />}
     </div>
   )

@@ -153,7 +153,16 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
       }
     }
 
-    return { binary, pipes, exitCode, stderrTail: () => stderrText.trim(), stopReason: () => stopReason, hasExited: () => hasExited, stop, lowerPriority }
+    return {
+      binary,
+      pipes,
+      exitCode,
+      stderrTail: () => stderrText.trim(),
+      stopReason: () => stopReason,
+      hasExited: () => hasExited,
+      stop,
+      lowerPriority,
+    }
   }
 
   async function runOnce(binary: Binary, args: readonly string[], options: RunOptions): Promise<Buffer> {

@@ -177,6 +177,10 @@ function isModifier(value: unknown): value is Modifier {
   return value === 'ctrl' || value === 'alt' || value === 'shift' || value === 'meta'
 }
 
+function orderedModifiers(modifiers: readonly Modifier[]): Modifier[] {
+  return MODIFIER_ORDER.filter((modifier) => modifiers.includes(modifier))
+}
+
 export function bindingOf(press: KeyPress): Binding | undefined {
   if (MODIFIER_CODES.has(press.code) || keyName(press.code) === undefined) return undefined
   const held: Record<Modifier, boolean> = { ctrl: press.ctrlKey, alt: press.altKey, shift: press.shiftKey, meta: press.metaKey }
@@ -184,24 +188,41 @@ export function bindingOf(press: KeyPress): Binding | undefined {
 }
 
 export function isSameBinding(a: Binding, b: Binding): boolean {
-  return a.code === b.code && MODIFIER_ORDER.every((modifier) => a.modifiers.includes(modifier) === b.modifiers.includes(modifier))
+  if (a.code !== b.code) return false
+  for (const modifier of MODIFIER_ORDER) {
+    if (a.modifiers.includes(modifier) !== b.modifiers.includes(modifier)) return false
+  }
+  return true
+}
+
+function sharesBinding(first: readonly Binding[], second: readonly Binding[]): boolean {
+  for (const binding of first) {
+    for (const other of second) {
+      if (isSameBinding(binding, other)) return true
+    }
+  }
+  return false
 }
 
 export function actionFor(bindings: Bindings, press: KeyPress): ShortcutAction | undefined {
   const pressed = bindingOf(press)
   if (pressed === undefined) return undefined
-  return SHORTCUT_ACTIONS.find(({ action }) => bindings[action].some((binding) => isSameBinding(binding, pressed)))?.action
+  for (const { action } of SHORTCUT_ACTIONS) {
+    if (sharesBinding(bindings[action], [pressed])) return action
+  }
+  return undefined
 }
 
 export function hintOf(binding: Binding): string {
-  const modifiers = MODIFIER_ORDER.filter((modifier) => binding.modifiers.includes(modifier)).map((modifier) => MODIFIER_SYMBOLS[modifier])
-  return `${modifiers.join('')}${keyName(binding.code)?.symbol ?? binding.code}`
+  const symbols = orderedModifiers(binding.modifiers).map((modifier) => MODIFIER_SYMBOLS[modifier])
+  const keySymbol = keyName(binding.code)?.symbol ?? binding.code
+  return `${symbols.join('')}${keySymbol}`
 }
 
 export function acceleratorOf(binding: Binding): string | undefined {
   const name = keyName(binding.code)
   if (name === undefined) return undefined
-  const modifiers = MODIFIER_ORDER.filter((modifier) => binding.modifiers.includes(modifier)).map((modifier) => MODIFIER_ACCELERATORS[modifier])
+  const modifiers = orderedModifiers(binding.modifiers).map((modifier) => MODIFIER_ACCELERATORS[modifier])
   return [...modifiers, name.accelerator].join('+')
 }
 
@@ -214,8 +235,8 @@ export function conflictsOf(bindings: Bindings): Map<ShortcutAction, ShortcutAct
   for (const { action } of SHORTCUT_ACTIONS) {
     const others: ShortcutAction[] = []
     for (const { action: other } of SHORTCUT_ACTIONS) {
-      const isShared = other !== action && bindings[action].some((binding) => bindings[other].some((otherBinding) => isSameBinding(binding, otherBinding)))
-      if (isShared) others.push(other)
+      if (other === action) continue
+      if (sharesBinding(bindings[action], bindings[other])) others.push(other)
     }
     if (others.length > 0) conflicts.set(action, others)
   }
@@ -223,12 +244,14 @@ export function conflictsOf(bindings: Bindings): Map<ShortcutAction, ShortcutAct
 }
 
 function parsedBinding(value: unknown): Binding | undefined {
-  if (typeof value !== 'object' || value === null || !('code' in value) || !('modifiers' in value)) return undefined
+  if (typeof value !== 'object' || value === null) return undefined
+  if (!('code' in value) || !('modifiers' in value)) return undefined
   const { code, modifiers } = value
-  if (typeof code !== 'string' || keyName(code) === undefined || !Array.isArray(modifiers)) return undefined
+  if (typeof code !== 'string' || keyName(code) === undefined) return undefined
+  if (!Array.isArray(modifiers)) return undefined
   const held = modifiers.filter(isModifier)
   if (held.length !== modifiers.length) return undefined
-  return { code, modifiers: MODIFIER_ORDER.filter((modifier) => held.includes(modifier)) }
+  return { code, modifiers: orderedModifiers(held) }
 }
 
 export function parseBindings(text: string | undefined): Bindings {
@@ -256,7 +279,18 @@ export function parseBindings(text: string | undefined): Bindings {
   return bindings
 }
 
-export const MENU_SHORTCUT_ACTIONS = ['split', 'split-all', 'duplicate', 'delete', 'ripple-delete', 'group', 'ungroup', 'import', 'export', 'preview-mode'] as const satisfies readonly (ShortcutAction & MenuAction)[]
+export const MENU_SHORTCUT_ACTIONS = [
+  'split',
+  'split-all',
+  'duplicate',
+  'delete',
+  'ripple-delete',
+  'group',
+  'ungroup',
+  'import',
+  'export',
+  'preview-mode',
+] as const satisfies readonly (ShortcutAction & MenuAction)[]
 
 export function menuShortcutsOf(bindings: Bindings): MenuShortcuts {
   const accelerators: MenuShortcuts = {}

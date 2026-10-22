@@ -68,7 +68,10 @@ function numberSettings(effect: Effect): NumberSetting[] {
   } else if (effect.type === 'blackAndWhite' || effect.type === 'sepia' || effect.type === 'invert' || effect.type === 'tint') {
     return [amountOf('Amount', 'amount', effect.amount, (amount) => ({ ...effect, amount }))]
   } else if (effect.type === 'vignette') {
-    return [amountOf('Amount', 'amount', effect.amount, (amount) => ({ ...effect, amount })), amountOf('Size', 'size', effect.size, (size) => ({ ...effect, size }))]
+    return [
+      amountOf('Amount', 'amount', effect.amount, (amount) => ({ ...effect, amount })),
+      amountOf('Size', 'size', effect.size, (size) => ({ ...effect, size })),
+    ]
   } else if (effect.type === 'dropShadow') {
     return [
       { ...lengthOf('Offset X', 'offsetX', effect.offsetX, (offsetX) => ({ ...effect, offsetX })), min: -MAX_LENGTH },
@@ -85,7 +88,16 @@ function numberSettings(effect: Effect): NumberSetting[] {
   } else if (effect.type === 'look') {
     return [
       amountOf('Strength', 'strength', effect.strength, (strength) => ({ ...effect, strength })),
-      { label: 'Exposure (stops)', testId: 'exposure', value: effect.exposure, displayMultiplier: 1, min: -MAX_STOPS, max: MAX_STOPS, presets: STOPS, changed: (exposure) => ({ ...effect, exposure }) },
+      {
+        label: 'Exposure (stops)',
+        testId: 'exposure',
+        value: effect.exposure,
+        displayMultiplier: 1,
+        min: -MAX_STOPS,
+        max: MAX_STOPS,
+        presets: STOPS,
+        changed: (exposure) => ({ ...effect, exposure }),
+      },
       adjustmentOf('Contrast', 'contrast', effect.contrast, (contrast) => ({ ...effect, contrast })),
       adjustmentOf('Highlights', 'highlights', effect.highlights, (highlights) => ({ ...effect, highlights })),
       adjustmentOf('Shadows', 'shadows', effect.shadows, (shadows) => ({ ...effect, shadows })),
@@ -96,11 +108,21 @@ function numberSettings(effect: Effect): NumberSetting[] {
     ]
   } else if (effect.type === 'sharpen') {
     return [
-      { ...amountOf('Amount', 'amount', effect.amount, (amount) => ({ ...effect, amount })), max: MAX_SHARPEN, presets: SHARPEN_AMOUNTS },
-      { ...lengthOf('Radius', 'radius', effect.radius, (radius) => ({ ...effect, radius }), SMALLEST_RADIUS), presets: RADII },
+      {
+        ...amountOf('Amount', 'amount', effect.amount, (amount) => ({ ...effect, amount })),
+        max: MAX_SHARPEN,
+        presets: SHARPEN_AMOUNTS,
+      },
+      {
+        ...lengthOf('Radius', 'radius', effect.radius, (radius) => ({ ...effect, radius }), SMALLEST_RADIUS),
+        presets: RADII,
+      },
     ]
   } else if (effect.type === 'blurFill') {
-    return [lengthOf('Strength', 'strength', effect.strength, (strength) => ({ ...effect, strength }), 1), amountOf('Darken', 'darken', effect.darken, (darken) => ({ ...effect, darken }))]
+    return [
+      lengthOf('Strength', 'strength', effect.strength, (strength) => ({ ...effect, strength }), 1),
+      amountOf('Darken', 'darken', effect.darken, (darken) => ({ ...effect, darken })),
+    ]
   } else {
     return [
       amountOf('Tolerance', 'tolerance', effect.tolerance, (tolerance) => ({ ...effect, tolerance })),
@@ -162,9 +184,21 @@ function LookToneFields({ look, withSettings }: LookFieldsProps): ReactElement {
   const highlightAmount = amountOf('Highlight colour amount', 'highlightAmount', look.highlightAmount, (amount) => ({ ...look, highlightAmount: amount }))
   return (
     <>
-      <ColorField label="Shadow colour" testId="effect-look-shadowColor" command="Change Effect" value={look.shadowColor} edit={(color) => withSettings({ ...look, shadowColor: color })} />
+      <ColorField
+        label="Shadow colour"
+        testId="effect-look-shadowColor"
+        command="Change Effect"
+        value={look.shadowColor}
+        edit={(color) => withSettings({ ...look, shadowColor: color })}
+      />
       <SettingField type="look" setting={shadowAmount} withSettings={withSettings} />
-      <ColorField label="Highlight colour" testId="effect-look-highlightColor" command="Change Effect" value={look.highlightColor} edit={(color) => withSettings({ ...look, highlightColor: color })} />
+      <ColorField
+        label="Highlight colour"
+        testId="effect-look-highlightColor"
+        command="Change Effect"
+        value={look.highlightColor}
+        edit={(color) => withSettings({ ...look, highlightColor: color })}
+      />
       <SettingField type="look" setting={highlightAmount} withSettings={withSettings} />
     </>
   )
@@ -176,9 +210,24 @@ function EffectGroup({ clipId, effect, isFirst, isLast }: EffectGroupProps): Rea
   const name = EFFECT_NAMES[type]
   const isOn = effect.isOff !== true
   const ids = [clipId]
+  const switchLabel = isOn ? `Switch ${name} off` : `Switch ${name} on`
+  const colorLabel = type === 'chromaKey' ? 'Key colour' : 'Colour'
 
   function withSettings(changed: Effect): Edit {
     return (project) => setEffect(project, ids, changed)
+  }
+
+  function switchOnOrOff(): void {
+    const command = isOn ? 'Switch Effect Off' : 'Switch Effect On'
+    store.apply(command, (project) => setEffectOff(project, ids, type, isOn))
+  }
+
+  function moveBy(direction: 1 | -1): void {
+    store.apply('Reorder Effects', (project) => moveEffect(project, ids, type, direction))
+  }
+
+  function remove(): void {
+    store.apply('Remove Effect', (project) => removeEffect(project, ids, type))
   }
 
   async function pickKeyColor(key: Extract<Effect, { type: 'chromaKey' }>): Promise<void> {
@@ -197,17 +246,17 @@ function EffectGroup({ clipId, effect, isFirst, isLast }: EffectGroupProps): Rea
 
   const actions = (
     <>
-      <IconButton icon="eye" label={isOn ? `Switch ${name} off` : `Switch ${name} on`} testId={`effect-${type}-switch`} isPressed={isOn} onClick={() => store.apply(isOn ? 'Switch Effect Off' : 'Switch Effect On', (project) => setEffectOff(project, ids, type, isOn))} />
-      <IconButton icon="chevronUp" label="Apply earlier" testId={`effect-${type}-earlier`} isDisabled={isFirst} onClick={() => store.apply('Reorder Effects', (project) => moveEffect(project, ids, type, -1))} />
-      <IconButton icon="chevronDown" label="Apply later" testId={`effect-${type}-later`} isDisabled={isLast} onClick={() => store.apply('Reorder Effects', (project) => moveEffect(project, ids, type, 1))} />
-      <IconButton icon="trash" label={`Remove ${name}`} testId={`effect-${type}-remove`} onClick={() => store.apply('Remove Effect', (project) => removeEffect(project, ids, type))} />
+      <IconButton icon="eye" label={switchLabel} testId={`effect-${type}-switch`} isPressed={isOn} onClick={switchOnOrOff} />
+      <IconButton icon="chevronUp" label="Apply earlier" testId={`effect-${type}-earlier`} isDisabled={isFirst} onClick={() => moveBy(-1)} />
+      <IconButton icon="chevronDown" label="Apply later" testId={`effect-${type}-later`} isDisabled={isLast} onClick={() => moveBy(1)} />
+      <IconButton icon="trash" label={`Remove ${name}`} testId={`effect-${type}-remove`} onClick={remove} />
     </>
   )
 
   return (
     <Group title={name} icon="wand" actions={actions} isOpenAtStart>
-      {(effect.type === 'dropShadow' || effect.type === 'border' || effect.type === 'chromaKey' || effect.type === 'tint') && (
-        <ColorField label={effect.type === 'chromaKey' ? 'Key colour' : 'Colour'} testId={`effect-${type}-color`} command="Change Effect" value={effect.color} edit={(color) => withSettings({ ...effect, color })} />
+      {'color' in effect && (
+        <ColorField label={colorLabel} testId={`effect-${type}-color`} command="Change Effect" value={effect.color} edit={(color) => withSettings({ ...effect, color })} />
       )}
       {effect.type === 'chromaKey' && (
         <button type="button" className="button" data-testid="effect-chromaKey-pick" onClick={() => void pickKeyColor(effect)}>

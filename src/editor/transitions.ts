@@ -1,6 +1,6 @@
 import type { Clip, Project, Track, Transition, TransitionType, VisualClip } from '../shared/project.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
-import { editClips, endOf, isVisual, locateClip, withOnlyAtEnd } from './clips.js'
+import { coversTime, editClips, endOf, isVisual, locateClip, withOnlyAtEnd } from './clips.js'
 
 export const DEFAULT_TRANSITION = TICKS_PER_SECOND
 
@@ -81,7 +81,7 @@ function spansOn(track: Track, clip: VisualClip): Spans {
 export function transitionTargetAt(project: Project, trackIndex: number, time: number): TransitionTarget | undefined {
   const track = project.tracks[trackIndex]
   if (track === undefined || track.locked) return undefined
-  const clip = track.clips.find((candidate) => time >= candidate.start && time < endOf(candidate))
+  const clip = track.clips.find((candidate) => coversTime(candidate, time))
   if (clip === undefined || !isVisual(clip)) return undefined
   if (time < clip.start + clip.duration / 2) return { clipId: clip.id, edge: 'in' }
   const next = touchingAfter(track, clip)

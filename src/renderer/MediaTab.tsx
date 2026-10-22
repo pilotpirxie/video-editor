@@ -76,7 +76,9 @@ function MediaItem({ reference, state, preparation, isSelected, isTabStop, dragg
   const problem = state !== undefined && 'error' in state ? state : undefined
   const info = state !== undefined && 'info' in state ? state.info : undefined
   const picture = info === undefined || info.kind === 'audio' ? undefined : thumbnails.poster(reference.id, info)
-  const drag = useLibraryDrag(info === undefined ? undefined : { kind: 'media', mediaIds: draggedIds }, draggedIds.length > 1 ? `${draggedIds.length} files` : name)
+  const draggedItem = info === undefined ? undefined : { kind: 'media' as const, mediaIds: draggedIds }
+  const dragLabel = draggedIds.length > 1 ? `${draggedIds.length} files` : name
+  const drag = useLibraryDrag(draggedItem, dragLabel)
 
   const isPreparing = preparation !== undefined && preparation.progress < 1 && !preparation.hasFailed
   const percent = Math.floor((preparation?.progress ?? 0) * PERCENT)
@@ -224,7 +226,8 @@ export function MediaTab(): ReactElement {
   useEffect(() => {
     let redraw: number | undefined
     const unsubscribe = session.thumbnails.subscribe(() => {
-      redraw ??= requestAnimationFrame(() => {
+      if (redraw !== undefined) return
+      redraw = requestAnimationFrame(() => {
         redraw = undefined
         setPictureCount((count) => count + 1)
       })
@@ -246,19 +249,26 @@ export function MediaTab(): ReactElement {
     const state = mediaStates[reference.id]
     if (selected.has(reference.id) && state !== undefined && 'info' in state) draggedSelection.push(reference.id)
   }
-  let tabStopId = focusedId !== undefined && shownIds.includes(focusedId) ? focusedId : shownIds.find((id) => selected.has(id))
-  tabStopId ??= shownIds[0]
+  let tabStopId = shownIds.find((id) => selected.has(id)) ?? shownIds[0]
+  const isFocusedShown = focusedId !== undefined && shownIds.includes(focusedId)
+  if (isFocusedShown) tabStopId = focusedId
+
+  function toggleSelected(mediaId: string): void {
+    if (selected.has(mediaId)) setSelectedIds(selectedIds.filter((id) => id !== mediaId))
+    else setSelectedIds([...selectedIds, mediaId])
+  }
 
   function press(mediaId: string, event: PointerEvent<HTMLElement>): void {
     setFocusedId(mediaId)
-    if (event.currentTarget.parentElement?.contains(document.activeElement) === true) event.currentTarget.focus()
+    const isListFocused = event.currentTarget.parentElement?.contains(document.activeElement) === true
+    if (isListFocused) event.currentTarget.focus()
     if (event.shiftKey && anchorId !== undefined) {
       setSelectedIds(filesBetween(shownIds, anchorId, mediaId))
       return
     }
     setAnchorId(mediaId)
     if (event.metaKey) {
-      setSelectedIds(selected.has(mediaId) ? selectedIds.filter((id) => id !== mediaId) : [...selectedIds, mediaId])
+      toggleSelected(mediaId)
     } else if (!selected.has(mediaId)) {
       setSelectedIds([mediaId])
     }
@@ -270,15 +280,19 @@ export function MediaTab(): ReactElement {
 
   function onListKeyDown(event: KeyboardEvent<HTMLUListElement>): void {
     const option = event.target
-    const mediaId = option instanceof HTMLElement && option.getAttribute('role') === 'option' ? option.dataset.mediaId : undefined
+    if (!(option instanceof HTMLElement) || option.getAttribute('role') !== 'option') return
+    const mediaId = option.dataset.mediaId
     if (mediaId === undefined) return
     const index = shownIds.indexOf(mediaId)
     const target = movedTo(event.key, index, shownIds.length, columnsOf(event.currentTarget))
+    if (event.key !== 'Enter' && event.key !== ' ' && target === undefined) return
+    event.preventDefault()
+    event.stopPropagation()
     if (event.key === 'Enter') {
       session.actions.addMedia(selected.has(mediaId) ? draggedSelection : [mediaId])
     } else if (event.key === ' ') {
       setAnchorId(mediaId)
-      setSelectedIds(selected.has(mediaId) ? selectedIds.filter((id) => id !== mediaId) : [...selectedIds, mediaId])
+      toggleSelected(mediaId)
     } else if (target !== undefined) {
       const targetId = shownIds[target] ?? mediaId
       if (event.shiftKey) {
@@ -288,12 +302,9 @@ export function MediaTab(): ReactElement {
         setSelectedIds([targetId])
       }
       setFocusedId(targetId)
-      event.currentTarget.querySelector<HTMLElement>(`[data-media-id="${CSS.escape(targetId)}"]`)?.focus()
-    } else {
-      return
+      const targetOption = event.currentTarget.querySelector<HTMLElement>(`[data-media-id="${CSS.escape(targetId)}"]`)
+      targetOption?.focus()
     }
-    event.preventDefault()
-    event.stopPropagation()
   }
 
   function isInUse(): boolean {

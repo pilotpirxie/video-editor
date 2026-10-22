@@ -82,7 +82,11 @@ export class ProbeError extends Error {
 class UnusableMedia extends Error {}
 
 function isProbeOutput(value: unknown): value is ProbeOutput {
-  return typeof value === 'object' && value !== null
+  if (typeof value !== 'object' || value === null) return false
+  if ('streams' in value && !Array.isArray(value.streams)) return false
+  if ('packets' in value && !Array.isArray(value.packets)) return false
+  if ('format' in value && (typeof value.format !== 'object' || value.format === null)) return false
+  return true
 }
 
 function parseRatio(text: string | undefined): FrameRate | undefined {
@@ -100,7 +104,8 @@ function framesPerSecond(rate: FrameRate): number {
 function nearestStandardRate(target: number): FrameRate {
   let nearest = STANDARD_RATES[0]
   for (const candidate of STANDARD_RATES) {
-    const isCloser = nearest === undefined || Math.abs(framesPerSecond(candidate) - target) < Math.abs(framesPerSecond(nearest) - target)
+    const candidateGap = Math.abs(framesPerSecond(candidate) - target)
+    const isCloser = nearest === undefined || candidateGap < Math.abs(framesPerSecond(nearest) - target)
     if (isCloser) nearest = candidate
   }
   if (nearest === undefined) throw new UnusableMedia('it has no usable frame rate')
@@ -144,7 +149,8 @@ function chooseFrameTiming(stream: ProbedStream, samples: readonly (readonly Pro
   const exact = exactFrameDuration(nominal)
   const isUsableAsIs = exact !== undefined && framesPerSecond(nominal) <= MAX_SOURCE_FRAME_RATE
   if (isUsableAsIs) return { frameDuration: exact, isVariableFrameRate }
-  return { frameDuration: frameDuration(nearestStandardRate(framesPerSecond(average))), isVariableFrameRate }
+  const nearest = nearestStandardRate(framesPerSecond(average))
+  return { frameDuration: frameDuration(nearest), isVariableFrameRate }
 }
 
 function isSideways(stream: ProbedStream): boolean {
@@ -291,7 +297,8 @@ function interpret(output: ProbeOutput, laterPackets: readonly (readonly ProbedP
   const containerStart = secondsToTicks(containerStartSeconds)
 
   if (video !== undefined) {
-    const info: MediaInfo = { kind: 'video', duration, containerStart, video: videoInfo(video, output, laterPackets, containerStartSeconds, duration) }
+    const videoDetails = videoInfo(video, output, laterPackets, containerStartSeconds, duration)
+    const info: MediaInfo = { kind: 'video', duration, containerStart, video: videoDetails }
     if (audio !== undefined) info.audio = audioInfo(audio, output)
     if (isAnimatedImage) info.isAnimatedImage = true
     return info

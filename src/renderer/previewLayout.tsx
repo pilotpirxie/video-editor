@@ -7,7 +7,12 @@ export type PreviewZoom = 'fit' | number
 const PERCENT = 100
 
 function previewSize(canvas: Size, stage: DOMRect, zoom: PreviewZoom): Size {
-  if (zoom !== 'fit') return { width: (canvas.width * zoom) / PERCENT / devicePixelRatio, height: (canvas.height * zoom) / PERCENT / devicePixelRatio }
+  if (zoom !== 'fit') {
+    return {
+      width: (canvas.width * zoom) / PERCENT / devicePixelRatio,
+      height: (canvas.height * zoom) / PERCENT / devicePixelRatio,
+    }
+  }
   const scale = Math.min(stage.width / canvas.width, stage.height / canvas.height)
   return { width: canvas.width * scale, height: canvas.height * scale }
 }

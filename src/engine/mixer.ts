@@ -52,7 +52,15 @@ export function soundRanges(project: Project, media: MediaStates): WantedRange[]
   const ranges: WantedRange[] = []
   for (const audible of found) {
     const { clip, shift, from, to } = audible
-    const range: WantedRange = { mediaId: clip.mediaId, use: 'sound', timelineStart: from, timelineEnd: to, sourceStart: sourceTime(clip, from - shift), speedPercent: clip.speedPercent, isLooping: false }
+    const range: WantedRange = {
+      mediaId: clip.mediaId,
+      use: 'sound',
+      timelineStart: from,
+      timelineEnd: to,
+      sourceStart: sourceTime(clip, from - shift),
+      speedPercent: clip.speedPercent,
+      isLooping: false,
+    }
     const stretch = stretchOf(clip)
     if (stretch !== undefined) range.stretch = stretch
     ranges.push(range)

@@ -10,6 +10,8 @@ const TABS = ['Performance', 'Editing', 'Shortcuts'] as const
 
 type SettingsTab = (typeof TABS)[number]
 
+type Section = (typeof SECTIONS)[number]
+
 type Recording = {
   action: ShortcutAction
   slot: number
@@ -56,7 +58,8 @@ export function ShortcutSettings(): ReactElement {
     if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
     event.preventDefault()
     const direction = event.key === 'ArrowRight' ? 1 : -1
-    const next = TABS[(TABS.indexOf(tab) + direction + TABS.length) % TABS.length]
+    const wrappedIndex = (TABS.indexOf(tab) + direction + TABS.length) % TABS.length
+    const next = TABS[wrappedIndex]
     if (next !== undefined) showTab(next)
   }
 
@@ -75,9 +78,12 @@ export function ShortcutSettings(): ReactElement {
       setRefusal({ action: recording.action, text: `${hintOf(pressed)} belongs to ${owner}.` })
       return
     }
-    const current = bindings[recording.action]
-    const others = current.filter((binding, slot) => slot !== recording.slot && !isSameBinding(binding, pressed))
-    const keys = [...others.slice(0, recording.slot), pressed, ...others.slice(recording.slot)]
+    const keys: Binding[] = []
+    for (const [slot, binding] of bindings[recording.action].entries()) {
+      if (slot === recording.slot) continue
+      if (!isSameBinding(binding, pressed)) keys.push(binding)
+    }
+    keys.splice(recording.slot, 0, pressed)
     setKeys(recording.action, keys.slice(0, MAX_KEYS))
     record(undefined)
     isReleasingRef.current = true
@@ -100,16 +106,56 @@ export function ShortcutSettings(): ReactElement {
     let text = '+ Add keys'
     if (isRecording) text = 'Press keys…'
     else if (binding !== undefined) text = hintOf(binding)
+    const change = binding === undefined ? 'add keys' : `change ${hintOf(binding)}`
+
+    function toggleRecording(): void {
+      if (isRecording) record(undefined)
+      else record({ action, slot })
+    }
+
+    function removeKeys(): void {
+      const kept = bindings[action].filter((_, index) => index !== slot)
+      setKeys(action, kept)
+    }
+
     return (
       <span key={slot} className="shortcut-key">
-        <button type="button" className="button" data-testid={`shortcut-${action}-${slot}`} aria-pressed={isRecording} aria-label={`${nameOf(action)}: ${binding === undefined ? 'add keys' : `change ${hintOf(binding)}`}`} onClick={() => record(isRecording ? undefined : { action, slot })}>
+        <button type="button" className="button" data-testid={`shortcut-${action}-${slot}`} aria-pressed={isRecording} aria-label={`${nameOf(action)}: ${change}`} onClick={toggleRecording}>
           {text}
         </button>
-        {binding !== undefined && (
-          <IconButton icon="minus" label={`Remove ${hintOf(binding)} from ${nameOf(action)}`} testId={`shortcut-${action}-${slot}-remove`} onClick={() => setKeys(action, bindings[action].filter((_, index) => index !== slot))} />
-        )}
+        {binding !== undefined && <IconButton icon="minus" label={`Remove ${hintOf(binding)} from ${nameOf(action)}`} testId={`shortcut-${action}-${slot}-remove`} onClick={removeKeys} />}
       </span>
     )
+  }
+
+  function shortcutRows(section: Section): ReactElement[] {
+    const rows: ReactElement[] = []
+    for (const entry of SHORTCUT_ACTIONS) {
+      if (entry.section !== section) continue
+      const { action, name } = entry
+      const keys = bindings[action]
+      const shared = conflicts.get(action)
+      const slots = keys.length < MAX_KEYS ? [...keys, undefined] : keys
+      rows.push(
+        <div key={action} className="shortcut-row" data-testid={`shortcut-${action}`}>
+          <span className="shortcut-name">
+            {name}
+            {shared !== undefined && (
+              <span className="badge warning" data-testid={`shortcut-${action}-conflict`}>
+                Also {shared.map(nameOf).join(', ')}
+              </span>
+            )}
+          </span>
+          <span className="shortcut-keys">{slots.map((binding, slot) => keyButton(action, slot, binding))}</span>
+          {refusal?.action === action && (
+            <p className="hint" role="alert">
+              {refusal.text}
+            </p>
+          )}
+        </div>,
+      )
+    }
+    return rows
   }
 
   return (
@@ -142,29 +188,7 @@ export function ShortcutSettings(): ReactElement {
               {SECTIONS.map((section) => (
                 <section key={section} aria-label={section}>
                   <h3 className="field-label">{section}</h3>
-                  {SHORTCUT_ACTIONS.filter((entry) => entry.section === section).map(({ action, name }) => {
-                    const keys = bindings[action]
-                    const shared = conflicts.get(action)
-                    const slots = keys.length < MAX_KEYS ? [...keys, undefined] : keys
-                    return (
-                      <div key={action} className="shortcut-row" data-testid={`shortcut-${action}`}>
-                        <span className="shortcut-name">
-                          {name}
-                          {shared !== undefined && (
-                            <span className="badge warning" data-testid={`shortcut-${action}-conflict`}>
-                              Also {shared.map(nameOf).join(', ')}
-                            </span>
-                          )}
-                        </span>
-                        <span className="shortcut-keys">{slots.map((binding, slot) => keyButton(action, slot, binding))}</span>
-                        {refusal?.action === action && (
-                          <p className="hint" role="alert">
-                            {refusal.text}
-                          </p>
-                        )}
-                      </div>
-                    )
-                  })}
+                  {shortcutRows(section)}
                 </section>
               ))}
             </div>

@@ -171,7 +171,7 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     if (event.type === 'wanted') {
       watchPreparation()
     } else if (event.type === 'preview-lost') {
-      previewLostTimer ??= window.setTimeout(() => void reloadWithoutPreview(), PREVIEW_RETURN_MS)
+      if (previewLostTimer === undefined) previewLostTimer = window.setTimeout(() => void reloadWithoutPreview(), PREVIEW_RETURN_MS)
     } else if (event.type === 'preview-restored') {
       window.clearTimeout(previewLostTimer)
       previewLostTimer = undefined
@@ -234,7 +234,9 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
       for (const item of found) store.setMediaState(item.id, { info: item.info, createdAt: item.createdAt })
       store.apply('Relink Media', (current) => relinkedMedia(current, found))
       watchPreparation()
-      if (found.length > 1) store.notify(`${found.length - 1} more missing ${found.length === 2 ? 'file was' : 'files were'} found in the same folder.`)
+      const moreCount = found.length - 1
+      if (moreCount === 1) store.notify('1 more missing file was found in the same folder.')
+      else if (moreCount > 1) store.notify(`${moreCount} more missing files were found in the same folder.`)
     } catch (error) {
       store.notify(describeError(error))
     }
@@ -319,8 +321,9 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   }
 
   async function save(): Promise<boolean> {
-    const path = store.getState().documentPath ?? (await window.host.saveProjectDialog())
-    return path === undefined ? false : saveTo(path)
+    const { documentPath } = store.getState()
+    if (documentPath !== undefined) return saveTo(documentPath)
+    return saveAs()
   }
 
   async function saveAs(): Promise<boolean> {
@@ -398,12 +401,17 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   }
 
   function selectAll(): void {
-    if (isTypingTarget(document.activeElement)) document.execCommand('selectAll')
-    else if (window.dispatchEvent(new Event(SELECT_ALL_EVENT, { cancelable: true }))) actions.selectAll()
+    if (isTypingTarget(document.activeElement)) {
+      document.execCommand('selectAll')
+      return
+    }
+    const isUnclaimed = window.dispatchEvent(new Event(SELECT_ALL_EVENT, { cancelable: true }))
+    if (isUnclaimed) actions.selectAll()
   }
 
   function deleteSelection(isRipple: boolean): void {
-    if (window.dispatchEvent(new Event(DELETE_EVENT, { cancelable: true }))) actions.deleteSelection(isRipple)
+    const isUnclaimed = window.dispatchEvent(new Event(DELETE_EVENT, { cancelable: true }))
+    if (isUnclaimed) actions.deleteSelection(isRipple)
   }
 
   function runMenuAction(action: MenuAction): void {
@@ -466,7 +474,8 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
       watchPreparation()
       const notices: string[] = []
       const missingCount = unlinkedMedia(loaded.project, loaded.media).length
-      if (missingCount > 0) notices.push(`${missingCount} media ${missingCount === 1 ? 'file is' : 'files are'} missing. Use Relink in the Media tab to say where ${missingCount === 1 ? 'it is' : 'they are'}.`)
+      if (missingCount === 1) notices.push('1 media file is missing. Use Relink in the Media tab to say where it is.')
+      else if (missingCount > 1) notices.push(`${missingCount} media files are missing. Use Relink in the Media tab to say where they are.`)
       const fonts = await missingFontsNotice(loaded.project)
       if (fonts !== undefined) notices.push(fonts)
       if (notices.length > 0) store.notify(notices.join(' '))

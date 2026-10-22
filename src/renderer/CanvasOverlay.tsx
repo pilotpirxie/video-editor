@@ -26,7 +26,7 @@ import { viewAt } from '../engine/camera.js'
 import { groupFrameAt, onCanvas, resolveFrame, type GroupFrame, type Layer, type MediaStates } from '../engine/resolve.js'
 import { measureText } from '../engine/text.js'
 import type { Size } from '../shared/exportPresets.js'
-import type { Crop, GroupClip, Project, Transform } from '../shared/project.js'
+import type { Clip, Crop, GroupClip, Project, Transform } from '../shared/project.js'
 import { useEditorState, usePosition, useSession } from './context.js'
 import type { Edit } from './store.js'
 import { TextEditor } from './TextEditor.js'
@@ -307,12 +307,17 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
   const shown = isPlaying ? [] : shownClips(wholeProject, mediaStates, wholeTime, { project, time, groups: openGroups, frame: openFrame })
   const selected = shown.filter((item) => selection.includes(item.clipId))
   const locked = lockedClipIds(project)
-  const outside = shown.filter((item) => !selection.includes(item.clipId) && !locked.has(item.clipId) && isPastFrame(item.box, frame))
+  const outside: ShownClip[] = []
+  for (const item of shown) {
+    if (selection.includes(item.clipId) || locked.has(item.clipId)) continue
+    if (isPastFrame(item.box, frame)) outside.push(item)
+  }
   const pictureOffset = { x: reach.left, y: reach.top }
-  const [only] = selected.length === 1 ? selected : []
+  const only = selected.length === 1 ? selected[0] : undefined
   const editing = editingTextId === undefined ? undefined : locateClip(project, editingTextId)?.clip
   const editedText = editing?.type === 'text' || editing?.type === 'callout' ? editing : undefined
-  const onlyClip = only === undefined || editingTextId !== undefined ? undefined : locateClip(project, only.clipId)?.clip
+  let onlyClip: Clip | undefined
+  if (only !== undefined && editingTextId === undefined) onlyClip = locateClip(project, only.clipId)?.clip
   const path = onlyClip === undefined ? undefined : motionPath(onlyClip)
   const pathOffset = only === undefined ? NO_PIVOT : { x: only.box.centerX - only.transform.x, y: only.box.centerY - only.transform.y }
 
@@ -330,16 +335,24 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     return pointOnCanvas(event, event.currentTarget, frame, pictureWidth, pictureOffset)
   }
 
+  function isUnlockedAt(item: ShownClip, point: Point): boolean {
+    if (locked.has(item.clipId)) return false
+    return item.hitBoxes.some((box) => containsPoint(box, point))
+  }
+
   function topmostAt(point: Point): ShownClip | undefined {
-    return shown.findLast((item) => !locked.has(item.clipId) && item.hitBoxes.some((box) => containsPoint(box, point)))
+    return shown.findLast((item) => isUnlockedAt(item, point))
   }
 
   function effectTargetAt(detail: LibraryDragDetail): ShownClip | undefined {
     const svg = svgRef.current
     if (svg === null || detail.item.kind !== 'effect') return undefined
     const point = pointOnCanvas(detail, svg, frame, pictureWidth, pictureOffset)
-    const isFitting = (item: ShownClip): boolean => (detail.item.kind === 'effect' && detail.item.effect === 'blurFill' ? item.kind === 'picture' : item.kind !== 'shape')
-    return shown.findLast((item) => isFitting(item) && !locked.has(item.clipId) && item.hitBoxes.some((box) => containsPoint(box, point)))
+    const isBlurFill = detail.item.effect === 'blurFill'
+    return shown.findLast((item) => {
+      const takesEffect = isBlurFill ? item.kind === 'picture' : item.kind !== 'shape'
+      return takesEffect && isUnlockedAt(item, point)
+    })
   }
 
   const onLibraryDrag = useEffectEvent((event: Event) => {
@@ -391,7 +404,8 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     if (only?.arrowLength !== undefined && (grabbed === 'arrow-start' || grabbed === 'arrow-end')) {
       const ends = arrowEnds(only.transform, only.arrowLength)
       store.begin('Move Arrow End')
-      gestureRef.current = grabbed === 'arrow-end' ? { kind: 'arrow', item: only, moves: 'end', fixed: ends.start } : { kind: 'arrow', item: only, moves: 'start', fixed: ends.end }
+      if (grabbed === 'arrow-end') gestureRef.current = { kind: 'arrow', item: only, moves: 'end', fixed: ends.start }
+      else gestureRef.current = { kind: 'arrow', item: only, moves: 'start', fixed: ends.end }
       return
     }
     if (only !== undefined && grabbed === 'tail') {
@@ -399,9 +413,14 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
       gestureRef.current = { kind: 'tail', item: only }
       return
     }
-    const dot = grabbed === 'path-point' && event.target instanceof SVGElement ? path?.dots[Number(event.target.dataset.dot)] : undefined
+    const grabbedDot = grabbed === 'path-point' && event.target instanceof SVGElement ? event.target.dataset.dot : undefined
+    const dot = grabbedDot === undefined ? undefined : path?.dots[Number(grabbedDot)]
     const dotAt = dot === undefined ? undefined : shownOnPath(dot.point)
-    const isUnderClip = only !== undefined && dotAt !== undefined && Math.hypot(dotAt.x - only.box.centerX, dotAt.y - only.box.centerY) < PATH_DOT_PIXELS * canvasPerPixel
+    let isUnderClip = false
+    if (only !== undefined && dotAt !== undefined) {
+      const distance = Math.hypot(dotAt.x - only.box.centerX, dotAt.y - only.box.centerY)
+      isUnderClip = distance < PATH_DOT_PIXELS * canvasPerPixel
+    }
     if (only !== undefined && onlyClip !== undefined && dot !== undefined && !isUnderClip) {
       store.begin('Move Position Keyframe')
       gestureRef.current = { kind: 'path', item: only, time: onlyClip.start + dot.time, from: point, start: placeOnCanvas(dot.point) }
@@ -426,13 +445,18 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     }
     const isSelected = selection.includes(hit.clipId)
     let moving = selection
-    if (event.shiftKey) moving = isSelected ? selection.filter((id) => id !== hit.clipId) : [...selection, hit.clipId]
+    if (event.shiftKey && isSelected) moving = selection.filter((id) => id !== hit.clipId)
+    else if (event.shiftKey) moving = [...selection, hit.clipId]
     else if (!isSelected) moving = [hit.clipId]
     if (moving !== selection) store.select(moving)
 
-    const items = shown.filter((item) => moving.includes(item.clipId))
+    const items: ShownClip[] = []
+    const others: Bounds[] = []
+    for (const item of shown) {
+      if (moving.includes(item.clipId)) items.push(item)
+      else others.push(boundsOf(item.box))
+    }
     if (items.length === 0) return
-    const others = shown.filter((item) => !moving.includes(item.clipId)).map((item) => boundsOf(item.box))
     store.begin(items.length === 1 ? 'Move Clip' : 'Move Clips')
     gestureRef.current = { kind: 'move', from: point, items, others }
   }
@@ -486,7 +510,8 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     if (gesture.kind === 'path') {
       const { item, time: keyTime } = gesture
       const placed = { x: gesture.start.x + point.x - gesture.from.x, y: gesture.start.y + point.y - gesture.from.y }
-      store.update((current) => setProperties(current, [item.clipId], valuesInOpenTracks(openGroups, openFrame, item, placed), keyTime))
+      const values = valuesInOpenTracks(openGroups, openFrame, item, placed)
+      store.update((current) => setProperties(current, [item.clipId], values, keyTime))
       return
     }
 
@@ -495,23 +520,29 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     if (gesture.kind === 'arrow') {
       const ends = gesture.moves === 'end' ? { start: gesture.fixed, end: point } : { start: point, end: gesture.fixed }
       const { length, ...placed } = arrowBetween(ends.start, ends.end, item.transform)
-      store.update((current) => setArrowStyle(edit(item, placed)(current), [item.clipId], { length }))
+      const moveArrow = edit(item, placed)
+      store.update((current) => setArrowStyle(moveArrow(current), [item.clipId], { length }))
     } else if (gesture.kind === 'tail') {
       const tip = canvasPointToClip(item.transform, point)
-      store.update((current) => setCalloutStyle(current, [item.clipId], { tail: { x: Math.round(tip.x), y: Math.round(tip.y) } }))
+      const tail = { x: Math.round(tip.x), y: Math.round(tip.y) }
+      store.update((current) => setCalloutStyle(current, [item.clipId], { tail }))
     } else if (gesture.kind === 'rotate') {
       const rotation = rotationFromPointer(item.box, gesture.from, point, event.shiftKey)
-      const placed = item.kind === 'group' ? { ...placeFor(item, middle, { ...item.transform, rotation }), rotation } : { rotation }
+      let placed: Partial<Transform> = { rotation }
+      if (item.kind === 'group') placed = { ...placeFor(item, middle, { ...item.transform, rotation }), rotation }
       store.update(edit(item, placed))
     } else if (gesture.kind === 'crop') {
       const { crop, transform } = cropFromHandle(item.natural, item.crop, item.transform, gesture.handle, point)
-      store.update(edit(item, { x: transform.x, y: transform.y }, { cropLeft: crop.left, cropTop: crop.top, cropRight: crop.right, cropBottom: crop.bottom }))
+      const cropValues = { cropLeft: crop.left, cropTop: crop.top, cropRight: crop.right, cropBottom: crop.bottom }
+      store.update(edit(item, { x: transform.x, y: transform.y }, cropValues))
     } else {
       const targets = range === undefined ? undefined : sizeTargets(item, gesture.others, canvas, range)
       const keepsAspect = item.kind === 'group' || !event.shiftKey
-      const { transform, isSnapped } = scaleFromHandle(item.natural, item.crop, { ...item.transform, ...middle }, gesture.handle, point, keepsAspect, targets)
+      const pivoted = { ...item.transform, ...middle }
+      const { transform, isSnapped } = scaleFromHandle(item.natural, item.crop, pivoted, gesture.handle, point, keepsAspect, targets)
       setGuides({ x: undefined, y: undefined, isSizeSnapped: isSnapped })
-      store.update(edit(item, { ...placeFor(item, transform, transform), scaleX: transform.scaleX, scaleY: transform.scaleY }))
+      const placed = { ...placeFor(item, transform, transform), scaleX: transform.scaleX, scaleY: transform.scaleY }
+      store.update(edit(item, placed))
     }
   }
 
@@ -527,12 +558,16 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
   const dropTarget = shown.find((item) => item.clipId === dropTargetId)
   const shownLine = path?.line.map(shownOnPath)
   const shownDots = path?.dots.map((dot) => shownOnPath(dot.point)) ?? []
+  const viewLeft = frame.left - reach.left * canvasPerPixel
+  const viewTop = frame.top - reach.top * canvasPerPixel
+  const viewWidth = frame.width + (reach.left + reach.right) * canvasPerPixel
+  const viewHeight = frame.height + (reach.top + reach.bottom) * canvasPerPixel
 
   return (
     <svg
       ref={svgRef}
       className="canvas-overlay"
-      viewBox={`${frame.left - reach.left * canvasPerPixel} ${frame.top - reach.top * canvasPerPixel} ${frame.width + (reach.left + reach.right) * canvasPerPixel} ${frame.height + (reach.top + reach.bottom) * canvasPerPixel}`}
+      viewBox={`${viewLeft} ${viewTop} ${viewWidth} ${viewHeight}`}
       preserveAspectRatio="none"
       style={{ left: -reach.left, top: -reach.top, width: `calc(100% + ${reach.left + reach.right}px)`, height: `calc(100% + ${reach.top + reach.bottom}px)` }}
       data-testid="canvas-overlay"

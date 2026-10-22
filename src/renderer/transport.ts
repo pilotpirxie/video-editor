@@ -142,7 +142,13 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
     }
 
     if (position.isPlaying) engine.send({ type: 'pause' })
-    const active: Shuttle = { rate: next, fromTime: position.time, startedAt: performance.now(), limits, shownFrame: frameAt(position.time, limits.frameTicks) }
+    const active: Shuttle = {
+      rate: next,
+      fromTime: position.time,
+      startedAt: performance.now(),
+      limits,
+      shownFrame: frameAt(position.time, limits.frameTicks),
+    }
     shuttling = active
     position = { ...position, shuttleRate: next }
     announce()

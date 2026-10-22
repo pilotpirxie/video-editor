@@ -3,7 +3,7 @@ import { scopeOf, scopedProject, withScopedProject, type Scope } from '../editor
 import { EMPTY_HISTORY, record, redo, undo, type History } from '../editor/history.js'
 import type { MediaStates } from '../engine/resolve.js'
 import type { LoadedProject, MediaState } from '../shared/mediaProtocol.js'
-import type { Project, Track } from '../shared/project.js'
+import { PROJECT_VERSION, type Canvas, type Project, type Track } from '../shared/project.js'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings.js'
 
 export type Edit = (project: Project) => Project
@@ -92,11 +92,14 @@ type Gesture = {
 const NO_SELECTION: readonly string[] = []
 
 const STARTING_TRACKS = 6
+const STARTING_CANVAS: Canvas = { width: 1920, height: 1080, frameRate: { num: 30, den: 1 } }
 
 function blankProject(): Project {
   const tracks: Track[] = []
-  for (let index = 0; index < STARTING_TRACKS; index++) tracks.push(emptyTrack({ id: crypto.randomUUID(), name: `Track ${index + 1}` }))
-  return { version: 1, canvas: { width: 1920, height: 1080, frameRate: { num: 30, den: 1 } }, media: [], tracks }
+  for (let index = 0; index < STARTING_TRACKS; index++) {
+    tracks.push(emptyTrack({ id: crypto.randomUUID(), name: `Track ${index + 1}` }))
+  }
+  return { version: PROJECT_VERSION, canvas: STARTING_CANVAS, media: [], tracks }
 }
 
 function withoutMissingClips(selection: readonly string[], project: Project): readonly string[] {
@@ -139,27 +142,30 @@ export function createEditorStore(settings: AppSettings = DEFAULT_SETTINGS): Edi
   let gesture: Gesture | undefined
   const listeners = new Set<() => void>()
 
-  function withOpenTracks(next: EditorState): void {
-    let openGroups = next.openGroups
-    let scoped = scopedProject(next.wholeProject, openGroups)
+  function openTracksOf(wholeProject: Project, wantedGroups: readonly string[]): Pick<EditorState, 'openGroups' | 'scope' | 'project'> {
+    let openGroups = wantedGroups
+    let scoped = scopedProject(wholeProject, openGroups)
     while (scoped === undefined) {
       openGroups = openGroups.slice(0, -1)
-      scoped = scopedProject(next.wholeProject, openGroups)
+      scoped = scopedProject(wholeProject, openGroups)
     }
-    if (openGroups.length !== next.openGroups.length) next.openGroups = openGroups
-    next.scope = scopeOf(next.wholeProject, openGroups)
     const { project } = state
-    const isSameInside = openGroups.length > 0 && scoped.tracks === project.tracks && scoped.media === project.media && scoped.canvas === project.canvas && project.camera === undefined
-    next.project = isSameInside ? project : scoped
+    const hasSameContent = scoped.tracks === project.tracks && scoped.media === project.media && scoped.canvas === project.canvas
+    const isSameInside = openGroups.length > 0 && hasSameContent && project.camera === undefined
+    return { openGroups, scope: scopeOf(wholeProject, openGroups), project: isSameInside ? project : scoped }
   }
 
   function setState(changes: Partial<Omit<EditorState, 'project' | 'scope'>>): void {
-    const next = { ...state, ...changes }
-    if (next.wholeProject !== state.wholeProject || next.openGroups !== state.openGroups) withOpenTracks(next)
+    let next = { ...state, ...changes }
+    if (next.wholeProject !== state.wholeProject || next.openGroups !== state.openGroups) {
+      next = { ...next, ...openTracksOf(next.wholeProject, next.openGroups) }
+    }
     if (next.project !== state.project) {
       next.selection = withoutMissingClips(next.selection, next.project)
-      if (next.editingTextId !== undefined && withoutMissingClips([next.editingTextId], next.project).length === 0) next.editingTextId = undefined
-      if (next.selectedZoom !== undefined && next.project.camera?.[next.selectedZoom] === undefined) next.selectedZoom = undefined
+      const isEditedTextGone = next.editingTextId !== undefined && withoutMissingClips([next.editingTextId], next.project).length === 0
+      if (isEditedTextGone) next.editingTextId = undefined
+      const isZoomGone = next.selectedZoom !== undefined && next.project.camera?.[next.selectedZoom] === undefined
+      if (isZoomGone) next.selectedZoom = undefined
     }
     state = next
     for (const listener of listeners) listener()

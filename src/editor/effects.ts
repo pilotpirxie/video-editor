@@ -70,12 +70,17 @@ export const LOOK_PRESETS: readonly { name: string; label: string; values: LookV
 ]
 
 export function lookPresetOf(look: Look): string {
-  const preset = LOOK_PRESETS.find(({ values }) => Object.entries(values).every(([key, value]) => look[key as keyof LookValues] === value))
-  return preset?.name ?? 'custom'
+  for (const preset of LOOK_PRESETS) {
+    const withPreset: Look = { ...look, ...preset.values }
+    if (hasSameSettings(withPreset, look)) return preset.name
+  }
+  return 'custom'
 }
 
 export function defaultEffect(type: EffectType, canvas: Size): Effect {
-  const sized = (length: number): number => Math.max(1, Math.round((length * canvas.height) / EFFECT_SIZES_CANVAS_HEIGHT))
+  function sized(length: number): number {
+    return Math.max(1, Math.round((length * canvas.height) / EFFECT_SIZES_CANVAS_HEIGHT))
+  }
   if (type === 'colorAdjust') {
     return { type, brightness: 0, contrast: 0, saturation: 0 }
   } else if (type === 'blackAndWhite' || type === 'sepia' || type === 'invert') {
@@ -105,14 +110,20 @@ export function defaultEffect(type: EffectType, canvas: Size): Effect {
 
 function withinLimits(effect: Effect, before: Effect): Effect {
   if (effect.type === 'colorAdjust') {
-    return { ...effect, brightness: between(effect.brightness, -1, 1), contrast: between(effect.contrast, -1, 1), saturation: between(effect.saturation, -1, 1) }
+    return {
+      ...effect,
+      brightness: between(effect.brightness, -1, 1),
+      contrast: between(effect.contrast, -1, 1),
+      saturation: between(effect.saturation, -1, 1),
+    }
   } else if (effect.type === 'blackAndWhite' || effect.type === 'sepia' || effect.type === 'invert') {
     return { ...effect, amount: between(effect.amount, 0, 1) }
   } else if (effect.type === 'dropShadow') {
     const color = colorOr(effect.color, before.type === 'dropShadow' ? before.color : '#000000')
     return { ...effect, softness: Math.max(0, effect.softness), color, opacity: between(effect.opacity, 0, 1) }
   } else if (effect.type === 'border') {
-    return { ...effect, width: Math.max(SMALLEST_EFFECT_LENGTH, effect.width), color: colorOr(effect.color, before.type === 'border' ? before.color : '#ffffff') }
+    const color = colorOr(effect.color, before.type === 'border' ? before.color : '#ffffff')
+    return { ...effect, width: Math.max(SMALLEST_EFFECT_LENGTH, effect.width), color }
   } else if (effect.type === 'roundedCorners') {
     return { ...effect, radius: Math.max(SMALLEST_EFFECT_LENGTH, effect.radius) }
   } else if (effect.type === 'clipBlur') {
@@ -190,7 +201,10 @@ export function addEffect(project: Project, clipIds: readonly string[], type: Ef
 }
 
 export function removeEffect(project: Project, clipIds: readonly string[], type: EffectType): Project {
-  return editEffects(project, clipIds, type, (effects) => (effects.some((effect) => effect.type === type) ? effects.filter((effect) => effect.type !== type) : effects))
+  return editEffects(project, clipIds, type, (effects) => {
+    const kept = effects.filter((effect) => effect.type !== type)
+    return kept.length === effects.length ? effects : kept
+  })
 }
 
 export function setEffectOff(project: Project, clipIds: readonly string[], type: EffectType, isOff: boolean): Project {
@@ -219,6 +233,7 @@ export function setEffect(project: Project, clipIds: readonly string[], changed:
     const existing = effects.find((effect) => effect.type === changed.type)
     if (existing === undefined) return effects
     const next = switched(withinLimits(changed, existing), existing.isOff === true)
-    return hasSameSettings(next, existing) ? effects : effects.map((effect) => (effect === existing ? next : effect))
+    if (hasSameSettings(next, existing)) return effects
+    return effects.map((effect) => (effect === existing ? next : effect))
   })
 }

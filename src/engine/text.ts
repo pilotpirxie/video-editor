@@ -36,7 +36,8 @@ export function rasterSize(naturalWidth: number, naturalHeight: number, pixelsPe
   const wantedWidth = wantedPixels(naturalWidth, pixelsPerUnitX)
   const wantedHeight = wantedPixels(naturalHeight, pixelsPerUnitY)
   // Separate square roots, so the product of the two sides cannot overflow.
-  const shrink = Math.min(1, MAX_RASTER_SIDE / wantedWidth, MAX_RASTER_SIDE / wantedHeight, Math.sqrt(MAX_RASTER_PIXELS) / Math.sqrt(wantedWidth) / Math.sqrt(wantedHeight))
+  const pixelLimitShrink = Math.sqrt(MAX_RASTER_PIXELS) / Math.sqrt(wantedWidth) / Math.sqrt(wantedHeight)
+  const shrink = Math.min(1, MAX_RASTER_SIDE / wantedWidth, MAX_RASTER_SIDE / wantedHeight, pixelLimitShrink)
   return { width: Math.max(1, Math.ceil(wantedWidth * shrink)), height: Math.max(1, Math.ceil(wantedHeight * shrink)) }
 }
 
@@ -102,7 +103,9 @@ export function measureText(look: TextLook): TextMeasure {
   const ascent = reference.fontBoundingBoxAscent
   const lineHeight = ascent + reference.fontBoundingBoxDescent
   const padding = Math.ceil(look.font.size * PADDING_PER_FONT_SIZE)
-  const widthOf = (text: string): number => measuring.measureText(text).width
+  function widthOf(text: string): number {
+    return measuring.measureText(text).width
+  }
 
   let lines = look.text.split('\n')
   if (look.boxWidth !== undefined) {

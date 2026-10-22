@@ -16,6 +16,10 @@ export function endOf(clip: Clip): number {
   return clip.start + clip.duration
 }
 
+export function coversTime(clip: Clip, time: number): boolean {
+  return time >= clip.start && time < endOf(clip)
+}
+
 export function isVisual(clip: Clip): clip is VisualClip {
   return clip.type !== 'audio'
 }

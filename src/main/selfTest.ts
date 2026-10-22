@@ -107,8 +107,8 @@ export async function runSelfTest(window: BrowserWindow, options: SelfTestOption
   const timecodeStillPaused = await page.text('timecode')
 
   // A slider set to the value it already shows reports nothing, so it first goes to the frame beside the wanted one.
-  const scrubTo = (frame: 'wanted' | 'beside it'): Promise<unknown> =>
-    page.evaluate(`(() => {
+  function scrubTo(frame: 'wanted' | 'beside it'): Promise<unknown> {
+    return page.evaluate(`(() => {
       const slider = ${selector('scrub')}
       const step = Number(slider.step)
       const wanted = Math.min(Number(slider.max), step * ${SCRUB_FRAME})
@@ -118,6 +118,7 @@ export async function runSelfTest(window: BrowserWindow, options: SelfTestOption
       slider.dispatchEvent(new Event('input', { bubbles: true }))
       return value
     })()`)
+  }
   const besideIt = await scrubTo('beside it')
   const deadline = Date.now() + STEP_TIMEOUT_MS
   while ((await page.evaluate(`Number(${selector('scrub')}.value)`)) !== besideIt) {
@@ -130,7 +131,8 @@ export async function runSelfTest(window: BrowserWindow, options: SelfTestOption
   const timecodeAfterScrub = await page.text('timecode')
 
   await pressSpace(window)
-  const playsOnSpace = (await page.waitFor('play', (label) => label === 'Pause', STEP_TIMEOUT_MS, 'Space to start playback')) === 'Pause'
+  const labelAfterSpace = await page.waitFor('play', (label) => label === 'Pause', STEP_TIMEOUT_MS, 'Space to start playback')
+  const playsOnSpace = labelAfterSpace === 'Pause'
   const reportsBeforeSpacePause = await page.reportCount()
   await pressSpace(window)
   await page.waitFor('play', (label) => label === 'Play', STEP_TIMEOUT_MS, 'Space to pause playback')

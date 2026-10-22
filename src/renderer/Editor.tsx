@@ -134,7 +134,8 @@ function Sidebar(): ReactElement {
     if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
     event.preventDefault()
     const direction = event.key === 'ArrowRight' ? 1 : -1
-    const next = SIDEBAR_TABS[(SIDEBAR_TABS.indexOf(tab) + direction + SIDEBAR_TABS.length) % SIDEBAR_TABS.length]
+    const wrappedIndex = (SIDEBAR_TABS.indexOf(tab) + direction + SIDEBAR_TABS.length) % SIDEBAR_TABS.length
+    const next = SIDEBAR_TABS[wrappedIndex]
     if (next !== undefined) setTab(next)
   }
 
@@ -288,18 +289,25 @@ function listenForEditingKeys(session: Session): () => void {
   function onKeyDown(event: globalThis.KeyboardEvent): void {
     const action = actionFor(shortcuts.get(), event)
     const isAllowed = !store.getState().isPreviewing || PREVIEW_ACTIONS.has(action)
-    if (action !== undefined && isAllowed && isShortcutFor(event) && runShortcut(session, action)) {
-      event.preventDefault()
-      return
+    const isShortcut = action !== undefined && isAllowed && isShortcutFor(event)
+    if (isShortcut) {
+      const isHandled = runShortcut(session, action)
+      if (isHandled) {
+        event.preventDefault()
+        return
+      }
     }
     if (!isKeyForTheEditor(event) || event.key !== 'Escape') return
-    if (store.cancel()) event.preventDefault()
+    const hasCancelledGesture = store.cancel()
+    if (hasCancelledGesture) event.preventDefault()
     else if (store.getState().isPreviewing) store.setPreviewing(false)
     else if (store.getState().selection.length > 0) store.select([])
     else actions.closeGroup()
   }
 
-  const abandonDrag = (): void => void store.cancel()
+  function abandonDrag(): void {
+    store.cancel()
+  }
 
   function onClipboard(event: ClipboardEvent): void {
     if (isTypingTarget(document.activeElement) || isModalOpen()) return
@@ -350,12 +358,18 @@ export function Editor({ session, preview }: { session: Session; preview: HTMLCa
   const layout = clampLayout(stored, size)
 
   useEffect(() => {
-    const onResize = (): void => setSize(windowSize())
+    function onResize(): void {
+      setSize(windowSize())
+    }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  useEffect(() => (rootRef.current === null ? undefined : installTooltips(rootRef.current)), [])
+  useEffect(() => {
+    const root = rootRef.current
+    if (root === null) return
+    return installTooltips(root)
+  }, [])
   useEffect(() => listenForEditingKeys(session), [session])
 
   const togglePanel = useEffectEvent((panel: Panel) => {

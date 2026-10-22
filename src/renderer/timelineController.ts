@@ -254,7 +254,18 @@ export function createTimelineController(elements: TimelineElements, session: Se
       isOverlayStale = false
       const landing = landingOfHeld()
       const drop = heldLibraryItem === undefined ? undefined : heldDropAt(heldLibraryItem)
-      drawOverlay(overlayContext, { view, size, colors, fonts, playhead: transport.position().time, guide: landing?.guide ?? guide, marquee, landing, dropTarget: drop?.shown, ...shownHandles() })
+      drawOverlay(overlayContext, {
+        view,
+        size,
+        colors,
+        fonts,
+        playhead: transport.position().time,
+        guide: landing?.guide ?? guide,
+        marquee,
+        landing,
+        dropTarget: drop?.shown,
+        ...shownHandles(),
+      })
       const landingText = landing === undefined ? '' : JSON.stringify(landing)
       if (landingText !== shownLanding) host.dataset.landing = landingText
       shownLanding = landingText
@@ -269,6 +280,12 @@ export function createTimelineController(elements: TimelineElements, session: Se
     return { x: detail.clientX - box.left, y: detail.clientY - box.top }
   }
 
+  function unlockedClipAt(point: Point): ClipHit | undefined {
+    const hit = hitClip(store.getState().project.tracks, inOrder, view, point.x, point.y)
+    if (hit === undefined || hit.track.locked) return undefined
+    return hit
+  }
+
   function heldDropAt(detail: LibraryDragDetail): HeldDrop | undefined {
     const { item } = detail
     if (item.kind === 'media' || item.kind === 'annotation') return undefined
@@ -276,10 +293,14 @@ export function createTimelineController(elements: TimelineElements, session: Se
     const point = pointIn(detail)
     const trackCount = project.tracks.length
     if (item.kind === 'effect') {
-      const hit = hitClip(project.tracks, inOrder, view, point.x, point.y)
-      if (hit === undefined || hit.track.locked || !takesEffect(hit.clip, item.effect)) return undefined
+      const hit = unlockedClipAt(point)
+      if (hit === undefined || !takesEffect(hit.clip, item.effect)) return undefined
       const clipIds = selection.includes(hit.clip.id) ? selection : [hit.clip.id]
-      const shown = { left: timeToX(hit.clip.start, view), right: timeToX(endOf(hit.clip), view), top: trackTop(hit.trackIndex, trackCount, view) }
+      const shown = {
+        left: timeToX(hit.clip.start, view),
+        right: timeToX(endOf(hit.clip), view),
+        top: trackTop(hit.trackIndex, trackCount, view),
+      }
       return { kind: 'effect', clipIds, effect: item.effect, shown }
     }
 
@@ -311,13 +332,19 @@ export function createTimelineController(elements: TimelineElements, session: Se
     const stillDuration = stillDurationTicks(store.getState().settings)
     if (item.kind === 'annotation') {
       const added = { clipId: newClipId(0), start, duration: stillDuration, trackIndex, newTrack }
-      return { clipIds: [added.clipId], guide, label: `Add ${ANNOTATION_NAMES[item.annotation]}`, place: (current) => addAnnotation(current, item.annotation, added) }
+      return {
+        clipIds: [added.clipId],
+        guide,
+        label: `Add ${ANNOTATION_NAMES[item.annotation]}`,
+        place: (current) => addAnnotation(current, item.annotation, added),
+      }
     }
     const media = placeableMedia(project, mediaStates, item.mediaIds, newClipId)
     if (media.length === 0) return undefined
     const drop = { media, start, trackIndex, newTrack, stillDuration }
     const clipIds = media.map((dropped) => dropped.clipId)
-    return { clipIds, guide, label: media.length === 1 ? 'Add Clip' : `Add ${media.length} Clips`, place: (current) => dropMedia(current, drop) }
+    const label = media.length === 1 ? 'Add Clip' : `Add ${media.length} Clips`
+    return { clipIds, guide, label, place: (current) => dropMedia(current, drop) }
   }
 
   function landingOfHeld(): Landing | undefined {
@@ -361,8 +388,10 @@ export function createTimelineController(elements: TimelineElements, session: Se
     if (gesture?.kind === 'volume-line') return { ...none, ...heldVolumeLine(gesture) }
     const fading = gesture?.kind === 'fade' ? gesture : undefined
     const changing = gesture?.kind === 'transition' ? gesture : undefined
+    const isOtherGesture = gesture !== undefined && fading === undefined && changing === undefined
+    if (isOtherGesture) return none
     const clipId = fading?.clipId ?? changing?.target.clipId ?? hoveredClipId
-    if (clipId === undefined || (gesture !== undefined && fading === undefined && changing === undefined)) return none
+    if (clipId === undefined) return none
     const { project, mediaStates } = store.getState()
     const shown = locateClip(project, clipId)
     if (shown === undefined || shown.track.locked) return none
@@ -397,7 +426,8 @@ export function createTimelineController(elements: TimelineElements, session: Se
     const rowTop = trackTop(shown.trackIndex, project.tracks.length, view)
     const spot = volumeLineAt(shown.clip, makesSound(shown.clip, mediaStates), view, rowTop, dragging.from.x)
     if (spot === undefined) return { heldPoint: undefined, heldLabel: '' }
-    return { heldPoint: { index: -1, x: dragging.from.x, y: spot.y }, heldLabel: `${Math.round(volumeAtY(spot.band, spot.y) * PERCENT)}%` }
+    const volume = volumeAtY(spot.band, spot.y)
+    return { heldPoint: { index: -1, x: dragging.from.x, y: spot.y }, heldLabel: `${Math.round(volume * PERCENT)}%` }
   }
 
   function volumeLineOn(hit: ClipHit, point: Point): VolumeLineSpot | undefined {
@@ -573,7 +603,8 @@ export function createTimelineController(elements: TimelineElements, session: Se
     if (edge !== undefined) {
       store.begin('Trim Clip')
       const targets = timelineTargets(project, new Set([clip.id]), playhead)
-      return { kind: 'trim', clipId: clip.id, edge, edgeTime: edge === 'start' ? clip.start : endOf(clip), targets }
+      const edgeTime = edge === 'start' ? clip.start : endOf(clip)
+      return { kind: 'trim', clipId: clip.id, edge, edgeTime, targets }
     }
 
     const moving = new Set(selection)
@@ -606,7 +637,9 @@ export function createTimelineController(elements: TimelineElements, session: Se
     const clipIds: string[] = []
     for (const track of project.tracks) {
       for (const other of track.clips) {
-        if (chosen.has(other.id) && (!isVolumeFade || makesSound(other, mediaStates))) clipIds.push(other.id)
+        if (!chosen.has(other.id)) continue
+        if (isVolumeFade && !makesSound(other, mediaStates)) continue
+        clipIds.push(other.id)
       }
     }
 
@@ -688,13 +721,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   }
 
   function updateFade(fading: Extract<Gesture, { kind: 'fade' }>, event: PointerEvent, point: Point): void {
-    let time = wholeFrames(xToTime(point.x - fading.grabOffset, view))
-    guide = undefined
-    if (isSnapping(event)) {
-      const snap = snapDelta([fading.endTime], time - fading.endTime, fading.targets, snapRange())
-      time = fading.endTime + snap.delta
-      guide = snap.guide
-    }
+    const time = snappedTime(point.x - fading.grabOffset, fading.endTime, fading.targets, event)
     const length = isFadeIn(fading.fade) ? time - fading.clipStart : fading.clipEnd - time
     const { clipIds, fade } = fading
     store.update((project) => setFade(project, clipIds, fade, length))
@@ -715,13 +742,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   }
 
   function updateTrim(trim: Extract<Gesture, { kind: 'trim' }>, event: PointerEvent, point: Point): void {
-    let time = wholeFrames(xToTime(point.x, view))
-    guide = undefined
-    if (isSnapping(event)) {
-      const snap = snapDelta([trim.edgeTime], time - trim.edgeTime, trim.targets, snapRange())
-      time = trim.edgeTime + snap.delta
-      guide = snap.guide
-    }
+    const time = snappedTime(point.x, trim.edgeTime, trim.targets, event)
     const { clipId, edge } = trim
     const { mediaStates } = store.getState()
     const ticks = frameTicks()
@@ -773,14 +794,15 @@ export function createTimelineController(elements: TimelineElements, session: Se
       const camera = store.getState().project.camera ?? []
       const zoomHit = hitZoom(camera, view, at.x)
       store.selectZoom(zoomHit?.index)
-      const zoom = zoomHit === undefined ? undefined : camera[zoomHit.index]
-      if (zoomHit !== undefined && zoom !== undefined) gesture = { kind: 'zoom-press', hit: zoomHit, at, time: zoom.time }
+      if (zoomHit === undefined) return
+      const zoom = camera[zoomHit.index]
+      if (zoom !== undefined) gesture = { kind: 'zoom-press', hit: zoomHit, at, time: zoom.time }
       return
     }
     const hasModifier = event.shiftKey || event.metaKey
-    const { project, selection } = store.getState()
-    const hit = hitClip(project.tracks, inOrder, view, at.x, at.y)
-    if (hit === undefined || hit.track.locked) {
+    const { selection } = store.getState()
+    const hit = unlockedClipAt(at)
+    if (hit === undefined) {
       const kept = hasModifier ? selection : []
       if (!hasModifier) store.select([])
       gesture = { kind: 'marquee', from: at, kept }
@@ -820,19 +842,21 @@ export function createTimelineController(elements: TimelineElements, session: Se
   }
 
   function showHover(point: Point | undefined): void {
-    const { project } = store.getState()
-    const found = point === undefined || point.y < TRACKS_TOP ? undefined : hitClip(project.tracks, inOrder, view, point.x, point.y)
-    const hit = found === undefined || found.track.locked ? undefined : found
+    const isOverTracks = point !== undefined && point.y >= TRACKS_TOP
+    const hit = isOverTracks ? unlockedClipAt(point) : undefined
     const isOnLane = point !== undefined && point.y >= RULER_HEIGHT && point.y < TRACKS_TOP
-    const zoomHit = isOnLane ? hitZoom(project.camera ?? [], view, point.x) : undefined
+    const zoomHit = isOnLane ? hitZoom(store.getState().project.camera ?? [], view, point.x) : undefined
     let cursor = 'default'
-    if (zoomHit !== undefined) cursor = zoomHit.part === 'start' ? 'ew-resize' : 'grab'
-    else if (hit !== undefined && point !== undefined && transitionGripOn(hit, point) !== undefined) cursor = 'ew-resize'
-    else if (hit !== undefined && point !== undefined && volumePointOn(hit, point) !== undefined) cursor = 'grab'
-    else if (hit !== undefined && point !== undefined && fadeHandleOn(hit, point) !== undefined) cursor = 'grab'
-    else if (hit !== undefined && point !== undefined && volumeLineOn(hit, point) !== undefined) cursor = 'ns-resize'
-    else if (hit !== undefined && point !== undefined && keyframeDiamondOn(hit, point) !== undefined) cursor = 'pointer'
-    else if (hit?.edge !== undefined) cursor = 'ew-resize'
+    if (zoomHit !== undefined) {
+      cursor = zoomHit.part === 'start' ? 'ew-resize' : 'grab'
+    } else if (hit !== undefined && point !== undefined) {
+      if (transitionGripOn(hit, point) !== undefined) cursor = 'ew-resize'
+      else if (volumePointOn(hit, point) !== undefined) cursor = 'grab'
+      else if (fadeHandleOn(hit, point) !== undefined) cursor = 'grab'
+      else if (volumeLineOn(hit, point) !== undefined) cursor = 'ns-resize'
+      else if (keyframeDiamondOn(hit, point) !== undefined) cursor = 'pointer'
+      else if (hit.edge !== undefined) cursor = 'ew-resize'
+    }
     overlay.style.cursor = cursor
 
     if (hit?.clip.id === hoveredClipId) return
@@ -847,7 +871,9 @@ export function createTimelineController(elements: TimelineElements, session: Se
       return
     }
     if (gesture.kind === 'pan') {
-      setView({ ...view, scrollX: gesture.scrollX - (event.clientX - gesture.from.x), scrollY: gesture.scrollY - (event.clientY - gesture.from.y) })
+      const scrollX = gesture.scrollX - (event.clientX - gesture.from.x)
+      const scrollY = gesture.scrollY - (event.clientY - gesture.from.y)
+      setView({ ...view, scrollX, scrollY })
       return
     }
     if (gesture.kind === 'press') {
@@ -929,20 +955,26 @@ export function createTimelineController(elements: TimelineElements, session: Se
       openMenu(at, { kind: 'zoom', index: zoomHit.index })
       return
     }
-    const hit = hitClip(project.tracks, inOrder, view, point.x, point.y)
-    const isOpen = hit !== undefined && !hit.track.locked
-    if (isOpen && !selection.includes(hit.clip.id)) store.select([hit.clip.id])
-    const volumePoint = isOpen ? volumePointOn(hit, point) : undefined
-    openMenu(at, volumePoint === undefined || hit === undefined ? undefined : { kind: 'volume', clipId: hit.clip.id, index: volumePoint.index })
+    const hit = unlockedClipAt(point)
+    if (hit === undefined) {
+      openMenu(at, undefined)
+      return
+    }
+    if (!selection.includes(hit.clip.id)) store.select([hit.clip.id])
+    const volumePoint = volumePointOn(hit, point)
+    if (volumePoint === undefined) {
+      openMenu(at, undefined)
+      return
+    }
+    openMenu(at, { kind: 'volume', clipId: hit.clip.id, index: volumePoint.index })
   }
 
   function onDoubleClick(event: MouseEvent): void {
     const point = pointOf(event)
-    const hit = hitClip(store.getState().project.tracks, inOrder, view, point.x, point.y)
-    if (hit === undefined || hit.track.locked) return
+    const hit = unlockedClipAt(point)
+    if (hit === undefined) return
     if (volumeLineOn(hit, point) !== undefined) {
-      const ticks = frameTicks()
-      const time = Math.round(xToTime(point.x, view) / ticks) * ticks
+      const time = wholeFrames(xToTime(point.x, view))
       store.apply('Add Volume Keyframe', (project) => setKeyframesAt(project, [hit.clip.id], 'volume', time, true))
       return
     }
@@ -975,7 +1007,8 @@ export function createTimelineController(elements: TimelineElements, session: Se
       store.select(drop.clipIds)
       return
     }
-    const placement = placementAt(event.detail, () => crypto.randomUUID(), { id: crypto.randomUUID(), name: nextTrackName(store.getState().project) })
+    const newTrack = { id: crypto.randomUUID(), name: nextTrackName(store.getState().project) }
+    const placement = placementAt(event.detail, () => crypto.randomUUID(), newTrack)
     if (placement === undefined) return
     store.apply(placement.label, placement.place)
     store.select(placement.clipIds)
@@ -1002,14 +1035,12 @@ export function createTimelineController(elements: TimelineElements, session: Se
     event.preventDefault()
   }
 
-  const cancel = (): void => endGesture('cancel')
-  const commit = (): void => endGesture('commit')
   function onWindowBlur(): void {
     heldLibraryItem = undefined
     endGesture('cancel')
     invalidate('overlay')
   }
-  const leave = (): void => showHover(undefined)
+
   const resizeObserver = new ResizeObserver(resize)
   resizeObserver.observe(host)
   const unsubscribe = [
@@ -1018,50 +1049,38 @@ export function createTimelineController(elements: TimelineElements, session: Se
     session.onPreparation(() => invalidate('content')),
     transport.subscribe(followPlayhead),
   ]
-  overlay.addEventListener('pointerdown', onPointerDown)
-  overlay.addEventListener('pointermove', onPointerMove)
-  overlay.addEventListener('pointerup', commit)
-  overlay.addEventListener('pointercancel', cancel)
-  overlay.addEventListener('lostpointercapture', cancel)
-  overlay.addEventListener('pointerleave', leave)
-  overlay.addEventListener('wheel', onWheel, { passive: false })
-  scrollbar.addEventListener('scroll', onScrollbar)
-  overlay.addEventListener('contextmenu', onContextMenu)
-  overlay.addEventListener('dblclick', onDoubleClick)
-  host.addEventListener(LIBRARY_DROP_EVENT, onLibraryDrop)
-  window.addEventListener(LIBRARY_DRAG_EVENT, onLibraryDrag)
-  window.addEventListener('keydown', onKeyDown)
-  window.addEventListener('blur', onWindowBlur)
+  const listening = new AbortController()
+  const { signal } = listening
+  overlay.addEventListener('pointerdown', onPointerDown, { signal })
+  overlay.addEventListener('pointermove', onPointerMove, { signal })
+  overlay.addEventListener('pointerup', () => endGesture('commit'), { signal })
+  overlay.addEventListener('pointercancel', () => endGesture('cancel'), { signal })
+  overlay.addEventListener('lostpointercapture', () => endGesture('cancel'), { signal })
+  overlay.addEventListener('pointerleave', () => showHover(undefined), { signal })
+  overlay.addEventListener('wheel', onWheel, { passive: false, signal })
+  scrollbar.addEventListener('scroll', onScrollbar, { signal })
+  overlay.addEventListener('contextmenu', onContextMenu, { signal })
+  overlay.addEventListener('dblclick', onDoubleClick, { signal })
+  host.addEventListener(LIBRARY_DROP_EVENT, onLibraryDrop, { signal })
+  window.addEventListener(LIBRARY_DRAG_EVENT, onLibraryDrag, { signal })
+  window.addEventListener('keydown', onKeyDown, { signal })
+  window.addEventListener('blur', onWindowBlur, { signal })
   // A canvas the GPU process drew comes back blank, and without its scale, once that process has been restarted.
-  content.addEventListener('contextrestored', resize)
-  overlay.addEventListener('contextrestored', resize)
+  content.addEventListener('contextrestored', resize, { signal })
+  overlay.addEventListener('contextrestored', resize, { signal })
 
   return {
     zoomBy(factor) {
       const playheadX = timeToX(transport.position().time, view)
-      const anchorX = playheadX >= 0 && playheadX <= size.width ? playheadX : size.width / 2
+      const isPlayheadShown = playheadX >= 0 && playheadX <= size.width
+      const anchorX = isPlayheadShown ? playheadX : size.width / 2
       setView(zoomAround(view, factor, anchorX, zoomLimits(store.getState().project)))
     },
     zoomToFit,
     dispose() {
       resizeObserver.disconnect()
       for (const stop of unsubscribe) stop()
-      overlay.removeEventListener('pointerdown', onPointerDown)
-      overlay.removeEventListener('pointermove', onPointerMove)
-      overlay.removeEventListener('pointerup', commit)
-      overlay.removeEventListener('pointercancel', cancel)
-      overlay.removeEventListener('lostpointercapture', cancel)
-      overlay.removeEventListener('pointerleave', leave)
-      overlay.removeEventListener('wheel', onWheel)
-      scrollbar.removeEventListener('scroll', onScrollbar)
-      overlay.removeEventListener('contextmenu', onContextMenu)
-      overlay.removeEventListener('dblclick', onDoubleClick)
-      host.removeEventListener(LIBRARY_DROP_EVENT, onLibraryDrop)
-      window.removeEventListener(LIBRARY_DRAG_EVENT, onLibraryDrag)
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('blur', onWindowBlur)
-      content.removeEventListener('contextrestored', resize)
-      overlay.removeEventListener('contextrestored', resize)
+      listening.abort()
     },
   }
 }

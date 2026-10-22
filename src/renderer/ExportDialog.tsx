@@ -67,7 +67,10 @@ export function ExportDialog(): ReactElement {
   const selection = useEditorState((state) => state.selection)
   const mediaStates = useEditorState((state) => state.mediaStates)
   const dialogRef = useRef<HTMLDialogElement>(null)
-  const [choices, setChoices] = useState<ExportChoices>(() => startingChoices(project, parseRememberedChoices(localStorage.getItem(CHOICES_KEY) ?? undefined)))
+  const [choices, setChoices] = useState<ExportChoices>(() => {
+    const remembered = parseRememberedChoices(localStorage.getItem(CHOICES_KEY) ?? undefined)
+    return startingChoices(project, remembered)
+  })
   const [playheadTime] = useState(() => session.transport.position().time)
 
   useEffect(() => {
@@ -83,19 +86,31 @@ export function ExportDialog(): ReactElement {
   const selected = selectionRange(project, selection)
   const range = choices.isSelectionOnly && selected !== undefined ? selected : { start: 0, end: projectDuration(project) }
   const missingCount = unlinkedMedia(project, mediaStates).length
+  let missingNote = ''
+  if (missingCount === 1) missingNote = '. 1 media file is missing; clips that use it will be left out.'
+  else if (missingCount > 1) missingNote = `. ${missingCount} media files are missing; clips that use them will be left out.`
+
+  function choose(changes: Partial<ExportChoices>): void {
+    setChoices({ ...choices, ...changes })
+  }
 
   function presetChoices(isShaped: boolean, heading: string): Choice[] {
-    const presets = EXPORT_PRESETS.filter((preset) => (shortSideOf(preset) !== undefined) === isShaped)
-    return presets.map((preset, index) => {
+    const shown: Choice[] = []
+    for (const preset of EXPORT_PRESETS) {
+      const isPresetShaped = shortSideOf(preset) !== undefined
+      if (isPresetShaped !== isShaped) continue
       const pixels = exportSize(preset, canvas)
       const label = `${PRESET_NAMES[preset]} (${pixels.width}x${pixels.height})`
-      return index === 0 ? { value: preset, label, heading } : { value: preset, label }
-    })
+      if (shown.length === 0) shown.push({ value: preset, label, heading })
+      else shown.push({ value: preset, label })
+    }
+    return shown
   }
 
   function rateLabel(rate: FrameRate): string {
     const framesPerSecond = Number((rate.num / rate.den).toFixed(FRAME_RATE_DECIMALS))
-    return rateKey(rate) === rateKey(canvas.frameRate) ? `${framesPerSecond} fps (project)` : `${framesPerSecond} fps`
+    const isProjectRate = rateKey(rate) === rateKey(canvas.frameRate)
+    return isProjectRate ? `${framesPerSecond} fps (project)` : `${framesPerSecond} fps`
   }
 
   function onSubmit(event: FormEvent<HTMLFormElement>): void {
@@ -145,7 +160,7 @@ export function ExportDialog(): ReactElement {
               choices={[...presetChoices(true, 'Shape of this project'), ...presetChoices(false, 'Fixed shapes')]}
               value={choices.preset}
               onChoose={(preset) => {
-                if (isExportPreset(preset)) setChoices({ ...choices, preset })
+                if (isExportPreset(preset)) choose({ preset })
               }}
             />
           </div>
@@ -160,7 +175,7 @@ export function ExportDialog(): ReactElement {
               value={rateKey(choices.frameRate)}
               onChoose={(key) => {
                 const frameRate = rates.find((rate) => rateKey(rate) === key)
-                if (frameRate !== undefined) setChoices({ ...choices, frameRate })
+                if (frameRate !== undefined) choose({ frameRate })
               }}
             />
           </div>
@@ -172,7 +187,7 @@ export function ExportDialog(): ReactElement {
             </span>
             <div className="segmented wide" role="group" aria-labelledby="export-quality-label">
               {EXPORT_QUALITIES.map((quality) => (
-                <button key={quality} type="button" className="button" data-testid={`export-quality-${quality}`} aria-pressed={choices.quality === quality} onClick={() => setChoices({ ...choices, quality })}>
+                <button key={quality} type="button" className="button" data-testid={`export-quality-${quality}`} aria-pressed={choices.quality === quality} onClick={() => choose({ quality })}>
                   {QUALITY_NAMES[quality]}
                 </button>
               ))}
@@ -183,7 +198,7 @@ export function ExportDialog(): ReactElement {
           <fieldset className="labelled">
             <legend className="field-label">Range</legend>
             <label className="check-field">
-              <input type="radio" name="export-range" data-testid="export-range-whole" checked={!choices.isSelectionOnly} onChange={() => setChoices({ ...choices, isSelectionOnly: false })} />
+              <input type="radio" name="export-range" data-testid="export-range-whole" checked={!choices.isSelectionOnly} onChange={() => choose({ isSelectionOnly: false })} />
               Whole timeline
             </label>
             <label className="check-field">
@@ -193,7 +208,7 @@ export function ExportDialog(): ReactElement {
                 data-testid="export-range-selection"
                 checked={choices.isSelectionOnly}
                 disabled={selected === undefined}
-                onChange={() => setChoices({ ...choices, isSelectionOnly: true })}
+                onChange={() => choose({ isSelectionOnly: true })}
               />
               Selected clips
             </label>
@@ -203,14 +218,14 @@ export function ExportDialog(): ReactElement {
           <div className="labelled">
             <span className="field-label">Sound</span>
             <label className="check-field">
-              <input type="checkbox" data-testid="export-audio" checked={choices.hasAudio} onChange={(event) => setChoices({ ...choices, hasAudio: event.target.checked })} />
+              <input type="checkbox" data-testid="export-audio" checked={choices.hasAudio} onChange={(event) => choose({ hasAudio: event.target.checked })} />
               Include sound
             </label>
           </div>
         )}
         <p className="dialog-summary" data-testid="export-summary">
           {summary()}
-          {missingCount > 0 && `. ${missingCount} media ${missingCount === 1 ? 'file is' : 'files are'} missing; clips that use ${missingCount === 1 ? 'it' : 'them'} will be left out.`}
+          {missingNote}
         </p>
         <div className="dialog-buttons">
           <button type="button" className="button" data-testid="export-cancel-dialog" onClick={() => dialogRef.current?.close()}>
@@ -244,7 +259,8 @@ export function ExportProgressDialog(): ReactElement | undefined {
   }, [phase])
 
   if (status === undefined) return undefined
-  const left = status.phase === 'running' ? timeLeftMs(status.done, status.total, performance.now() - status.startedAt) : undefined
+  let left: number | undefined
+  if (status.phase === 'running') left = timeLeftMs(status.done, status.total, performance.now() - status.startedAt)
   return (
     <dialog
       ref={dialogRef}

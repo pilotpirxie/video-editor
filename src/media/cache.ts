@@ -5,6 +5,7 @@ import { logError } from '../shared/log.js'
 import { DEFAULT_SETTINGS, unusedMediaMs } from '../shared/settings.js'
 
 const TEMPORARY_SUFFIX = '.tmp'
+const INDEX_EXTENSION = '.idx'
 const MEDIA_FACTS_NAME = 'info'
 const FIRST_LAYOUT_MEDIA_FOLDER = /^[0-9a-f]{32}$/
 
@@ -103,8 +104,13 @@ export function createDiskCache(directory: string, initialLimitBytes: number, ma
     units.delete(key)
     total -= unit.bytes
     // An index goes before its pictures, so a half-removed segment reads as missing rather than broken.
-    const files = [...unit.files].sort((a, b) => Number(b.endsWith('.idx')) - Number(a.endsWith('.idx')))
-    for (const file of files) await rm(file, { force: true })
+    const indexes: string[] = []
+    const others: string[] = []
+    for (const file of unit.files) {
+      if (file.endsWith(INDEX_EXTENSION)) indexes.push(file)
+      else others.push(file)
+    }
+    for (const file of [...indexes, ...others]) await rm(file, { force: true })
   }
 
   async function evictOverLimit(): Promise<void> {
@@ -113,9 +119,13 @@ export function createDiskCache(directory: string, initialLimitBytes: number, ma
     for (const paths of protectedBy.values()) {
       for (const path of paths) protectedKeys.add(unitKeyOf(path))
     }
-    const candidates = [...units.entries()].filter(([key]) => !protectedKeys.has(key) && !isBeingBuilt(key))
-    candidates.sort((a, b) => a[1].usedAt - b[1].usedAt)
-    for (const [key, unit] of candidates) {
+    const candidates: { key: string; unit: EvictionUnit }[] = []
+    for (const [key, unit] of units) {
+      if (protectedKeys.has(key) || isBeingBuilt(key)) continue
+      candidates.push({ key, unit })
+    }
+    candidates.sort((a, b) => a.unit.usedAt - b.unit.usedAt)
+    for (const { key, unit } of candidates) {
       if (total <= limitBytes) return
       try {
         await removeUnit(key, unit)
@@ -183,18 +193,23 @@ export function createDiskCache(directory: string, initialLimitBytes: number, ma
 
   const ready = scan()
 
+  async function evictAfter(earlier: Promise<void>): Promise<void> {
+    await Promise.allSettled([earlier])
+    await evictOverLimit()
+  }
+
   async function added(path: string): Promise<void> {
     await ready
     const size = await sizeOf(path)
     if (size === undefined) return
     record(path, size.bytes, Date.now())
-    evicting = evicting.then(evictOverLimit, evictOverLimit)
+    evicting = evictAfter(evicting)
     await evicting
   }
 
   async function setLimit(bytes: number): Promise<void> {
     limitBytes = bytes
-    evicting = evicting.then(evictOverLimit, evictOverLimit)
+    evicting = evictAfter(evicting)
     await evicting
   }
 

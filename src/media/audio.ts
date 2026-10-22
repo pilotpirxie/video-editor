@@ -23,6 +23,10 @@ const PREROLL_SAMPLES = SAMPLE_RATE
 const STRETCH_MARGIN_SAMPLES = SAMPLE_RATE
 const STRETCH_FEED_SAMPLES = 10 * SAMPLE_RATE
 const RUN_END_MARGIN_SECONDS = 0.5
+const SECONDS_DECIMALS = 6
+const SAMPLE_CENTRE = 0.5
+const KEPT_PITCH_CODE = 'k'
+const CHANGED_PITCH_CODE = 'c'
 
 class StretchError extends Error {
   constructor(message: string) {
@@ -162,8 +166,11 @@ export async function readWaveform(directory: string): Promise<WaveformLevel[]> 
 
 export function tempoFilter(stretch: AudioStretch): string {
   const { speedPercent } = stretch
-  const isUsable = Number.isInteger(speedPercent) && speedPercent >= MIN_SPEED_PERCENT && speedPercent <= MAX_SPEED_PERCENT && speedPercent !== NORMAL_SPEED_PERCENT
-  if (!isUsable || typeof stretch.keepsPitch !== 'boolean') throw new StretchError(`Sound cannot be played at "${String(speedPercent)}" percent of its speed`)
+  const isInRange = speedPercent >= MIN_SPEED_PERCENT && speedPercent <= MAX_SPEED_PERCENT
+  const isUsable = Number.isInteger(speedPercent) && isInRange && speedPercent !== NORMAL_SPEED_PERCENT
+  if (!isUsable || typeof stretch.keepsPitch !== 'boolean') {
+    throw new StretchError(`Sound cannot be played at "${String(speedPercent)}" percent of its speed`)
+  }
 
   if (!stretch.keepsPitch) return `asetrate=${(SAMPLE_RATE * speedPercent) / NORMAL_SPEED_PERCENT},aresample=${SAMPLE_RATE}`
 
@@ -182,7 +189,8 @@ export function tempoFilter(stretch: AudioStretch): string {
 }
 
 export function stretchKey(stretch: AudioStretch): string {
-  return `${stretch.speedPercent}${stretch.keepsPitch ? 'k' : 'c'}`
+  const pitchCode = stretch.keepsPitch ? KEPT_PITCH_CODE : CHANGED_PITCH_CODE
+  return `${stretch.speedPercent}${pitchCode}`
 }
 
 export function audioLayout(durationTicks: number, segmentSeconds: number, seeksExactly: boolean): AudioLayout {
@@ -202,7 +210,7 @@ export function audioSegmentPath(directory: string, segment: number, stretch?: A
 }
 
 function seconds(ticks: number): string {
-  return (ticks / TICKS_PER_SECOND).toFixed(6)
+  return (ticks / TICKS_PER_SECOND).toFixed(SECONDS_DECIMALS)
 }
 
 function decodeFrom(ffmpeg: FfmpegRunner, source: AudioSource, startSample: number, durationSamples: number | undefined, signal: AbortSignal): Job {
@@ -212,7 +220,10 @@ function decodeFrom(ffmpeg: FfmpegRunner, source: AudioSource, startSample: numb
   if (startSample > 0) args.push('-ss', seconds(startSample * TICKS_PER_SAMPLE))
   args.push('-i', source.path, '-map', '0:a:0', '-af', filter)
   // With the file's own timestamps kept, the end is a timestamp too: `-t` would also be counted from the start of the file.
-  if (durationSamples !== undefined) args.push('-to', ((firstPts + durationSamples) / SAMPLE_RATE + RUN_END_MARGIN_SECONDS).toFixed(6))
+  if (durationSamples !== undefined) {
+    const endSeconds = (firstPts + durationSamples) / SAMPLE_RATE + RUN_END_MARGIN_SECONDS
+    args.push('-to', endSeconds.toFixed(SECONDS_DECIMALS))
+  }
   args.push('-f', 'f32le', '-')
   return ffmpeg.spawnJob('ffmpeg', args, { signal })
 }
@@ -285,7 +296,8 @@ export async function buildAudioRun(run: AudioRun): Promise<string[]> {
   const startSample = Math.max(0, runStart - PREROLL_SAMPLES)
   const neededSamples = (lastSegment + 1) * layout.samplesPerSegment + SEAM_SAMPLES - startSample
 
-  const filler = createSegmentFiller({ ...layout, segmentCount: Math.min(layout.segmentCount, lastSegment + 1) }, firstSegment, async (segment, samples) => {
+  const runLayout = { ...layout, segmentCount: Math.min(layout.segmentCount, lastSegment + 1) }
+  const filler = createSegmentFiller(runLayout, firstSegment, async (segment, samples) => {
     const path = audioSegmentPath(directory, segment)
     if (!claimed.has(path)) return
     await writeCacheFile(cache, path, samples)
@@ -328,7 +340,8 @@ export async function buildStretchedSegment(build: StretchedBuild): Promise<void
   const speed = stretch.speedPercent
   const step = speed / greatestCommonDivisor(speed, NORMAL_SPEED_PERCENT)
   const segmentStart = segment * layout.samplesPerSegment
-  const sourceStart = Math.max(0, Math.floor((segmentStart * speed) / NORMAL_SPEED_PERCENT / step - STRETCH_MARGIN_SAMPLES / step) * step)
+  const sourceSteps = (segmentStart * speed) / NORMAL_SPEED_PERCENT / step - STRETCH_MARGIN_SAMPLES / step
+  const sourceStart = Math.max(0, Math.floor(sourceSteps) * step)
   const outputStart = (sourceStart * NORMAL_SPEED_PERCENT) / speed
   const segmentFrames = layout.samplesPerSegment + SEAM_SAMPLES
   const sourceEnd = Math.ceil(((segmentStart + segmentFrames) * speed) / NORMAL_SPEED_PERCENT) + STRETCH_MARGIN_SAMPLES
@@ -339,7 +352,8 @@ export async function buildStretchedSegment(build: StretchedBuild): Promise<void
   const raw = ['-f', 'f32le', '-ar', String(SAMPLE_RATE), '-ac', String(CHANNELS)]
 
   try {
-    const job = ffmpeg.spawnJob('ffmpeg', [...raw, '-i', 'pipe:0', '-af', tempoFilter(stretch), '-f', 'f32le', '-'], { signal })
+    const args = [...raw, '-i', 'pipe:0', '-af', tempoFilter(stretch), '-f', 'f32le', '-']
+    const job = ffmpeg.spawnJob('ffmpeg', args, { signal })
     async function feed(): Promise<void> {
       for (let first = sourceStart; first < sourceEnd; first += STRETCH_FEED_SAMPLES) {
         const samples = await readBase(first, Math.min(STRETCH_FEED_SAMPLES, sourceEnd - first))
@@ -401,11 +415,13 @@ export async function readSegmentedAudio(directory: string, layout: AudioLayout,
     const tail = new Float32Array((seamTo - partFrom) * CHANNELS)
     await readSegmentInto(audioSegmentPath(directory, segment - 1, stretch), partFrom - segmentStart + perSegment, tail)
     for (let sample = partFrom; sample < seamTo; sample++) {
-      const weight = (sample - segmentStart + 0.5) / SEAM_SAMPLES
+      const incomingWeight = (sample - segmentStart + SAMPLE_CENTRE) / SEAM_SAMPLES
       const index = (sample - firstSample) * CHANNELS
       const tailIndex = (sample - partFrom) * CHANNELS
       for (let channel = 0; channel < CHANNELS; channel++) {
-        samples[index + channel] = (tail[tailIndex + channel] ?? 0) * (1 - weight) + (samples[index + channel] ?? 0) * weight
+        const outgoing = tail[tailIndex + channel] ?? 0
+        const incoming = samples[index + channel] ?? 0
+        samples[index + channel] = outgoing * (1 - incomingWeight) + incoming * incomingWeight
       }
     }
   }
