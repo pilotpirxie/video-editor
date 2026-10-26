@@ -206,6 +206,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
         playing.mixedUntil += AUDIO_BLOCK_SAMPLES
       }
     } catch (error) {
+      if (playback === playing) pause()
       emit({ type: 'error', message: describeError(error) })
     } finally {
       playing.isMixing = false

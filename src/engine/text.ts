@@ -122,7 +122,7 @@ export function measureText(look: TextLook): TextMeasure {
     lineHeight,
     lineStep,
     padding,
-    naturalWidth: look.boxWidth ?? Math.max(...lineWidths) + 2 * padding,
+    naturalWidth: look.boxWidth ?? lineWidths.reduce((widest, width) => Math.max(widest, width), 0) + 2 * padding,
     naturalHeight: (lines.length - 1) * lineStep + lineHeight + 2 * padding,
   }
 }

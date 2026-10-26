@@ -141,8 +141,10 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
       })
     })
 
+    const onAbort = (): void => stop('was cancelled')
     if (signal?.aborted === true) stop('was cancelled')
-    signal?.addEventListener('abort', () => stop('was cancelled'), { once: true })
+    signal?.addEventListener('abort', onAbort, { once: true })
+    void exitCode.then(() => signal?.removeEventListener('abort', onAbort))
 
     function lowerPriority(): void {
       if (child.pid === undefined) return
@@ -246,7 +248,7 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
       return unit
     }
 
-    async function read(byteCount: number | undefined, timeoutMs: number): Promise<Buffer | undefined> {
+    async function readNext(byteCount: number | undefined, timeoutMs: number): Promise<Buffer | undefined> {
       const needed = byteCount ?? 1
       while (bufferedBytes < needed && !hasEnded) {
         await waitForOutput(timeoutMs)
@@ -254,6 +256,13 @@ export function createFfmpegRunner(binaryDirectory: string): FfmpegRunner {
       if (bufferedBytes >= needed) return take(byteCount ?? bufferedBytes)
       await done
       return undefined
+    }
+
+    let lastRead: Promise<unknown> = Promise.resolve()
+    function read(byteCount: number | undefined, timeoutMs: number): Promise<Buffer | undefined> {
+      const next = lastRead.then(() => readNext(byteCount, timeoutMs))
+      lastRead = next.catch(reportedThroughJob)
+      return next
     }
 
     if (readAheadBytes > 0) stdout.resume()

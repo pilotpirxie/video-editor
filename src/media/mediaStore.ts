@@ -60,7 +60,7 @@ type MediaEntry = {
   directory: string
   failures: number
   hasFailed: boolean
-  silentSegmentPaths: Set<string>
+  emptySegmentPaths: Set<string>
 }
 
 type OpenProject = {
@@ -442,8 +442,9 @@ export class MediaSession implements MediaClient {
       const entry = await this.openFile(found)
       return { state: { info: entry.info, createdAt: entry.createdAt }, entry }
     } catch (error) {
-      if (!(error instanceof ProbeError) && !(error instanceof MediaError)) throw error
-      return { state: { error: error.message, isMissing: false } }
+      if (error instanceof ProbeError || error instanceof MediaError) return { state: { error: error.message, isMissing: false } }
+      logError('Could not open a media file', error, { path: found })
+      return { state: { error: describeError(error), isMissing: false } }
     }
   }
 
@@ -474,7 +475,7 @@ export class MediaSession implements MediaClient {
     const info = await this.infoOf(path, directory)
     // A disk without creation times reports 0.
     const createdAt = file.birthtimeMs > 0 ? file.birthtimeMs : file.mtimeMs
-    return { path, info, createdAt, directory, failures: 0, hasFailed: false, silentSegmentPaths: new Set() }
+    return { path, info, createdAt, directory, failures: 0, hasFailed: false, emptySegmentPaths: new Set() }
   }
 
   private async infoOf(path: string, directory: string): Promise<MediaInfo> {
@@ -526,7 +527,7 @@ export class MediaSession implements MediaClient {
     const entry = this.project.media.get(job.mediaId)
     const path = this.jobPath(job)
     if (entry === undefined || path === undefined || entry.hasFailed) return 1
-    const isReady = this.cache.has(path) || entry.silentSegmentPaths.has(path)
+    const isReady = this.cache.has(path) || entry.emptySegmentPaths.has(path)
     if (isReady) return 1
     const inProgress = this.inProgress
     const layout = this.layoutOf(entry, undefined)
@@ -559,7 +560,7 @@ export class MediaSession implements MediaClient {
       const entry = this.project.media.get(job.mediaId)
       const path = this.jobPath(job)
       if (entry === undefined || entry.hasFailed || path === undefined) continue
-      const isMadeOrMaking = this.cache.has(path) || this.cache.pending(path) !== undefined || entry.silentSegmentPaths.has(path)
+      const isMadeOrMaking = this.cache.has(path) || this.cache.pending(path) !== undefined || entry.emptySegmentPaths.has(path)
       if (isMadeOrMaking) continue
       return job
     }
@@ -568,8 +569,12 @@ export class MediaSession implements MediaClient {
 
   private untilWoken(signal: AbortSignal): Promise<void> {
     return new Promise((resolveWake) => {
-      this.wake = resolveWake
-      signal.addEventListener('abort', () => resolveWake(), { once: true })
+      const woken = (): void => {
+        signal.removeEventListener('abort', woken)
+        resolveWake()
+      }
+      this.wake = woken
+      signal.addEventListener('abort', woken, { once: true })
     })
   }
 
@@ -654,7 +659,7 @@ export class MediaSession implements MediaClient {
     const claim = this.cache.claim(paths)
     let threads = 0
     if (this.settings().backgroundCores === 'half') threads = Math.max(1, Math.ceil(availableParallelism() / 2))
-    await buildPreviewRun({
+    const emptySegmentPaths = await buildPreviewRun({
       ffmpeg: this.ffmpeg,
       source: videoSource(entry),
       directory: entry.directory,
@@ -668,11 +673,13 @@ export class MediaSession implements MediaClient {
         this.inProgress = inProgress
       },
     })
+    // A source shorter than its header says has no pictures for its last segments; otherwise they would be decoded again without end.
+    for (const path of emptySegmentPaths) entry.emptySegmentPaths.add(path)
   }
 
   private async ensureSound(entry: MediaEntry, layout: AudioLayout, segment: number, stretch: AudioStretch | undefined, signal: AbortSignal): Promise<void> {
     const path = audioSegmentPath(entry.directory, segment, stretch)
-    if (entry.silentSegmentPaths.has(path)) return
+    if (entry.emptySegmentPaths.has(path)) return
     if (this.cache.has(path)) {
       this.cache.used(path)
       return
@@ -712,7 +719,7 @@ export class MediaSession implements MediaClient {
     }
     const claim = this.cache.claim(paths)
     const last = layout.seeksExactly ? segment + paths.length - 1 : lastSegment
-    const silentSegmentPaths = await buildAudioRun({
+    const emptySegmentPaths = await buildAudioRun({
       ffmpeg: this.ffmpeg,
       source: audioSource(entry),
       directory: entry.directory,
@@ -723,7 +730,7 @@ export class MediaSession implements MediaClient {
       claim,
       signal,
     })
-    for (const path of silentSegmentPaths) entry.silentSegmentPaths.add(path)
+    for (const path of emptySegmentPaths) entry.emptySegmentPaths.add(path)
   }
 
   private suspendIdleStreams(): void {
@@ -731,6 +738,7 @@ export class MediaSession implements MediaClient {
     let suspended = 0
     for (const stream of this.streams.values()) {
       if (suspended >= excess) return
+      if (stream.isReading()) continue
       stream.close()
       suspended += 1
     }

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { bundledFfmpeg } from '../../test/helpers.js'
 import { FfmpegError, createFfmpegRunner, writeAll } from './ffmpeg.js'
 
@@ -100,6 +100,23 @@ describe('spawnJob', () => {
     await expect(job.done).rejects.toThrow(FfmpegError)
     await expect(writeAll(job.stdin, Buffer.alloc(FRAME_BYTES))).rejects.toThrow()
     await expect(runOnce('ffmpeg', ['-version'], { timeoutMs: 10_000 })).resolves.toBeInstanceOf(Buffer)
+  })
+
+  it('serves overlapping reads one after another instead of losing a waiter', async () => {
+    const job = spawnJob('ffmpeg', TEN_FRAMES)
+    const reads = await Promise.all([job.readExact(FRAME_BYTES, 5000), job.readExact(FRAME_BYTES, 5000), job.readExact(FRAME_BYTES, 5000)])
+    expect(reads.map((data) => data?.length)).toEqual([FRAME_BYTES, FRAME_BYTES, FRAME_BYTES])
+    job.kill()
+    await expect(job.done).rejects.toThrow(/cancelled/)
+  })
+
+  it('lets go of the abort listener once the job has ended', async () => {
+    const controller = new AbortController()
+    const removed = vi.spyOn(controller.signal, 'removeEventListener')
+    const job = spawnJob('ffmpeg', TEN_FRAMES, { signal: controller.signal })
+    while ((await job.readExact(FRAME_BYTES, 5000)) !== undefined);
+    await job.done
+    expect(removed).toHaveBeenCalledWith('abort', expect.any(Function))
   })
 
   it('rejects a pending read when the job is cancelled', async () => {

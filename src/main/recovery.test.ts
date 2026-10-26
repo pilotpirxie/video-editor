@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -62,6 +62,16 @@ describe('findRecoveries', () => {
     expect(existsSync(outputPath)).toBe(true)
     expect(await readdir(directory)).toEqual([])
     await rm(outputPath)
+  })
+
+  it('leaves out a recovery whose note cannot be read and still finds the others', async () => {
+    const readable = await recoveryWrittenAt('readable.json', 10)
+    const unreadable = await recoveryWrittenAt('unreadable.json', 20)
+    await rememberProjectPath(unreadable, '/projects/unreadable.json')
+    await chmod(`${unreadable}.path`, 0)
+
+    expect(await findRecoveries(directory)).toEqual([{ recoveryPath: readable, projectPath: undefined }])
+    await chmod(`${unreadable}.path`, 0o600)
   })
 
   it('finds nothing in a folder that is not there', async () => {

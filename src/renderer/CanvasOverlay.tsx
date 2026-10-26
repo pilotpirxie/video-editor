@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from 'react'
 import { arrowBetween, arrowEnds, canvasPointToClip, clipPointToCanvas, setArrowStyle, setCalloutStyle } from '../editor/annotations.js'
 import { frameOf, type ZoomFrame } from '../editor/camera.js'
 import { locateClip } from '../editor/clips.js'
@@ -20,7 +20,7 @@ import {
 } from '../editor/geometry.js'
 import { intoGroup } from '../editor/groups.js'
 import { motionPath, propertyAt, setProperties, type PropertyValues } from '../editor/properties.js'
-import { positionTargets, snapPosition, type Bounds } from '../editor/snapping.js'
+import { positionTargets, snapPosition, sortedTargets, type Bounds } from '../editor/snapping.js'
 import { arrowSize } from '../engine/annotations.js'
 import { viewAt } from '../engine/camera.js'
 import { groupFrameAt, onCanvas, resolveFrame, type GroupFrame, type Layer, type MediaStates } from '../engine/resolve.js'
@@ -257,8 +257,8 @@ function sizeTargets(item: ShownClip, others: readonly ShownClip[], canvas: Size
   const fullWidth = item.natural.width - item.crop.left - item.crop.right
   const fullHeight = item.natural.height - item.crop.top - item.crop.bottom
   return {
-    widths: [fullWidth, canvas.width, ...others.map((other) => other.box.width)],
-    heights: [fullHeight, canvas.height, ...others.map((other) => other.box.height)],
+    widths: sortedTargets([fullWidth, canvas.width, ...others.map((other) => other.box.width)]),
+    heights: sortedTargets([fullHeight, canvas.height, ...others.map((other) => other.box.height)]),
     range,
   }
 }
@@ -302,9 +302,12 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
   const wholeTime = time + offset
   const frame = frameOf(canvas, viewAt(wholeProject.camera, wholeTime, canvas))
   const canvasPerPixel = frame.width / pictureWidth
-  const openFrame = groupFrameAt(wholeProject, openGroups, wholeTime)
+  const openFrame = useMemo(() => groupFrameAt(wholeProject, openGroups, wholeTime), [wholeProject, openGroups, wholeTime])
 
-  const shown = isPlaying ? [] : shownClips(wholeProject, mediaStates, wholeTime, { project, time, groups: openGroups, frame: openFrame })
+  const shown = useMemo(
+    () => (isPlaying ? [] : shownClips(wholeProject, mediaStates, wholeTime, { project, time, groups: openGroups, frame: openFrame })),
+    [isPlaying, wholeProject, mediaStates, wholeTime, project, time, openGroups, openFrame],
+  )
   const selected = shown.filter((item) => selection.includes(item.clipId))
   const locked = lockedClipIds(project)
   const outside: ShownClip[] = []

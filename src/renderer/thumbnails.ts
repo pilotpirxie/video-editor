@@ -10,6 +10,7 @@ const BYTES_PER_PIXEL = 4
 const MAX_HALVINGS = 6
 const MAX_FRAME_REQUESTS = 4
 const RETRY_AFTER_MS = 1000
+const FAILED_HOLD_OFF_MS = 30_000
 
 function standInKeyOf(mediaId: string, frame: number): string {
   return `keyframe:${mediaId}:${frame}`
@@ -50,14 +51,16 @@ export function createThumbnails(media: MediaClient, isPlaying: () => boolean): 
   async function fetchOnce(key: string, load: () => Promise<boolean>): Promise<void> {
     inFlight.add(key)
     let isReady = false
+    let holdOffMs = 0
     try {
       isReady = await load()
     } catch (error) {
       logError('Could not load a thumbnail', error, { key })
+      holdOffMs = FAILED_HOLD_OFF_MS
     }
     inFlight.delete(key)
     if (!isReady) {
-      notReadyAt.set(key, performance.now())
+      notReadyAt.set(key, performance.now() + holdOffMs)
       askAgainLater()
       return
     }

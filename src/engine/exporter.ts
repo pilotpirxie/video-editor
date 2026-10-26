@@ -1,6 +1,6 @@
 import { DEFAULT_GIF_FRAME_RATE, exportSize, fitCanvas, hasMovingPicture, hasSound, pixelLayoutOf, type ExportFormat, type Size } from '../shared/exportPresets.js'
 import type { ExportJob, ExportTarget, FramesJob, LoadedProject, MediaClient } from '../shared/mediaProtocol.js'
-import { describeError } from '../shared/log.js'
+import { describeError, logError } from '../shared/log.js'
 import { projectDuration } from '../shared/project.js'
 import { SAMPLE_RATE, TICKS_PER_SAMPLE, TICKS_PER_SECOND, frameDuration, timecode, type FrameRate } from '../shared/time.js'
 import { viewAt } from './camera.js'
@@ -88,7 +88,7 @@ async function encode(context: RenderContext, target: ExportTarget, write: (jobI
     await write(jobId)
     await context.media.exportFinish(jobId)
   } catch (error) {
-    await context.media.exportCancel(jobId)
+    await context.media.exportCancel(jobId).catch((cancelError: unknown) => logError('Could not cancel the export', cancelError, { jobId }))
     throw new ExportError(`The export stopped at ${timecode(reachedTime(), context.loaded.project.canvas.frameRate)}: ${describeError(error)}`, { cause: error })
   } finally {
     await context.provider.closeStreams()

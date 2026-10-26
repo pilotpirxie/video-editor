@@ -58,6 +58,20 @@ describe('createMediaClient', () => {
     second.close()
   })
 
+  it('lets go of the abort listener once a request is answered, so a long-lived signal gathers none', async () => {
+    const process = fakeMediaProcess()
+    const client = createMediaClient(process.clientPort)
+    const controller = new AbortController()
+    const added = vi.spyOn(controller.signal, 'addEventListener')
+    const removed = vi.spyOn(controller.signal, 'removeEventListener')
+    for (let request = 0; request < 3; request++) {
+      await expect(client.fullFrame('media', 0, 0, controller.signal)).rejects.toThrow('unexpected answer')
+    }
+    expect(added).toHaveBeenCalledTimes(3)
+    expect(removed).toHaveBeenCalledTimes(3)
+    process.close()
+  })
+
   it('gives up on a save the media process never answers', async () => {
     vi.useFakeTimers()
     const hanging = fakeMediaProcess(true)

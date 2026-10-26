@@ -114,17 +114,23 @@ export function createMediaClient(firstPort: MessagePort): MediaConnection {
         reject(new MediaRequestError('The media process stopped.'))
         return
       }
-      pending.set(id, { resolve, reject })
-      signal?.addEventListener(
-        'abort',
-        () => {
-          if (!pending.delete(id)) return
-          const abort: MediaMessage = { abort: id }
-          port?.postMessage(abort)
-          reject(new DOMException('The request was cancelled', 'AbortError'))
+      function onAbort(): void {
+        if (!pending.delete(id)) return
+        const abort: MediaMessage = { abort: id }
+        port?.postMessage(abort)
+        reject(new DOMException('The request was cancelled', 'AbortError'))
+      }
+      pending.set(id, {
+        resolve: (answer) => {
+          signal?.removeEventListener('abort', onAbort)
+          resolve(answer)
         },
-        { once: true },
-      )
+        reject: (error) => {
+          signal?.removeEventListener('abort', onAbort)
+          reject(error)
+        },
+      })
+      signal?.addEventListener('abort', onAbort, { once: true })
       const message: MediaMessage = { id, request }
       sendTo.postMessage(message)
     })

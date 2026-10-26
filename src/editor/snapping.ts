@@ -14,13 +14,25 @@ export type Bounds = {
   bottom: number
 }
 
+export function sortedTargets(targets: Iterable<number>): number[] {
+  return [...targets].sort((a, b) => a - b)
+}
+
+// Targets are sorted ascending; on a tie the lower one wins.
 export function nearestWithin(value: number, targets: readonly number[], range: number): number | undefined {
-  let nearest: number | undefined
-  for (const target of targets) {
-    const distance = Math.abs(target - value)
-    if (distance <= range && (nearest === undefined || distance < Math.abs(nearest - value))) nearest = target
+  let low = 0
+  let high = targets.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if ((targets[middle] ?? Infinity) < value) low = middle + 1
+    else high = middle
   }
-  return nearest
+  const above = targets[low]
+  const below = targets[low - 1]
+  const aboveDistance = above === undefined ? Infinity : above - value
+  const belowDistance = below === undefined ? Infinity : value - below
+  if (aboveDistance > range && belowDistance > range) return undefined
+  return belowDistance <= aboveDistance ? below : above
 }
 
 export function snapDelta(edges: readonly number[], delta: number, targets: readonly number[], range: number): Snap {
@@ -53,7 +65,7 @@ export function timelineTargets(project: Project, movingIds: ReadonlySet<string>
       }
     }
   }
-  return [...targets]
+  return sortedTargets(targets)
 }
 
 function edgesAndCentre(low: number, high: number): number[] {
@@ -72,7 +84,7 @@ export function positionTargets(others: readonly Bounds[], canvas: Size): Positi
     x.push(...edgesAndCentre(other.left, other.right))
     y.push(...edgesAndCentre(other.top, other.bottom))
   }
-  return { x, y }
+  return { x: sortedTargets(x), y: sortedTargets(y) }
 }
 
 export type PositionSnap = {

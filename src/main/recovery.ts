@@ -93,6 +93,20 @@ export async function discardRecovery(recoveryPath: string): Promise<void> {
   await discardRecoveredWork(`${recoveryPath}${PROJECT_PATH_EXTENSION}`)
 }
 
+async function recoveryAt(recoveryPath: string): Promise<(FoundRecovery & { writtenAt: number }) | undefined> {
+  const writtenAt = await modifiedAt(recoveryPath)
+  if (writtenAt === undefined) return undefined
+
+  const projectPath = await readProjectPath(recoveryPath)
+  const projectSavedAt = projectPath === undefined ? undefined : await modifiedAt(projectPath)
+  const isSuperseded = projectSavedAt !== undefined && projectSavedAt > writtenAt
+  if (isSuperseded) {
+    await discardRecovery(recoveryPath)
+    return undefined
+  }
+  return { recoveryPath, projectPath, writtenAt }
+}
+
 export async function findRecoveries(directory: string): Promise<FoundRecovery[]> {
   let names: string[]
   try {
@@ -109,17 +123,12 @@ export async function findRecoveries(directory: string): Promise<FoundRecovery[]
     if (name.endsWith(PROJECT_PATH_EXTENSION) && !names.includes(name.slice(0, -PROJECT_PATH_EXTENSION.length))) await discardRecoveredWork(join(directory, name))
     if (!name.endsWith(RECOVERY_EXTENSION)) continue
     const recoveryPath = join(directory, name)
-    const writtenAt = await modifiedAt(recoveryPath)
-    if (writtenAt === undefined) continue
-
-    const projectPath = await readProjectPath(recoveryPath)
-    const projectSavedAt = projectPath === undefined ? undefined : await modifiedAt(projectPath)
-    const isSuperseded = projectSavedAt !== undefined && projectSavedAt > writtenAt
-    if (isSuperseded) {
-      await discardRecovery(recoveryPath)
-      continue
+    try {
+      const recovery = await recoveryAt(recoveryPath)
+      if (recovery !== undefined) found.push(recovery)
+    } catch (error) {
+      logError('Could not read a recovery file, so it is left for a later launch', error, { recoveryPath })
     }
-    found.push({ recoveryPath, projectPath, writtenAt })
   }
   found.sort((a, b) => b.writtenAt - a.writtenAt)
   return found.map(({ recoveryPath, projectPath }) => ({ recoveryPath, projectPath }))

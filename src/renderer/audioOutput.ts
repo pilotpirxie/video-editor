@@ -9,13 +9,17 @@ export type AudioOutput = {
 
 export async function createAudioOutput(): Promise<AudioOutput> {
   const context = new AudioContext({ sampleRate: SAMPLE_RATE, latencyHint: 'interactive' })
-  await context.audioWorklet.addModule(new URL('./outputWorklet.js', import.meta.url))
-  const node = new AudioWorkletNode(context, 'output', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] })
-  node.connect(context.destination)
-
   const channel = new MessageChannel()
-  node.port.postMessage(undefined, [channel.port1])
-  await context.suspend()
+  try {
+    await context.audioWorklet.addModule(new URL('./outputWorklet.js', import.meta.url))
+    const node = new AudioWorkletNode(context, 'output', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] })
+    node.connect(context.destination)
+    node.port.postMessage(undefined, [channel.port1])
+    await context.suspend()
+  } catch (error) {
+    await context.close()
+    throw error
+  }
 
   return {
     enginePort: channel.port2,

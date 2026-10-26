@@ -776,6 +776,8 @@ export function createTimelineController(elements: TimelineElements, session: Se
   function onPointerDown(event: PointerEvent): void {
     if (event.button === MIDDLE_BUTTON) {
       event.preventDefault()
+      // A pan must not steal a running drag, which would leave its edit neither committed nor cancelled.
+      if (gesture !== undefined) return
       overlay.setPointerCapture(event.pointerId)
       gesture = { kind: 'pan', from: { x: event.clientX, y: event.clientY }, scrollX: view.scrollX, scrollY: view.scrollY }
       overlay.style.cursor = 'grabbing'

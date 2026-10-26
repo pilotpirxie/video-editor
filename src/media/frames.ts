@@ -1,3 +1,4 @@
+import { availableParallelism } from 'node:os'
 import type { RawFrame, VideoInfo } from '../shared/mediaProtocol.js'
 import { frameDecoderThreads, streamDecoderThreads } from '../shared/limits.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
@@ -28,6 +29,7 @@ export type VideoSource = {
 
 export type FrameStream = {
   frame(index: number): Promise<RawFrame>
+  isReading(): boolean
   close(): void
 }
 
@@ -159,7 +161,7 @@ export function toArrayBuffer(bytes: Buffer): ArrayBuffer {
 
 async function decodeExactly(ffmpeg: FfmpegRunner, source: VideoSource, frame: number, halvings: number, signal: AbortSignal | undefined): Promise<RawFrame | undefined> {
   const size = decodedSize(source.video, halvings)
-  const threads = frameDecoderThreads(source.video.width * source.video.height)
+  const threads = frameDecoderThreads(source.video.width * source.video.height, availableParallelism())
   const args = [...decodeArguments(source, frame, halvings, threads, 1), '-frames:v', '1', '-']
   const options = signal === undefined ? { timeoutMs: ONE_SHOT_TIMEOUT_MS } : { timeoutMs: ONE_SHOT_TIMEOUT_MS, signal }
   const bytes = await ffmpeg.runOnce('ffmpeg', args, options)
@@ -219,7 +221,7 @@ export function openFrameStream(ffmpeg: FfmpegRunner, source: VideoSource, first
     job?.kill()
     nextIndex = index
     step = newStep
-    const threads = streamDecoderThreads(source.video.width * source.video.height, step)
+    const threads = streamDecoderThreads(source.video.width * source.video.height, step, availableParallelism())
     job = ffmpeg.spawnJob('ffmpeg', [...decodeArguments(source, index, halvings, threads, step), '-'], { readAheadBytes: frameBytes })
     return job
   }
@@ -233,7 +235,18 @@ export function openFrameStream(ffmpeg: FfmpegRunner, source: VideoSource, first
     }
   }
 
+  let readsInFlight = 0
+
   async function frame(index: number): Promise<RawFrame> {
+    readsInFlight += 1
+    try {
+      return await frameNow(index)
+    } finally {
+      readsInFlight -= 1
+    }
+  }
+
+  async function frameNow(index: number): Promise<RawFrame> {
     if (latest !== undefined && latest.index === index) return latest.frame
 
     const distance = index - nextIndex
@@ -257,5 +270,5 @@ export function openFrameStream(ffmpeg: FfmpegRunner, source: VideoSource, first
     job = undefined
   }
 
-  return { frame, close }
+  return { frame, isReading: () => readsInFlight > 0, close }
 }

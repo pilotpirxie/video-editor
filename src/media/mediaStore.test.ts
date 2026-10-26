@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { bundledFfmpeg } from '../../test/helpers.js'
 import { mediaPath } from '../../test/media/generate.js'
+import { MAX_OPEN_STREAMS } from '../shared/limits.js'
 import { createDiskCache } from './cache.js'
 import { MediaSession } from './mediaStore.js'
 
@@ -41,6 +42,18 @@ describe('MediaSession.openMedia', () => {
     const session = newSession('cache-relative')
     const states = await session.openMedia([{ id: 'voice', path: join(scratch, 'old-place', 'voice.wav'), relativePath: 'voice.wav' }], join(projectDirectory, 'project.json'))
     expect(states.voice).toMatchObject({ info: { kind: 'audio' } })
+    await session.dispose()
+  })
+})
+
+describe('MediaSession.streamFrame', () => {
+  it('reads from more streams at once than it keeps open, without failing any of them', async () => {
+    const session = newSession('many-streams')
+    await session.openMedia([{ id: 'clip', path: mediaPath('h264.mp4'), relativePath: '' }], undefined)
+    const streamCount = MAX_OPEN_STREAMS + 2
+    const ids = await Promise.all(Array.from({ length: streamCount }, () => session.openStream('clip', 0, 0)))
+    const frames = await Promise.all(ids.map((id) => session.streamFrame(id, 0)))
+    expect(frames).toHaveLength(streamCount)
     await session.dispose()
   })
 })

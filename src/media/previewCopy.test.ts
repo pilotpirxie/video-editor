@@ -192,6 +192,20 @@ describe('preview segments', () => {
     expect(kept).toEqual(expected)
   })
 
+  it('reports the segments a source shorter than its header has no pictures for', async () => {
+    const real = await prepared(mediaPath('h264.mp4'), 1)
+    const video = { ...real.source.video, frameCount: 120 }
+    const layout = previewLayout(video, 1)
+    expect(layout.segmentCount).toBe(4)
+    const paths = [0, 1, 2, 3].map((segment) => previewSegmentFiles(real.directory, segment, layout).index)
+    const claim = real.cache.claim(paths)
+    const source = { ...real.source, video }
+    const empty = await buildPreviewRun({ ffmpeg, source, directory: real.directory, layout, cache: real.cache, firstSegment: 0, claim, threads: 0, signal: never, onFrame: () => {} })
+    expect(empty).toEqual(paths.slice(2))
+    expect(await real.readFrame(59)).toBeDefined()
+    expect(await real.readFrame(60)).toBeUndefined()
+  })
+
   it('shows the last picture before a long gap, whichever segment it starts in', async () => {
     const built = await prepared(mediaPath('variable-rate-gap.mp4'), 1)
     for (let segment = built.layout.segmentCount - 1; segment >= 0; segment--) await buildSegments(built, segment, 1)

@@ -35,6 +35,7 @@ const LOD_BIAS = -0.5
 const EDGE_MARGIN = 1
 const BYTES_PER_PIXEL = 4
 const READBACK_POLL_MS = 1
+const READBACK_DEADLINE_MS = 10_000
 const MIP_CHAIN_FACTOR = 4 / 3
 const FLOATS_PER_VERTEX = 4
 const COMPONENTS = 4
@@ -922,9 +923,12 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     gl.flush()
 
     return async () => {
+      const deadline = performance.now() + READBACK_DEADLINE_MS
       while (fence !== null && gl.clientWaitSync(fence, 0, 0) === gl.TIMEOUT_EXPIRED) {
+        if (performance.now() > deadline) throw new CompositorError('The graphics processor did not finish a frame in time.')
         await new Promise((resolve) => setTimeout(resolve, READBACK_POLL_MS))
       }
+      if (fence === null || gl.isContextLost()) throw new CompositorError('The graphics processor stopped; export again once the preview is back.')
       gl.deleteSync(fence)
       if (readBack.length !== byteLength) readBack = new Uint8Array(byteLength)
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, readback.buffer)

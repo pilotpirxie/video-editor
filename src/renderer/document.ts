@@ -150,17 +150,17 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   }
 
   async function pollPreparation(): Promise<void> {
-    preparationTimer = undefined
     try {
       preparation = await media.preparation()
     } catch (error) {
+      preparationTimer = undefined
       logError('Could not read the preparation progress', error)
       return
     }
     void offerLargerCache()
     for (const listener of preparationListeners) listener()
     const isBusy = Object.values(preparation).some((state) => state.progress < 1 && !state.hasFailed)
-    if (isBusy) preparationTimer = window.setTimeout(() => void pollPreparation(), PREPARATION_POLL_MS)
+    preparationTimer = isBusy ? window.setTimeout(() => void pollPreparation(), PREPARATION_POLL_MS) : undefined
   }
 
   function watchPreparation(): void {

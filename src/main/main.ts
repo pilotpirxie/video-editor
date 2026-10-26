@@ -300,11 +300,12 @@ function restartMediaProcess(state: AppState, uptimeMs: number): void {
   setTimeout(() => {
     if (state.isQuitting) return
     state.mediaProcess = launchMediaProcess(state)
-    for (const editor of state.editors) {
-      if (editor.window.isDestroyed()) continue
-      const page = editor.window.webContents
+    const windows = [...state.editors.map((editor) => editor.window), state.exportWindow]
+    for (const window of windows) {
+      if (window === undefined || window.isDestroyed()) continue
+      const page = window.webContents
       if (page.isLoading() || page.isCrashed()) continue
-      connectToMedia(state, editor.window)
+      connectToMedia(state, window)
     }
   }, waitMs)
 }
@@ -397,7 +398,14 @@ function watchMemoryPressure(state: AppState): void {
     for (const editor of state.editors) send(editor.window, command)
     if (state.exportWindow !== undefined) send(state.exportWindow, command)
   }
-  setInterval(() => void check(), MEMORY_PRESSURE_POLL_MS)
+  let isChecking = false
+  setInterval(() => {
+    if (isChecking) return
+    isChecking = true
+    void check().finally(() => {
+      isChecking = false
+    })
+  }, MEMORY_PRESSURE_POLL_MS)
 }
 
 function connectToMedia(state: AppState, window: BrowserWindow): void {

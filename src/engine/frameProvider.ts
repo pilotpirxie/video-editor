@@ -42,6 +42,14 @@ export type FrameProvider = {
 
 class PreviewNotReady extends Error {}
 
+const FAILED_LOAD_RETRY_MS = 2000
+const MAX_REMEMBERED_FAILURES = 256
+
+function isWorthRemembering(error: unknown): boolean {
+  if (error instanceof PreviewNotReady) return false
+  return !(error instanceof DOMException && error.name === 'AbortError')
+}
+
 function isDrawn(layer: PictureLayer): layer is DrawnLayer {
   return layer.kind === 'text' || layer.kind === 'callout' || layer.kind === 'arrow'
 }
@@ -82,6 +90,7 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
   const evictedWhileShown = new Set<GpuTexture>()
   const pictures = createByteLru<Picture>(TEXTURE_CACHE_BYTES, (picture) => retire(picture.texture))
   const loading = new Map<string, Promise<Picture>>()
+  const failed = new Map<string, { until: number; error: unknown }>()
   const streams = new Map<string, OpenStream>()
 
   function isShown(texture: GpuTexture): boolean {
@@ -120,16 +129,28 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     if (ready !== undefined) return ready
     const pending = loading.get(key)
     if (pending !== undefined) return pending
+    const recentFailure = failed.get(key)
+    if (recentFailure !== undefined && performance.now() < recentFailure.until) throw recentFailure.error
 
     const started = load()
     loading.set(key, started)
     try {
       const picture = await started
+      failed.delete(key)
       pictures.set(key, picture, picture.texture.bytes)
       return picture
+    } catch (error) {
+      if (isWorthRemembering(error)) rememberFailure(key, error)
+      throw error
     } finally {
       loading.delete(key)
     }
+  }
+
+  // A picture that cannot be loaded is otherwise asked for again on every frame, each time decoding and logging anew.
+  function rememberFailure(key: string, error: unknown): void {
+    if (failed.size >= MAX_REMEMBERED_FAILURES) failed.clear()
+    failed.set(key, { until: performance.now() + FAILED_LOAD_RETRY_MS, error })
   }
 
   async function loadImage(layer: ImageLayer): Promise<Picture> {
@@ -237,11 +258,21 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
 
   async function closeEndedStreams(layers: readonly Layer[]): Promise<void> {
     const active = new Set(layers.map((layer) => layer.clipId))
+    const closing: Promise<void>[] = []
     for (const [clipId, stream] of streams) {
       if (active.has(clipId)) continue
       streams.delete(clipId)
       if (stream.shown !== undefined) retired.push(stream.shown)
+      closing.push(closeStream(stream))
+    }
+    await Promise.all(closing)
+  }
+
+  async function closeStream(stream: OpenStream): Promise<void> {
+    try {
       await media.closeStream(await stream.id)
+    } catch (error) {
+      logError('Could not close a frame stream', error)
     }
   }
 
@@ -352,6 +383,7 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
   function clear(): void {
     lastShown.clear()
     pictures.clear()
+    failed.clear()
     retired.push(...evictedWhileShown)
     evictedWhileShown.clear()
     collect()

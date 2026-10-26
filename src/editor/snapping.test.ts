@@ -9,6 +9,22 @@ describe('nearestWithin', () => {
     expect(nearestWithin(50, [0, 100], 8)).toBeUndefined()
     expect(nearestWithin(108, [100], 8)).toBe(100)
   })
+
+  it('prefers the lower target when two are equally near', () => {
+    expect(nearestWithin(105, [100, 110], 8)).toBe(100)
+  })
+
+  it('answers like a plain scan over thousands of sorted targets', () => {
+    const targets = Array.from({ length: 5000 }, (_, index) => index * 7)
+    for (const value of [-3, 0, 1, 3.5, 4, 17_496, 34_993, 40_000]) {
+      let expected: number | undefined
+      for (const target of targets) {
+        const distance = Math.abs(target - value)
+        if (distance <= 3 && (expected === undefined || distance < Math.abs(expected - value))) expected = target
+      }
+      expect(nearestWithin(value, targets, 3), `value ${value}`).toBe(expected)
+    }
+  })
 })
 
 describe('snapDelta', () => {
@@ -34,8 +50,8 @@ describe('timelineTargets', () => {
     ]),
   ])
 
-  it('offers the timeline start, the playhead, other clip edges and their visible keyframes', () => {
-    const targets = timelineTargets(project, new Set(['moving']), 4 * SECOND).sort((a, b) => a - b)
+  it('offers the timeline start, the playhead, other clip edges and their visible keyframes, in order', () => {
+    const targets = timelineTargets(project, new Set(['moving']), 4 * SECOND)
     expect(targets).toEqual([0, SECOND, 2 * SECOND, 3 * SECOND, 4 * SECOND])
   })
 })
@@ -44,6 +60,11 @@ describe('snapPosition', () => {
   const canvas = { width: 1920, height: 1080 }
   const other = { left: 100, top: 100, right: 500, bottom: 300 }
   const targets = positionTargets([other], canvas)
+
+  it('keeps its targets in order, so each pointer move can bisect them', () => {
+    expect(targets.x).toEqual([...targets.x].sort((a, b) => a - b))
+    expect(targets.y).toEqual([...targets.y].sort((a, b) => a - b))
+  })
 
   it('snaps edges and centres to the canvas edges and centre lines', () => {
     const moving = { left: 800, top: 400, right: 1000, bottom: 600 }

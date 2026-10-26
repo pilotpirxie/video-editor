@@ -187,6 +187,30 @@ describe('pictures while playing', () => {
   })
 })
 
+describe('a picture that cannot be loaded', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('is asked for again after a pause, not on every frame', async () => {
+    vi.stubGlobal('createImageBitmap', () => Promise.resolve({ close: () => {} }))
+    const media = fakeMedia()
+    const readImage = vi.fn(() => Promise.reject(new Error('The file is damaged')))
+    media.readImage = readImage
+    const provider = createFrameProvider(media, fakeGpu().compositor)
+    const now = vi.spyOn(performance, 'now').mockReturnValue(1000)
+
+    await provider.prepare([first], SCALE)
+    await provider.prepare([first], SCALE)
+    expect(readImage).toHaveBeenCalledTimes(1)
+
+    now.mockReturnValue(1000 + 2001)
+    await provider.prepare([first], SCALE)
+    expect(readImage).toHaveBeenCalledTimes(2)
+  })
+})
+
 function videoAt(frame: number): VideoLayer {
   return {
     kind: 'video',

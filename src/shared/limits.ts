@@ -19,14 +19,15 @@ export const MAX_OPEN_STREAMS = 8
 
 export const CACHE_SEGMENT_SECONDS = 30
 
-export function frameDecoderThreads(pixelCount: number): number {
-  if (pixelCount <= ULTRA_HD_PIXELS) return 4
-  return 2
+// One core stays free for the interface, so decoding never starves input and paint on a small machine.
+export function frameDecoderThreads(pixelCount: number, cores: number): number {
+  const wanted = pixelCount <= ULTRA_HD_PIXELS ? 4 : 2
+  return Math.max(1, Math.min(wanted, cores - 1))
 }
 
-export function streamDecoderThreads(pixelCount: number, step: number): number {
-  if (step > 1) return frameDecoderThreads(pixelCount)
-  return 2
+export function streamDecoderThreads(pixelCount: number, step: number, cores: number): number {
+  if (step > 1) return frameDecoderThreads(pixelCount, cores)
+  return Math.max(1, Math.min(2, cores - 1))
 }
 
 export function minimumHalvings(width: number, height: number): number {

@@ -42,7 +42,7 @@ const START_POSITION: Position = { time: 0, isPlaying: false, droppedFrames: 0, 
 
 export function createTransport(engine: EngineHost, onError: (message: string) => void): Transport {
   let position = START_POSITION
-  let audio: AudioOutput | undefined
+  let audio: Promise<AudioOutput> | undefined
   let shuttling: Shuttle | undefined
   let offset = 0
   const listeners = new Set<() => void>()
@@ -53,7 +53,7 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
 
   async function suspendSound(): Promise<void> {
     try {
-      await audio?.suspend()
+      await (await audio)?.suspend()
     } catch (error) {
       onError(`The sound output could not be paused: ${describeError(error)}`)
     }
@@ -85,14 +85,24 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
     announce()
   }
 
+  // Two quick presses of Space must not open two sound outputs, so the first opening is shared.
+  async function openAudio(): Promise<AudioOutput> {
+    try {
+      const output = await createAudioOutput()
+      engine.send({ type: 'audio-port' }, [output.enginePort])
+      return output
+    } catch (error) {
+      audio = undefined
+      throw error
+    }
+  }
+
   async function play(): Promise<void> {
     try {
-      if (audio === undefined) {
-        audio = await createAudioOutput()
-        engine.send({ type: 'audio-port' }, [audio.enginePort])
-      }
-      await audio.resume()
-      engine.send({ type: 'play', outputLatency: audio.latency() })
+      audio ??= openAudio()
+      const output = await audio
+      await output.resume()
+      engine.send({ type: 'play', outputLatency: output.latency() })
     } catch (error) {
       onError(`The sound output could not be started: ${describeErrorAsSentence(error)} Check the sound output in System Settings, then play again.`)
     }
@@ -197,7 +207,7 @@ export function isKeyForTheEditor(event: KeyboardEvent): boolean {
 
 export function onSpaceKey(handler: () => void): () => void {
   function onKeyDown(event: KeyboardEvent): void {
-    if (event.code !== 'Space' || isTypingTarget(event.target)) return
+    if (event.code !== 'Space' || event.repeat || isTypingTarget(event.target)) return
     event.preventDefault()
     handler()
   }

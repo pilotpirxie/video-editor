@@ -222,10 +222,11 @@ async function discard(output: FileHandle | undefined, path: string | undefined)
   if (path !== undefined) await rm(path, { force: true })
 }
 
-export async function buildPreviewRun(run: PreviewRun): Promise<void> {
+// Resolves with the index paths of claimed segments the source had no pictures for.
+export async function buildPreviewRun(run: PreviewRun): Promise<string[]> {
   const { ffmpeg, source, directory, layout, cache, firstSegment, claim, threads, signal } = run
   const segmentCount = claim.paths.length
-  if (segmentCount === 0) return
+  if (segmentCount === 0) return []
   const firstFrame = sourceFrameOf(layout, firstSegment * layout.framesPerSegment)
   const frameCount = segmentCount * layout.framesPerSegment
   const args = [
@@ -248,6 +249,7 @@ export async function buildPreviewRun(run: PreviewRun): Promise<void> {
   let temporaryPath: string | undefined
   let locations: FrameLocation[] = []
   let writtenBytes = 0
+  const written = new Set<string>()
 
   async function finishSegment(): Promise<void> {
     if (output === undefined || temporaryPath === undefined) return
@@ -262,6 +264,7 @@ export async function buildPreviewRun(run: PreviewRun): Promise<void> {
     await cache.added(files.data)
     await cache.added(files.index)
     claim.written(files.index)
+    written.add(files.index)
     segment += 1
     locations = []
     writtenBytes = 0
@@ -293,6 +296,7 @@ export async function buildPreviewRun(run: PreviewRun): Promise<void> {
     await job.done
     await finishSegment()
     claim.giveUp(new Error('The source ended before this preview segment'))
+    return claim.paths.filter((path) => !written.has(path))
   } catch (error) {
     run.onFrame(undefined)
     await discard(output, temporaryPath)
