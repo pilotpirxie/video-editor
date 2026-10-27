@@ -70,6 +70,7 @@ function fakeGpu(): FakeGpu {
     render: notUsed,
     present: notUsed,
     readPixels: notUsed,
+    readPixel: notUsed,
     startReadback: notUsed,
   }
   return { compositor, uploaded, released }

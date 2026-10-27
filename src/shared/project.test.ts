@@ -457,6 +457,30 @@ describe('drawing clips', () => {
     expect(shapesRejectedWith([clippedInside(9)])).toMatch(/children go deeper than 8 shapes clipped inside each other$/)
   })
 
+  it('load and save stroke styles and links to the shared colours of their animation', () => {
+    const styled = { ...face, fillSwatch: 'skin', stroke: { color: '#000000', width: 4, swatch: 'line', isDashed: true, cap: 'butt', join: 'miter', align: 'outside', isBehind: true, scalesWithObject: true } }
+    const swatches = [
+      { id: 'skin', name: 'Skin', color: '#FFCC99' },
+      { id: 'line', name: 'Line', color: '#000000' },
+    ]
+    const text = JSON.stringify({ ...JSON.parse(animationWith([{ ...drawing, shapes: [styled] }])), swatches })
+    const parsed = parseProject(text, 'animation')
+    expect(parsed.ok && parsed.project.swatches).toEqual(swatches)
+    expect(parsed.ok && parsed.project.tracks[0]?.clips).toEqual([{ ...drawing, shapes: [styled] }])
+    expect(parsed.ok && parseProject(serializeProject(parsed.project), 'animation')).toEqual(parsed)
+  })
+
+  it('reject unknown swatches, a link without a colour, a false switch and swatches in a project', () => {
+    expect(shapesRejectedWith([{ ...face, fillSwatch: 'skin' }])).toBe('tracks[0].clips[0].shapes[0].fillSwatch "skin" is not in the swatches')
+    expect(shapesRejectedWith([{ ...eye, fillSwatch: 'skin' }])).toBe('tracks[0].clips[0].shapes[0].fillSwatch needs a fill next to it')
+    expect(shapesRejectedWith([{ ...face, stroke: { color: '#000000', width: 4, isDashed: false } }])).toBe('tracks[0].clips[0].shapes[0].stroke.isDashed must be true or left out')
+    expect(shapesRejectedWith([{ ...face, stroke: { color: '#000000', width: 4, cap: 'flat' } }])).toBe('tracks[0].clips[0].shapes[0].stroke.cap must be one of butt, round, square')
+    const twice = { ...JSON.parse(animationWith([])), swatches: [{ id: 'a', name: 'A', color: '#000000' }, { id: 'a', name: 'B', color: '#FFFFFF' }] }
+    expect(parseProject(JSON.stringify(twice), 'animation')).toEqual({ ok: false, message: 'swatches uses the id "a" more than once' })
+    expect(parseProject(JSON.stringify({ ...JSON.parse(animationWith([])), swatches: [] }), 'animation')).toEqual({ ok: false, message: 'swatches must be a list with at least one swatch; leave it out instead' })
+    expect(messageFor(withValue('swatches', [{ id: 'a', name: 'A', color: '#000000' }]))).toBe('project.swatches is not a known setting')
+  })
+
   it('have no keyframes yet', () => {
     const keyed = { ...drawing, keyframes: { x: [{ time: 0, value: 1, easing: 'linear' }] } }
     const result = parseProject(animationWith([keyed]), 'animation')

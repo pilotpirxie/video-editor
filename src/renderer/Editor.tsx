@@ -10,6 +10,7 @@ import { SessionContext, useEditorState, useSession } from './context.js'
 import { EffectProperties } from './EffectProperties.js'
 import { ExportDialog, ExportProgressDialog } from './ExportDialog.js'
 import type { Panel, Session } from './document.js'
+import type { DrawingTool } from './store.js'
 import { AnnotationsTab, EffectsTab, TransitionsTab } from './LibraryTabs.js'
 import { MediaTab } from './MediaTab.js'
 import { Properties } from './Properties.js'
@@ -39,6 +40,7 @@ const PREVIEW_ACTIONS = new Set<ShortcutAction | undefined>([
   'preview-mode',
 ])
 
+const TOOL_OF: Record<'tool-move' | 'tool-fill' | 'tool-picker', DrawingTool> = { 'tool-move': 'move', 'tool-fill': 'fill', 'tool-picker': 'picker' }
 const PANEL_FLAGS: Record<Panel, 'isLeftCollapsed' | 'isRightCollapsed' | 'isTimelineCollapsed'> = {
   library: 'isLeftCollapsed',
   properties: 'isRightCollapsed',
@@ -263,8 +265,10 @@ function runShortcut({ actions, transport, store, runMenuAction }: Session, acti
     case 'timeline-zoom-fit':
       return false
     case 'tool-move':
+    case 'tool-fill':
+    case 'tool-picker':
       if (store.getState().openChain.length === 0) return false
-      store.setTool('move')
+      store.setTool(TOOL_OF[action])
       return true
     case 'tool-shape':
       if (store.getState().openChain.length === 0) return false

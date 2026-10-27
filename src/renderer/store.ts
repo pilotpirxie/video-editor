@@ -1,15 +1,15 @@
 import { emptyTrack, locateClip } from '../editor/clips.js'
-import { NEW_SHAPE_STYLE, pickableShape, type ColorPart, type ShapeRef, type ShapeStyle } from '../editor/drawings.js'
+import { NEW_SHAPE_STYLE, pickableShape, styleWithColor, type ColorPart, type ShapeRef, type ShapeStyle } from '../editor/drawings.js'
 import { resolveScope, withScopedProject, type Scope } from '../editor/groups.js'
 import { EMPTY_HISTORY, changedDocuments, record, redo, undo, type History, type Step, type Travel } from '../editor/history.js'
 import type { MediaStates } from '../engine/resolve.js'
 import type { Documents, LoadedAnimations, LoadedProject, MediaState } from '../shared/mediaProtocol.js'
-import { PROJECT_VERSION, type Canvas, type Project, type Track } from '../shared/project.js'
+import { PROJECT_VERSION, type Canvas, type Project, type ShapeStroke, type Track } from '../shared/project.js'
 import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings.js'
 
 export type Edit = (project: Project) => Project
 
-type DrawingTool = 'move' | 'rectangle' | 'ellipse'
+export type DrawingTool = 'move' | 'fill' | 'rectangle' | 'ellipse' | 'picker'
 
 type ExportStatus =
   | { phase: 'running'; fileName: string; done: number; total: number; startedAt: number }
@@ -66,6 +66,7 @@ export type EditorStore = {
   applyToFiles(label: string, editEpisode: Edit, editDocument?: Edit): void
   begin(label: string): void
   update(edit: Edit): boolean
+  updateFile(edit: Edit): boolean
   commit(): void
   cancel(): boolean
   undo(): void
@@ -73,7 +74,8 @@ export type EditorStore = {
   select(clipIds: readonly string[]): void
   selectShapes(shapes: readonly ShapeRef[]): void
   setTool(tool: DrawingTool): void
-  setDrawingColor(part: ColorPart, color: string): void
+  setDrawingColor(part: ColorPart, color: string, swatchId?: string): void
+  setDrawingStroke(stroke: ShapeStroke | undefined): void
   setColorPart(part: ColorPart): void
   expandTrack(trackId: string, isExpanded: boolean): void
   openGroup(groupId: string): void
@@ -189,7 +191,7 @@ export function createEditorStore(settings: AppSettings = DEFAULT_SETTINGS): Edi
     const opened = resolveScope(next.wholeProject, next.documents, next.mediaStates, next.openGroups)
     const scoped = opened.project
     const { project } = state
-    const hasSameContent = scoped.tracks === project.tracks && scoped.media === project.media && scoped.canvas === project.canvas
+    const hasSameContent = scoped.tracks === project.tracks && scoped.media === project.media && scoped.canvas === project.canvas && scoped.swatches === project.swatches
     const isSameInside = opened.openGroups.length > 0 && hasSameContent && project.camera === undefined
     const openGroups = opened.openGroups.length === next.openGroups.length ? next.openGroups : opened.openGroups
     const openChain = opened.chain.join('/') === state.openChain.join('/') ? state.openChain : opened.chain
@@ -247,21 +249,25 @@ export function createEditorStore(settings: AppSettings = DEFAULT_SETTINGS): Edi
     gesture = { label, base: state.wholeProject, baseDocuments: state.documents }
   }
 
-  function update(edit: Edit): boolean {
+  // The open tracks, or with `isWholeFile` the whole file holding them.
+  function updateIn(edit: Edit, isWholeFile: boolean): boolean {
     if (gesture === undefined) return false
     const { base, baseDocuments } = gesture
     const opened = resolveScope(base, baseDocuments, state.mediaStates, state.openGroups)
-    const edited = edit(opened.project)
     const path = opened.documentPath
     const document = path === undefined ? undefined : baseDocuments[path]
+    const owner = document ?? base
+    const changed = isWholeFile ? edit(owner) : withScopedProject(owner, opened.groupsInDocument, edit(opened.project))
     if (path === undefined || document === undefined) {
-      const wholeProject = withScopedProject(base, opened.groupsInDocument, edited)
-      if (wholeProject !== state.wholeProject) setState({ wholeProject })
+      if (changed !== state.wholeProject) setState({ wholeProject: changed })
       return true
     }
-    const changed = withScopedProject(document, opened.groupsInDocument, edited)
     if (changed !== state.documents[path]) setState({ documents: { ...state.documents, [path]: changed } })
     return true
+  }
+
+  function update(edit: Edit): boolean {
+    return updateIn(edit, false)
   }
 
   function apply(label: string, edit: Edit): void {
@@ -325,6 +331,7 @@ export function createEditorStore(settings: AppSettings = DEFAULT_SETTINGS): Edi
     applyToFiles,
     begin,
     update,
+    updateFile: (edit) => updateIn(edit, true),
     commit,
     cancel,
     undo: () => travel(undo),
@@ -332,10 +339,10 @@ export function createEditorStore(settings: AppSettings = DEFAULT_SETTINGS): Edi
     select: (clipIds) => setState({ selection: clipIds, selectedShapes: NO_SHAPES, selectedZoom: undefined }),
     selectShapes: (selectedShapes) => setState({ selectedShapes, selection: NO_SELECTION, selectedZoom: undefined }),
     setTool: (tool) => setState({ tool }),
-    setDrawingColor(part, color) {
-      const { drawingStyle } = state
-      const changed = part === 'fill' ? { ...drawingStyle, fill: color } : { ...drawingStyle, stroke: { ...drawingStyle.stroke, color } }
-      setState({ drawingStyle: changed })
+    setDrawingColor: (part, color, swatchId) => setState({ drawingStyle: styleWithColor(state.drawingStyle, part, color, swatchId) }),
+    setDrawingStroke(stroke) {
+      const { stroke: _old, ...unstroked } = state.drawingStyle
+      setState({ drawingStyle: stroke === undefined ? unstroked : { ...unstroked, stroke } })
     },
     setColorPart: (colorPart) => setState({ colorPart }),
     expandTrack(trackId, isExpanded) {

@@ -53,6 +53,19 @@ export type Engine = {
   exportMedia(job: ExportJob, onProgress: ProgressListener): Promise<JobSummary>
   renderFrames(job: FramesJob): Promise<JobSummary>
   still(path: string, time: number, height: number): Promise<ImageBitmap | undefined>
+  colorAt(share: Share): Promise<PixelColor | undefined>
+}
+
+// A place in the picture as a share of its width and height from the top left.
+export type Share = {
+  x: number
+  y: number
+}
+
+export type PixelColor = {
+  red: number
+  green: number
+  blue: number
 }
 
 type Playback = {
@@ -167,14 +180,18 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     emit({ type: 'position', time, isPlaying: playback !== undefined, droppedFrames, fullQualityMs })
   }
 
+  function pausedView(project: LoadedProject): View {
+    const { canvas, camera } = project.project
+    return isWholeCanvasShownWhenPaused ? wholeCanvas(canvas) : viewAt(camera, time, canvas)
+  }
+
   async function showPaused(): Promise<void> {
     const project = loaded
     if (project === undefined || isContextLost) return
     generation += 1
     const shown = generation
     const layers = layersAt(project, time)
-    const { canvas, camera } = project.project
-    const view = isWholeCanvasShownWhenPaused ? wholeCanvas(canvas) : viewAt(camera, time, canvas)
+    const view = pausedView(project)
     const scale = textScale(project, view)
     const needed = decodesNeeded(layers)
     if (refining === undefined || refining.signal.aborted || needed !== refiningFor) {
@@ -470,6 +487,19 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     return createImageBitmap(new ImageData(new Uint8ClampedArray(pixels), output.width, output.height))
   }
 
+  // Read from the frame as exported, without the dimming around an open animation; the screen keeps what it shows, since only draw() presents.
+  async function colorAt(share: Share): Promise<PixelColor | undefined> {
+    const project = loaded
+    if (project === undefined || isContextLost) return undefined
+    const view = pausedView(project)
+    const layers = resolveFrame(project.project, project.media, project.documents, time, outputScale(project))
+    const items = await provider.itemsFor(layers, 'full', textScale(project, view))
+    if (loaded !== project || isContextLost) return undefined
+    compositor.render(project.project.canvas, output, view, items)
+    const [red = 0, green = 0, blue = 0] = compositor.readPixel(share.x * output.width, share.y * output.height)
+    return { red, green, blue }
+  }
+
   return {
     load,
     setProject,
@@ -484,5 +514,6 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     exportMedia: (job, onProgress) => exportMedia(renderContext(), job, onProgress),
     renderFrames: (job) => renderFrames(renderContext(), job),
     still,
+    colorAt,
   }
 }

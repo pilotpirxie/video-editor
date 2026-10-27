@@ -1,20 +1,50 @@
-import type { DrawingClip, DrawingShape, Project, ShapeNode, ShapeStroke, Track, Transform } from '../shared/project.js'
+import {
+  MAX_SHAPE_DEPTH,
+  type DrawingClip,
+  type DrawingShape,
+  type Project,
+  type ShapeNode,
+  type ShapeStroke,
+  type StrokeAlign,
+  type StrokeCap,
+  type StrokeJoin,
+  type Swatch,
+  type Track,
+  type Transform,
+} from '../shared/project.js'
 import { TICKS_PER_SECOND, frameAt, frameDuration } from '../shared/time.js'
 import { canvasPointToClip, clipPointToCanvas, type Point } from './annotations.js'
-import { coversTime, editClips, locateClip, nextTrackName, placeOnTrack, type NewTrack } from './clips.js'
+import { coversTime, editClips, endOf, locateClip, mapClipsDeep, nextTrackName, placeOnTrack, type NewTrack } from './clips.js'
+import { shiftLater } from './moveTrim.js'
 import type { Bounds } from './snapping.js'
 
 // Four bezier quarters with handles this share of the radius long are closest to a circle.
 const CIRCLE_HANDLE = 0.5523
 
+// The colours and stroke new shapes get; a link to a swatch is kept only where the file has that swatch.
 export type ShapeStyle = {
   fill: string
-  stroke: ShapeStroke
+  fillSwatch?: string
+  stroke?: ShapeStroke
 }
 
 export type ColorPart = 'fill' | 'stroke'
 
-export const NEW_SHAPE_STYLE: ShapeStyle = { fill: '#FFFFFF', stroke: { color: '#000000', width: 4 } }
+export const NEW_STROKE: ShapeStroke = { color: '#000000', width: 4, scalesWithObject: true }
+export const NEW_SHAPE_STYLE: ShapeStyle = { fill: '#FFFFFF', stroke: NEW_STROKE }
+export const MIN_STROKE_WIDTH = 0.1
+
+export type StrokeChange = {
+  width?: number
+  isDashed?: boolean
+  cap?: StrokeCap
+  join?: StrokeJoin
+  align?: StrokeAlign
+  isBehind?: boolean
+  scalesWithObject?: boolean
+}
+
+export type ShapeDrop = 'front' | 'behind' | 'inside'
 
 export type ShapeRef = {
   clipId: string
@@ -32,10 +62,17 @@ export function dragBox(from: Point, to: Point, isEven: boolean): Bounds {
   return { left: Math.min(from.x, from.x + across), top: Math.min(from.y, from.y + down), right: Math.max(from.x, from.x + across), bottom: Math.max(from.y, from.y + down) }
 }
 
+function painted(shape: DrawingShape, style: ShapeStyle): DrawingShape {
+  const result: DrawingShape = { ...shape, fill: style.fill }
+  if (style.fillSwatch !== undefined) result.fillSwatch = style.fillSwatch
+  if (style.stroke !== undefined) result.stroke = style.stroke
+  return result
+}
+
 export function rectangleShape(id: string, box: Bounds, style: ShapeStyle): DrawingShape {
   const { left, top, right, bottom } = box
   const nodes = [{ x: left, y: top }, { x: right, y: top }, { x: right, y: bottom }, { x: left, y: bottom }]
-  return { id, name: 'Rectangle', nodes, isClosed: true, fill: style.fill, stroke: style.stroke }
+  return painted({ id, name: 'Rectangle', nodes, isClosed: true }, style)
 }
 
 export function ellipseShape(id: string, box: Bounds, style: ShapeStyle): DrawingShape {
@@ -49,16 +86,21 @@ export function ellipseShape(id: string, box: Bounds, style: ShapeStyle): Drawin
     { x: middleX, y: box.bottom, in: { x: handleX, y: 0 }, out: { x: -handleX, y: 0 } },
     { x: box.left, y: middleY, in: { x: 0, y: handleY }, out: { x: 0, y: -handleY } },
   ]
-  return { id, name: 'Ellipse', nodes, isClosed: true, fill: style.fill, stroke: style.stroke }
+  return painted({ id, name: 'Ellipse', nodes, isClosed: true }, style)
 }
 
-export function findShape(shapes: readonly DrawingShape[], shapeId: string): DrawingShape | undefined {
+function findShape(shapes: readonly DrawingShape[], shapeId: string): DrawingShape | undefined {
   for (const shape of shapes) {
     if (shape.id === shapeId) return shape
     const inside = shape.children === undefined ? undefined : findShape(shape.children, shapeId)
     if (inside !== undefined) return inside
   }
   return undefined
+}
+
+export function shapeAt(project: Project, shape: ShapeRef): DrawingShape | undefined {
+  const clip = locateClip(project, shape.clipId)?.clip
+  return clip?.type === 'drawing' ? findShape(clip.shapes, shape.shapeId) : undefined
 }
 
 // A hidden or locked shape takes its clipped children along.
@@ -200,6 +242,12 @@ function mappedHandle(node: ShapeNode, handle: Point, moved: Point, from: Transf
   return { x: end.x - moved.x, y: end.y - moved.y }
 }
 
+// A stroke that scales with its shape grows by the geometric mean of how much the box grew across and down.
+function strokeScale(from: Transform, to: Transform): number {
+  const scale = Math.sqrt(Math.abs((to.scaleX * to.scaleY) / (from.scaleX * from.scaleY)))
+  return Number.isFinite(scale) ? scale : 1
+}
+
 function transformedShape(shape: DrawingShape, from: Transform, to: Transform): DrawingShape {
   const nodes = shape.nodes.map((node) => {
     const moved = mappedPoint(node, from, to)
@@ -209,6 +257,8 @@ function transformedShape(shape: DrawingShape, from: Transform, to: Transform): 
     return mapped
   })
   const transformed = { ...shape, nodes }
+  const { stroke } = shape
+  if (stroke?.scalesWithObject === true) transformed.stroke = { ...stroke, width: Math.max(MIN_STROKE_WIDTH, stroke.width * strokeScale(from, to)) }
   if (shape.children !== undefined) transformed.children = shape.children.map((child) => transformedShape(child, from, to))
   return transformed
 }
@@ -245,26 +295,97 @@ export function renameShape(project: Project, shape: ShapeRef, name: string): Pr
   return editEachShape(project, [shape], (chosen) => ({ ...chosen, name: trimmed }))
 }
 
-export function setShapeColor(project: Project, shapes: readonly ShapeRef[], part: ColorPart, color: string): Project {
+// Without a stroke yet, the stroke starts as the one new shapes get.
+function coloredStroke(stroke: ShapeStroke | undefined, color: string, swatchId: string | undefined): ShapeStroke {
+  const { swatch: _unlinked, ...unlinkedStroke } = stroke ?? NEW_STROKE
+  return swatchId === undefined ? { ...unlinkedStroke, color } : { ...unlinkedStroke, color, swatch: swatchId }
+}
+
+function coloredShape(shape: DrawingShape, part: ColorPart, color: string, swatchId: string | undefined): DrawingShape {
+  if (part === 'stroke') return { ...shape, stroke: coloredStroke(shape.stroke, color, swatchId) }
+  const { fillSwatch: _unlinked, ...filled } = shape
+  return swatchId === undefined ? { ...filled, fill: color } : { ...filled, fill: color, fillSwatch: swatchId }
+}
+
+export function styleWithColor(style: ShapeStyle, part: ColorPart, color: string, swatchId?: string): ShapeStyle {
+  if (part === 'stroke') return { ...style, stroke: coloredStroke(style.stroke, color, swatchId) }
+  const { fillSwatch: _unlinked, ...filled } = style
+  return swatchId === undefined ? { ...filled, fill: color } : { ...filled, fill: color, fillSwatch: swatchId }
+}
+
+// A colour of its own unlinks the shape from its swatch.
+export function setShapeColor(project: Project, shapes: readonly ShapeRef[], part: ColorPart, color: string, swatchId?: string): Project {
+  return editEachShape(project, shapes, (chosen) => coloredShape(chosen, part, color, swatchId))
+}
+
+function withSwitch(stroke: ShapeStroke, key: 'isDashed' | 'isBehind' | 'scalesWithObject', isOn: boolean | undefined): ShapeStroke {
+  if (isOn === undefined) return stroke
+  if (isOn) return { ...stroke, [key]: true }
+  const { [key]: _off, ...switchedOff } = stroke
+  return switchedOff
+}
+
+// The file leaves a switch out rather than storing false.
+export function strokeWith(stroke: ShapeStroke, change: StrokeChange): ShapeStroke {
+  const { isDashed, isBehind, scalesWithObject, ...values } = change
+  let changed: ShapeStroke = { ...stroke, ...values }
+  changed = withSwitch(changed, 'isDashed', isDashed)
+  changed = withSwitch(changed, 'isBehind', isBehind)
+  return withSwitch(changed, 'scalesWithObject', scalesWithObject)
+}
+
+// A shape without a stroke starts from `base`.
+export function setShapeStroke(project: Project, shapes: readonly ShapeRef[], change: StrokeChange | 'none', base: ShapeStroke): Project {
   return editEachShape(project, shapes, (chosen) => {
-    if (part === 'fill') return { ...chosen, fill: color }
-    return { ...chosen, stroke: { color, width: chosen.stroke?.width ?? NEW_SHAPE_STYLE.stroke.width } }
+    if (change !== 'none') return { ...chosen, stroke: strokeWith(chosen.stroke ?? base, change) }
+    const { stroke: _removed, ...unstroked } = chosen
+    return unstroked
   })
 }
 
-// The shape takes the place of the sibling at `targetShapeId`, or of the sibling that holds it.
-export function reorderShape(project: Project, shape: ShapeRef, targetShapeId: string): Project {
-  return editDrawings(project, [shape], (drawn) =>
-    editSiblings(drawn, (siblings) => {
-      const from = siblings.findIndex((sibling) => sibling.id === shape.shapeId)
-      const to = siblings.findIndex((sibling) => sibling.id === targetShapeId || findShape(sibling.children ?? [], targetShapeId) !== undefined)
-      const moving = siblings[from]
-      if (moving === undefined || to < 0 || from === to) return siblings
-      const reordered = siblings.filter((sibling) => sibling !== moving)
-      reordered.splice(to, 0, moving)
-      return reordered
-    }),
-  )
+function depthOf(shapes: readonly DrawingShape[], shapeId: string, depth: number): number | undefined {
+  for (const shape of shapes) {
+    if (shape.id === shapeId) return depth
+    const inside = shape.children === undefined ? undefined : depthOf(shape.children, shapeId, depth + 1)
+    if (inside !== undefined) return inside
+  }
+  return undefined
+}
+
+function levelsBelow(shape: DrawingShape): number {
+  let levels = 0
+  for (const child of shape.children ?? []) levels = Math.max(levels, 1 + levelsBelow(child))
+  return levels
+}
+
+// A shape cannot go into itself or a shape clipped inside it, nor deeper than the file allows.
+export function canDropShape(shapes: readonly DrawingShape[], movingId: string, targetId: string, drop: ShapeDrop): boolean {
+  const moving = findShape(shapes, movingId)
+  const targetDepth = depthOf(shapes, targetId, 0)
+  if (moving === undefined || targetDepth === undefined || movingId === targetId) return false
+  if (findShape(moving.children ?? [], targetId) !== undefined) return false
+  const depth = drop === 'inside' ? targetDepth + 1 : targetDepth
+  return depth + levelsBelow(moving) <= MAX_SHAPE_DEPTH
+}
+
+function placedShape(siblings: DrawingShape[], moving: DrawingShape, targetId: string, drop: ShapeDrop): DrawingShape[] {
+  const index = siblings.findIndex((sibling) => sibling.id === targetId)
+  const target = siblings[index]
+  if (target === undefined) return siblings
+  if (drop === 'inside') return siblings.map((sibling) => (sibling === target ? { ...target, children: [...(target.children ?? []), moving] } : sibling))
+  const at = drop === 'front' ? index + 1 : index
+  return [...siblings.slice(0, at), moving, ...siblings.slice(at)]
+}
+
+// Shapes are listed back to front, so in front of the target is right after it, and inside it is in front of its other children.
+export function moveShape(project: Project, shape: ShapeRef, targetId: string, drop: ShapeDrop): Project {
+  const clip = locateClip(project, shape.clipId)?.clip
+  const moving = shapeAt(project, shape)
+  if (clip?.type !== 'drawing' || moving === undefined || !canDropShape(clip.shapes, shape.shapeId, targetId, drop)) return project
+  return editDrawings(project, [shape], (drawn) => {
+    const without = editSiblings(drawn, (siblings) => siblings.filter((sibling) => sibling.id !== shape.shapeId))
+    return editSiblings(without, (siblings) => placedShape(siblings, moving, targetId, drop))
+  })
 }
 
 export type ArrangePlace = 'forward' | 'backward' | 'front' | 'back'
@@ -341,4 +462,101 @@ export function addShapesAbove(project: Project, copies: readonly CopiedShape[])
       return withCopies
     }),
   )
+}
+
+// The copy goes right after the drawing, and every later clip on its track moves later to make room.
+export function duplicateDrawing(project: Project, clipId: string, copyId: string): Project {
+  const located = locateClip(project, clipId)
+  if (located === undefined || located.clip.type !== 'drawing' || located.track.locked) return project
+  const { clip, track } = located
+  const end = endOf(clip)
+  const shifted = shiftLater(project, track, end, clip.duration, clip.id)
+  const copy: DrawingClip = { ...clip, id: copyId, start: end }
+  const tracks = shifted.tracks.map((each) => (each.id === track.id ? { ...each, clips: [...each.clips, copy] } : each))
+  return { ...shifted, tracks }
+}
+
+function swatchIn(swatches: readonly Swatch[] | undefined, swatchId: string | undefined): Swatch | undefined {
+  if (swatchId === undefined) return undefined
+  return swatches?.find((swatch) => swatch.id === swatchId)
+}
+
+// A link survives only into a file that has the swatch, and then takes the swatch's colour.
+export function styleIn(style: ShapeStyle, swatches: readonly Swatch[] | undefined): ShapeStyle {
+  const fillSwatch = swatchIn(swatches, style.fillSwatch)
+  const resolved: ShapeStyle = { fill: fillSwatch?.color ?? style.fill }
+  if (fillSwatch !== undefined) resolved.fillSwatch = fillSwatch.id
+  if (style.stroke === undefined) return resolved
+  const { swatch: _link, ...stroke } = style.stroke
+  const strokeSwatch = swatchIn(swatches, style.stroke.swatch)
+  resolved.stroke = strokeSwatch === undefined ? stroke : { ...stroke, color: strokeSwatch.color, swatch: strokeSwatch.id }
+  return resolved
+}
+
+function unlinked(shape: DrawingShape, isKept: (swatchId: string) => boolean): DrawingShape {
+  let kept = shape
+  if (kept.fillSwatch !== undefined && !isKept(kept.fillSwatch)) {
+    const { fillSwatch: _gone, ...rest } = kept
+    kept = rest
+  }
+  if (kept.stroke?.swatch !== undefined && !isKept(kept.stroke.swatch)) {
+    const { swatch: _gone, ...stroke } = kept.stroke
+    kept = { ...kept, stroke }
+  }
+  return kept
+}
+
+// Pasted into another animation, a shape keeps its colours but not its links to swatches that file lacks.
+export function withKnownSwatches(shape: DrawingShape, swatches: readonly Swatch[] | undefined): DrawingShape {
+  const known = new Set(swatches?.map((swatch) => swatch.id))
+  const [kept] = editSiblings([shape], (siblings) => siblings.map((sibling) => unlinked(sibling, (swatchId) => known.has(swatchId))))
+  return kept ?? shape
+}
+
+// Every shape in every drawing of the file, groups included.
+function withEveryShape(project: Project, change: (shape: DrawingShape) => DrawingShape): Project {
+  const tracks = mapClipsDeep(project.tracks, (clip) => {
+    if (clip.type !== 'drawing') return clip
+    return { ...clip, shapes: editSiblings(clip.shapes, (siblings) => siblings.map(change)) }
+  })
+  return { ...project, tracks }
+}
+
+export function nextSwatchName(swatches: readonly Swatch[] | undefined): string {
+  const names = new Set(swatches?.map((swatch) => swatch.name))
+  let number = names.size + 1
+  while (names.has(`Colour ${number}`)) number += 1
+  return `Colour ${number}`
+}
+
+export function addSwatch(project: Project, swatch: Swatch): Project {
+  return { ...project, swatches: [...(project.swatches ?? []), swatch] }
+}
+
+export function renameSwatch(project: Project, swatchId: string, name: string): Project {
+  const trimmed = name.trim()
+  if (trimmed === '' || project.swatches === undefined) return project
+  return { ...project, swatches: project.swatches.map((swatch) => (swatch.id === swatchId ? { ...swatch, name: trimmed } : swatch)) }
+}
+
+// Linked shapes keep the swatch's hex beside the link, so every one of them is rewritten.
+export function setSwatchColor(project: Project, swatchId: string, color: string): Project {
+  if (project.swatches === undefined) return project
+  const swatches = project.swatches.map((swatch) => (swatch.id === swatchId ? { ...swatch, color } : swatch))
+  const recolored = withEveryShape(project, (shape) => {
+    let changed = shape
+    if (changed.fillSwatch === swatchId) changed = { ...changed, fill: color }
+    if (changed.stroke?.swatch === swatchId) changed = { ...changed, stroke: { ...changed.stroke, color } }
+    return changed
+  })
+  return { ...recolored, swatches }
+}
+
+// Shapes keep the swatch's last colour as their own.
+export function deleteSwatch(project: Project, swatchId: string): Project {
+  const unlinkedProject = withEveryShape(project, (shape) => unlinked(shape, (linkedId) => linkedId !== swatchId))
+  const swatches = project.swatches?.filter((swatch) => swatch.id !== swatchId) ?? []
+  if (swatches.length > 0) return { ...unlinkedProject, swatches }
+  const { swatches: _none, ...withoutSwatches } = unlinkedProject
+  return withoutSwatches
 }

@@ -3,6 +3,7 @@ import { ANIMATION_NAMES, DEFAULT_ANIMATION, setAnimation, takesAnimation } from
 import { CALLOUT_NAMES, setArrowStyle, setCalloutStyle } from '../editor/annotations.js'
 import { deleteZoom, setZoom, type ZoomChanges } from '../editor/camera.js'
 import { allClips, coversTime, freeTrackId, hasMedia, hasSource, isCroppable, isContainer, makesSound, nextTrackName } from '../editor/clips.js'
+import { MIN_STROKE_WIDTH, NEW_STROKE, setShapeStroke, shapeAt, strokeWith, type StrokeChange } from '../editor/drawings.js'
 import { cropFromValue } from '../editor/geometry.js'
 import { resolveScope } from '../editor/groups.js'
 import { moveClips } from '../editor/moveTrim.js'
@@ -56,6 +57,9 @@ import {
   type Project,
   type Shape,
   type ShapeClip,
+  type StrokeAlign,
+  type StrokeCap,
+  type StrokeJoin,
   type TextAlign,
   type TextClip,
   type Transform,
@@ -119,10 +123,35 @@ const EASINGS: readonly { easing: Easing; label: string }[] = [
   { easing: 'linear', label: 'Linear' },
   { easing: 'hold', label: 'Hold' },
 ]
-const SHAPES: readonly { shape: Shape; label: string }[] = [
-  { shape: 'rectangle', label: 'Rectangle' },
-  { shape: 'ellipse', label: 'Ellipse' },
+const SHAPES: readonly SegmentChoice<Shape>[] = [
+  { value: 'rectangle', label: 'Rectangle' },
+  { value: 'ellipse', label: 'Ellipse' },
 ]
+const STROKE_STYLES: readonly SegmentChoice<'none' | 'solid' | 'dashed'>[] = [
+  { value: 'none', label: 'None' },
+  { value: 'solid', label: 'Solid' },
+  { value: 'dashed', label: 'Dashed' },
+]
+const STROKE_CAPS: readonly SegmentChoice<StrokeCap>[] = [
+  { value: 'butt', label: 'Butt' },
+  { value: 'round', label: 'Round' },
+  { value: 'square', label: 'Square' },
+]
+const STROKE_JOINS: readonly SegmentChoice<StrokeJoin>[] = [
+  { value: 'miter', label: 'Mitre' },
+  { value: 'round', label: 'Round' },
+  { value: 'bevel', label: 'Bevel' },
+]
+const STROKE_ALIGNS: readonly SegmentChoice<StrokeAlign>[] = [
+  { value: 'inside', label: 'Inside' },
+  { value: 'center', label: 'Centre' },
+  { value: 'outside', label: 'Outside' },
+]
+const STROKE_ORDERS: readonly SegmentChoice<'behind' | 'front'>[] = [
+  { value: 'behind', label: 'Behind' },
+  { value: 'front', label: 'Front' },
+]
+const MAX_STROKE_WIDTH = 1000
 const CROP_SIDES: readonly { side: keyof Crop; property: AnimatableProperty; label: string }[] = [
   { side: 'left', property: 'cropLeft', label: 'Left' },
   { side: 'top', property: 'cropTop', label: 'Top' },
@@ -1038,6 +1067,34 @@ function InOutFields({ edge, label, clips, frameTicks }: InOutProps): ReactEleme
   )
 }
 
+type SegmentChoice<Value extends string> = {
+  value: Value
+  label: string
+}
+
+type ChoiceFieldProps<Value extends string> = {
+  label: string
+  testId: string
+  choices: readonly SegmentChoice<Value>[]
+  value: Value | undefined
+  onChoose(value: Value): void
+}
+
+function ChoiceField<Value extends string>({ label, testId, choices, value, onChoose }: ChoiceFieldProps<Value>): ReactElement {
+  return (
+    <div className="labelled">
+      <span className="field-label">{label}</span>
+      <div className="segmented wide" role="group" aria-label={label}>
+        {choices.map((choice) => (
+          <button key={choice.value} type="button" className="button" data-testid={`${testId}-${choice.value}`} aria-pressed={value === choice.value} onClick={() => onChoose(choice.value)}>
+            {choice.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function ShapeFields({ clips }: { clips: readonly ShapeClip[] }): ReactElement {
   const { store } = useSession()
   const ids = clips.map((clip) => clip.id)
@@ -1049,16 +1106,7 @@ function ShapeFields({ clips }: { clips: readonly ShapeClip[] }): ReactElement {
 
   return (
     <>
-      <div className="labelled">
-        <span className="field-label">Shape</span>
-        <div className="segmented wide" role="group" aria-label="Shape">
-          {SHAPES.map(({ shape, label }) => (
-            <button key={shape} type="button" className="button" data-testid={`shape-${shape}`} aria-pressed={current === shape} onClick={() => chooseShape(shape)}>
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <ChoiceField label="Shape" testId="shape" choices={SHAPES} value={current} onChoose={chooseShape} />
       <EditField
         label="Soft edge"
         testId="shape-soft-edge"
@@ -1086,6 +1134,79 @@ function SwitchField({ label, testId, isOn, onSwitch }: SwitchFieldProps): React
       <input type="checkbox" data-testid={testId} checked={isOn} onChange={(event) => onSwitch(event.target.checked)} />
       {label}
     </label>
+  )
+}
+
+// Sets the chosen shapes as one undo step per drag, and the stroke new shapes get; with no shape chosen it sets only that stroke.
+function StrokeFields(): ReactElement {
+  const { store } = useSession()
+  const selectedShapes = useEditorState((state) => state.selectedShapes)
+  const drawingStyle = useEditorState((state) => state.drawingStyle)
+  const firstShape = useEditorState((state) => (state.selectedShapes[0] === undefined ? undefined : shapeAt(state.project, state.selectedShapes[0])))
+  const pendingRef = useRef<StrokeChange | 'none' | undefined>(undefined)
+  const isEditingShapes = selectedShapes.length > 0
+  const stroke = isEditingShapes ? firstShape?.stroke : drawingStyle.stroke
+  const base = drawingStyle.stroke ?? NEW_STROKE
+
+  function newShapesStroke(change: StrokeChange | 'none'): void {
+    store.setDrawingStroke(change === 'none' ? undefined : strokeWith(base, change))
+  }
+
+  function begin(): void {
+    if (isEditingShapes) store.begin('Change Stroke')
+  }
+
+  function change(next: StrokeChange | 'none'): void {
+    pendingRef.current = next
+    if (isEditingShapes) store.update((project) => setShapeStroke(project, selectedShapes, next, base))
+    else newShapesStroke(next)
+  }
+
+  function commit(): void {
+    if (isEditingShapes) store.commit()
+    const next = pendingRef.current
+    pendingRef.current = undefined
+    if (next !== undefined && isEditingShapes) newShapesStroke(next)
+  }
+
+  function cancel(): void {
+    pendingRef.current = undefined
+    if (isEditingShapes) store.cancel()
+  }
+
+  function changeOnce(next: StrokeChange | 'none'): void {
+    begin()
+    change(next)
+    commit()
+  }
+
+  let style: 'none' | 'solid' | 'dashed' = 'none'
+  if (stroke !== undefined) style = stroke.isDashed === true ? 'dashed' : 'solid'
+  return (
+    <>
+      <ChoiceField label="Style" testId="stroke-style" choices={STROKE_STYLES} value={style} onChoose={(chosen) => changeOnce(chosen === 'none' ? 'none' : { isDashed: chosen === 'dashed' })} />
+      {stroke !== undefined && (
+        <>
+          <NumberField
+            label="Width (px)"
+            testId="stroke-width"
+            value={stroke.width}
+            min={MIN_STROKE_WIDTH}
+            max={MAX_STROKE_WIDTH}
+            decimals={1}
+            onBegin={begin}
+            onChange={(width) => change({ width })}
+            onCommit={commit}
+            onCancel={cancel}
+          />
+          <ChoiceField label="Cap" testId="stroke-cap" choices={STROKE_CAPS} value={stroke.cap ?? 'round'} onChoose={(cap) => changeOnce({ cap })} />
+          <ChoiceField label="Join" testId="stroke-join" choices={STROKE_JOINS} value={stroke.join ?? 'round'} onChoose={(join) => changeOnce({ join })} />
+          <ChoiceField label="Align" testId="stroke-align" choices={STROKE_ALIGNS} value={stroke.align ?? 'center'} onChoose={(align) => changeOnce({ align })} />
+          <ChoiceField label="Order" testId="stroke-order" choices={STROKE_ORDERS} value={stroke.isBehind === true ? 'behind' : 'front'} onChoose={(order) => changeOnce({ isBehind: order === 'behind' })} />
+          <SwitchField label="Scale with object" testId="stroke-scales" isOn={stroke.scalesWithObject === true} onSwitch={(isOn) => changeOnce({ scalesWithObject: isOn })} />
+        </>
+      )}
+    </>
   )
 }
 
@@ -1571,9 +1692,14 @@ export function Properties(): ReactElement | undefined {
   if (selectedZoom !== undefined) return <ZoomProperties index={selectedZoom} />
   if (clips.length > 0) return <ClipProperties clips={clips} />
   const colour = (
-    <Group title="Colour" icon="droplet" isOpenAtStart>
-      <ColorFields />
-    </Group>
+    <>
+      <Group title="Colour" icon="droplet" isOpenAtStart>
+        <ColorFields />
+      </Group>
+      <Group title="Stroke" icon="line" isOpenAtStart>
+        <StrokeFields />
+      </Group>
+    </>
   )
   if (hasShapes) return colour
   if (isAnimationOpen) {

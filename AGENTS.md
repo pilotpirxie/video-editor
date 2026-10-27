@@ -69,6 +69,9 @@ Approved by the user (2026-10-26):
 Approved by the user (2026-10-27):
 - A drawing clip holds timing and shapes only: no transform, opacity, fades, transitions or effects. Shapes move by their nodes; fades and effects go on the animation clip.
 - V picks Move; M picks Rectangle, and M again Ellipse, as in Affinity. Both keys are rebindable.
+- A colour that uses a swatch edits the swatch, so every shape using it follows; clicking the chosen chip again unlinks.
+- The Fill tool's hover preview is an outline of the shape it would fill.
+- With nothing selected, the Stroke panel sets the stroke of new shapes, like the current colour.
 
 Made in this plan (veto any of them before its ticket is built):
 - The file format version stays 1. New clip types are `drawing` and `animation`; all other new keys are optional.
@@ -79,7 +82,7 @@ Made in this plan (veto any of them before its ticket is built):
 - Animation clips render flattened, like groups, until A-73. The cost until then is that parts show through each other while a clip fades.
 - Onion skin is drawn as outlines by the canvas overlay. It shows in the preview only, never in export.
 - Drawings are rasterised with Canvas2D on the CPU, like callouts, for parity.
-- ⌘D on a drawing ripples later drawings on the same track to make room.
+- ⌘D on drawings applies when every selected clip is a drawing: each copy goes right after its original, and every later clip on that track (not only drawings) moves later by the original's length, so nothing overlaps.
 - With the Node tool and nodes selected, the arrow keys nudge the nodes; otherwise they step frames as now.
 - Pasting a drawing clip into an episode is refused.
 - Save As saves the episode only; ⌘S also saves changed animations.
@@ -92,25 +95,33 @@ Made in this plan (veto any of them before its ticket is built):
 - Media dropped inside an animation adds its reference through the normal drop; there is no separate copy step.
 - Build order for groups 1–2 differed from ticket order: A-05/06 before A-04's placement; A-13, A-15 and A-18 together; A-14, A-16 and A-17 together.
 - Node handles are stored relative to their node; a side without a handle is sharp. Shape ids are unique within their drawing, shapes are listed back to front, and shapes clip inside each other at most 8 deep.
-- New shapes have a white fill and a black 4 px stroke, with round caps and joins until A-40.
+- New shapes have a white fill and a black 4 px solid stroke with round caps and joins that scales with the object (mockup v3).
 - Drawing clips use the image clip colour (mockup v3) and the label "Drawing".
 - Shape and clip selections are exclusive. While shapes are selected, Properties shows only the Colour group.
-- The shapes' selection box is upright in the artboard, fits the outlines without their strokes, and refits as they turn. Corners keep the aspect and Shift frees it, as for clips. Stroke widths don't scale until A-40.
+- The shapes' selection box is upright in the artboard, fits the outlines without their strokes, and refits as they turn. Corners keep the aspect and Shift frees it, as for clips. A stroke set to Scale with object grows by the geometric mean of the box's two scales.
 - Clipped children are drawn from A-28, because the file format holds them; A-41 adds the way to make them. A double-click picks a direct child, and a press on a chosen child moves that child.
 - The fill and stroke wells show the first selected shape's colours, or the current colours with nothing selected. A click picks which one the Colour group edits.
 - The Rectangle and Ellipse tools stay on after a drag and select the new shape. A hidden or locked target track gets the new drawing on a track above it. Coordinates are not rounded until A-47.
 - A clip after a drawing plays its transition in on its own, as after a gap; drawings take no part in transitions.
 - Shape rows are 30 px and list front to back. An expanded track is as tall as its drawing with the most shapes, so rows below never jump. Only tracks holding a drawing get ▸; expansion is per window, by track id, and isn't saved. With no drawing at the playhead, an expanded track shows "No drawing at the playhead".
 - Hiding or locking a shape also hides or locks its clipped children. Hidden or locked shapes can't be selected from the list or the canvas, and hiding or locking unselects them.
-- Dragging a row only reorders among its siblings, with no drop indicator, as for tracks; clipping inside is A-41.
+- Dragging a row drops in front of the shape under the pointer in a row's top quarter, behind it in the bottom quarter, and inside it in the middle half (in front of its other children). An accent line or outline shows where. Drops into the shape itself, a shape clipped inside it, or deeper than 8 are refused.
 - Unnamed shapes show "Shape"; the tools name new shapes "Rectangle" and "Ellipse".
 - Paste and ⌘D keep the coordinates and put the copies in front: paste goes into the drawing at the playhead (or a new one, as for the tools), ⌘D right above each original. Cut works on shapes, and ripple delete deletes them. Deleting every shape leaves an empty drawing clip.
-- Shapes paste into other animations now; A-63 brings their shared colours.
+- Shapes paste into other animations now, losing links to swatches that file doesn't have; A-63 brings their shared colours.
 - Edit › Arrange is a submenu: Bring to Front, Bring Forward, Send Backward, Send to Back.
 - The current colour: the last fill or stroke set becomes the colour of new shapes. It is kept per window, isn't saved and isn't undoable. With nothing selected the Colour group edits it.
 - The Colour group is open at start, shows the first selected shape's colour and sets every selected shape. Setting a stroke colour on a shape without a stroke gives it a 4 px stroke. Opacity is stored as `#RRGGBBAA`.
 - The colour field is a full-saturation spectrum, as in the mockup; a pick there sets hue and lightness and makes saturation 100%. Gradients appear only in the field and the slider tracks.
 - The slider tracks take no keyboard focus; their number fields are the keyboard path until A-76.
+- G picks Fill and I picks Colour picker, as in Affinity; both are rebindable. The tool strip follows mockup v3: Move | Fill | Rectangle, Ellipse | Colour picker.
+- The Fill tool fills the deepest unlocked shape whose inside holds the pointer, filled or not; a clip on top blocks it, and the selection doesn't change. Hovering outlines that shape.
+- The Colour picker reads the frame as exported (without the 40% dimming around an open animation) at preview resolution. The picked colour is the shape's own and also becomes the current colour.
+- Shapes keep their hex beside a swatch link (`fillSwatch`, `stroke.swatch`), and changing a swatch rewrites the hex of every linked shape in its file, groups included, so the engine draws hex only. Swatch edits always apply to the whole open file.
+- When the first selected shape's colour (or the current colour) uses a swatch, the Colour panel edits the swatch; clicking its chip again unlinks and keeps the hex. A chip click links the selection, or the current colour. `+` adds the shown colour as "Colour N" without linking. A Swatch name field shows while linked; right-click a chip to delete it.
+- The current colour may carry a swatch link; new shapes and the Fill tool keep it only where the open file has that swatch.
+- Strokes: dashes and gaps are twice the width; the mitre limit is 4; inside and outside align apply to closed outlines only; Behind draws the stroke under the fill and the clipped children. Left out, a stroke is solid, round, centred and in front.
+- The Stroke group is open at start and shows after Colour. Width is a number field from 0.1 to 1000 px, with no slider. With nothing selected it sets the stroke of new shapes; the last stroke change on shapes also becomes it. Kept per window, not saved, not undoable.
 
 ## 4. Code map
 

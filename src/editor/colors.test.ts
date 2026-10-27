@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hexInput, hexOf, partsOf } from './colors.js'
+import { hexInput, hexOf, hexOfChannels, partsOf } from './colors.js'
 
 describe('partsOf and hexOf', () => {
   it('read hue, saturation, lightness and opacity from a hex colour', () => {
@@ -33,5 +33,12 @@ describe('hexInput', () => {
     expect(hexInput('#FFF')).toBeUndefined()
     expect(hexInput('#FF8800AA')).toBeUndefined()
     expect(hexInput('orange')).toBeUndefined()
+  })
+})
+
+describe('hexOfChannels', () => {
+  it('writes 0–255 channels as an opaque hex colour', () => {
+    expect(hexOfChannels(255, 136, 0)).toBe('#FF8800')
+    expect(hexOfChannels(0, 15, 16)).toBe('#000F10')
   })
 })

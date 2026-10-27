@@ -57,6 +57,11 @@ export function hexOf(parts: ColorParts): string {
   return alpha === 'FF' ? opaque : `${opaque}${alpha}`
 }
 
+// Channels as 0–255, as read back from a picture.
+export function hexOfChannels(red: number, green: number, blue: number): string {
+  return `#${hexByte(red / CHANNEL_MAX)}${hexByte(green / CHANNEL_MAX)}${hexByte(blue / CHANNEL_MAX)}`
+}
+
 export function hexInput(text: string): string | undefined {
   const digits = HEX_PATTERN.exec(text.trim())?.groups?.digits
   return digits === undefined ? undefined : `#${digits.toUpperCase()}`

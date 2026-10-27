@@ -1,6 +1,8 @@
-import type { DrawingShape, ShapeNode } from '../shared/project.js'
+import type { DrawingShape, ShapeNode, ShapeStroke } from '../shared/project.js'
 
 const FLAT = 1e-12
+// Canvas2D and SVG cut a mitre longer than this many stroke widths down to a bevel.
+export const MITER_LIMIT = 4
 
 export type DrawingBounds = {
   left: number
@@ -27,7 +29,7 @@ function handlePoint(node: ShapeNode, handle: ShapeNode['in']): Point {
   return { x: node.x + handle.x, y: node.y + handle.y }
 }
 
-export function segmentsOf(shape: DrawingShape): Segment[] {
+function segmentsOf(shape: DrawingShape): Segment[] {
   const { nodes } = shape
   const count = shape.isClosed === true ? nodes.length : nodes.length - 1
   const segments: Segment[] = []
@@ -39,6 +41,36 @@ export function segmentsOf(shape: DrawingShape): Segment[] {
     segments.push({ start: from, startControl: handlePoint(from, from.out), endControl: handlePoint(to, to.in), end: to, isStraight })
   }
   return segments
+}
+
+// The same outline as SVG path data, which Path2D also reads.
+export function svgPathOf(shape: DrawingShape): string {
+  const first = shape.nodes[0]
+  if (first === undefined) return ''
+  const commands = [`M${first.x} ${first.y}`]
+  for (const { startControl, endControl, end, isStraight } of segmentsOf(shape)) {
+    if (isStraight) commands.push(`L${end.x} ${end.y}`)
+    else commands.push(`C${startControl.x} ${startControl.y} ${endControl.x} ${endControl.y} ${end.x} ${end.y}`)
+  }
+  if (shape.isClosed === true) commands.push('Z')
+  return commands.join(' ')
+}
+
+// Only a closed outline has an inside and an outside to align a stroke to.
+export function strokeAlignOf(shape: DrawingShape): 'inside' | 'center' | 'outside' {
+  if (shape.isClosed !== true) return 'center'
+  return shape.stroke?.align ?? 'center'
+}
+
+// How far past the outline the stroke can reach.
+function strokeReach(shape: DrawingShape, stroke: ShapeStroke): number {
+  const align = strokeAlignOf(shape)
+  let reach = stroke.width / 2
+  if (align === 'inside') reach = 0
+  else if (align === 'outside') reach = stroke.width
+  if (stroke.join === 'miter') return reach * MITER_LIMIT
+  if (stroke.cap === 'square') return reach * Math.SQRT2
+  return reach
 }
 
 function cubicAt(start: number, startControl: number, endControl: number, end: number, progress: number): number {
@@ -82,7 +114,7 @@ export function shapesBounds(shapes: readonly DrawingShape[], hasStrokes: boolea
   let right = -Infinity
   let bottom = -Infinity
   for (const shape of shapes) {
-    const reach = hasStrokes && shape.stroke !== undefined ? shape.stroke.width / 2 : 0
+    const reach = hasStrokes && shape.stroke !== undefined ? strokeReach(shape, shape.stroke) : 0
     for (const segment of segmentsOf(shape)) {
       for (const point of segmentPoints(segment)) {
         left = Math.min(left, point.x - reach)

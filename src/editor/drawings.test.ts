@@ -5,22 +5,32 @@ import {
   NEW_SHAPE_STYLE,
   addDrawingShapes,
   addShapesAbove,
+  addSwatch,
   arrangeShapes,
+  canDropShape,
   copyShapes,
   deleteShapes,
+  deleteSwatch,
   dragBox,
   drawingPlace,
+  duplicateDrawing,
   ellipseShape,
+  moveShape,
+  nextSwatchName,
   pickableShape,
   rectangleShape,
   renameShape,
-  reorderShape,
+  renameSwatch,
   setShapeColor,
   setShapeFlag,
+  setShapeStroke,
+  setSwatchColor,
   shapeRefsOf,
   shapeRows,
+  styleIn,
   targetTrackIndex,
   transformShapes,
+  withKnownSwatches,
   withNewShapeIds,
   type ArrangePlace,
   type DrawingPlace,
@@ -65,8 +75,11 @@ describe('rectangleShape and ellipseShape', () => {
       nodes: [{ x: 10, y: 20 }, { x: 110, y: 20 }, { x: 110, y: 80 }, { x: 10, y: 80 }],
       isClosed: true,
       fill: '#FFFFFF',
-      stroke: { color: '#000000', width: 4 },
+      stroke: { color: '#000000', width: 4, scalesWithObject: true },
     })
+    const bare = rectangleShape('bare', BOX, { fill: '#000000', fillSwatch: 'ink' })
+    expect(bare).toMatchObject({ fill: '#000000', fillSwatch: 'ink' })
+    expect('stroke' in bare).toBe(false)
     const ellipse = ellipseShape('sun', BOX, { fill: '#112233', stroke: { color: '#445566', width: 4 } })
     expect(ellipse).toMatchObject({ name: 'Ellipse', isClosed: true, fill: '#112233', stroke: { color: '#445566' } })
     expect(ellipse.nodes.map((node) => ({ x: node.x, y: node.y }))).toEqual([{ x: 60, y: 20 }, { x: 110, y: 50 }, { x: 60, y: 80 }, { x: 10, y: 50 }])
@@ -146,6 +159,12 @@ describe('transformShapes', () => {
     expect(start?.out?.y).toBeCloseTo(0)
   })
 
+  it('scales a stroke with its shape only when asked, by the mean of the two scales', () => {
+    const stroked = projectOf([track('art', [drawingClip('sketch', 0, SECOND, [{ ...curve, stroke: { color: '#000000', width: 4, scalesWithObject: true } }, { ...child, stroke: { color: '#000000', width: 4 } }])])])
+    const scaled = shapesOf(transformShapes(stroked, [{ clipId: 'sketch', shapeId: 'curve' }, { clipId: 'sketch', shapeId: 'child' }], STILL, { ...STILL, scaleX: 2, scaleY: 8 }), 'sketch')
+    expect(scaled.map((shape) => shape.stroke?.width)).toEqual([16, 4])
+  })
+
   it('takes clipped children along once, and moves a chosen child alone', () => {
     const [, withParent] = moved(['parent', 'child'], { x: 60 })
     expect(withParent?.children?.[0]?.nodes).toEqual([{ x: 55, y: 45 }, { x: 65, y: 55 }])
@@ -197,11 +216,28 @@ describe('editing shapes', () => {
     expect(renameShape(project, ref('coat'), '  ')).toBe(project)
   })
 
-  it('reorders a shape among its siblings only, onto a sibling or anything inside it', () => {
-    expect(treeOf(reorderShape(project, ref('hat'), 'back'))).toEqual(['0:coat', '1:patch', '1:pocket', '0:back', '0:hat'])
-    expect(treeOf(reorderShape(project, ref('back'), 'pocket'))).toEqual(['0:hat', '0:back', '0:coat', '1:patch', '1:pocket'])
-    expect(treeOf(reorderShape(project, ref('pocket'), 'patch'))).toEqual(['0:hat', '0:coat', '1:pocket', '1:patch', '0:back'])
-    expect(reorderShape(project, ref('pocket'), 'hat')).toEqual(project)
+  it('moves a shape in front of, behind or inside another, across levels', () => {
+    expect(treeOf(moveShape(project, ref('hat'), 'back', 'behind'))).toEqual(['0:coat', '1:patch', '1:pocket', '0:back', '0:hat'])
+    expect(treeOf(moveShape(project, ref('back'), 'coat', 'front'))).toEqual(['0:hat', '0:back', '0:coat', '1:patch', '1:pocket'])
+    expect(treeOf(moveShape(project, ref('pocket'), 'patch', 'front'))).toEqual(['0:hat', '0:coat', '1:pocket', '1:patch', '0:back'])
+    expect(treeOf(moveShape(project, ref('pocket'), 'hat', 'front'))).toEqual(['0:pocket', '0:hat', '0:coat', '1:patch', '0:back'])
+    expect(treeOf(moveShape(project, ref('hat'), 'pocket', 'inside'))).toEqual(['0:coat', '1:patch', '1:pocket', '2:hat', '0:back'])
+    expect(treeOf(moveShape(project, ref('back'), 'coat', 'inside'))).toEqual(['0:hat', '0:coat', '1:back', '1:patch', '1:pocket'])
+    const emptied = moveShape(moveShape(project, ref('pocket'), 'hat', 'inside'), ref('patch'), 'hat', 'inside')
+    expect(shapesOf(emptied, 'sketch')[1]).toEqual(shapeOf('coat'))
+  })
+
+  it('refuses to put a shape into itself, into a shape clipped inside it, or deeper than eight', () => {
+    const shapes = shapesOf(project, 'sketch')
+    expect(canDropShape(shapes, 'coat', 'coat', 'inside')).toBe(false)
+    expect(canDropShape(shapes, 'coat', 'pocket', 'inside')).toBe(false)
+    expect(canDropShape(shapes, 'coat', 'missing', 'front')).toBe(false)
+    expect(moveShape(project, ref('coat'), 'pocket', 'front')).toBe(project)
+    let deep = shapeOf('level-0')
+    for (let level = 1; level <= 8; level++) deep = shapeOf(`level-${level}`, [deep])
+    expect(canDropShape([deep, shapeOf('loose')], 'loose', 'level-1', 'inside')).toBe(true)
+    expect(canDropShape([deep, shapeOf('loose')], 'loose', 'level-0', 'inside')).toBe(false)
+    expect(canDropShape([deep, shapeOf('loose', [shapeOf('inner')])], 'loose', 'level-1', 'inside')).toBe(false)
   })
 
   it('arranges chosen siblings one step or all the way, keeping their order', () => {
@@ -228,7 +264,25 @@ describe('editing shapes', () => {
     expect(shapesOf(filled, 'sketch')[0]?.fill).toBe('#FF000080')
     expect(shapesOf(filled, 'sketch')[1]?.children?.[0]?.fill).toBe('#FF000080')
     const stroked = setShapeColor(project, [ref('hat')], 'stroke', '#00FF00')
-    expect(shapesOf(stroked, 'sketch')[2]?.stroke).toEqual({ color: '#00FF00', width: NEW_SHAPE_STYLE.stroke.width })
+    expect(shapesOf(stroked, 'sketch')[2]?.stroke).toEqual({ color: '#00FF00', width: 4, scalesWithObject: true })
+  })
+
+  it('links a colour to a swatch, and a colour of its own unlinks it', () => {
+    const linked = setShapeColor(setShapeColor(project, [ref('back')], 'fill', '#112233', 'skin'), [ref('back')], 'stroke', '#000000', 'line')
+    expect(shapesOf(linked, 'sketch')[0]).toMatchObject({ fill: '#112233', fillSwatch: 'skin', stroke: { color: '#000000', swatch: 'line' } })
+    const own = setShapeColor(setShapeColor(linked, [ref('back')], 'fill', '#445566'), [ref('back')], 'stroke', '#FFFFFF')
+    expect(shapesOf(own, 'sketch')[0]?.fillSwatch).toBeUndefined()
+    expect(shapesOf(own, 'sketch')[0]?.stroke).toEqual({ color: '#FFFFFF', width: 4, scalesWithObject: true })
+  })
+
+  it('changes strokes, leaving switched-off settings out, and takes a stroke away', () => {
+    const base = { color: '#000000', width: 4 }
+    const dashed = setShapeStroke(project, [ref('back'), ref('pocket')], { width: 6, isDashed: true, cap: 'butt', align: 'outside' }, base)
+    expect(shapesOf(dashed, 'sketch')[0]?.stroke).toEqual({ color: '#000000', width: 6, isDashed: true, cap: 'butt', align: 'outside' })
+    expect(shapesOf(dashed, 'sketch')[1]?.children?.[0]?.stroke).toMatchObject({ width: 6, isDashed: true })
+    const solid = setShapeStroke(dashed, [ref('back')], { isDashed: false, isBehind: true }, base)
+    expect(shapesOf(solid, 'sketch')[0]?.stroke).toEqual({ color: '#000000', width: 6, cap: 'butt', align: 'outside', isBehind: true })
+    expect(shapesOf(setShapeStroke(solid, [ref('back')], 'none', base), 'sketch')[0]).toEqual(shapeOf('back'))
   })
 
   it('copies chosen shapes back to front, a chosen child only once with its parent', () => {
@@ -249,5 +303,71 @@ describe('editing shapes', () => {
     const duplicated = addShapesAbove(project, copies)
     expect(treeOf(duplicated)).toEqual(['0:hat', '0:coat', '1:copy-2', '1:patch', '1:pocket', '0:copy-1', '0:back'])
     expect(shapeRefsOf(duplicated, ['copy-1', 'copy-2', 'missing'])).toEqual([ref('copy-1'), ref('copy-2')])
+  })
+})
+
+describe('shared colours', () => {
+  const skin = { id: 'skin', name: 'Skin', color: '#FFCC99' }
+  const hand: DrawingShape = { ...shapeOf('hand'), fill: '#FFCC99', fillSwatch: 'skin', stroke: { color: '#FFCC99', width: 2, swatch: 'skin' } }
+  const inGroup = { ...clipOf(projectOf([track('inner', [drawingClip('far', 0, SECOND, [{ ...shapeOf('foot'), fill: '#FFCC99', fillSwatch: 'skin' }])])]), 'far') }
+  const group = { id: 'body', type: 'group' as const, start: 0, duration: SECOND, transform: STILL, opacity: 1, volume: 1, tracks: [{ id: 'inner', name: '', hidden: false, locked: false, muted: false, clips: [inGroup] }] }
+  const project: Project = { ...projectOf([track('art', [drawingClip('sketch', 0, SECOND, [hand, shapeOf('plain')]), group])]), swatches: [skin] }
+
+  function footOf(edited: Project): DrawingShape | undefined {
+    const body = clipOf(edited, 'body')
+    const far = body.type === 'group' ? body.tracks[0]?.clips[0] : undefined
+    return far?.type === 'drawing' ? far.shapes[0] : undefined
+  }
+
+  it('recolours every linked fill and stroke in the file, inside groups too', () => {
+    const changed = setSwatchColor(project, 'skin', '#AA7755')
+    expect(changed.swatches).toEqual([{ ...skin, color: '#AA7755' }])
+    expect(shapesOf(changed, 'sketch')[0]).toMatchObject({ fill: '#AA7755', stroke: { color: '#AA7755' } })
+    expect(shapesOf(changed, 'sketch')[1]).toEqual(shapeOf('plain'))
+    expect(footOf(changed)?.fill).toBe('#AA7755')
+  })
+
+  it('adds, names and renames swatches, and a deleted one leaves its colour on the shapes', () => {
+    expect(nextSwatchName(undefined)).toBe('Colour 1')
+    expect(nextSwatchName([{ ...skin, name: 'Colour 2' }])).toBe('Colour 3')
+    const added = addSwatch(project, { id: 'ink', name: 'Ink', color: '#000000' })
+    expect(added.swatches?.map((swatch) => swatch.id)).toEqual(['skin', 'ink'])
+    expect(renameSwatch(added, 'ink', ' Line ').swatches?.[1]?.name).toBe('Line')
+    expect(renameSwatch(added, 'ink', '  ')).toBe(added)
+    const deleted = deleteSwatch(project, 'skin')
+    expect(deleted.swatches).toBeUndefined()
+    expect(shapesOf(deleted, 'sketch')[0]).toEqual({ ...shapeOf('hand'), fill: '#FFCC99', stroke: { color: '#FFCC99', width: 2 } })
+    expect(footOf(deleted)?.fillSwatch).toBeUndefined()
+    expect(deleteSwatch(added, 'skin').swatches).toEqual([{ id: 'ink', name: 'Ink', color: '#000000' }])
+  })
+
+  it('keeps a link only into a file that has the swatch, with its colour', () => {
+    const style = { fill: '#000000', fillSwatch: 'skin', stroke: { color: '#000000', width: 4, swatch: 'gone' } }
+    expect(styleIn(style, [skin])).toEqual({ fill: '#FFCC99', fillSwatch: 'skin', stroke: { color: '#000000', width: 4 } })
+    expect(styleIn(style, undefined)).toEqual({ fill: '#000000', stroke: { color: '#000000', width: 4 } })
+    const pasted = withKnownSwatches({ ...hand, children: [{ ...shapeOf('nail'), fill: '#FFFFFF', fillSwatch: 'nail' }] }, [skin])
+    expect(pasted).toMatchObject({ fillSwatch: 'skin', stroke: { swatch: 'skin' } })
+    expect(pasted.children?.[0]?.fillSwatch).toBeUndefined()
+  })
+})
+
+describe('duplicateDrawing', () => {
+  const project = projectOf([
+    track('art', [drawingClip('one', 0, SECOND), drawingClip('two', SECOND, SECOND), videoClip('later', 3 * SECOND, SECOND)]),
+    track('other', [drawingClip('beside', SECOND, SECOND)]),
+  ])
+
+  it('puts the copy right after the drawing and moves every later clip on its track to make room', () => {
+    const duplicated = duplicateDrawing(project, 'one', 'copy')
+    expect(clipOf(duplicated, 'copy')).toMatchObject({ type: 'drawing', start: SECOND, duration: SECOND })
+    expect(clipOf(duplicated, 'two').start).toBe(2 * SECOND)
+    expect(clipOf(duplicated, 'later').start).toBe(4 * SECOND)
+    expect(clipOf(duplicated, 'beside').start).toBe(SECOND)
+  })
+
+  it('leaves anything but an unlocked drawing alone', () => {
+    expect(duplicateDrawing(project, 'later', 'copy')).toBe(project)
+    const locked = { ...project, tracks: project.tracks.map((each) => ({ ...each, locked: true })) }
+    expect(duplicateDrawing(locked, 'one', 'copy')).toBe(locked)
   })
 })

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { MEDIA_STATES, SECOND, animationClip, drawingClip, projectOf, track, videoClip } from '../../test/fixtures.js'
+import { MEDIA_STATES, SECOND, animationClip, drawingClip, groupClip, projectOf, track, videoClip } from '../../test/fixtures.js'
 import { editClips } from '../editor/clips.js'
 import { hexOf } from '../editor/colors.js'
-import { setShapeFlag } from '../editor/drawings.js'
+import { setShapeFlag, setSwatchColor } from '../editor/drawings.js'
 import { trimClip } from '../editor/moveTrim.js'
 import { setProperties } from '../editor/properties.js'
 import type { Documents, LoadedProject } from '../shared/mediaProtocol.js'
-import type { Project } from '../shared/project.js'
+import type { DrawingShape, Project } from '../shared/project.js'
 import { frameDuration } from '../shared/time.js'
 import { createEditorStore, type EditorStore } from './store.js'
 
@@ -84,6 +84,29 @@ describe('editing inside an animation', () => {
     expect(store.getState().documents[WAVE]?.tracks[0]?.clips[0]?.duration).toBe(16 * frameTicks)
   })
 
+  it('edits the whole animation file from inside a group in it, and shows the change there', () => {
+    const skin = hexOf({ hue: 30, saturation: 60, lightness: 70, opacity: 100 })
+    const tan = hexOf({ hue: 30, saturation: 40, lightness: 40, opacity: 100 })
+    const linked = (id: string): DrawingShape => ({ id, nodes: [{ x: 0, y: 0 }, { x: 1, y: 1 }], fill: skin, fillSwatch: 'skin' })
+    const body = groupClip('body', 0, SECOND, [[drawingClip('inner', 0, SECOND, [linked('hand')])]])
+    const character = { ...projectOf([track('a1', [drawingClip('loose', 0, SECOND, [linked('foot')])]), track('a2', [body])]), swatches: [{ id: 'skin', name: 'Skin', color: skin }] }
+    const store = openedStore({ [WAVE]: character })
+    store.select(['body'])
+    store.openGroup('body')
+    store.begin('Change Swatch')
+    store.updateFile((project) => setSwatchColor(project, 'skin', tan))
+    store.commit()
+    const saved = store.getState().documents[WAVE]
+    const fillOf = (clip: unknown): string | undefined => (typeof clip === 'object' && clip !== null && 'shapes' in clip && Array.isArray(clip.shapes) ? clip.shapes[0]?.fill : undefined)
+    expect(fillOf(saved?.tracks[0]?.clips[0])).toBe(tan)
+    const group = saved?.tracks[1]?.clips[0]
+    expect(fillOf(group?.type === 'group' ? group.tracks[0]?.clips[0] : undefined)).toBe(tan)
+    expect(store.getState().project.swatches?.[0]?.color).toBe(tan)
+    expect(fillOf(store.getState().project.tracks[0]?.clips[0])).toBe(tan)
+    store.undo()
+    expect(store.getState().documents[WAVE]).toBe(character)
+  })
+
   it('closes an animation whose file is no longer loaded', () => {
     const store = openedStore({})
     expect(store.getState().openGroups).toEqual([])
@@ -138,6 +161,11 @@ describe('drawing settings of the window', () => {
     store.setDrawingColor('fill', olive)
     store.setColorPart('stroke')
     expect(store.getState()).toMatchObject({ drawingStyle: { fill: olive, stroke: { color: navy, width: 4 } }, colorPart: 'stroke' })
+    store.setDrawingColor('fill', navy, 'ink')
+    store.setDrawingStroke({ color: olive, width: 2, isDashed: true })
+    expect(store.getState().drawingStyle).toEqual({ fill: navy, fillSwatch: 'ink', stroke: { color: olive, width: 2, isDashed: true } })
+    store.setDrawingStroke(undefined)
+    expect(store.getState().drawingStyle).toEqual({ fill: navy, fillSwatch: 'ink' })
     expect(store.getState().history.done).toEqual([])
   })
 

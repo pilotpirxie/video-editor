@@ -176,6 +176,14 @@ export function withOnlyAtEnd(clip: VisualClip, edge: 'in' | 'out', kept: 'fade'
   return edited
 }
 
+// Members of a group are mapped before the group itself.
+export function mapClipsDeep(tracks: readonly Track[], map: (clip: Clip) => Clip): Track[] {
+  return tracks.map((track) => {
+    const clips = track.clips.map((clip) => (clip.type === 'group' ? map({ ...clip, tracks: mapClipsDeep(clip.tracks, map) }) : map(clip)))
+    return { ...track, clips }
+  })
+}
+
 export function editClips(project: Project, clipIds: ReadonlySet<string>, edit: (clip: Clip) => Clip | undefined): Project {
   let hasChanged = false
   const tracks = project.tracks.map((track) => {

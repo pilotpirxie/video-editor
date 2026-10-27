@@ -1,4 +1,4 @@
-import { createEngine, type Engine, type EngineEvent } from '../engine/engine.js'
+import { createEngine, type Engine, type EngineEvent, type PixelColor, type Share } from '../engine/engine.js'
 import { describeError, logError } from '../shared/log.js'
 import type { HeadlessJob, JobEvent, LoadedProject } from '../shared/mediaProtocol.js'
 import { createMediaClient, type MediaConnection } from './mediaClient.js'
@@ -18,8 +18,11 @@ export type WorkerCommand =
   | { type: 'job'; job: HeadlessJob }
   | { type: 'memory-pressure'; isUnderPressure: boolean }
   | { type: 'still'; id: number; path: string; time: number; height: number }
+  | { type: 'color'; id: number; share: Share }
 
-export type WorkerEvent = EngineEvent | { type: 'job'; event: JobEvent } | { type: 'still'; id: number; bitmap: ImageBitmap | undefined }
+export type WorkerReply = { type: 'still'; id: number; bitmap: ImageBitmap | undefined } | { type: 'color'; id: number; color: PixelColor | undefined }
+
+export type WorkerEvent = EngineEvent | { type: 'job'; event: JobEvent } | WorkerReply
 
 const HEADLESS_SURFACE_SIZE = 2
 
@@ -69,6 +72,16 @@ async function sendStill(engine: Engine, command: Extract<WorkerCommand, { type:
   postMessage({ type: 'still', id: command.id, bitmap } satisfies WorkerEvent, { transfer: bitmap === undefined ? [] : [bitmap] })
 }
 
+async function sendColor(engine: Engine, command: Extract<WorkerCommand, { type: 'color' }>): Promise<void> {
+  let color: PixelColor | undefined
+  try {
+    color = await engine.colorAt(command.share)
+  } catch (error) {
+    logError('Could not read the colour of the picture', error, { share: command.share })
+  }
+  post({ type: 'color', id: command.id, color })
+}
+
 async function handle(engine: Engine, command: WorkerCommand, ports: readonly MessagePort[]): Promise<void> {
   if (command.type === 'load') {
     await engine.load(command.path, true)
@@ -95,6 +108,8 @@ async function handle(engine: Engine, command: WorkerCommand, ports: readonly Me
     engine.setUnderPressure(command.isUnderPressure)
   } else if (command.type === 'still') {
     await sendStill(engine, command)
+  } else if (command.type === 'color') {
+    await sendColor(engine, command)
   }
 }
 

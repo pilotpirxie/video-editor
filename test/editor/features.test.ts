@@ -361,7 +361,7 @@ describe('animation files', () => {
     const coat: Clip = { id: 'coat', type: 'drawing', start: 0, duration: 2 * SECOND, shapes: [parent] }
     const { episodePath, cardPath } = writeEpisode(directory, [[coat]])
     const report = await uiTest('drawing-tools', ['--project', episodePath, '--out', directory])
-    expect(report.tools).toEqual(['Move', 'Rectangle', 'Ellipse'])
+    expect(report.tools).toEqual(['Move', 'Fill', 'Rectangle', 'Ellipse', 'Colour picker'])
 
     // The card's 320x180 artboard sits in the middle of the 640x360 episode at full size; a pointer lands on whole screen pixels.
     const { preview } = report
@@ -455,7 +455,39 @@ describe('animation files', () => {
     expect(coat?.stroke?.width).toBe(2)
     expect(partsOf(coat?.stroke?.color ?? '#000000').hue).toBeGreaterThan(100)
     expect(partsOf(coat?.stroke?.color ?? '#000000').hue).toBeLessThan(140)
-    expect(drawn?.shapes).toEqual([expect.objectContaining({ name: 'Rectangle', fill: '#FF8800', stroke: { color: coat?.stroke?.color, width: 4 } })])
+    expect(drawn?.shapes).toEqual([expect.objectContaining({ name: 'Rectangle', fill: '#FF8800', stroke: { color: coat?.stroke?.color, width: 4, scalesWithObject: true } })])
+  })
+
+  it('fills shapes, picks colours off the canvas, and shares a colour that edits every shape using it', async () => {
+    const directory = join(scratch, 'shape-paint')
+    const { episodePath, cardPath } = writeEpisode(directory, [[shapesDrawing()]])
+    const report = await uiTest('shape-paint', ['--project', episodePath, '--out', directory])
+    expect(report).toEqual({ swatchName: 'Skin', coatFill: 'Fill #884400', isCoatLinked: true })
+
+    const document = animationIn(cardPath)
+    expect(document.swatches).toBeUndefined()
+    const [sketch] = drawingsIn(cardPath)
+    const [left, coat, right] = sketch?.shapes ?? []
+    expect(left?.fill).toBe('#00AAFF')
+    expect(coat).toMatchObject({ fill: '#884400', stroke: { color: '#00AAFF', width: 2 } })
+    expect(coat?.children?.[0]?.fill).toBe('#00AAFF')
+    expect(right?.fill).toBe('#884400')
+    expect(JSON.stringify(sketch)).not.toContain('swatch')
+  })
+
+  it('styles strokes, draws without one, clips a shape inside another and duplicates a drawing', async () => {
+    const directory = join(scratch, 'shape-strokes')
+    const { episodePath, cardPath } = writeEpisode(directory, [[shapesDrawing()]])
+    const report = await uiTest('shape-strokes', ['--project', episodePath, '--out', directory])
+    expect(report.rows).toEqual(['Coat', 'Right', 'Shape', 'Left'])
+
+    const [sketch, copy, drawn] = drawingsIn(cardPath)
+    const coat = sketch?.shapes[1]
+    expect(coat?.stroke).toEqual({ color: '#FF0000', width: 6, isDashed: true, cap: 'butt', align: 'outside', isBehind: true, scalesWithObject: true })
+    expect(coat?.children?.map((child) => child.id)).toEqual(['pocket', 'right'])
+    expect(sketch?.shapes.map((shape) => shape.id)).toEqual(['left', 'coat'])
+    expect(copy).toMatchObject({ start: 2 * SECOND, duration: 2 * SECOND, shapes: sketch?.shapes })
+    expect(drawn?.shapes).toEqual([expect.not.objectContaining({ stroke: expect.anything() })])
   })
 
   it('restores an unsaved animation after the editor was killed', async () => {

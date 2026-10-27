@@ -2,7 +2,23 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent, 
 import { arrowBetween, arrowEnds, canvasPointToClip, clipPointToCanvas, setArrowStyle, setCalloutStyle } from '../editor/annotations.js'
 import { frameOf, type ZoomFrame } from '../editor/camera.js'
 import { isContainer, locateClip } from '../editor/clips.js'
-import { addDrawingShapes, dragBox, drawingPlace, ellipseShape, findShape, pickableShape, rectangleShape, shapeRefsOf, transformShapes, type DrawingPlace, type ShapeRef } from '../editor/drawings.js'
+import { hexOfChannels } from '../editor/colors.js'
+import {
+  addDrawingShapes,
+  dragBox,
+  drawingPlace,
+  ellipseShape,
+  pickableShape,
+  rectangleShape,
+  setShapeColor,
+  shapeAt,
+  shapeRefsOf,
+  styleIn,
+  transformShapes,
+  type ColorPart,
+  type DrawingPlace,
+  type ShapeRef,
+} from '../editor/drawings.js'
 import { addEffect } from '../editor/effects.js'
 import {
   HANDLES,
@@ -24,12 +40,13 @@ import { motionPath, propertyAt, setProperties, type PropertyValues } from '../e
 import { positionTargets, snapPosition, sortedTargets, type Bounds } from '../editor/snapping.js'
 import { arrowSize } from '../engine/annotations.js'
 import { viewAt } from '../engine/camera.js'
-import { shapesBounds } from '../engine/curves.js'
+import { shapesBounds, svgPathOf } from '../engine/curves.js'
 import { shapePath } from '../engine/drawings.js'
 import { onCanvas, resolveFrame, scopeFrameAt, type GroupFrame, type Layer, type MediaStates } from '../engine/resolve.js'
 import { measureText } from '../engine/text.js'
 import type { Size } from '../shared/exportPresets.js'
 import type { Documents } from '../shared/mediaProtocol.js'
+import { logError } from '../shared/log.js'
 import type { AnimationClip, Clip, Crop, DrawingShape, GroupClip, Project, Transform } from '../shared/project.js'
 import { useEditorState, usePosition, useSession } from './context.js'
 import type { Edit } from './store.js'
@@ -76,6 +93,11 @@ type ShownShape = {
 }
 
 type Pickable = ShownClip | ShownShape
+
+type DrawnShape = {
+  clipId: string
+  shape: DrawingShape
+}
 
 function isClipItem(item: Pickable): item is ShownClip {
   return item.kind !== 'drawn'
@@ -311,7 +333,7 @@ function valuesInOpenTracks(openGroups: readonly string[], openFrame: GroupFrame
 }
 
 export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; areaRef: RefObject<HTMLElement | null> }): ReactElement {
-  const { store, actions } = useSession()
+  const { store, actions, engine } = useSession()
   const project = useEditorState((state) => state.project)
   const wholeProject = useEditorState((state) => state.wholeProject)
   const openGroups = useEditorState((state) => state.openGroups)
@@ -331,6 +353,7 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
   const { reach, pictureWidth } = useOverlayReach(svgRef, areaRef)
   const [guides, setGuides] = useState<Guides>(NO_GUIDES)
   const [dropTargetId, setDropTargetId] = useState<string | undefined>(undefined)
+  const [fillTarget, setFillTarget] = useState<DrawnShape | undefined>(undefined)
   const { canvas } = wholeProject
   const wholeTime = episodeTimeOf(scope, time)
   const frame = frameOf(canvas, viewAt(wholeProject.camera, wholeTime, canvas))
@@ -388,9 +411,8 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
 
   function shapesBoxOf(shapes: readonly ShapeRef[]): ShownClip | undefined {
     const picked: DrawingShape[] = []
-    for (const { clipId, shapeId } of shapes) {
-      const clip = locateClip(project, clipId)?.clip
-      const shape = clip?.type === 'drawing' ? findShape(clip.shapes, shapeId) : undefined
+    for (const ref of shapes) {
+      const shape = shapeAt(project, ref)
       if (shape !== undefined) picked.push(shape)
     }
     const bounds = shapesBounds(picked, false)
@@ -479,6 +501,53 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     return target instanceof Element && target.closest('foreignObject') !== null
   }
 
+  function insideAt(shape: DrawingShape, at: Point): boolean {
+    return hitContext?.isPointInPath(shapePath(shape), at.x, at.y) === true
+  }
+
+  // The topmost shape whose inside holds the point, then the deepest unlocked shape clipped inside it there; a clip on top hides them.
+  function fillTargetAt(point: Point): DrawnShape | undefined {
+    const at = artboardPoint(point)
+    const hit = pickables.findLast((item) => {
+      if (isClipItem(item)) return isUnlockedAt(item, point)
+      return !locked.has(item.clipId) && item.shape.locked !== true && hitContext?.isPointInPath(item.path, at.x, at.y) === true
+    })
+    if (hit === undefined || isClipItem(hit)) return undefined
+    let { shape } = hit
+    let inside = shape.children?.findLast((child) => child.locked !== true && insideAt(child, at))
+    while (inside !== undefined) {
+      shape = inside
+      inside = shape.children?.findLast((child) => child.locked !== true && insideAt(child, at))
+    }
+    return { clipId: hit.clipId, shape }
+  }
+
+  function fillAt(point: Point): void {
+    const target = fillTargetAt(point)
+    if (target === undefined) return
+    const { fill, fillSwatch } = styleIn(drawingStyle, project.swatches)
+    const shapes = [{ clipId: target.clipId, shapeId: target.shape.id }]
+    store.apply('Fill Shape', (current) => setShapeColor(current, shapes, 'fill', fill, fillSwatch))
+  }
+
+  function showFillTarget(point: Point): void {
+    const target = tool === 'fill' && isInAnimation ? fillTargetAt(point) : undefined
+    if (target?.clipId === fillTarget?.clipId && target?.shape === fillTarget?.shape) return
+    setFillTarget(target)
+  }
+
+  // A picked colour is the shape's own, and becomes the colour new shapes get.
+  async function pickColorAt(point: Point, part: ColorPart): Promise<void> {
+    const share = { x: (point.x - frame.left) / frame.width, y: (point.y - frame.top) / frame.height }
+    if (share.x < 0 || share.x >= 1 || share.y < 0 || share.y >= 1) return
+    const picked = await engine.colorAt(share)
+    if (picked === undefined) return
+    const color = hexOfChannels(picked.red, picked.green, picked.blue)
+    const chosen = store.getState().selectedShapes
+    if (chosen.length > 0) store.apply(part === 'fill' ? 'Pick Fill Colour' : 'Pick Stroke Colour', (current) => setShapeColor(current, chosen, part, color))
+    store.setDrawingColor(part, color)
+  }
+
   function startDrawing(shapeTool: 'rectangle' | 'ellipse', point: Point): void {
     const { selection: chosenClips, selectedShapes: chosenShapes } = store.getState()
     const place = drawingPlace(project, time, chosenClips, chosenShapes, { clipId: crypto.randomUUID(), trackId: crypto.randomUUID() })
@@ -516,7 +585,9 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     event.currentTarget.setPointerCapture(event.pointerId)
     const point = pointOf(event)
     if (isDrawingTool) {
-      startDrawing(tool, point)
+      if (tool === 'fill') fillAt(point)
+      else if (tool === 'picker') pickColorAt(point, event.shiftKey ? 'stroke' : 'fill').catch((error: unknown) => logError('Could not pick a colour', error))
+      else startDrawing(tool, point)
       return
     }
     const grabbed = event.target instanceof SVGElement ? event.target.dataset.handle : undefined
@@ -619,8 +690,11 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
 
   function onPointerMove(event: PointerEvent<SVGSVGElement>): void {
     const gesture = gestureRef.current
-    if (gesture === undefined) return
     const point = pointOf(event)
+    if (gesture === undefined) {
+      showFillTarget(point)
+      return
+    }
     const range = snapRange(event)
 
     if (gesture.kind === 'draw') {
@@ -630,7 +704,8 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
         store.update((current) => current)
         return
       }
-      const shape = gesture.tool === 'rectangle' ? rectangleShape(gesture.shapeId, box, drawingStyle) : ellipseShape(gesture.shapeId, box, drawingStyle)
+      const style = styleIn(drawingStyle, project.swatches)
+      const shape = gesture.tool === 'rectangle' ? rectangleShape(gesture.shapeId, box, style) : ellipseShape(gesture.shapeId, box, style)
       const { place } = gesture
       store.update((current) => addDrawingShapes(current, place, [shape]))
       return
@@ -737,6 +812,7 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
       onDoubleClick={onDoubleClick}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerLeave={() => setFillTarget(undefined)}
       onPointerCancel={() => endGesture(store.cancel)}
       onLostPointerCapture={() => endGesture(store.cancel)}
     >
@@ -745,6 +821,11 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
       {dropTarget !== undefined && (
         <g transform={`translate(${dropTarget.box.centerX} ${dropTarget.box.centerY}) rotate(${dropTarget.box.rotation})`}>
           <rect className="selection-box" x={-dropTarget.box.width / 2} y={-dropTarget.box.height / 2} width={dropTarget.box.width} height={dropTarget.box.height} />
+        </g>
+      )}
+      {fillTarget !== undefined && tool === 'fill' && (
+        <g transform={`translate(${openFrame.x} ${openFrame.y}) rotate(${openFrame.rotation}) scale(${openFrame.scale})`}>
+          <path className="selection-box" data-testid="fill-target" data-shape={fillTarget.shape.id} d={svgPathOf(fillTarget.shape)} />
         </g>
       )}
       {outside.map((item) => (

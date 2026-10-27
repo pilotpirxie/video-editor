@@ -1,9 +1,12 @@
-import { useRef, useState, type HTMLAttributes, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
-import { locateClip } from '../editor/clips.js'
+import { useCallback, useRef, useState, type HTMLAttributes, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
 import { hexInput, hexOf, partsOf, type ColorParts } from '../editor/colors.js'
-import { findShape, setShapeColor, type ColorPart } from '../editor/drawings.js'
+import { NEW_STROKE, addSwatch, deleteSwatch, nextSwatchName, renameSwatch, setShapeColor, setSwatchColor, shapeAt, styleIn, type ColorPart } from '../editor/drawings.js'
+import type { Swatch } from '../shared/project.js'
 import { useEditorState, useSession } from './context.js'
+import { IconButton } from './icons.js'
+import { PopupMenu } from './Menu.js'
 import { NumberField } from './NumberField.js'
+import type { Edit } from './store.js'
 
 const PARTS: readonly { part: ColorPart; label: string }[] = [
   { part: 'fill', label: 'Fill' },
@@ -27,16 +30,27 @@ type Drag = {
   height: number
 }
 
-// The first chosen shape's colours, or the colours new shapes get when no shape is chosen.
-export function useWellColors(): Record<ColorPart, string | undefined> {
+type ShownColors = Record<ColorPart, string | undefined> & {
+  swatchIds: Record<ColorPart, string | undefined>
+}
+
+// The first chosen shape's colours, or the colours new shapes get when no shape is chosen, with the swatches they use.
+function useShownColors(): ShownColors {
   const project = useEditorState((state) => state.project)
   const selectedShapes = useEditorState((state) => state.selectedShapes)
   const drawingStyle = useEditorState((state) => state.drawingStyle)
   const first = selectedShapes[0]
-  if (first === undefined) return { fill: drawingStyle.fill, stroke: drawingStyle.stroke.color }
-  const clip = locateClip(project, first.clipId)?.clip
-  const shape = clip?.type === 'drawing' ? findShape(clip.shapes, first.shapeId) : undefined
-  return { fill: shape?.fill, stroke: shape?.stroke?.color }
+  if (first === undefined) {
+    const style = styleIn(drawingStyle, project.swatches)
+    return { fill: style.fill, stroke: style.stroke?.color, swatchIds: { fill: style.fillSwatch, stroke: style.stroke?.swatch } }
+  }
+  const shape = shapeAt(project, first)
+  return { fill: shape?.fill, stroke: shape?.stroke?.color, swatchIds: { fill: shape?.fillSwatch, stroke: shape?.stroke?.swatch } }
+}
+
+export function useWellColors(): Record<ColorPart, string | undefined> {
+  const { fill, stroke } = useShownColors()
+  return { fill, stroke }
 }
 
 function share(value: number, range: Range): number {
@@ -141,58 +155,116 @@ function HslField({ parts, onChange, ...gesture }: HslFieldProps): ReactElement 
   )
 }
 
+type DraftFieldProps = {
+  label: string
+  testId: string
+  value: string
+  onApply(text: string): void
+}
+
+// Applies what was typed on Enter or on leaving the field; Escape puts the value back.
+function DraftField({ label, testId, value, onApply }: DraftFieldProps): ReactElement {
+  const [draft, setDraft] = useState<string | undefined>(undefined)
+
+  function apply(): void {
+    setDraft(undefined)
+    if (draft !== undefined && draft !== value) onApply(draft)
+  }
+
+  function onKey(event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === 'Enter') event.currentTarget.blur()
+    if (event.key === 'Escape') setDraft(undefined)
+  }
+
+  return (
+    <label className="labelled">
+      <span className="field-label">{label}</span>
+      <input className="field" type="text" spellCheck={false} data-testid={testId} value={draft ?? value} onChange={(event) => setDraft(event.target.value)} onKeyDown={onKey} onBlur={apply} />
+    </label>
+  )
+}
+
+type SwatchMenu = {
+  at: { x: number; y: number }
+  swatchId: string
+}
+
 // Edits the chosen shapes as one undo step per drag, and the result becomes the colour for new shapes; with no shape chosen it sets only that colour.
+// A colour linked to a swatch edits the swatch, and with it every shape of the file that uses it.
 export function ColorFields(): ReactElement {
   const { store } = useSession()
   const part = useEditorState((state) => state.colorPart)
   const selectedShapes = useEditorState((state) => state.selectedShapes)
+  const swatches = useEditorState((state) => state.project.swatches)
   const drawingStyle = useEditorState((state) => state.drawingStyle)
-  const wells = useWellColors()
-  const [hexDraft, setHexDraft] = useState<string | undefined>(undefined)
+  const shownColors = useShownColors()
   const [remembered, setRemembered] = useState<ColorParts | undefined>(undefined)
+  const [menu, setMenu] = useState<SwatchMenu | undefined>(undefined)
   const pendingRef = useRef<string | undefined>(undefined)
-  const current = part === 'fill' ? drawingStyle.fill : drawingStyle.stroke.color
-  const shown = wells[part] ?? current
+  const current = part === 'fill' ? drawingStyle.fill : (drawingStyle.stroke?.color ?? NEW_STROKE.color)
+  const shown = shownColors[part] ?? current
+  const linked = swatches?.find((swatch) => swatch.id === shownColors.swatchIds[part])
   // Keeps the hue and saturation a grey would lose, for as long as they still make the colour shown.
   const parts = remembered !== undefined && hexOf(remembered) === shown ? remembered : partsOf(shown)
   const isEditingShapes = selectedShapes.length > 0
+  const isStep = linked !== undefined || isEditingShapes
+  const closeMenu = useCallback(() => setMenu(undefined), [])
+
+  function applyToFile(label: string, edit: Edit): void {
+    store.begin(label)
+    store.updateFile(edit)
+    store.commit()
+  }
 
   function begin(): void {
-    if (isEditingShapes) store.begin(part === 'fill' ? 'Change Fill' : 'Change Stroke')
+    if (linked !== undefined) store.begin('Change Swatch')
+    else if (isEditingShapes) store.begin(part === 'fill' ? 'Change Fill' : 'Change Stroke')
   }
 
   function change(next: ColorParts): void {
     setRemembered(next)
     const color = hexOf(next)
     pendingRef.current = color
-    if (isEditingShapes) store.update((project) => setShapeColor(project, selectedShapes, part, color))
+    if (linked !== undefined) store.updateFile((project) => setSwatchColor(project, linked.id, color))
+    else if (isEditingShapes) store.update((project) => setShapeColor(project, selectedShapes, part, color))
     else store.setDrawingColor(part, color)
   }
 
   function commit(): void {
-    if (isEditingShapes) store.commit()
+    if (isStep) store.commit()
     const color = pendingRef.current
     pendingRef.current = undefined
-    if (color !== undefined) store.setDrawingColor(part, color)
+    if (color !== undefined) store.setDrawingColor(part, color, linked?.id)
   }
 
   function cancel(): void {
     pendingRef.current = undefined
-    if (isEditingShapes) store.cancel()
+    if (isStep) store.cancel()
   }
 
-  function applyHex(): void {
-    const typed = hexDraft === undefined ? undefined : hexInput(hexDraft)
-    setHexDraft(undefined)
+  function applyHex(text: string): void {
+    const typed = hexInput(text)
     if (typed === undefined || typed === shown.slice(0, OPAQUE_HEX_LENGTH)) return
     begin()
     change({ ...partsOf(typed), opacity: parts.opacity })
     commit()
   }
 
-  function onHexKey(event: KeyboardEvent<HTMLInputElement>): void {
-    if (event.key === 'Enter') event.currentTarget.blur()
-    if (event.key === 'Escape') setHexDraft(undefined)
+  // The chosen swatch again unlinks, keeping its colour.
+  function chooseSwatch(swatch: Swatch): void {
+    const swatchId = swatch.id === linked?.id ? undefined : swatch.id
+    if (isEditingShapes) store.apply(swatchId === undefined ? 'Unlink Swatch' : 'Apply Swatch', (project) => setShapeColor(project, selectedShapes, part, swatch.color, swatchId))
+    store.setDrawingColor(part, swatch.color, swatchId)
+  }
+
+  function addShownSwatch(): void {
+    const swatch = { id: crypto.randomUUID(), name: nextSwatchName(swatches), color: shown }
+    applyToFile('Add Swatch', (project) => addSwatch(project, swatch))
+  }
+
+  function openSwatchMenu(event: MouseEvent<HTMLButtonElement>, swatchId: string): void {
+    event.preventDefault()
+    setMenu({ at: { x: event.clientX, y: event.clientY }, swatchId })
   }
 
   const gesture: GestureProps = { onBegin: begin, onCommit: commit, onCancel: cancel }
@@ -208,7 +280,7 @@ export function ColorFields(): ReactElement {
       <div className="segmented wide colour-wells" role="group" aria-label="Colour of">
         {PARTS.map((each) => (
           <button key={each.part} type="button" className="button" data-testid={`colour-${each.part}`} aria-pressed={part === each.part} onClick={() => store.setColorPart(each.part)}>
-            <span className={wells[each.part] === undefined ? 'colour-chip none' : 'colour-chip'} style={{ background: wells[each.part] }} />
+            <span className={shownColors[each.part] === undefined ? 'colour-chip none' : 'colour-chip'} style={{ background: shownColors[each.part] }} />
             {each.label}
           </button>
         ))}
@@ -227,19 +299,35 @@ export function ColorFields(): ReactElement {
           onChange={(value) => change({ ...parts, [key]: value })}
         />
       ))}
-      <label className="labelled">
-        <span className="field-label">Hex</span>
-        <input
-          className="field"
-          type="text"
-          spellCheck={false}
-          data-testid="colour-hex"
-          value={hexDraft ?? shown.slice(0, OPAQUE_HEX_LENGTH)}
-          onChange={(event) => setHexDraft(event.target.value)}
-          onKeyDown={onHexKey}
-          onBlur={applyHex}
+      <DraftField label="Hex" testId="colour-hex" value={shown.slice(0, OPAQUE_HEX_LENGTH)} onApply={applyHex} />
+      <div className="swatches" role="group" aria-label="Swatches">
+        {swatches?.map((swatch, index) => (
+          <button
+            key={swatch.id}
+            type="button"
+            className="swatch"
+            title={swatch.name}
+            aria-label={swatch.name}
+            aria-pressed={swatch.id === linked?.id}
+            data-testid={`swatch-${index}`}
+            style={{ background: swatch.color }}
+            onClick={() => chooseSwatch(swatch)}
+            onContextMenu={(event) => openSwatchMenu(event, swatch.id)}
+          />
+        ))}
+        <IconButton icon="plus" label="Add swatch" testId="swatch-add" onClick={addShownSwatch} />
+      </div>
+      {linked !== undefined && (
+        <DraftField key={linked.id} label="Swatch" testId="swatch-name" value={linked.name} onApply={(name) => applyToFile('Rename Swatch', (project) => renameSwatch(project, linked.id, name))} />
+      )}
+      {menu !== undefined && (
+        <PopupMenu
+          label="Swatch"
+          items={[{ label: 'Delete Swatch', testId: 'menu-delete-swatch', onSelect: () => applyToFile('Delete Swatch', (project) => deleteSwatch(project, menu.swatchId)) }]}
+          at={menu.at}
+          onClose={closeMenu}
         />
-      </label>
+      )}
     </>
   )
 }

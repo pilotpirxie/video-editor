@@ -1,24 +1,44 @@
-import type { DrawingShape } from '../shared/project.js'
-import { segmentsOf } from './curves.js'
+import type { DrawingShape, ShapeStroke } from '../shared/project.js'
+import { MITER_LIMIT, strokeAlignOf, svgPathOf, type DrawingBounds } from './curves.js'
 import type { DrawingLook } from './resolve.js'
 import { rasterOf, type Raster } from './text.js'
 
+// Each dash and each gap is this many stroke widths long.
+const DASH_WIDTHS = 2
+
 export function shapePath(shape: DrawingShape): Path2D {
-  const path = new Path2D()
-  const first = shape.nodes[0]
-  if (first === undefined) return path
-  path.moveTo(first.x, first.y)
-  for (const { startControl, endControl, end, isStraight } of segmentsOf(shape)) {
-    if (isStraight) path.lineTo(end.x, end.y)
-    else path.bezierCurveTo(startControl.x, startControl.y, endControl.x, endControl.y, end.x, end.y)
-  }
-  if (shape.isClosed === true) path.closePath()
-  return path
+  return new Path2D(svgPathOf(shape))
 }
 
-function drawShapes(context: OffscreenCanvasRenderingContext2D, shapes: readonly DrawingShape[]): void {
+function outsideOf(path: Path2D, bounds: DrawingBounds): Path2D {
+  const outside = new Path2D()
+  outside.rect(bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top)
+  outside.addPath(path)
+  return outside
+}
+
+// Canvas2D strokes on the centre of the outline, so an inside or outside stroke is drawn twice as wide and half of it is clipped away.
+function drawStroke(context: OffscreenCanvasRenderingContext2D, shape: DrawingShape, stroke: ShapeStroke, path: Path2D, bounds: DrawingBounds): void {
+  const align = strokeAlignOf(shape)
+  const width = align === 'center' ? stroke.width : 2 * stroke.width
+  context.save()
+  if (align === 'inside') context.clip(path)
+  else if (align === 'outside') context.clip(outsideOf(path, bounds), 'evenodd')
+  context.lineCap = stroke.cap ?? 'round'
+  context.lineJoin = stroke.join ?? 'round'
+  context.miterLimit = MITER_LIMIT
+  context.lineWidth = width
+  context.setLineDash(stroke.isDashed === true ? [DASH_WIDTHS * stroke.width, DASH_WIDTHS * stroke.width] : [])
+  context.strokeStyle = stroke.color
+  context.stroke(path)
+  context.restore()
+}
+
+function drawShapes(context: OffscreenCanvasRenderingContext2D, shapes: readonly DrawingShape[], bounds: DrawingBounds): void {
   for (const shape of shapes) {
     const path = shapePath(shape)
+    const { stroke } = shape
+    if (stroke?.isBehind === true) drawStroke(context, shape, stroke, path, bounds)
     if (shape.fill !== undefined) {
       context.fillStyle = shape.fill
       context.fill(path)
@@ -26,16 +46,10 @@ function drawShapes(context: OffscreenCanvasRenderingContext2D, shapes: readonly
     if (shape.children !== undefined) {
       context.save()
       context.clip(path)
-      drawShapes(context, shape.children)
+      drawShapes(context, shape.children, bounds)
       context.restore()
     }
-    if (shape.stroke !== undefined) {
-      context.lineCap = 'round'
-      context.lineJoin = 'round'
-      context.lineWidth = shape.stroke.width
-      context.strokeStyle = shape.stroke.color
-      context.stroke(path)
-    }
+    if (stroke !== undefined && stroke.isBehind !== true) drawStroke(context, shape, stroke, path, bounds)
   }
 }
 
@@ -43,6 +57,6 @@ export function rasterizeDrawing(look: DrawingLook, pixelsPerUnitX: number, pixe
   const { bounds } = look
   const raster = rasterOf(bounds.right - bounds.left, bounds.bottom - bounds.top, pixelsPerUnitX, pixelsPerUnitY)
   raster.context.translate(-bounds.left, -bounds.top)
-  drawShapes(raster.context, look.shapes)
+  drawShapes(raster.context, look.shapes, bounds)
   return { canvas: raster.canvas, naturalWidth: raster.naturalWidth, naturalHeight: raster.naturalHeight }
 }

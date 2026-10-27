@@ -3,7 +3,7 @@ import type { MediaStates } from '../engine/resolve.js'
 import type { Documents, MediaInfo, MediaUse, UnlinkedMedia } from '../shared/mediaProtocol.js'
 import { MAX_CANVAS, MIN_CANVAS, projectDuration, type Canvas, type Clip, type MediaRef, type Project, type Track, type Transform } from '../shared/project.js'
 import { NORMAL_SPEED_PERCENT, PROJECT_FRAME_RATES, frameDuration, type FrameRate } from '../shared/time.js'
-import { allClips, endOf, hasMedia, placeOnTrack, type NewTrack } from './clips.js'
+import { allClips, endOf, hasMedia, mapClipsDeep, placeOnTrack, type NewTrack } from './clips.js'
 
 const MAX_AUTOMATIC_FRAMES_PER_SECOND = 60
 
@@ -167,22 +167,15 @@ function tracksWithoutMedia(tracks: readonly Track[], mediaIds: ReadonlySet<stri
   return kept
 }
 
-function tracksWithMediaIds(tracks: readonly Track[], renamed: ReadonlyMap<string, string>): Track[] {
-  return tracks.map((track) => {
-    const clips = track.clips.map((clip): Clip => {
-      if (clip.type === 'group') return { ...clip, tracks: tracksWithMediaIds(clip.tracks, renamed) }
-      if (!hasMedia(clip)) return clip
-      const mediaId = renamed.get(clip.mediaId)
-      return mediaId === undefined ? clip : { ...clip, mediaId }
-    })
-    return { ...track, clips }
-  })
-}
-
 export function withMediaIdsChanged(project: Project, renamed: ReadonlyMap<string, string>): Project {
   if (renamed.size === 0) return project
   const media = project.media.map((reference) => ({ ...reference, id: renamed.get(reference.id) ?? reference.id }))
-  return { ...project, media, tracks: tracksWithMediaIds(project.tracks, renamed) }
+  const tracks = mapClipsDeep(project.tracks, (clip) => {
+    if (!hasMedia(clip)) return clip
+    const mediaId = renamed.get(clip.mediaId)
+    return mediaId === undefined ? clip : { ...clip, mediaId }
+  })
+  return { ...project, media, tracks }
 }
 
 export function withoutMedia(project: Project, mediaIds: readonly string[]): Project {

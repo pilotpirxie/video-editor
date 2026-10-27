@@ -512,6 +512,8 @@ async function testDrawingTools(driver: Driver): Promise<UiTestReport> {
 }
 
 const CHOSEN_SHAPES = `${selector('canvas-overlay')}.dataset.selectedShapes`
+// From the middle of a shape row down into its bottom quarter, which drops behind that shape.
+const BEHIND_ROW_SHARE = 0.4
 
 // The card's 320x180 artboard sits in the middle of the 640x360 episode at full size.
 async function artboardPointer(driver: Driver): Promise<(x: number, y: number) => Point> {
@@ -568,7 +570,7 @@ async function testShapeRows(driver: Driver): Promise<UiTestReport> {
   const pickedWhereLocked = await shapesPickedAt(driver, pointAt(255, 145))
 
   const lowestRow = await shapeRowPoint(driver, 'shape-row-left')
-  await driver.drag(await shapeRowPoint(driver, 'shape-row-right'), lowestRow)
+  await driver.drag(await shapeRowPoint(driver, 'shape-row-right'), { x: lowestRow.x, y: lowestRow.y + SHAPE_ROW_HEIGHT * BEHIND_ROW_SHARE })
   await driver.untilUndoLabel('Undo Reorder Shapes')
   const rowsAfter = await shownRows(driver)
   driver.menu('save')
@@ -629,6 +631,103 @@ async function testShapeEdits(driver: Driver): Promise<UiTestReport> {
   driver.window.webContents.paste()
   await driver.until(`${selector('notice')} !== null`, 'the paste to be refused')
   return { rowsWithCopies, notice: await driver.page.text('notice') }
+}
+
+async function clickTestId(driver: Driver, testId: string): Promise<void> {
+  await driver.clickAt(centerOf(await driver.rect(testId)))
+}
+
+// Back to front the card's drawing holds Left (red), Coat (white, with a blue pocket clipped inside) and Right (green).
+async function testShapePaint(driver: Driver): Promise<UiTestReport> {
+  await openShapeRows(driver)
+  const pointAt = await artboardPointer(driver)
+
+  await driver.typeInto('colour-hex', '00AAFF')
+  await driver.until(`${selector('tool-well-fill')}?.getAttribute('aria-label') === 'Fill #00AAFF'`, 'the colour for new shapes to change')
+  await driver.press('G')
+  await driver.until(isPressed('tool-fill'), 'the fill tool to be chosen')
+  await driver.hover(pointAt(40, 40))
+  await driver.until(`${selector('fill-target')}?.dataset.shape === 'left'`, 'the left square to be outlined')
+  await driver.clickAt(pointAt(40, 40))
+  await driver.untilUndoLabel('Undo Fill Shape')
+  await driver.hover(pointAt(278, 158))
+  await driver.until(`${selector('fill-target')}?.dataset.shape === 'pocket'`, 'the pocket to be outlined')
+  await driver.clickAt(pointAt(278, 158))
+  await chooseRow(driver, 'pocket')
+  await driver.until(`${selector('tool-well-fill')}?.getAttribute('aria-label') === 'Fill #00AAFF'`, 'the pocket to be filled')
+
+  await driver.press('I')
+  await driver.until(isPressed('tool-picker'), 'the colour picker to be chosen')
+  await chooseRow(driver, 'coat')
+  await driver.clickAt(pointAt(120, 30))
+  await driver.untilUndoLabel('Undo Pick Fill Colour')
+  await driver.clickAt(pointAt(40, 40), ['shift'])
+  await driver.untilUndoLabel('Undo Pick Stroke Colour')
+
+  await clickTestId(driver, 'swatch-add')
+  await driver.untilUndoLabel('Undo Add Swatch')
+  await clickTestId(driver, 'swatch-0')
+  await driver.until(isPressed('swatch-0'), 'the coat to use the swatch')
+  await chooseRow(driver, 'right')
+  await clickTestId(driver, 'swatch-0')
+  await driver.until(isPressed('swatch-0'), 'the right square to use the swatch')
+  await driver.typeInto('swatch-name', 'Skin')
+  await driver.untilUndoLabel('Undo Rename Swatch')
+  await driver.typeInto('colour-hex', '884400')
+  await driver.untilUndoLabel('Undo Change Swatch')
+  const swatchName = await driver.page.evaluate(`${selector('swatch-0')}?.getAttribute('aria-label')`)
+  await chooseRow(driver, 'coat')
+  const coatFill = await driver.page.evaluate(`${selector('tool-well-fill')}?.getAttribute('aria-label')`)
+  const isCoatLinked = await driver.page.evaluate(isPressed('swatch-0'))
+  await driver.picture('swatches')
+
+  await driver.rightClickAt(centerOf(await driver.rect('swatch-0')))
+  await driver.until(`${selector('menu-delete-swatch')} !== null`, 'the swatch menu')
+  await driver.page.click('menu-delete-swatch')
+  await driver.untilUndoLabel('Undo Delete Swatch')
+  driver.menu('save')
+  await untilEdited(driver, false)
+  return { swatchName, coatFill, isCoatLinked }
+}
+
+async function testShapeStrokes(driver: Driver): Promise<UiTestReport> {
+  await openShapeRows(driver)
+  const pointAt = await artboardPointer(driver)
+
+  await chooseRow(driver, 'coat')
+  for (const choice of ['stroke-style-dashed', 'stroke-cap-butt', 'stroke-align-outside', 'stroke-order-behind']) {
+    await driver.page.click(choice)
+    await driver.until(isPressed(choice), `${choice} to be chosen`)
+  }
+  await driver.typeInto('stroke-width', '6')
+  await driver.until(`Number(${selector('stroke-width')}?.value) === 6`, 'the stroke to be 6 px wide')
+  await driver.page.click('stroke-scales')
+  await driver.until(`${selector('stroke-scales')}?.checked === true`, 'the stroke to scale with the coat')
+  await driver.picture('stroke-panel')
+
+  await driver.press('Escape')
+  await driver.until(`${CHOSEN_SHAPES} === '0'`, 'the coat to be let go')
+  await driver.page.click('stroke-style-none')
+  await driver.until(isPressed('stroke-style-none'), 'new shapes to have no stroke')
+  await driver.press('M')
+  await driver.until(isPressed('tool-rectangle'), 'the rectangle tool to be chosen')
+  await driver.drag(pointAt(150, 100), pointAt(200, 130))
+  await driver.untilUndoLabel('Undo Add Rectangle')
+  await driver.press('V')
+
+  await shapeRowPoint(driver, 'shape-row-coat')
+  const rightRow = await shapeRowPoint(driver, 'shape-row-right')
+  await driver.drag(rightRow, centerOf(await driver.rect('shape-row-coat')))
+  await driver.untilUndoLabel('Undo Clip Inside')
+  const rows = await shownRows(driver)
+
+  await driver.clickAt(await driver.timelinePoint(TICKS_PER_SECOND / 2, 0, 3))
+  await driver.until(`${selector('clip-duration')} !== null && ${selector('clip-x')} === null`, 'the drawing to be selected')
+  await driver.press('D', ['meta'])
+  await driver.untilUndoLabel('Undo Duplicate Drawing')
+  driver.menu('save')
+  await untilEdited(driver, false)
+  return { rows }
 }
 
 async function testAnimationCrash(driver: Driver): Promise<UiTestReport> {
@@ -731,6 +830,8 @@ const SCENARIOS: Record<string, Scenario> = {
   'drawing-tools': testDrawingTools,
   'shape-rows': testShapeRows,
   'shape-edits': testShapeEdits,
+  'shape-paint': testShapePaint,
+  'shape-strokes': testShapeStrokes,
   'animation-crash': testAnimationCrash,
   'animation-restore': testAnimationRestore,
   budgets: testBudgets,

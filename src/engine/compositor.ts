@@ -95,6 +95,7 @@ export type Compositor = {
   render(canvas: Size, output: Size, view: View, items: readonly DrawItem[]): void
   present(): void
   readPixels(): ArrayBuffer
+  readPixel(x: number, y: number): Uint8Array
   startReadback(layout: PixelLayout): () => Promise<ArrayBuffer>
 }
 
@@ -877,6 +878,16 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     return readBack.buffer
   }
 
+  // The frame's rows run top to bottom, as readPixels hands them to exports.
+  function readPixel(x: number, y: number): Uint8Array {
+    const pixel = new Uint8Array(BYTES_PER_PIXEL)
+    const column = Math.min(frame.width - 1, Math.max(0, Math.floor(x)))
+    const row = Math.min(frame.height - 1, Math.max(0, Math.floor(y)))
+    gl.bindFramebuffer(gl.FRAMEBUFFER, frame.framebuffer)
+    gl.readPixels(column, row, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel)
+    return pixel
+  }
+
   let nextReadback = { buffer: gl.createBuffer(), byteLength: 0 }
   let laterReadback = { buffer: gl.createBuffer(), byteLength: 0 }
 
@@ -938,5 +949,5 @@ export function createCompositor(gl: WebGL2RenderingContext): Compositor {
     }
   }
 
-  return { uploadPixels, refillPixels, uploadImage, release, render, present, readPixels, startReadback }
+  return { uploadPixels, refillPixels, uploadImage, release, render, present, readPixels, readPixel, startReadback }
 }

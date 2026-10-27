@@ -9,7 +9,9 @@ import {
   copyShapes,
   deleteShapes,
   drawingPlace,
+  duplicateDrawing,
   shapeRefsOf,
+  withKnownSwatches,
   withNewShapeIds,
   type ArrangePlace,
 } from '../editor/drawings.js'
@@ -135,7 +137,7 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       store.notify('Shapes can only be pasted inside an animation.')
       return
     }
-    const pasted = shapes.map(newShapeIds)
+    const pasted = shapes.map((shape) => withKnownSwatches(newShapeIds(shape), project.swatches))
     const place = drawingPlace(project, transport.position().time, selection, selectedShapes, { clipId: crypto.randomUUID(), trackId: crypto.randomUUID() })
     store.apply(`Paste ${plural(pasted.length, 'Shape')}`, (current) => addDrawingShapes(current, place, pasted))
     store.selectShapes(shapeRefsOf(store.getState().project, pasted.map((shape) => shape.id)))
@@ -360,6 +362,17 @@ export function createActions(store: EditorStore, transport: Transport): Actions
         return
       }
       if (selection.length === 0) return
+      const drawingIds = selectedClipIds((clip) => clip.type === 'drawing')
+      if (drawingIds.length === selection.length) {
+        const copies = drawingIds.map((clipId) => ({ clipId, copyId: crypto.randomUUID() }))
+        store.apply(`Duplicate ${plural(copies.length, 'Drawing')}`, (current) => {
+          let duplicated = current
+          for (const { clipId, copyId } of copies) duplicated = duplicateDrawing(duplicated, clipId, copyId)
+          return duplicated
+        })
+        store.select(copies.map((copy) => copy.copyId))
+        return
+      }
       const copied = copyClips(project, selection)
       pasteAt(copied, spanEnd(copied), `Duplicate ${plural(selection.length, 'Clip')}`)
     },

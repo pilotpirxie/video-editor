@@ -24,7 +24,9 @@ export type ShortcutAction =
   | 'group'
   | 'ungroup'
   | 'tool-move'
+  | 'tool-fill'
   | 'tool-shape'
+  | 'tool-picker'
   | 'bring-to-front'
   | 'bring-forward'
   | 'send-backward'
@@ -77,7 +79,9 @@ export const SHORTCUT_ACTIONS: readonly { action: ShortcutAction; name: string; 
   { action: 'group', name: 'Group', section: 'Editing' },
   { action: 'ungroup', name: 'Ungroup', section: 'Editing' },
   { action: 'tool-move', name: 'Move tool', section: 'Drawing' },
+  { action: 'tool-fill', name: 'Fill tool', section: 'Drawing' },
   { action: 'tool-shape', name: 'Rectangle or ellipse tool', section: 'Drawing' },
+  { action: 'tool-picker', name: 'Colour picker tool', section: 'Drawing' },
   { action: 'bring-to-front', name: 'Bring to front', section: 'Drawing' },
   { action: 'bring-forward', name: 'Bring forward', section: 'Drawing' },
   { action: 'send-backward', name: 'Send backward', section: 'Drawing' },
@@ -118,7 +122,9 @@ export const DEFAULT_BINDINGS: Bindings = {
   group: [key('KeyG', 'meta')],
   ungroup: [key('KeyU', 'meta')],
   'tool-move': [key('KeyV')],
+  'tool-fill': [key('KeyG')],
   'tool-shape': [key('KeyM')],
+  'tool-picker': [key('KeyI')],
   'bring-to-front': [key('BracketRight', 'shift', 'meta')],
   'bring-forward': [key('BracketRight', 'meta')],
   'send-backward': [key('BracketLeft', 'meta')],

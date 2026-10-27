@@ -1,6 +1,7 @@
 import { logError } from '../shared/log.js'
 import type { Host } from '../shared/mediaProtocol.js'
-import type { WorkerCommand, WorkerEvent } from './engineWorker.js'
+import type { PixelColor, Share } from '../engine/engine.js'
+import type { WorkerCommand, WorkerEvent, WorkerReply } from './engineWorker.js'
 
 declare global {
   interface Window {
@@ -19,6 +20,7 @@ export type EngineHost = {
   uiMediaPort: Promise<MessagePort>
   onReconnect(listener: (ports: MediaPorts) => void): void
   renderStill(path: string, time: number, height: number): Promise<ImageBitmap | undefined>
+  colorAt(share: Share): Promise<PixelColor | undefined>
 }
 
 function isMediaPortMessage(event: MessageEvent<unknown>): boolean {
@@ -89,22 +91,32 @@ export function startEngine(canvas: HTMLCanvasElement | undefined): EngineHost {
     listener(ports)
   }
 
-  const stillRequests = new Map<number, (bitmap: ImageBitmap | undefined) => void>()
-  let nextStillId = 0
+  const requests = new Map<number, (reply: WorkerReply) => void>()
+  let nextRequestId = 0
   onEvent((event) => {
-    if (event.type !== 'still') return
-    stillRequests.get(event.id)?.(event.bitmap)
-    stillRequests.delete(event.id)
+    if (event.type !== 'still' && event.type !== 'color') return
+    requests.get(event.id)?.(event)
+    requests.delete(event.id)
   })
 
-  function renderStill(path: string, time: number, height: number): Promise<ImageBitmap | undefined> {
-    const id = nextStillId
-    nextStillId += 1
+  function request(command: (id: number) => WorkerCommand): Promise<WorkerReply> {
+    const id = nextRequestId
+    nextRequestId += 1
     return new Promise((resolve) => {
-      stillRequests.set(id, resolve)
-      send({ type: 'still', id, path, time, height })
+      requests.set(id, resolve)
+      send(command(id))
     })
   }
 
-  return { send, onEvent, uiMediaPort, onReconnect, renderStill }
+  async function renderStill(path: string, time: number, height: number): Promise<ImageBitmap | undefined> {
+    const reply = await request((id) => ({ type: 'still', id, path, time, height }))
+    return reply.type === 'still' ? reply.bitmap : undefined
+  }
+
+  async function colorAt(share: Share): Promise<PixelColor | undefined> {
+    const reply = await request((id) => ({ type: 'color', id, share }))
+    return reply.type === 'color' ? reply.color : undefined
+  }
+
+  return { send, onEvent, uiMediaPort, onReconnect, renderStill, colorAt }
 }

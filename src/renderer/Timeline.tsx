@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
 import { deleteZoom, setZoom } from '../editor/camera.js'
 import { hasSource, locateClip } from '../editor/clips.js'
-import { drawingAt, renameShape, reorderShape, setShapeFlag, shapeRows, type ShapeRef, type ShapeRow } from '../editor/drawings.js'
+import { canDropShape, drawingAt, moveShape, renameShape, setShapeFlag, shapeRows, type ShapeDrop, type ShapeRef, type ShapeRow } from '../editor/drawings.js'
 import { resolveScope } from '../editor/groups.js'
 import { changeKeyframe, removeKeyframe, setSpeed, sharedValue } from '../editor/properties.js'
 import { actionFor } from '../editor/shortcuts.js'
@@ -20,6 +20,8 @@ const DRAG_THRESHOLD = 3
 const SHAPE_ROW_PADDING = 8
 const SHAPE_INDENT = 14
 const UNNAMED_SHAPE = 'Shape'
+// The top and bottom quarter of a row drop in front of or behind its shape; the middle drops inside it.
+const DROP_EDGE_SHARE = 0.25
 
 type Point = {
   x: number
@@ -55,11 +57,23 @@ type ShapePress = {
   listTop: number
 }
 
+type RowDrop = {
+  shapeId: string
+  place: ShapeDrop
+}
+
+function dropPlaceAt(shareOfRow: number): ShapeDrop {
+  if (shareOfRow < DROP_EDGE_SHARE) return 'front'
+  if (shareOfRow > 1 - DROP_EDGE_SHARE) return 'behind'
+  return 'inside'
+}
+
 function ShapeRows({ track, height }: { track: Track; height: number }): ReactElement {
   const { store } = useSession()
   const drawingId = usePosition((position) => drawingAt(track, position.time)?.id)
   const selectedShapes = useEditorState((state) => state.selectedShapes)
   const [renaming, setRenaming] = useState<{ shapeId: string; name: string } | undefined>(undefined)
+  const [drop, setDrop] = useState<RowDrop | undefined>(undefined)
   const listRef = useRef<HTMLDivElement>(null)
   const pressRef = useRef<ShapePress | undefined>(undefined)
   const drawing = track.clips.find((clip) => clip.id === drawingId)
@@ -95,18 +109,38 @@ function ShapeRows({ track, height }: { track: Track; height: number }): ReactEl
     pressRef.current = { row, fromY: event.clientY, listTop: list.getBoundingClientRect().top }
   }
 
+  function dropAt(press: ShapePress, clientY: number): RowDrop | undefined {
+    const offset = (clientY - press.listTop) / SHAPE_ROW_HEIGHT
+    const target = rows[Math.floor(offset)]
+    if (target === undefined || drawing?.type !== 'drawing') return undefined
+    const place = dropPlaceAt(offset - Math.floor(offset))
+    return canDropShape(drawing.shapes, press.row.shape.id, target.shape.id, place) ? { shapeId: target.shape.id, place } : undefined
+  }
+
+  function onListMove(event: PointerEvent<HTMLDivElement>): void {
+    const press = pressRef.current
+    if (press === undefined || Math.abs(event.clientY - press.fromY) < DRAG_THRESHOLD) return
+    const next = dropAt(press, event.clientY)
+    if (next?.shapeId !== drop?.shapeId || next?.place !== drop?.place) setDrop(next)
+  }
+
+  function endPress(): void {
+    pressRef.current = undefined
+    setDrop(undefined)
+  }
+
   // Without pointer capture, so a double-click still reaches the name; letting go outside the list does nothing.
   function onListUp(event: PointerEvent<HTMLDivElement>): void {
     const press = pressRef.current
-    pressRef.current = undefined
+    endPress()
     if (press === undefined) return
     if (Math.abs(event.clientY - press.fromY) < DRAG_THRESHOLD) {
       choose(press.row, event.shiftKey)
       return
     }
-    const target = rows[Math.floor((event.clientY - press.listTop) / SHAPE_ROW_HEIGHT)]
-    if (target === undefined || target === press.row) return
-    store.apply('Reorder Shapes', (project) => reorderShape(project, refOf(press.row), target.shape.id))
+    const target = dropAt(press, event.clientY)
+    if (target === undefined) return
+    store.apply(target.place === 'inside' ? 'Clip Inside' : 'Reorder Shapes', (project) => moveShape(project, refOf(press.row), target.shapeId, target.place))
   }
 
   function switchFlag(row: ShapeRow, flag: 'hidden' | 'locked', label: string): void {
@@ -126,7 +160,7 @@ function ShapeRows({ track, height }: { track: Track; height: number }): ReactEl
   }
 
   return (
-    <div className="shape-rows" style={{ height }} ref={listRef} aria-label="Shapes" onPointerUp={onListUp} onPointerLeave={() => (pressRef.current = undefined)}>
+    <div className="shape-rows" style={{ height }} ref={listRef} aria-label="Shapes" onPointerMove={onListMove} onPointerUp={onListUp} onPointerLeave={endPress}>
       {rows.map((row) => {
         const { shape } = row
         const isHidden = shape.hidden === true
@@ -135,6 +169,7 @@ function ShapeRows({ track, height }: { track: Track; height: number }): ReactEl
         let className = 'shape-row'
         if (isChosen(row)) className += ' selected'
         if (!row.isPickable) className += ' muted'
+        if (drop?.shapeId === shape.id) className += ` drop-${drop.place}`
         return (
           <div
             key={shape.id}

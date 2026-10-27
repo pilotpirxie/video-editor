@@ -336,11 +336,24 @@ export type ShapeNode = {
   out?: ShapeHandle
 }
 
+export type StrokeCap = 'butt' | 'round' | 'square'
+export type StrokeJoin = 'miter' | 'round' | 'bevel'
+export type StrokeAlign = 'inside' | 'center' | 'outside'
+
+// Left out, a stroke is solid, round, centred on the outline and drawn in front of the fill.
 export type ShapeStroke = {
   color: string
   width: number
+  swatch?: string
+  isDashed?: true
+  cap?: StrokeCap
+  join?: StrokeJoin
+  align?: StrokeAlign
+  isBehind?: true
+  scalesWithObject?: true
 }
 
+// A colour linked to a swatch keeps the swatch's hex next to the link.
 export type DrawingShape = {
   id: string
   name?: string
@@ -349,8 +362,15 @@ export type DrawingShape = {
   nodes: ShapeNode[]
   isClosed?: true
   fill?: string
+  fillSwatch?: string
   stroke?: ShapeStroke
   children?: DrawingShape[]
+}
+
+export type Swatch = {
+  id: string
+  name: string
+  color: string
 }
 
 // Shapes are listed back to front, in the artboard's pixels.
@@ -404,6 +424,7 @@ export type Project = {
   media: MediaRef[]
   tracks: Track[]
   camera?: CameraKeyframe[]
+  swatches?: Swatch[]
 }
 
 export type ParseResult = { ok: true; project: Project } | { ok: false; message: string }
@@ -413,7 +434,7 @@ export const MAX_CANVAS = { width: 3840, height: 2160 }
 export const MAX_CAMERA_SCALE = 10
 const MAX_VOLUME = 2
 const MAX_GROUP_DEPTH = 8
-const MAX_SHAPE_DEPTH = 8
+export const MAX_SHAPE_DEPTH = 8
 const MIN_SHAPE_NODES = 2
 const FONT_WEIGHT_STEP = 100
 const FONT_WEIGHT = { min: 100, max: 900 }
@@ -814,6 +835,7 @@ const OPTIONAL_TEXT_KEYS = ['outline', 'shadow', 'lineSpacing']
 type ParseContext = {
   kind: DocumentKind
   mediaIds: ReadonlySet<string>
+  swatchIds: ReadonlySet<string>
   clipIds: Set<string>
   depth: number
   shift: number
@@ -1139,20 +1161,48 @@ function parseShapeNode(value: unknown, path: string): ShapeNode {
   return node
 }
 
-function parseDrawingShapes(value: unknown, path: string, depth: number, shapeIds: Set<string>): DrawingShape[] {
+type ShapeContext = {
+  shapeIds: Set<string>
+  swatchIds: ReadonlySet<string>
+}
+
+const STROKE_CAPS: readonly StrokeCap[] = ['butt', 'round', 'square']
+const STROKE_JOINS: readonly StrokeJoin[] = ['miter', 'round', 'bevel']
+const STROKE_ALIGNS: readonly StrokeAlign[] = ['inside', 'center', 'outside']
+
+function parseSwatchLink(fields: Fields, key: string, swatchIds: ReadonlySet<string>): string {
+  const swatchId = fields.nonEmptyString(key)
+  if (!swatchIds.has(swatchId)) fail(fields.at(key), `"${swatchId}" is not in the swatches`)
+  return swatchId
+}
+
+function parseShapeStroke(value: unknown, path: string, swatchIds: ReadonlySet<string>): ShapeStroke {
+  const fields = readFields(value, path, ['color', 'width'], ['swatch', 'isDashed', 'cap', 'join', 'align', 'isBehind', 'scalesWithObject'])
+  const stroke: ShapeStroke = { color: fields.color('color'), width: fields.number('width', { above: 0 }) }
+  if (fields.has('swatch')) stroke.swatch = parseSwatchLink(fields, 'swatch', swatchIds)
+  if (fields.has('isDashed')) stroke.isDashed = parseSwitch(fields, 'isDashed')
+  if (fields.has('cap')) stroke.cap = fields.oneOf('cap', STROKE_CAPS)
+  if (fields.has('join')) stroke.join = fields.oneOf('join', STROKE_JOINS)
+  if (fields.has('align')) stroke.align = fields.oneOf('align', STROKE_ALIGNS)
+  if (fields.has('isBehind')) stroke.isBehind = parseSwitch(fields, 'isBehind')
+  if (fields.has('scalesWithObject')) stroke.scalesWithObject = parseSwitch(fields, 'scalesWithObject')
+  return stroke
+}
+
+function parseDrawingShapes(value: unknown, path: string, depth: number, context: ShapeContext): DrawingShape[] {
   if (!Array.isArray(value)) fail(path, 'must be a list')
   const shapes: DrawingShape[] = []
   for (const [index, entry] of value.entries()) {
-    shapes.push(parseDrawingShape(entry, `${path}[${index}]`, depth, shapeIds))
+    shapes.push(parseDrawingShape(entry, `${path}[${index}]`, depth, context))
   }
   return shapes
 }
 
-function parseDrawingShape(value: unknown, path: string, depth: number, shapeIds: Set<string>): DrawingShape {
-  const fields = readFields(value, path, ['id', 'nodes'], ['name', 'hidden', 'locked', 'isClosed', 'fill', 'stroke', 'children'])
+function parseDrawingShape(value: unknown, path: string, depth: number, context: ShapeContext): DrawingShape {
+  const fields = readFields(value, path, ['id', 'nodes'], ['name', 'hidden', 'locked', 'isClosed', 'fill', 'fillSwatch', 'stroke', 'children'])
   const id = fields.nonEmptyString('id')
-  if (shapeIds.has(id)) fail(fields.at('id'), `"${id}" is used by more than one shape in this drawing`)
-  shapeIds.add(id)
+  if (context.shapeIds.has(id)) fail(fields.at('id'), `"${id}" is used by more than one shape in this drawing`)
+  context.shapeIds.add(id)
 
   const nodes: ShapeNode[] = []
   for (const [index, entry] of fields.array('nodes').entries()) {
@@ -1165,13 +1215,14 @@ function parseDrawingShape(value: unknown, path: string, depth: number, shapeIds
   if (fields.has('locked')) shape.locked = parseSwitch(fields, 'locked')
   if (fields.has('isClosed')) shape.isClosed = parseSwitch(fields, 'isClosed')
   if (fields.has('fill')) shape.fill = fields.color('fill')
-  if (fields.has('stroke')) {
-    const stroke = readFields(fields.raw('stroke'), fields.at('stroke'), ['color', 'width'])
-    shape.stroke = { color: stroke.color('color'), width: stroke.number('width', { above: 0 }) }
+  if (fields.has('fillSwatch')) {
+    if (shape.fill === undefined) fail(fields.at('fillSwatch'), 'needs a fill next to it')
+    shape.fillSwatch = parseSwatchLink(fields, 'fillSwatch', context.swatchIds)
   }
+  if (fields.has('stroke')) shape.stroke = parseShapeStroke(fields.raw('stroke'), fields.at('stroke'), context.swatchIds)
   if (fields.has('children')) {
     if (depth >= MAX_SHAPE_DEPTH) fail(fields.at('children'), `go deeper than ${MAX_SHAPE_DEPTH} shapes clipped inside each other`)
-    const children = parseDrawingShapes(fields.raw('children'), fields.at('children'), depth + 1, shapeIds)
+    const children = parseDrawingShapes(fields.raw('children'), fields.at('children'), depth + 1, context)
     if (children.length === 0) fail(fields.at('children'), 'is empty; leave it out instead')
     shape.children = children
   }
@@ -1181,7 +1232,8 @@ function parseDrawingShape(value: unknown, path: string, depth: number, shapeIds
 function parseDrawingClip(value: unknown, path: string, context: ParseContext): DrawingClip {
   if (context.kind !== 'animation') fail(path, 'is a drawing, which only an animation can hold')
   const fields = readFields(value, path, [...TIMING_KEYS, 'shapes'])
-  return { type: 'drawing', ...parseTiming(fields, context, []), shapes: parseDrawingShapes(fields.raw('shapes'), fields.at('shapes'), 0, new Set()) }
+  const shapes = parseDrawingShapes(fields.raw('shapes'), fields.at('shapes'), 0, { shapeIds: new Set(), swatchIds: context.swatchIds })
+  return { type: 'drawing', ...parseTiming(fields, context, []), shapes }
 }
 
 function parseClip(value: unknown, path: string, context: ParseContext): Clip {
@@ -1249,6 +1301,17 @@ function rejectDuplicateIds(items: readonly { id: string }[], path: string): voi
   }
 }
 
+function parseSwatches(value: unknown, path: string): Swatch[] {
+  if (!Array.isArray(value) || value.length === 0) fail(path, 'must be a list with at least one swatch; leave it out instead')
+  const swatches: Swatch[] = []
+  for (const [index, entry] of value.entries()) {
+    const fields = readFields(entry, `${path}[${index}]`, ['id', 'name', 'color'])
+    swatches.push({ id: fields.nonEmptyString('id'), name: fields.nonEmptyString('name'), color: fields.color('color') })
+  }
+  rejectDuplicateIds(swatches, path)
+  return swatches
+}
+
 function parseCamera(value: unknown, path: string): CameraKeyframe[] {
   if (!Array.isArray(value) || value.length === 0) fail(path, 'must be a list with at least one zoom; leave it out instead')
 
@@ -1287,14 +1350,22 @@ function parseDocument(document: unknown, kind: DocumentKind): Project {
   rejectUnreadableVersion(document)
   if (kind === 'animation' && 'camera' in document) fail('camera', 'is not allowed: an animation has no camera')
 
-  const fields = readFields(document, kind, ['version', 'canvas', 'media', 'tracks'], kind === 'project' ? ['camera'] : [])
+  const fields = readFields(document, kind, ['version', 'canvas', 'media', 'tracks'], kind === 'project' ? ['camera'] : ['swatches'])
   const media: MediaRef[] = []
   for (const [index, entry] of fields.array('media').entries()) {
     media.push(parseMedia(entry, `media[${index}]`))
   }
   rejectDuplicateIds(media, 'media')
+  const swatches = fields.has('swatches') ? parseSwatches(fields.raw('swatches'), 'swatches') : undefined
 
-  const context: ParseContext = { kind, mediaIds: new Set(media.map((entry) => entry.id)), clipIds: new Set(), depth: 0, shift: 0 }
+  const context: ParseContext = {
+    kind,
+    mediaIds: new Set(media.map((entry) => entry.id)),
+    swatchIds: new Set(swatches?.map((swatch) => swatch.id)),
+    clipIds: new Set(),
+    depth: 0,
+    shift: 0,
+  }
   const tracks = parseTracks(fields.array('tracks'), 'tracks', context)
 
   const project: Project = {
@@ -1304,6 +1375,7 @@ function parseDocument(document: unknown, kind: DocumentKind): Project {
     tracks,
   }
   if (fields.has('camera')) project.camera = parseCamera(fields.raw('camera'), 'camera')
+  if (swatches !== undefined) project.swatches = swatches
   return project
 }
 

@@ -79,6 +79,7 @@ body {
 
 .button:focus-visible,
 .field:focus-visible,
+.swatch:focus-visible,
 .focusable:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
@@ -707,6 +708,24 @@ legend.field-label {
   height: 12px;
   border: 1px solid var(--divider);
   border-radius: 50%;
+}
+
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.swatch {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.swatch[aria-pressed='true'] {
+  box-shadow: 0 0 0 2px var(--primary);
 }
 
 .field-pair {

@@ -52,15 +52,21 @@ function ToolStrip(): ReactElement {
   const { store } = useSession()
   const tool = useEditorState((state) => state.tool)
   const moveKeys = useShortcutHint('tool-move')
+  const fillKeys = useShortcutHint('tool-fill')
   const shapeKeys = useShortcutHint('tool-shape')
+  const pickerKeys = useShortcutHint('tool-picker')
   const colorPart = useEditorState((state) => state.colorPart)
   const wells = useWellColors()
   return (
     <div className="tool-strip" role="toolbar" aria-label="Drawing tools" aria-orientation="vertical" data-testid="tool-strip">
       <IconButton icon="pointer" label="Move" testId="tool-move" shortcut={moveKeys} isPressed={tool === 'move'} onClick={() => store.setTool('move')} />
       <hr />
+      <IconButton icon="bucket" label="Fill" testId="tool-fill" shortcut={fillKeys} isPressed={tool === 'fill'} onClick={() => store.setTool('fill')} />
+      <hr />
       <IconButton icon="rectangle" label="Rectangle" testId="tool-rectangle" shortcut={shapeKeys} isPressed={tool === 'rectangle'} onClick={() => store.setTool('rectangle')} />
       <IconButton icon="ellipse" label="Ellipse" testId="tool-ellipse" shortcut={shapeKeys} isPressed={tool === 'ellipse'} onClick={() => store.setTool('ellipse')} />
+      <hr />
+      <IconButton icon="pipette" label="Colour picker" testId="tool-picker" shortcut={pickerKeys} isPressed={tool === 'picker'} onClick={() => store.setTool('picker')} />
       <div className="tool-wells" role="group" aria-label="Colour of" data-testid="tool-wells">
         <button
           type="button"
