@@ -1,15 +1,26 @@
 import { ANNOTATION_NAMES, addAnnotation, type AnnotationKind } from '../editor/annotations.js'
 import { deleteZoom, setViewAt, zoomIndexAt } from '../editor/camera.js'
-import { copyClips, deleteClips, pasteClips, rippleDelete, spanEnd, type Clipboard } from '../editor/clipboard.js'
-import { allClips, isVisual, locateClip, nearestClipEdge, nextTrackName, trackAboveAll, unlockedClipIds, type NewTrack } from '../editor/clips.js'
+import { copyClips, deleteClips, holdsDrawings, pasteClips, rippleDelete, spanEnd, type Clipboard } from '../editor/clipboard.js'
+import { allClips, isContainer, locateClip, nearestClipEdge, nextTrackName, trackAboveAll, unlockedClipIds, type NewTrack } from '../editor/clips.js'
+import {
+  addDrawingShapes,
+  addShapesAbove,
+  arrangeShapes,
+  copyShapes,
+  deleteShapes,
+  drawingPlace,
+  shapeRefsOf,
+  withNewShapeIds,
+  type ArrangePlace,
+} from '../editor/drawings.js'
 import { addEffect, takesEffect } from '../editor/effects.js'
 import { groupClips, ungroupClips } from '../editor/groups.js'
-import { dropMedia, placeableMedia, withoutMedia } from '../editor/place.js'
+import { SELF_CONTAINING_NOTICE, containsAnimation, dropMedia, placeableMedia, withoutMedia } from '../editor/place.js'
 import { clipsToSeparate, separateAudio } from '../editor/separate.js'
 import { clipsToSplit, splitClips } from '../editor/split.js'
 import { addTrack } from '../editor/tracks.js'
 import { DEFAULT_TRANSITION, setTransition } from '../editor/transitions.js'
-import { projectDuration, type Clip, type EffectType, type Project, type TransitionType } from '../shared/project.js'
+import { isVisual, projectDuration, type Clip, type DrawingShape, type EffectType, type Project, type TransitionType } from '../shared/project.js'
 import { stillDurationTicks } from '../shared/settings.js'
 import { frameAt, frameDuration } from '../shared/time.js'
 import type { EditorStore } from './store.js'
@@ -40,8 +51,13 @@ export type Actions = {
   cut(): boolean
   paste(): void
   duplicate(): void
+  arrange(place: ArrangePlace): void
   addTrack(): void
 }
+
+type Copied = { kind: 'clips'; clipboard: Clipboard; place: string } | { kind: 'shapes'; shapes: readonly DrawingShape[] }
+
+const ARRANGE_LABELS: Record<ArrangePlace, string> = { front: 'Bring to Front', forward: 'Bring Forward', backward: 'Send Backward', back: 'Send to Back' }
 
 function plural(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`
@@ -56,8 +72,7 @@ function nextNumberedTracks(project: Project, count: number): NewTrack[] {
 }
 
 export function createActions(store: EditorStore, transport: Transport): Actions {
-  let clipboard: Clipboard | undefined
-  let clipboardPlace = ''
+  let copied: Copied | undefined
   let stepped: { time: number; sequence: number } | undefined
 
   function limits(): TimelineLimits {
@@ -100,11 +115,30 @@ export function createActions(store: EditorStore, transport: Transport): Actions
   }
 
   function copy(): boolean {
-    const { project, selection } = store.getState()
+    const { project, selection, selectedShapes, openGroups } = store.getState()
+    if (selectedShapes.length > 0) {
+      copied = { kind: 'shapes', shapes: copyShapes(project, selectedShapes).map((copy) => copy.shape) }
+      return true
+    }
     if (selection.length === 0) return false
-    clipboard = copyClips(project, selection)
-    clipboardPlace = store.getState().openGroups.join('/')
+    copied = { kind: 'clips', clipboard: copyClips(project, selection), place: openGroups.join('/') }
     return true
+  }
+
+  function newShapeIds(shape: DrawingShape): DrawingShape {
+    return withNewShapeIds(shape, () => crypto.randomUUID())
+  }
+
+  function pasteShapes(shapes: readonly DrawingShape[]): void {
+    const { project, selection, selectedShapes, openChain } = store.getState()
+    if (openChain.length === 0) {
+      store.notify('Shapes can only be pasted inside an animation.')
+      return
+    }
+    const pasted = shapes.map(newShapeIds)
+    const place = drawingPlace(project, transport.position().time, selection, selectedShapes, { clipId: crypto.randomUUID(), trackId: crypto.randomUUID() })
+    store.apply(`Paste ${plural(pasted.length, 'Shape')}`, (current) => addDrawingShapes(current, place, pasted))
+    store.selectShapes(shapeRefsOf(store.getState().project, pasted.map((shape) => shape.id)))
   }
 
   function selectedClipIds(isWanted: (clip: Clip) => boolean): string[] {
@@ -125,9 +159,13 @@ export function createActions(store: EditorStore, transport: Transport): Actions
   }
 
   function deleteSelection(isRipple: boolean): void {
-    const { selection, selectedZoom } = store.getState()
+    const { selection, selectedZoom, selectedShapes } = store.getState()
     if (selectedZoom !== undefined) {
       store.apply('Delete Zoom', (project) => deleteZoom(project, selectedZoom))
+      return
+    }
+    if (selectedShapes.length > 0) {
+      store.apply(`Delete ${plural(selectedShapes.length, 'Shape')}`, (project) => deleteShapes(project, selectedShapes))
       return
     }
     if (selection.length === 0) return
@@ -166,8 +204,12 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       if (kind === 'text' || kind === 'callout') store.editText(added.clipId)
     },
     addMedia(mediaIds) {
-      const { project, mediaStates, settings } = store.getState()
-      const media = placeableMedia(project, mediaStates, mediaIds, () => crypto.randomUUID())
+      const { project, wholeProject, mediaStates, documents, openDocument, settings } = store.getState()
+      if (openDocument !== undefined && containsAnimation(mediaIds, openDocument, mediaStates, documents)) {
+        store.notify(SELF_CONTAINING_NOTICE)
+        return
+      }
+      const media = placeableMedia(wholeProject.media, mediaStates, documents, mediaIds, () => crypto.randomUUID())
       if (media.length === 0) return
       const newTrack = { id: crypto.randomUUID(), name: nextTrackName(project) }
       const start = transport.position().time
@@ -212,11 +254,16 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       store.select(memberIds)
     },
     openGroup() {
-      const [groupId] = selectedClipIds((clip) => clip.type === 'group')
-      if (groupId === undefined) return
+      const [clipId] = selectedClipIds(isContainer)
+      if (clipId === undefined) return
       transport.pause()
-      store.openGroup(groupId)
-      const { scope } = store.getState()
+      const openCount = store.getState().openGroups.length
+      store.openGroup(clipId)
+      const { scope, openGroups } = store.getState()
+      if (openGroups.length === openCount) {
+        store.notify('This animation cannot be opened: its file is missing, or it contains itself.')
+        return
+      }
       const { time } = transport.position()
       if (scope !== undefined && (time < scope.from || time >= scope.to)) transport.seek(scope.from)
     },
@@ -279,23 +326,47 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     copy,
     cut() {
       if (!copy()) return false
-      const { selection } = store.getState()
+      const { selection, selectedShapes } = store.getState()
+      if (selectedShapes.length > 0) {
+        store.apply(`Cut ${plural(selectedShapes.length, 'Shape')}`, (project) => deleteShapes(project, selectedShapes))
+        return true
+      }
       store.apply(`Cut ${plural(selection.length, 'Clip')}`, (project) => deleteClips(project, selection))
       return true
     },
     paste() {
-      if (clipboard === undefined) return
-      if (clipboardPlace !== store.getState().openGroups.join('/')) {
+      if (copied === undefined) return
+      if (copied.kind === 'shapes') {
+        pasteShapes(copied.shapes)
+        return
+      }
+      const { clipboard } = copied
+      if (store.getState().openChain.length === 0 && holdsDrawings(clipboard)) {
+        store.notify('Drawings can only be pasted inside an animation.')
+        return
+      }
+      if (copied.place !== store.getState().openGroups.join('/')) {
         store.notify('Clips copied inside a group can only be pasted in that group, and clips copied outside it only there.')
         return
       }
       pasteAt(clipboard, transport.position().time, `Paste ${plural(clipboard.clips.length, 'Clip')}`)
     },
     duplicate() {
-      const { project, selection } = store.getState()
+      const { project, selection, selectedShapes } = store.getState()
+      if (selectedShapes.length > 0) {
+        const copies = copyShapes(project, selectedShapes).map((copy) => ({ ref: copy.ref, shape: newShapeIds(copy.shape) }))
+        store.apply(`Duplicate ${plural(copies.length, 'Shape')}`, (current) => addShapesAbove(current, copies))
+        store.selectShapes(copies.map((copy) => ({ clipId: copy.ref.clipId, shapeId: copy.shape.id })))
+        return
+      }
       if (selection.length === 0) return
       const copied = copyClips(project, selection)
       pasteAt(copied, spanEnd(copied), `Duplicate ${plural(selection.length, 'Clip')}`)
+    },
+    arrange(place) {
+      const { selectedShapes } = store.getState()
+      if (selectedShapes.length === 0) return
+      store.apply(ARRANGE_LABELS[place], (project) => arrangeShapes(project, selectedShapes, place))
     },
     addTrack() {
       const track = { id: crypto.randomUUID(), name: nextTrackName(store.getState().project) }

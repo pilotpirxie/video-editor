@@ -1,8 +1,8 @@
 import { scaledEffect, type MediaStates } from '../engine/resolve.js'
 import type { Size } from '../shared/exportPresets.js'
-import { MAX_CANVAS, MIN_CANVAS, valueAt, type AnimatableProperty, type Clip, type Crop, type Easing, type Keyframe, type Keyframes, type Project, type Transform } from '../shared/project.js'
+import { MAX_CANVAS, MIN_CANVAS, isVisual, valueAt, type AnimatableProperty, type Clip, type Crop, type Easing, type Keyframe, type Keyframes, type Project, type Transform } from '../shared/project.js'
 import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, TIMELINE_GRID, frameAt, frameDuration, type FrameRate } from '../shared/time.js'
-import { editClips, endOf, hasSource, hasVolume, isCroppable, isVisual, locateClip, withFadesWithin, withOnlyAtEnd } from './clips.js'
+import { editClips, endOf, hasSource, hasVolume, isCroppable, isContainer, locateClip, withFadesWithin, withOnlyAtEnd } from './clips.js'
 import type { Point } from './geometry.js'
 import { shiftLater, sourceDuration, timelineSpan, trimClip } from './moveTrim.js'
 
@@ -100,7 +100,7 @@ function isTransformProperty(property: AnimatableProperty): property is keyof Tr
 
 function baseValue(clip: Clip, property: AnimatableProperty): number | undefined {
   if (property === 'volume') return hasVolume(clip) ? clip.volume : undefined
-  if (clip.type === 'audio') return undefined
+  if (!isVisual(clip)) return undefined
   if (property === 'opacity') return clip.opacity
   if (isTransformProperty(property)) return clip.transform[property]
   const side = cropSide(property)
@@ -124,7 +124,7 @@ function limited(property: AnimatableProperty, value: number): number {
 
 function withBaseValue(clip: Clip, property: AnimatableProperty, value: number): Clip {
   if (property === 'volume') return hasVolume(clip) ? { ...clip, volume: value } : clip
-  if (clip.type === 'audio') return clip
+  if (!isVisual(clip)) return clip
   if (property === 'opacity') return { ...clip, opacity: value }
   if (isTransformProperty(property)) return { ...clip, transform: { ...clip.transform, [property]: value } }
   const side = cropSide(property)
@@ -241,7 +241,7 @@ function evenlyScaled(values: PropertyValues): PropertyValues {
 export function setProperties(project: Project, clipIds: readonly string[], values: PropertyValues, time: number): Project {
   const frameTicks = frameDuration(project.canvas.frameRate)
   return editClips(project, new Set(clipIds), (clip) => {
-    const wanted = clip.type === 'group' ? evenlyScaled(values) : values
+    const wanted = isContainer(clip) ? evenlyScaled(values) : values
     const changed = changedSets(clip, wanted, time)
     const isKeyed = changed.some((properties) => isAnimated(clip, properties))
     let edited = clip
@@ -330,7 +330,7 @@ export type MotionPath = {
 }
 
 export function motionPath(clip: Clip): MotionPath | undefined {
-  if (clip.type === 'audio') return undefined
+  if (!isVisual(clip)) return undefined
   const keyframes = [...(clip.keyframes?.x ?? []), ...(clip.keyframes?.y ?? [])]
   if (keyframes.length === 0) return undefined
   const placeAt = (local: number): Point => ({
@@ -452,9 +452,10 @@ export function setSpeed(project: Project, clipIds: readonly string[], speedPerc
 
 export function setLoop(project: Project, clipIds: readonly string[], isLooping: boolean, mediaStates: MediaStates): Project {
   return editClips(project, new Set(clipIds), (clip) => {
-    if (clip.type !== 'video') return clip
+    if (clip.type !== 'video' && clip.type !== 'animation') return clip
     const isAlreadySet = (clip.loop === true) === isLooping
     if (isAlreadySet) return clip
+    if (clip.type === 'animation') return isLooping ? { ...clip, loop: true } : { ...clip, loop: undefined }
     const state = mediaStates[clip.mediaId]
     if (state === undefined || 'error' in state) return clip
     if (state.info.kind !== 'video' || state.info.isAnimatedImage !== true) return clip

@@ -25,8 +25,10 @@ export const PROJECT_FRAME_RATES: readonly FrameRate[] = [
   { num: 160, den: 1 },
 ]
 
-export function isProjectFrameRate(rate: FrameRate): boolean {
-  return PROJECT_FRAME_RATES.some((allowed) => allowed.num === rate.num && allowed.den === rate.den)
+export const ANIMATION_FRAME_RATES: readonly FrameRate[] = [{ num: 8, den: 1 }, { num: 12, den: 1 }, { num: 15, den: 1 }, ...PROJECT_FRAME_RATES]
+
+export function isFrameRateIn(rates: readonly FrameRate[], rate: FrameRate): boolean {
+  return rates.some((allowed) => allowed.num === rate.num && allowed.den === rate.den)
 }
 
 export function exactFrameDuration(rate: FrameRate): number | undefined {
@@ -95,6 +97,10 @@ export function timecode(time: number, rate: FrameRate): string {
   const minutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE) % MINUTES_PER_HOUR
   const hours = Math.floor(totalSeconds / (SECONDS_PER_MINUTE * MINUTES_PER_HOUR))
   return `${twoDigits(hours)}:${twoDigits(minutes)}:${twoDigits(seconds)}:${twoDigits(frames)}`
+}
+
+export function frameNumber(time: number, rate: FrameRate): string {
+  return String(frameAt(time, frameDuration(rate)))
 }
 
 function twoDigits(value: number): string {

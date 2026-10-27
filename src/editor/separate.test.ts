@@ -79,8 +79,8 @@ describe('separateAudio', () => {
   })
 
   it('sounds exactly as before', async () => {
-    const before = await mix(project, MEDIA_STATES, 0, 6 * 48_000, readTone)
-    const after = await mix(separated, MEDIA_STATES, 0, 6 * 48_000, readTone)
+    const before = await mix(project, MEDIA_STATES, {}, 0, 6 * 48_000, readTone)
+    const after = await mix(separated, MEDIA_STATES, {}, 0, 6 * 48_000, readTone)
     expect(Array.from(after)).toEqual(Array.from(before))
   })
 

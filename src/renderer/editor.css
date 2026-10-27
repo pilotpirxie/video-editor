@@ -128,11 +128,80 @@
 }
 
 .canvas-panel {
+  position: relative;
   grid-area: canvas;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+.tool-strip {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius);
+  background: var(--panel-background);
+  box-shadow: var(--float-shadow);
+}
+
+.tool-strip .button.icon {
+  width: 28px;
+  height: 28px;
+}
+
+.tool-strip .button.icon[aria-pressed='true'] {
+  background: var(--window-background);
+  box-shadow: var(--pressed-edge);
+}
+
+.tool-strip hr {
+  width: 20px;
+  margin: 2px auto;
+  border: 0;
+  border-top: 1px solid var(--divider);
+}
+
+.tool-wells {
+  position: relative;
+  width: 28px;
+  height: 30px;
+  margin-top: 2px;
+}
+
+.tool-wells button {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.tool-wells .fill {
+  top: 0;
+  left: 0;
+  z-index: 1;
+  border: 1px solid rgb(0 0 0 / 45%);
+}
+
+.tool-wells .stroke {
+  right: 0;
+  bottom: 0;
+}
+
+/* The well being edited comes to the front, as in Affinity. */
+.tool-wells button[aria-pressed='true'] {
+  z-index: 2;
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
 }
 
 .canvas-area {
@@ -294,6 +363,51 @@
   font-size: var(--text-label);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.shape-rows {
+  overflow: hidden;
+  background: var(--panel-background);
+}
+
+/* Must match SHAPE_ROW_HEIGHT in timelineView.ts. */
+.shape-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 30px;
+  padding-right: var(--space-1);
+  border-bottom: 1px solid var(--divider);
+  font-size: var(--text-label);
+  cursor: default;
+  user-select: none;
+}
+
+.shape-row.selected {
+  background: var(--raised-surface);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+.shape-row.muted .shape-name,
+.shape-row.empty {
+  color: var(--text-disabled);
+}
+
+.shape-row.empty {
+  padding-left: var(--space-2);
+}
+
+.shape-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shape-row .field {
+  flex: 1;
+  min-width: 0;
 }
 
 .timeline-canvases {
@@ -679,6 +793,10 @@
   inset: -14px;
   width: calc(100% + 28px);
   height: calc(100% + 28px);
+}
+
+.canvas-overlay.drawing {
+  cursor: crosshair;
 }
 
 .selection-box {

@@ -1,9 +1,9 @@
 import { ANNOTATION_NAMES, addAnnotation, type AnnotationKind } from '../editor/annotations.js'
 import { moveZoom, setZoom } from '../editor/camera.js'
-import { endOf, hasVolume, locateClip, makesSound, nextTrackName, type NewTrack } from '../editor/clips.js'
+import { endOf, hasVolume, isContainer, locateClip, makesSound, nextTrackName, type NewTrack } from '../editor/clips.js'
 import { addEffect, takesEffect } from '../editor/effects.js'
 import { moveClips, trimClip } from '../editor/moveTrim.js'
-import { dropMedia, mediaFileName, placeableMedia } from '../editor/place.js'
+import { SELF_CONTAINING_NOTICE, containsAnimation, dropMedia, mediaFileName, placeableMedia } from '../editor/place.js'
 import { changeKeyframe, keyframeFrame, setFade, setKeyframesAt, setProperties, type Fade } from '../editor/properties.js'
 import { nearestWithin, snapDelta, timelineTargets } from '../editor/snapping.js'
 import {
@@ -22,6 +22,7 @@ import {
   keyframeDiamonds,
   timeToX,
   trackIndexAt,
+  trackRowsOf,
   trackTop,
   transitionBandAt,
   transitionBands,
@@ -39,6 +40,7 @@ import {
   type FadeHandle,
   type Marquee,
   type TimelineView,
+  type TrackRows,
   type TransitionBand,
   type VolumeLineSpot,
   type VolumePoint,
@@ -47,7 +49,7 @@ import {
 } from '../editor/timelineView.js'
 import { DEFAULT_TRANSITION, setTransition, transitionTargetAt, type TransitionTarget } from '../editor/transitions.js'
 import type { Size } from '../shared/exportPresets.js'
-import { projectDuration, type Clip, type EffectType, type MediaRef, type Project, type Track, type TransitionType } from '../shared/project.js'
+import { isVisual, projectDuration, type Clip, type EffectType, type MediaRef, type Project, type Track, type TransitionType } from '../shared/project.js'
 import { stillDurationTicks } from '../shared/settings.js'
 import { TICKS_PER_SECOND, frameDuration } from '../shared/time.js'
 import type { Session } from './document.js'
@@ -104,7 +106,7 @@ type Gesture =
   | { kind: 'zoom-press'; hit: ZoomHit; at: Point; time: number }
   | { kind: 'zoom'; hit: ZoomHit; edgeTime: number; zoomTime: number; grabOffset: number; targets: number[] }
   | { kind: 'transition'; target: TransitionTarget; type: TransitionType; anchor: number; isOnCut: boolean; grabOffset: number; targets: number[] }
-  | { kind: 'move'; clipIds: readonly string[]; grabTime: number; grabbedRow: number; edges: number[]; targets: number[]; trackCount: number; newTrack: NewTrack }
+  | { kind: 'move'; clipIds: readonly string[]; grabTime: number; grabbedRow: number; edges: number[]; targets: number[]; rows: TrackRows; newTrack: NewTrack }
   | { kind: 'trim'; clipId: string; edge: 'start' | 'end'; edgeTime: number; targets: number[] }
   | { kind: 'fade'; clipId: string; clipIds: readonly string[]; fade: Fade; clipStart: number; clipEnd: number; endTime: number; grabOffset: number; targets: number[] }
   | { kind: 'volume-point'; clipId: string; index: number; clipStart: number; pointTime: number; grabOffset: number; band: Band; targets: number[] }
@@ -178,6 +180,8 @@ export function createTimelineController(elements: TimelineElements, session: Se
   let isFitWanted = false
   let isLowestWanted = false
   let drawnTrackCount: number | undefined
+  let shownRows = ''
+  let rowsSource: { tracks: readonly Track[]; expandedTracks: ReadonlySet<string>; rows: TrackRows } | undefined
   let shownScrollWidth = -1
   let shownScrollLeft = 0
   let wasPlaying = false
@@ -186,6 +190,14 @@ export function createTimelineController(elements: TimelineElements, session: Se
   let selectedList: readonly string[] | undefined
   let selected = new Set<string>()
   let hoveredClipId: string | undefined
+
+  function rowsNow(): TrackRows {
+    const { project, expandedTracks } = store.getState()
+    if (rowsSource?.tracks !== project.tracks || rowsSource.expandedTracks !== expandedTracks) {
+      rowsSource = { tracks: project.tracks, expandedTracks, rows: trackRowsOf(project.tracks, expandedTracks) }
+    }
+    return rowsSource.rows
+  }
 
   function frameTicks(): number {
     return frameDuration(store.getState().project.canvas.frameRate)
@@ -202,7 +214,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
 
   function withScrollInRange(next: TimelineView, project: Project): TimelineView {
     const maxScrollX = maxScrollXOf(project, next.pixelsPerSecond)
-    const maxScrollY = Math.max(0, TRACKS_TOP + project.tracks.length * TRACK_HEIGHT - size.height)
+    const maxScrollY = Math.max(0, TRACKS_TOP + rowsNow().total - size.height)
     return {
       pixelsPerSecond: next.pixelsPerSecond,
       scrollX: Math.min(Math.max(0, next.scrollX), maxScrollX),
@@ -233,10 +245,13 @@ export function createTimelineController(elements: TimelineElements, session: Se
         shown: state.scope,
         project: state.project,
         mediaStates: state.mediaStates,
+        documents: state.documents,
+        openChain: state.openChain,
         preparation: session.preparation(),
         mediaNames,
         selection: selected,
         selectedZoom: state.selectedZoom,
+        rows: rowsNow(),
         view,
         size,
         colors,
@@ -248,6 +263,9 @@ export function createTimelineController(elements: TimelineElements, session: Se
       showScroll(state.project)
       // Read by the UI tests.
       host.dataset.view = JSON.stringify(view)
+      const rowsText = JSON.stringify(rowsNow().heights)
+      if (rowsText !== shownRows) host.dataset.rows = rowsText
+      shownRows = rowsText
       isOverlayStale = true
     }
     if (isOverlayStale) {
@@ -281,7 +299,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   }
 
   function unlockedClipAt(point: Point): ClipHit | undefined {
-    const hit = hitClip(store.getState().project.tracks, inOrder, view, point.x, point.y)
+    const hit = hitClip(store.getState().project.tracks, rowsNow(), inOrder, view, point.x, point.y)
     if (hit === undefined || hit.track.locked) return undefined
     return hit
   }
@@ -291,7 +309,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
     if (item.kind === 'media' || item.kind === 'annotation') return undefined
     const { project, selection } = store.getState()
     const point = pointIn(detail)
-    const trackCount = project.tracks.length
+    const rows = rowsNow()
     if (item.kind === 'effect') {
       const hit = unlockedClipAt(point)
       if (hit === undefined || !takesEffect(hit.clip, item.effect)) return undefined
@@ -299,27 +317,32 @@ export function createTimelineController(elements: TimelineElements, session: Se
       const shown = {
         left: timeToX(hit.clip.start, view),
         right: timeToX(endOf(hit.clip), view),
-        top: trackTop(hit.trackIndex, trackCount, view),
+        top: trackTop(hit.trackIndex, rows, view),
       }
       return { kind: 'effect', clipIds, effect: item.effect, shown }
     }
 
-    const trackIndex = trackIndexAt(point.y, trackCount, view)
+    const trackIndex = trackIndexAt(point.y, rows, view)
     const target = point.y < TRACKS_TOP ? undefined : transitionTargetAt(project, trackIndex, xToTime(point.x, view))
     if (target === undefined) return undefined
     const after = setTransition(project, target, { type: item.transition, duration: DEFAULT_TRANSITION }, frameTicks())
     const located = locateClip(after, target.clipId)
     if (after === project || located === undefined) return undefined
-    const rowTop = trackTop(located.trackIndex, trackCount, view)
+    const rowTop = trackTop(located.trackIndex, rows, view)
     const band = bandsOf(located.track, located.clip, rowTop).find((candidate) => candidate.edge === target.edge)
     if (band === undefined) return undefined
     return { kind: 'transition', target, type: item.transition, shown: { left: band.left, right: band.right, top: rowTop } }
   }
 
+  function isPlacedInsideItself(item: LibraryDragDetail['item']): boolean {
+    const { openDocument, mediaStates, documents } = store.getState()
+    return item.kind === 'media' && openDocument !== undefined && containsAnimation(item.mediaIds, openDocument, mediaStates, documents)
+  }
+
   function placementAt(detail: LibraryDragDetail, newClipId: (index: number) => string, newTrack: NewTrack): Placement | undefined {
     const { item } = detail
-    if (item.kind !== 'media' && item.kind !== 'annotation') return undefined
-    const { project, mediaStates, isSnapping: snaps } = store.getState()
+    if ((item.kind !== 'media' && item.kind !== 'annotation') || isPlacedInsideItself(item)) return undefined
+    const { project, wholeProject, mediaStates, documents, isSnapping: snaps } = store.getState()
     const point = pointIn(detail)
     let start = Math.max(0, wholeFrames(xToTime(point.x, view)))
     let guide: number | undefined
@@ -328,7 +351,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
       start += snap.delta
       guide = snap.guide
     }
-    const trackIndex = Math.max(0, trackIndexAt(Math.max(point.y, TRACKS_TOP), project.tracks.length, view))
+    const trackIndex = Math.max(0, trackIndexAt(Math.max(point.y, TRACKS_TOP), rowsNow(), view))
     const stillDuration = stillDurationTicks(store.getState().settings)
     if (item.kind === 'annotation') {
       const added = { clipId: newClipId(0), start, duration: stillDuration, trackIndex, newTrack }
@@ -339,7 +362,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
         place: (current) => addAnnotation(current, item.annotation, added),
       }
     }
-    const media = placeableMedia(project, mediaStates, item.mediaIds, newClipId)
+    const media = placeableMedia(wholeProject.media, mediaStates, documents, item.mediaIds, newClipId)
     if (media.length === 0) return undefined
     const drop = { media, start, trackIndex, newTrack, stillDuration }
     const clipIds = media.map((dropped) => dropped.clipId)
@@ -352,7 +375,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
     const firstId = placement?.clipIds[0]
     const lastId = placement?.clipIds.at(-1)
     if (placement === undefined || firstId === undefined || lastId === undefined) return undefined
-    const { project } = store.getState()
+    const { project, expandedTracks } = store.getState()
     const after = placement.place(project)
     const first = locateClip(after, firstId)
     const last = locateClip(after, lastId)
@@ -361,7 +384,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
       start: first.clip.start,
       end: endOf(last.clip),
       trackIndex: first.trackIndex,
-      top: trackTop(first.trackIndex, after.tracks.length, view),
+      top: trackTop(first.trackIndex, trackRowsOf(after.tracks, expandedTracks), view),
       isNewTrack: after.tracks.length > project.tracks.length,
       guide: placement.guide,
     }
@@ -374,7 +397,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   function fadeLength(fade: Fade, clipId: string): number {
     const clip = locateClip(store.getState().project, clipId)?.clip
     if (clip === undefined) return 0
-    if (fade === 'fadeIn' || fade === 'fadeOut') return clip.type === 'audio' ? 0 : (clip[fade] ?? 0)
+    if (fade === 'fadeIn' || fade === 'fadeOut') return isVisual(clip) ? (clip[fade] ?? 0) : 0
     return hasVolume(clip) ? (clip[fade] ?? 0) : 0
   }
 
@@ -392,12 +415,12 @@ export function createTimelineController(elements: TimelineElements, session: Se
     if (isOtherGesture) return none
     const clipId = fading?.clipId ?? changing?.target.clipId ?? hoveredClipId
     if (clipId === undefined) return none
-    const { project, mediaStates } = store.getState()
+    const { project, mediaStates, documents } = store.getState()
     const shown = locateClip(project, clipId)
     if (shown === undefined || shown.track.locked) return none
 
-    const rowTop = trackTop(shown.trackIndex, project.tracks.length, view)
-    const handles = fadeHandles(shown.clip, makesSound(shown.clip, mediaStates), view, rowTop)
+    const rowTop = trackTop(shown.trackIndex, rowsNow(), view)
+    const handles = fadeHandles(shown.clip, makesSound(shown.clip, mediaStates, documents), view, rowTop)
     const grips = bandsOf(shown.track, shown.clip, rowTop)
     if (changing !== undefined) {
       const heldGrip = grips.find((grip) => grip.edge === changing.target.edge)
@@ -410,31 +433,31 @@ export function createTimelineController(elements: TimelineElements, session: Se
   }
 
   function heldVolumePoint(dragging: Extract<Gesture, { kind: 'volume-point' }>): Pick<ShownHandles, 'heldPoint' | 'heldLabel'> {
-    const { project, mediaStates } = store.getState()
+    const { project, mediaStates, documents } = store.getState()
     const shown = locateClip(project, dragging.clipId)
     const volume = shown?.clip.keyframes?.volume?.[dragging.index]?.value
     if (shown === undefined || volume === undefined) return { heldPoint: undefined, heldLabel: '' }
-    const rowTop = trackTop(shown.trackIndex, project.tracks.length, view)
-    const heldPoint = volumePoints(shown.clip, makesSound(shown.clip, mediaStates), view, rowTop)[dragging.index]
+    const rowTop = trackTop(shown.trackIndex, rowsNow(), view)
+    const heldPoint = volumePoints(shown.clip, makesSound(shown.clip, mediaStates, documents), view, rowTop)[dragging.index]
     return { heldPoint, heldLabel: `${Math.round(volume * PERCENT)}%` }
   }
 
   function heldVolumeLine(dragging: Extract<Gesture, { kind: 'volume-line' }>): Pick<ShownHandles, 'heldPoint' | 'heldLabel'> {
-    const { project, mediaStates } = store.getState()
+    const { project, mediaStates, documents } = store.getState()
     const shown = locateClip(project, dragging.clipId)
     if (shown === undefined) return { heldPoint: undefined, heldLabel: '' }
-    const rowTop = trackTop(shown.trackIndex, project.tracks.length, view)
-    const spot = volumeLineAt(shown.clip, makesSound(shown.clip, mediaStates), view, rowTop, dragging.from.x)
+    const rowTop = trackTop(shown.trackIndex, rowsNow(), view)
+    const spot = volumeLineAt(shown.clip, makesSound(shown.clip, mediaStates, documents), view, rowTop, dragging.from.x)
     if (spot === undefined) return { heldPoint: undefined, heldLabel: '' }
     const volume = volumeAtY(spot.band, spot.y)
     return { heldPoint: { index: -1, x: dragging.from.x, y: spot.y }, heldLabel: `${Math.round(volume * PERCENT)}%` }
   }
 
   function volumeLineOn(hit: ClipHit, point: Point): VolumeLineSpot | undefined {
-    const { project, mediaStates, selection } = store.getState()
+    const { mediaStates, documents, selection } = store.getState()
     if (!selection.includes(hit.clip.id)) return undefined
-    const rowTop = trackTop(hit.trackIndex, project.tracks.length, view)
-    return volumeLineNear(hit.clip, makesSound(hit.clip, mediaStates), view, rowTop, point)
+    const rowTop = trackTop(hit.trackIndex, rowsNow(), view)
+    return volumeLineNear(hit.clip, makesSound(hit.clip, mediaStates, documents), view, rowTop, point)
   }
 
   function startVolumeLine(hit: ClipHit, spot: VolumeLineSpot, at: Point): Gesture {
@@ -459,17 +482,17 @@ export function createTimelineController(elements: TimelineElements, session: Se
   }
 
   function volumePointOn(hit: ClipHit, point: Point): VolumePoint | undefined {
-    const { project, mediaStates } = store.getState()
-    const rowTop = trackTop(hit.trackIndex, project.tracks.length, view)
-    return volumePointAt(volumePoints(hit.clip, makesSound(hit.clip, mediaStates), view, rowTop), point.x, point.y)
+    const { mediaStates, documents } = store.getState()
+    const rowTop = trackTop(hit.trackIndex, rowsNow(), view)
+    return volumePointAt(volumePoints(hit.clip, makesSound(hit.clip, mediaStates, documents), view, rowTop), point.x, point.y)
   }
 
   function startVolumePoint(hit: ClipHit, point: VolumePoint, at: Point): Gesture | undefined {
-    const { project, selection, mediaStates } = store.getState()
+    const { project, selection, mediaStates, documents } = store.getState()
     const { clip } = hit
     const keyframe = clip.keyframes?.volume?.[point.index]
-    const rowTop = trackTop(hit.trackIndex, project.tracks.length, view)
-    const band = clipBands(clip, makesSound(clip, mediaStates), rowTop).sound
+    const rowTop = trackTop(hit.trackIndex, rowsNow(), view)
+    const band = clipBands(clip, makesSound(clip, mediaStates, documents), rowTop).sound
     if (keyframe === undefined || band === undefined) return undefined
     if (!selection.includes(clip.id)) store.select([clip.id])
     const pointTime = clip.start + keyframe.time
@@ -494,28 +517,28 @@ export function createTimelineController(elements: TimelineElements, session: Se
   }
 
   function bandsOf(track: Track, clip: Clip, rowTop: number): TransitionBand[] {
-    if (clip.type === 'audio' || (clip.transitionIn === undefined && clip.transitionOut === undefined)) return []
+    if (!isVisual(clip) || (clip.transitionIn === undefined && clip.transitionOut === undefined)) return []
     const ordered = inOrder(track)
     const index = ordered.indexOf(clip)
     return transitionBands(clip, ordered[index - 1], ordered[index + 1], view, rowTop)
   }
 
   function transitionGripOn(hit: ClipHit, point: Point): TransitionBand | undefined {
-    const rowTop = trackTop(hit.trackIndex, store.getState().project.tracks.length, view)
+    const rowTop = trackTop(hit.trackIndex, rowsNow(), view)
     return transitionBandAt(bandsOf(hit.track, hit.clip, rowTop), point.x, point.y)
   }
 
   function keyframeDiamondOn(hit: ClipHit, point: Point): number | undefined {
-    const { project, mediaStates } = store.getState()
-    const rowTop = trackTop(hit.trackIndex, project.tracks.length, view)
-    const picture = clipBands(hit.clip, makesSound(hit.clip, mediaStates), rowTop).picture
+    const { mediaStates, documents } = store.getState()
+    const rowTop = trackTop(hit.trackIndex, rowsNow(), view)
+    const picture = clipBands(hit.clip, makesSound(hit.clip, mediaStates, documents), rowTop).picture
     return keyframeDiamondAt(keyframeDiamonds(hit.clip, picture, view), point.x, point.y)?.time
   }
 
   function fadeHandleOn(hit: ClipHit, point: Point): FadeHandle | undefined {
-    const { project, mediaStates } = store.getState()
-    const rowTop = trackTop(hit.trackIndex, project.tracks.length, view)
-    return fadeHandleAt(fadeHandles(hit.clip, makesSound(hit.clip, mediaStates), view, rowTop), point.x, point.y)
+    const { mediaStates, documents } = store.getState()
+    const rowTop = trackTop(hit.trackIndex, rowsNow(), view)
+    return fadeHandleAt(fadeHandles(hit.clip, makesSound(hit.clip, mediaStates, documents), view, rowTop), point.x, point.y)
   }
 
   function invalidate(layer: 'content' | 'overlay'): void {
@@ -622,13 +645,13 @@ export function createTimelineController(elements: TimelineElements, session: Se
       grabbedRow: locateClip(project, clip.id)?.trackIndex ?? press.hit.trackIndex,
       edges,
       targets: timelineTargets(project, moving, playhead),
-      trackCount: project.tracks.length,
+      rows: rowsNow(),
       newTrack: { id: crypto.randomUUID(), name: nextTrackName(project) },
     }
   }
 
   function startFade(hit: ClipHit, handle: FadeHandle, at: Point): Gesture {
-    const { project, selection, mediaStates } = store.getState()
+    const { project, selection, mediaStates, documents } = store.getState()
     const { clip } = hit
     const isSelected = selection.includes(clip.id)
     if (!isSelected) store.select([clip.id])
@@ -638,7 +661,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
     for (const track of project.tracks) {
       for (const other of track.clips) {
         if (!chosen.has(other.id)) continue
-        if (isVolumeFade && !makesSound(other, mediaStates)) continue
+        if (isVolumeFade && !makesSound(other, mediaStates, documents)) continue
         clipIds.push(other.id)
       }
     }
@@ -662,7 +685,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   function startTransition(hit: ClipHit, grip: TransitionBand, at: Point): Gesture | undefined {
     const { project, selection } = store.getState()
     const { clip } = hit
-    if (clip.type === 'audio') return undefined
+    if (!isVisual(clip)) return undefined
     const transition = grip.edge === 'in' ? clip.transitionIn : clip.transitionOut
     if (transition === undefined) return undefined
     if (!selection.includes(clip.id)) store.select([clip.id])
@@ -735,7 +758,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
       deltaTime = snap.delta
       guide = snap.guide
     }
-    const row = Math.min(move.trackCount, Math.max(0, trackIndexAt(point.y, move.trackCount, view)))
+    const row = Math.min(move.rows.heights.length, Math.max(0, trackIndexAt(point.y, move.rows, view)))
     const trackShift = row - move.grabbedRow
     const { clipIds, newTrack } = move
     store.update((project) => moveClips(project, { clipIds, deltaTime, trackShift, isRipple: event.shiftKey, newTrack }))
@@ -756,7 +779,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
       right: Math.max(drag.from.x, point.x),
       bottom: Math.max(drag.from.y, point.y),
     }
-    const touched = clipsInMarquee(store.getState().project.tracks, inOrder, view, marquee)
+    const touched = clipsInMarquee(store.getState().project.tracks, rowsNow(), inOrder, view, marquee)
     store.select([...new Set([...drag.kept, ...touched])])
   }
 
@@ -980,7 +1003,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
       store.apply('Add Volume Keyframe', (project) => setKeyframesAt(project, [hit.clip.id], 'volume', time, true))
       return
     }
-    if (hit.clip.type !== 'group') return
+    if (!isContainer(hit.clip)) return
     store.select([hit.clip.id])
     actions.openGroup()
   }
@@ -1011,7 +1034,10 @@ export function createTimelineController(elements: TimelineElements, session: Se
     }
     const newTrack = { id: crypto.randomUUID(), name: nextTrackName(store.getState().project) }
     const placement = placementAt(event.detail, () => crypto.randomUUID(), newTrack)
-    if (placement === undefined) return
+    if (placement === undefined) {
+      if (isPlacedInsideItself(event.detail.item)) store.notify(SELF_CONTAINING_NOTICE)
+      return
+    }
     store.apply(placement.label, placement.place)
     store.select(placement.clipIds)
   }

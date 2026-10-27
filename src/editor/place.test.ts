@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { MEDIA_STATES, SAMPLE_MEDIA, SECOND, STICKER_MEDIA, VIDEO_INFO, VIDEO_MEDIA, audioClip, clipIds, clipOf, groupClip, projectOf, reopened, textClip, track, videoClip } from '../../test/fixtures.js'
-import type { MediaInfo } from '../shared/mediaProtocol.js'
+import { MEDIA_STATES, SAMPLE_MEDIA, SECOND, STICKER_MEDIA, VIDEO_INFO, VIDEO_MEDIA, animationClip, audioClip, clipIds, clipOf, groupClip, projectOf, reopened, textClip, track, videoClip } from '../../test/fixtures.js'
 import type { MediaRef } from '../shared/project.js'
-import { canvasForFirstClip, clipForMedia, dropMedia, mediaFileName, mediaUses, relinkedMedia, unlinkedMedia, withoutMedia, type MediaDrop } from './place.js'
+import { canvasForFirstClip, clipForMedia, containsAnimation, dropMedia, mediaFileName, mediaUses, relinkedMedia, unlinkedMedia, withoutMedia, type MediaDrop, type PlaceableInfo } from './place.js'
 
 const CANVAS = projectOf([]).canvas
 const NEW_TRACK = { id: 'new-track', name: 'Track' }
 const VIDEO_REF: MediaRef = { id: 'video', path: '/footage/video.mp4', relativePath: '' }
 
-function drop(overrides: Partial<MediaDrop> & { info?: MediaInfo }): MediaDrop {
+function drop(overrides: Partial<MediaDrop> & { info?: PlaceableInfo }): MediaDrop {
   const { info = VIDEO_MEDIA, ...rest } = overrides
   return { media: [{ reference: VIDEO_REF, info, clipId: 'dropped' }], start: 0, trackIndex: 0, newTrack: NEW_TRACK, stillDuration: 5 * SECOND, ...rest }
 }
@@ -30,16 +29,16 @@ describe('clipForMedia', () => {
   })
 
   it('cuts the duration down to whole frames', () => {
-    const info: MediaInfo = { ...VIDEO_MEDIA, duration: 10 * SECOND + 12_345 }
+    const info: PlaceableInfo = { ...VIDEO_MEDIA, duration: 10 * SECOND + 12_345 }
     expect(clipForMedia('video', info, CANVAS, 'c', 0, 5 * SECOND).duration).toBe(10 * SECOND)
     expect(clipForMedia('video', { ...VIDEO_MEDIA, duration: 5 }, CANVAS, 'c', 0, 5 * SECOND).duration).toBe(SECOND / 30)
   })
 
   it('scales a picture larger than the canvas down to fit, and never enlarges a small one', () => {
-    const large: MediaInfo = { kind: 'image', width: 3840, height: 1080, hasAlpha: false }
+    const large: PlaceableInfo = { kind: 'image', width: 3840, height: 1080, hasAlpha: false }
     expect(clipForMedia('logo', large, CANVAS, 'c', 0, 5 * SECOND)).toMatchObject({ type: 'image', duration: 5 * SECOND, transform: { scaleX: 0.5, scaleY: 0.5 } })
     const small = MEDIA_STATES.logo
-    if (small === undefined || 'error' in small) throw new Error('fixture')
+    if (small === undefined || 'error' in small || small.info.kind === 'animation') throw new Error('fixture')
     expect(clipForMedia('logo', small.info, CANVAS, 'c', 0, 5 * SECOND)).toMatchObject({ transform: { scaleX: 1, scaleY: 1 } })
   })
 
@@ -55,14 +54,14 @@ describe('clipForMedia', () => {
 
   it('makes an audio clip without a picture', () => {
     const music = MEDIA_STATES.music
-    if (music === undefined || 'error' in music) throw new Error('fixture')
+    if (music === undefined || 'error' in music || music.info.kind === 'animation') throw new Error('fixture')
     expect(clipForMedia('music', music.info, CANVAS, 'c', 0, 5 * SECOND)).toEqual({ id: 'c', type: 'audio', mediaId: 'music', start: 0, duration: 60 * SECOND, sourceStart: 0, speedPercent: 100, volume: 1 })
   })
 })
 
 describe('canvasForFirstClip', () => {
   it('takes size and frame rate from a video', () => {
-    const info: MediaInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, width: 1280, height: 720, frameDuration: 960_000 } }
+    const info: PlaceableInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, width: 1280, height: 720, frameDuration: 960_000 } }
     expect(canvasForFirstClip(info, CANVAS)).toEqual({ width: 1280, height: 720, frameRate: { num: 25, den: 1 } })
   })
 
@@ -72,14 +71,14 @@ describe('canvasForFirstClip', () => {
     [1_001_000, { num: 24000, den: 1001 }],
     [1_600_000, { num: 24000, den: 1001 }],
   ])('maps a %i-tick source frame to the nearest project frame rate', (frameDuration, expected) => {
-    const info: MediaInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, frameDuration } }
+    const info: PlaceableInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, frameDuration } }
     expect(canvasForFirstClip(info, CANVAS).frameRate).toEqual(expected)
   })
 
   it('keeps the aspect ratio when the source is larger or smaller than a canvas can be', () => {
-    const huge: MediaInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, width: 7680, height: 4320 } }
+    const huge: PlaceableInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, width: 7680, height: 4320 } }
     expect(canvasForFirstClip(huge, CANVAS)).toMatchObject({ width: 3840, height: 2160 })
-    const tiny: MediaInfo = { kind: 'image', width: 64, height: 64, hasAlpha: false }
+    const tiny: PlaceableInfo = { kind: 'image', width: 64, height: 64, hasAlpha: false }
     expect(canvasForFirstClip(tiny, CANVAS)).toMatchObject({ width: 160, height: 160 })
   })
 
@@ -89,7 +88,7 @@ describe('canvasForFirstClip', () => {
 
   it('leaves the canvas alone for audio', () => {
     const music = MEDIA_STATES.music
-    if (music === undefined || 'error' in music) throw new Error('fixture')
+    if (music === undefined || 'error' in music || music.info.kind === 'animation') throw new Error('fixture')
     expect(canvasForFirstClip(music.info, CANVAS)).toBe(CANVAS)
   })
 })
@@ -98,7 +97,7 @@ describe('dropMedia', () => {
   const occupied = projectOf([track('t1', [videoClip('a', 0, 4 * SECOND)]), track('t2', [])])
 
   it('sets the canvas from the first clip and adds the media to the project', () => {
-    const info: MediaInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, width: 1280, height: 720 } }
+    const info: PlaceableInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, width: 1280, height: 720 } }
     const dropped = dropMedia(projectOf([], []), drop({ info }))
     expect(dropped.canvas).toMatchObject({ width: 1280, height: 720 })
     expect(dropped.media).toEqual([VIDEO_REF])
@@ -107,7 +106,7 @@ describe('dropMedia', () => {
   })
 
   it('keeps the canvas once the project has clips', () => {
-    const info: MediaInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, width: 640, height: 360 } }
+    const info: PlaceableInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, width: 640, height: 360 } }
     expect(dropMedia(occupied, drop({ info, start: 4 * SECOND })).canvas).toBe(occupied.canvas)
   })
 
@@ -144,7 +143,7 @@ describe('dropMedia', () => {
 
   describe('several files at once', () => {
     const SOUND_REF: MediaRef = { id: 'sound', path: '/footage/sound.wav', relativePath: '' }
-    const SOUND_INFO: MediaInfo = { kind: 'audio', duration: 3 * SECOND, containerStart: 0, audio: { channels: 2, sampleRate: 48_000, codec: 'aac', seeksExactly: true } }
+    const SOUND_INFO: PlaceableInfo = { kind: 'audio', duration: 3 * SECOND, containerStart: 0, audio: { channels: 2, sampleRate: 48_000, codec: 'aac', seeksExactly: true } }
     const sound = { reference: SOUND_REF, info: SOUND_INFO, clipId: 'second' }
     const video = { reference: VIDEO_REF, info: VIDEO_MEDIA, clipId: 'first' }
 
@@ -163,7 +162,7 @@ describe('dropMedia', () => {
     })
 
     it('takes the canvas of an empty project from the first picture, not from sound', () => {
-      const info: MediaInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, width: 1280, height: 720 } }
+      const info: PlaceableInfo = { ...VIDEO_MEDIA, video: { ...VIDEO_INFO, width: 1280, height: 720 } }
       const dropped = dropMedia(projectOf([], []), { media: [sound, { ...video, info }], start: 0, trackIndex: 0, newTrack: NEW_TRACK, stillDuration: 5 * SECOND })
       expect(dropped.canvas).toMatchObject({ width: 1280, height: 720 })
     })
@@ -220,5 +219,27 @@ describe('withoutMedia', () => {
     expect(kept.type === 'group' ? kept.tracks.map((member) => member.clips.map((clip) => clip.id)) : []).toEqual([[], ['words']])
     expect(withoutMedia(project, ['unknown'])).toBe(project)
     reopened(removed)
+  })
+})
+
+describe('placing animations', () => {
+  const ARTBOARD = { width: 3840, height: 2160, frameRate: { num: 12, den: 1 } }
+
+  it('fits the artboard to the canvas and runs as long as the animation', () => {
+    const clip = clipForMedia('wave', { kind: 'animation', artboard: ARTBOARD, length: 3 * SECOND }, CANVAS, 'c', 0, 5 * SECOND)
+    expect(clip).toMatchObject({ type: 'animation', mediaId: 'wave', duration: 3 * SECOND, sourceStart: 0, speedPercent: 100, volume: 1, transform: { scaleX: 0.5, scaleY: 0.5 } })
+  })
+
+  it('gives an empty animation the still duration', () => {
+    expect(clipForMedia('wave', { kind: 'animation', artboard: ARTBOARD, length: 0 }, CANVAS, 'c', 0, 5 * SECOND).duration).toBe(5 * SECOND)
+  })
+
+  it('knows when a drop would put an animation inside itself, however deep', () => {
+    const states = { ...MEDIA_STATES, body: { info: { kind: 'animation' as const, path: '/body.pbanim' } }, arm: { info: { kind: 'animation' as const, path: '/arm.pbanim' } } }
+    const documents = { '/body.pbanim': projectOf([track('t1', [animationClip('a', 0, SECOND, { mediaId: 'arm' })])]), '/arm.pbanim': projectOf([]) }
+    expect(containsAnimation(['body'], '/body.pbanim', states, documents)).toBe(true)
+    expect(containsAnimation(['body'], '/arm.pbanim', states, documents)).toBe(true)
+    expect(containsAnimation(['arm'], '/body.pbanim', states, documents)).toBe(false)
+    expect(containsAnimation(['video', 'gone'], '/body.pbanim', states, documents)).toBe(false)
   })
 })

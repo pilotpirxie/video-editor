@@ -1,6 +1,6 @@
-import type { CameraKeyframe, Clip, Track } from '../shared/project.js'
+import { isVisual, type CameraKeyframe, type Clip, type DrawingShape, type Track } from '../shared/project.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
-import { endOf, hasVolume, isVisual } from './clips.js'
+import { endOf, hasVolume } from './clips.js'
 import type { Fade } from './properties.js'
 import { transitionSpans, type TransitionEdge } from './transitions.js'
 
@@ -8,6 +8,7 @@ export const RULER_HEIGHT = 24
 export const CAMERA_LANE_HEIGHT = 22
 export const TRACKS_TOP = RULER_HEIGHT + CAMERA_LANE_HEIGHT
 export const TRACK_HEIGHT = 56
+export const SHAPE_ROW_HEIGHT = 30
 export const CLIP_INSET = 2
 
 const PICTURE_SHARE = 0.6
@@ -54,13 +55,68 @@ export function xToTime(x: number, view: TimelineView): number {
   return ((x + view.scrollX) / view.pixelsPerSecond) * TICKS_PER_SECOND
 }
 
-export function trackTop(trackIndex: number, trackCount: number, view: TimelineView): number {
-  return TRACKS_TOP + (trackCount - 1 - trackIndex) * TRACK_HEIGHT - view.scrollY
+// Indexed by track, with tops measured down from the first row; the top track comes first.
+export type TrackRows = {
+  heights: readonly number[]
+  tops: readonly number[]
+  total: number
 }
 
-export function trackIndexAt(y: number, trackCount: number, view: TimelineView): number {
-  const row = Math.floor((y - TRACKS_TOP + view.scrollY) / TRACK_HEIGHT)
-  return trackCount - 1 - row
+export function trackRows(heights: readonly number[]): TrackRows {
+  const tops: number[] = []
+  let total = 0
+  for (let trackIndex = heights.length - 1; trackIndex >= 0; trackIndex--) {
+    tops[trackIndex] = total
+    total += heights[trackIndex] ?? TRACK_HEIGHT
+  }
+  return { heights, tops, total }
+}
+
+// Places past either end count as collapsed tracks, so a drag can aim at a track that does not exist yet.
+function offsetOfTrack(trackIndex: number, rows: TrackRows): number {
+  const count = rows.heights.length
+  if (trackIndex >= count) return -(trackIndex - count + 1) * TRACK_HEIGHT
+  if (trackIndex < 0) return rows.total - (trackIndex + 1) * TRACK_HEIGHT
+  return rows.tops[trackIndex] ?? 0
+}
+
+function countShapes(shapes: readonly DrawingShape[]): number {
+  let count = 0
+  for (const shape of shapes) count += 1 + countShapes(shape.children ?? [])
+  return count
+}
+
+// An expanded track is as tall as its drawing with the most shapes, so the tracks below stay put while the playhead moves.
+export function trackRowsOf(tracks: readonly Track[], expandedTrackIds: ReadonlySet<string>): TrackRows {
+  const heights: number[] = []
+  for (const track of tracks) {
+    let mostShapes: number | undefined
+    if (expandedTrackIds.has(track.id)) {
+      for (const clip of track.clips) {
+        if (clip.type === 'drawing') mostShapes = Math.max(mostShapes ?? 1, countShapes(clip.shapes))
+      }
+    }
+    heights.push(mostShapes === undefined ? TRACK_HEIGHT : TRACK_HEIGHT + mostShapes * SHAPE_ROW_HEIGHT)
+  }
+  return trackRows(heights)
+}
+
+export function trackTop(trackIndex: number, rows: TrackRows, view: TimelineView): number {
+  return TRACKS_TOP + offsetOfTrack(trackIndex, rows) - view.scrollY
+}
+
+export function trackIndexAtOffset(offset: number, rows: TrackRows): number {
+  const count = rows.heights.length
+  if (offset < 0) return count - 1 - Math.floor(offset / TRACK_HEIGHT)
+  if (offset >= rows.total) return -1 - Math.floor((offset - rows.total) / TRACK_HEIGHT)
+  for (let trackIndex = count - 1; trackIndex > 0; trackIndex--) {
+    if (offset < (rows.tops[trackIndex] ?? 0) + (rows.heights[trackIndex] ?? TRACK_HEIGHT)) return trackIndex
+  }
+  return 0
+}
+
+export function trackIndexAt(y: number, rows: TrackRows, view: TimelineView): number {
+  return trackIndexAtOffset(y - TRACKS_TOP + view.scrollY, rows)
 }
 
 export function fitZoom(limits: ZoomLimits): number {
@@ -139,10 +195,10 @@ export type ClipHit = {
   edge: 'start' | 'end' | undefined
 }
 
-export function hitClip(tracks: readonly Track[], inOrder: ClipIndex, view: TimelineView, x: number, y: number): ClipHit | undefined {
-  const trackIndex = trackIndexAt(y, tracks.length, view)
+export function hitClip(tracks: readonly Track[], rows: TrackRows, inOrder: ClipIndex, view: TimelineView, x: number, y: number): ClipHit | undefined {
+  const trackIndex = trackIndexAt(y, rows, view)
   const track = tracks[trackIndex]
-  if (track === undefined || y < TRACKS_TOP) return undefined
+  if (track === undefined || y < TRACKS_TOP || y >= trackTop(trackIndex, rows, view) + TRACK_HEIGHT) return undefined
   const time = xToTime(x, view)
   const clips = inOrder(track)
   const range = visibleRange(clips, time, time + 1)
@@ -166,12 +222,12 @@ export type Marquee = {
   bottom: number
 }
 
-export function clipsInMarquee(tracks: readonly Track[], inOrder: ClipIndex, view: TimelineView, marquee: Marquee): string[] {
+export function clipsInMarquee(tracks: readonly Track[], rows: TrackRows, inOrder: ClipIndex, view: TimelineView, marquee: Marquee): string[] {
   const from = xToTime(marquee.left, view)
   const to = xToTime(marquee.right, view)
   const ids: string[] = []
   for (const [trackIndex, track] of tracks.entries()) {
-    const top = trackTop(trackIndex, tracks.length, view)
+    const top = trackTop(trackIndex, rows, view)
     if (track.locked || top + TRACK_HEIGHT <= marquee.top || top >= marquee.bottom) continue
     const clips = inOrder(track)
     const range = visibleRange(clips, from, Math.max(to, from + 1))
@@ -227,7 +283,7 @@ export function fadeHandles(clip: Clip, makesSound: boolean, view: TimelineView,
 
   const bands = clipBands(clip, makesSound, rowTop)
   const handles: FadeHandle[] = []
-  if (clip.type !== 'audio' && bands.picture !== undefined) {
+  if (isVisual(clip) && bands.picture !== undefined) {
     const y = bands.picture.top + FADE_HANDLE_INSET
     handles.push({ fade: 'fadeIn', x: fadeInX(clip.fadeIn), y })
     handles.push({ fade: 'fadeOut', x: fadeOutX(clip.fadeOut), y })

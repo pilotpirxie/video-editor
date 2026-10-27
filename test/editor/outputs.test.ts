@@ -197,6 +197,7 @@ const PROJECTS = [
   '23-weird',
   '24-cache-pressure',
   '25-no-video',
+  '26-animation',
 ]
 
 const PAUSED_ONLY = ['10-alpha']

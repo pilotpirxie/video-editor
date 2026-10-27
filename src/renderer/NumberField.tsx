@@ -15,6 +15,7 @@ type NumberFieldProps = {
   testId: string
   isDisabled?: boolean
   keyframes?: ReactElement
+  track?: ReactElement
   onBegin(): void
   onChange(value: number): void
   onCommit(): void
@@ -188,10 +189,11 @@ export function NumberField(props: NumberFieldProps): ReactElement {
       >
         {label}
       </label>
-      {props.keyframes === undefined ? (
+      {props.keyframes === undefined && props.track === undefined ? (
         box
       ) : (
-        <div className="field-row">
+        <div className={props.track === undefined ? 'field-row' : 'field-row with-track'}>
+          {props.track}
           {box}
           {props.keyframes}
         </div>

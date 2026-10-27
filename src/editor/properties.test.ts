@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ALL_MEDIA, FRAME, MEDIA_STATES, SECOND, audioClip, clipOf, groupClip, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import type { Clip, Project } from '../shared/project.js'
-import { setAnimation } from './animations.js'
+import { setAnimation } from './presets.js'
 import { setTransition } from './transitions.js'
 import {
   changeKeyframe,

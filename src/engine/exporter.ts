@@ -37,7 +37,7 @@ export type ProgressListener = (done: number, total: number) => void
 
 export type JobSummary = Record<string, unknown>
 
-type Quality = 'stream' | 'full'
+type Quality = 'stream' | 'full' | 'preview'
 
 type Stage = 'fetch' | 'render' | 'readback' | 'mix' | 'write'
 
@@ -60,10 +60,10 @@ function startStageClock(): StageClock {
 }
 
 async function drawAt(context: RenderContext, time: number, output: Size, quality: Quality, clock?: StageClock): Promise<void> {
-  const { project, media: states } = context.loaded
+  const { project, media: states, documents } = context.loaded
   const outputScale = fitCanvas(project.canvas, output).scale
   const view = viewAt(project.camera, time, project.canvas)
-  const layers = resolveFrame(project, states, time, outputScale)
+  const layers = resolveFrame(project, states, documents, time, outputScale)
   const items = await context.provider.itemsFor(layers, quality, outputScale * view.largestScale)
   clock?.lap('fetch')
   context.compositor.render(project.canvas, output, view, items)
@@ -100,7 +100,7 @@ function targetOf(job: ExportJob, format: ExportFormat, output: Size, frameRate:
 }
 
 async function exportPictures(context: RenderContext, job: ExportJob, format: ExportFormat, onProgress: ProgressListener): Promise<JobSummary> {
-  const { project, media: states } = context.loaded
+  const { project, media: states, documents } = context.loaded
   const output = exportSize(job.preset, project.canvas)
   const frameRate = job.frameRate ?? (format === 'gif' ? DEFAULT_GIF_FRAME_RATE : project.canvas.frameRate)
   const frameTicks = frameDuration(frameRate)
@@ -124,7 +124,7 @@ async function exportPictures(context: RenderContext, job: ExportJob, format: Ex
       async function send(frame: number, frameTime: number, pixels: () => Promise<ArrayBuffer>): Promise<void> {
         const firstSample = Math.ceil(frameTime / TICKS_PER_SAMPLE)
         const endSample = Math.ceil((frameTime + frameTicks) / TICKS_PER_SAMPLE)
-        const audio = hasAudio ? await mix(project, states, firstSample, endSample - firstSample, context.readAudio) : NO_SOUND
+        const audio = hasAudio ? await mix(project, states, documents, firstSample, endSample - firstSample, context.readAudio) : NO_SOUND
         clock.lap('mix')
         const read = await pixels()
         clock.lap('readback')
@@ -142,7 +142,7 @@ async function exportPictures(context: RenderContext, job: ExportJob, format: Ex
       for (let frame = 0; frame < frameCount; frame++) {
         time = range.start + frame * frameTicks
         await drawAt(context, time, output, 'stream', clock)
-        if (frame + 1 < frameCount) context.provider.prefetchStreams(resolveFrame(project, states, time + frameTicks, outputScale))
+        if (frame + 1 < frameCount) context.provider.prefetchStreams(resolveFrame(project, states, documents, time + frameTicks, outputScale))
         const pixels = context.compositor.startReadback(layout)
         if (drawn !== undefined) await send(drawn.frame, drawn.time, drawn.pixels)
         drawn = { frame, time, pixels }
@@ -159,7 +159,7 @@ async function exportPictures(context: RenderContext, job: ExportJob, format: Ex
 }
 
 async function exportSound(context: RenderContext, job: ExportJob, format: ExportFormat, onProgress: ProgressListener): Promise<JobSummary> {
-  const { project, media: states } = context.loaded
+  const { project, media: states, documents } = context.loaded
   const range = job.range ?? { start: 0, end: projectDuration(project) }
   const firstSample = Math.ceil(range.start / TICKS_PER_SAMPLE)
   const endSample = Math.ceil(range.end / TICKS_PER_SAMPLE)
@@ -174,7 +174,7 @@ async function exportSound(context: RenderContext, job: ExportJob, format: Expor
       for (let chunk = 0; chunk < chunkCount; chunk++) {
         const chunkFirst = firstSample + chunk * SOUND_CHUNK_SAMPLES
         time = chunkFirst * TICKS_PER_SAMPLE
-        const audio = await mix(project, states, chunkFirst, Math.min(SOUND_CHUNK_SAMPLES, endSample - chunkFirst), context.readAudio)
+        const audio = await mix(project, states, documents, chunkFirst, Math.min(SOUND_CHUNK_SAMPLES, endSample - chunkFirst), context.readAudio)
         await context.media.exportWrite(jobId, NO_PICTURE, audio)
         onProgress(chunk + 1, chunkCount)
       }
@@ -206,6 +206,11 @@ export async function exportMedia(context: RenderContext, job: ExportJob, onProg
   if (format === 'png') return exportStill(context, job)
   if (!hasMovingPicture(format)) return exportSound(context, job, format, onProgress)
   return exportPictures(context, job, format, onProgress)
+}
+
+export async function renderStill(context: RenderContext, time: number, output: Size): Promise<ArrayBuffer> {
+  await drawAt(context, time, output, 'preview')
+  return context.compositor.readPixels().slice(0)
 }
 
 export async function renderFrames(context: RenderContext, job: FramesJob): Promise<JobSummary> {

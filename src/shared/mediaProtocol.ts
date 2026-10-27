@@ -30,13 +30,32 @@ export type MediaInfo =
   | { kind: 'video'; duration: number; containerStart: number; video: VideoInfo; audio?: AudioInfo; isAnimatedImage?: true }
   | { kind: 'audio'; duration: number; containerStart: number; audio: AudioInfo }
   | { kind: 'image'; width: number; height: number; hasAlpha: boolean }
+  | { kind: 'animation'; path: string }
+
+export type TimedMediaInfo = Extract<MediaInfo, { kind: 'video' | 'audio' }>
+
+export function isTimed(info: MediaInfo): info is TimedMediaInfo {
+  return info.kind === 'video' || info.kind === 'audio'
+}
 
 export type MediaState = { info: MediaInfo; createdAt?: number } | { error: string; isMissing: boolean }
+
+// Animation files by the absolute path they were found at.
+export type Documents = Readonly<Record<string, Project>>
 
 export type LoadedProject = {
   project: Project
   media: Record<string, MediaState>
+  documents: Documents
 }
+
+export type LoadedAnimations = {
+  documents: Documents
+  media: Record<string, MediaState>
+}
+
+// Real path of an animation → the file to read it from instead, such as its recovery copy.
+export type AnimationOverrides = Readonly<Record<string, string>>
 
 export type AddedMedia = {
   id: string
@@ -44,7 +63,7 @@ export type AddedMedia = {
   createdAt: number
 }
 
-export type MediaUse = 'video' | 'image' | 'sound'
+export type MediaUse = 'video' | 'image' | 'sound' | 'animation'
 
 export type UnlinkedMedia = {
   reference: MediaRef
@@ -117,7 +136,9 @@ export type TimeRange = {
 }
 
 export type MediaClient = {
-  loadProject(path: string, forPreview: boolean): Promise<LoadedProject>
+  loadProject(path: string, forPreview: boolean, animationOverrides?: AnimationOverrides): Promise<LoadedProject>
+  loadAnimations(paths: readonly string[]): Promise<LoadedAnimations>
+  reopenAnimations(documents: Documents): Promise<Record<string, MediaState>>
   openMedia(media: readonly MediaRef[], projectPath: string | undefined): Promise<Record<string, MediaState>>
   whenPrepared(): Promise<void>
   readImage(mediaId: string): Promise<ArrayBuffer>
@@ -138,7 +159,7 @@ export type MediaClient = {
   preparation(): Promise<Record<string, Preparation>>
   want(wanted: Wanted): Promise<void>
   waveform(mediaId: string): Promise<WaveformLevel[] | undefined>
-  saveProject(path: string, project: Project): Promise<void>
+  saveProject(path: string, project: Project, animationPath?: string): Promise<void>
   cacheUsage(): Promise<CacheUsage>
   clearCache(): Promise<void>
 }
@@ -151,7 +172,9 @@ export type CacheUsage = {
 }
 
 export type MediaRequest =
-  | { method: 'loadProject'; path: string; forPreview: boolean }
+  | { method: 'loadProject'; path: string; forPreview: boolean; animationOverrides?: Record<string, string> }
+  | { method: 'loadAnimations'; paths: string[] }
+  | { method: 'reopenAnimations'; documents: Record<string, Project> }
   | { method: 'openMedia'; media: MediaRef[]; projectPath: string | undefined }
   | { method: 'whenPrepared' }
   | { method: 'readImage'; mediaId: string }
@@ -172,7 +195,7 @@ export type MediaRequest =
   | { method: 'preparation' }
   | { method: 'want'; wanted: Wanted }
   | { method: 'waveform'; mediaId: string }
-  | { method: 'saveProject'; path: string; project: Project }
+  | { method: 'saveProject'; path: string; project: Project; animationPath?: string }
   | { method: 'cacheUsage' }
   | { method: 'clearCache' }
 
@@ -201,6 +224,7 @@ export type ExportJob = {
   range?: TimeRange
   hasAudio?: boolean
   frame?: number
+  animationOverrides?: AnimationOverrides
 }
 
 export type FramesJob = {
@@ -225,6 +249,7 @@ export type MenuAction =
   | 'save'
   | 'save-as'
   | 'import'
+  | 'new-animation'
   | 'export'
   | 'close'
   | 'undo'
@@ -238,6 +263,10 @@ export type MenuAction =
   | 'ripple-delete'
   | 'group'
   | 'ungroup'
+  | 'bring-to-front'
+  | 'bring-forward'
+  | 'send-backward'
+  | 'send-to-back'
   | 'toggle-library'
   | 'toggle-properties'
   | 'toggle-timeline'
@@ -260,6 +289,17 @@ export type DocumentInfo = {
   loadFrom: string | undefined
   recoveryPath: string
   exportSnapshotPath: string
+  recoveredAnimations: AnimationOverrides
+}
+
+// Lists the unsaved animations of a window: real path → name of its copy beside the recovery file.
+export function animationManifestPath(recoveryPath: string): string {
+  return `${recoveryPath}.animations`
+}
+
+export function animationCopyName(recoveryPath: string, index: number): string {
+  const fileName = recoveryPath.split('/').at(-1) ?? recoveryPath
+  return `${fileName}.${index}.pbanim`
 }
 
 export type DocumentState = {
@@ -298,6 +338,7 @@ export type Host = {
   setDocumentPath(path: string): void
   saveProjectDialog(): Promise<string | undefined>
   importMediaDialog(): Promise<string[]>
+  newAnimationDialog(): Promise<string | undefined>
   chooseMediaFile(name: string): Promise<string | undefined>
   showLastExport(): void
   confirmUnsavedChanges(): Promise<UnsavedChoice>

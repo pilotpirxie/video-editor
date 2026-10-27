@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { MEDIA_STATES, SECOND, audioClip, clipIds, clipOf, groupClip, projectOf, reopened, textClip, track, videoClip } from '../../test/fixtures.js'
+import { MEDIA_STATES, SECOND, animationClip, audioClip, clipIds, clipOf, groupClip, projectOf, reopened, textClip, track, videoClip } from '../../test/fixtures.js'
 import { mix, type AudioReader } from '../engine/mixer.js'
-import { groupFrameAt, onCanvas, resolveFrame } from '../engine/resolve.js'
+import { onCanvas, resolveFrame, scopeFrameAt } from '../engine/resolve.js'
 import type { Clip, GroupClip, Project } from '../shared/project.js'
-import { groupClips, intoGroup, scopeOf, scopedProject, ungroupClips, withScopedProject } from './groups.js'
+import { episodeTimeOf, groupClips, intoGroup, resolveScope, scopeTimeOf, ungroupClips, withScopedProject } from './groups.js'
 import { setProperties } from './properties.js'
 
 const NEW_TRACK = { id: 'new', name: 'Track 9' }
@@ -30,7 +30,7 @@ function groupOf(project: Project, id: string): GroupClip {
 function drawn(project: Project): unknown[] {
   const pictures: unknown[] = []
   for (let time = 0; time < 13 * SECOND; time += SECOND / 4) {
-    const layers = resolveFrame(project, MEDIA_STATES, time, 1)
+    const layers = resolveFrame(project, MEDIA_STATES, {}, time, 1)
     pictures.push(layers.map((layer) => ({ id: layer.clipId, opacity: layer.opacity, x: layer.transform.x.toFixed(6), y: layer.transform.y.toFixed(6), turn: layer.transform.rotation.toFixed(6), scale: layer.transform.scaleX.toFixed(6) })))
   }
   return pictures
@@ -43,7 +43,7 @@ const readAudio: AudioReader = (mediaId, firstSample, sampleCount) => {
 }
 
 async function heard(project: Project): Promise<Float32Array> {
-  return mix(project, MEDIA_STATES, 0, 8 * 48_000, readAudio)
+  return mix(project, MEDIA_STATES, {}, 0, 8 * 48_000, readAudio)
 }
 
 describe('groupClips', () => {
@@ -154,8 +154,8 @@ describe('ungroupClips', () => {
     expect(clipIds(freed)).toEqual([['cut']])
     expect(clipOf(freed, 'cut')).toMatchObject({ start: 10 * SECOND, duration: 2 * SECOND, sourceStart: SECOND })
     expect(drawn(freed)).toEqual(drawn(project))
-    expect(resolveFrame(freed, MEDIA_STATES, 11 * SECOND, 1)[0]).toMatchObject({ clipId: 'cut', frame: 60 })
-    expect(resolveFrame(project, MEDIA_STATES, 11 * SECOND, 1)[0]).toMatchObject({ clipId: 'cut', frame: 60 })
+    expect(resolveFrame(freed, MEDIA_STATES, {}, 11 * SECOND, 1)[0]).toMatchObject({ clipId: 'cut', frame: 60 })
+    expect(resolveFrame(project, MEDIA_STATES, {}, 11 * SECOND, 1)[0]).toMatchObject({ clipId: 'cut', frame: 60 })
   })
 
   it('keeps hidden and muted tracks as they were, on tracks of their own', () => {
@@ -179,41 +179,43 @@ describe('editing inside a group', () => {
   const outer = groupClip('outer', 4 * SECOND, 6 * SECOND, [[videoClip('m', 0, SECOND), inner], [audioClip('music', 0, 6 * SECOND)]], { contentStart: SECOND })
   const project: Project = { ...projectOf([track('t1', [videoClip('a', 0, SECOND), outer])]), camera: [{ time: 0, duration: SECOND, x: 960, y: 540, scale: 1, easing: 'linear' }] }
 
+  function opened(openGroups: readonly string[], whole = project): ReturnType<typeof resolveScope> {
+    return resolveScope(whole, {}, MEDIA_STATES, openGroups)
+  }
+
   it('shows the tracks of the innermost open group, without the camera', () => {
-    expect(scopedProject(project, [])).toBe(project)
-    const scoped = scopedProject(project, ['outer'])
-    expect(scoped?.tracks).toBe(outer.tracks)
-    expect(scoped?.camera).toBeUndefined()
-    expect(scoped?.canvas).toBe(project.canvas)
-    expect(scopedProject(project, ['outer', 'inner'])?.tracks).toBe(inner.tracks)
+    expect(opened([]).project).toBe(project)
+    const scoped = opened(['outer']).project
+    expect(scoped.tracks).toBe(outer.tracks)
+    expect(scoped.camera).toBeUndefined()
+    expect(scoped.canvas).toBe(project.canvas)
+    expect(opened(['outer', 'inner']).project.tracks).toBe(inner.tracks)
   })
 
-  it('knows nothing of a group that is gone or not open in that order', () => {
-    expect(scopedProject(project, ['inner'])).toBeUndefined()
-    expect(scopedProject(project, ['outer', 'a'])).toBeUndefined()
-    expect(scopeOf(project, ['a'])).toBeUndefined()
-    expect(scopeOf(project, [])).toBeUndefined()
+  it('opens only as far as the groups are there in that order', () => {
+    expect(opened(['inner']).openGroups).toEqual([])
+    expect(opened(['outer', 'a']).openGroups).toEqual(['outer'])
+    expect(opened(['a']).scope).toBeUndefined()
+    expect(opened([]).scope).toBeUndefined()
   })
 
   it('tells where the time of the open tracks lies in the project, and what of it the group shows', () => {
-    expect(scopeOf(project, ['outer'])).toEqual({ offset: 3 * SECOND, from: SECOND, to: 7 * SECOND })
-    expect(scopeOf(project, ['outer', 'inner'])).toEqual({ offset: 3.5 * SECOND, from: SECOND / 2, to: 2.5 * SECOND })
+    expect(opened(['outer']).scope).toEqual({ offset: 3 * SECOND, timeScale: 1, from: SECOND, to: 7 * SECOND })
+    expect(opened(['outer', 'inner']).scope).toEqual({ offset: 3.5 * SECOND, timeScale: 1, from: SECOND / 2, to: 2.5 * SECOND })
   })
 
   it('writes an edit of the open tracks back into the whole project', () => {
-    const scoped = scopedProject(project, ['outer', 'inner'])
-    if (scoped === undefined) throw new Error('The group is not there')
+    const scoped = opened(['outer', 'inner']).project
     const edited = setProperties(scoped, ['deep'], { opacity: 0.25 }, 0)
     const whole = withScopedProject(project, ['outer', 'inner'], edited)
-    expect(scopedProject(whole, ['outer', 'inner'])?.tracks).toBe(edited.tracks)
+    expect(opened(['outer', 'inner'], whole).project.tracks).toBe(edited.tracks)
     expect(whole.camera).toBe(project.camera)
     expect(whole.tracks[0]?.clips[0]).toBe(project.tracks[0]?.clips[0])
     expect(reopened(whole)).toEqual(whole)
   })
 
   it('takes media added inside a group into the whole project, and nothing when nothing changed', () => {
-    const scoped = scopedProject(project, ['outer'])
-    if (scoped === undefined) throw new Error('The group is not there')
+    const scoped = opened(['outer']).project
     expect(withScopedProject(project, ['outer'], scoped)).toBe(project)
     const media = [...project.media, { id: 'new', path: '/footage/new.mp4', relativePath: '' }]
     expect(withScopedProject(project, ['outer'], { ...scoped, media }).media).toBe(media)
@@ -223,11 +225,53 @@ describe('editing inside a group', () => {
 
   it('turns a place on the canvas into a place inside the open group', () => {
     const turned = { ...project, tracks: [track('t1', [{ ...outer, transform: { x: 300, y: 200, scaleX: 2, scaleY: 2, rotation: 40 } }])] }
-    const frame = groupFrameAt(turned, ['outer'], 5 * SECOND)
+    const frame = scopeFrameAt(turned, MEDIA_STATES, {}, ['outer'], 5 * SECOND)
     const member = { x: 120, y: -40, scaleX: 0.5, scaleY: 0.75, rotation: 10 }
     const back = intoGroup(frame, onCanvas(frame, member))
     expect(back.x).toBeCloseTo(120)
     expect(back.y).toBeCloseTo(-40)
     expect(back).toMatchObject({ scaleX: 0.5, scaleY: 0.75, rotation: 10 })
+  })
+})
+
+describe('opening an animation', () => {
+  const wave = '/films/wave.pbanim'
+  const states = { ...MEDIA_STATES, wave: { info: { kind: 'animation' as const, path: wave } } }
+  const inside = groupClip('inside', SECOND, 2 * SECOND, [[videoClip('deep', 0, 2 * SECOND)]], { contentStart: SECOND / 2 })
+  const animation = { ...projectOf([track('a1', [videoClip('hand', 0, 3 * SECOND)]), track('a2', [inside])]), canvas: { width: 400, height: 300, frameRate: { num: 12, den: 1 } } }
+  const project = projectOf([track('t1', [animationClip('anim', 4 * SECOND, 6 * SECOND, { sourceStart: SECOND, speedPercent: 200 })])])
+  const documents = { [wave]: animation }
+
+  it('opens the tracks of its file, with the canvas of the animation', () => {
+    const opened = resolveScope(project, documents, states, ['anim'])
+    expect(opened.project).toBe(animation)
+    expect(opened.documentPath).toBe(wave)
+    expect(opened.groupsInDocument).toEqual([])
+    expect(opened.scope).toEqual({ offset: 3.5 * SECOND, timeScale: 0.5, from: SECOND, to: 13 * SECOND })
+  })
+
+  it('opens a group inside an animation in the time of the animation', () => {
+    const opened = resolveScope(project, documents, states, ['anim', 'inside'])
+    expect(opened.project.tracks).toBe(inside.tracks)
+    expect(opened.project.canvas).toBe(animation.canvas)
+    expect(opened.groupsInDocument).toEqual(['inside'])
+    expect(opened.scope).toEqual({ offset: 3.75 * SECOND, timeScale: 0.5, from: SECOND / 2, to: 2.5 * SECOND })
+  })
+
+  it('stops at an animation that is not loaded or that contains itself', () => {
+    expect(resolveScope(project, {}, states, ['anim']).openGroups).toEqual([])
+    const looped = { ...animation, tracks: [...animation.tracks, track('a3', [animationClip('again', 0, SECOND)])] }
+    expect(resolveScope(project, { [wave]: looped }, states, ['anim', 'again']).openGroups).toEqual(['anim'])
+  })
+
+  it('turns times of the open tracks into times of the episode and back, on the timeline grid', () => {
+    const { scope } = resolveScope(project, documents, states, ['anim'])
+    expect(episodeTimeOf(scope, SECOND)).toBe(4 * SECOND)
+    expect(episodeTimeOf(scope, 3 * SECOND)).toBe(5 * SECOND)
+    expect(scopeTimeOf(scope, 5 * SECOND)).toBe(3 * SECOND)
+    const thirds = resolveScope(projectOf([track('t1', [animationClip('anim', 0, SECOND, { speedPercent: 300 })])]), documents, states, ['anim']).scope
+    expect(episodeTimeOf(thirds, 100) % 100).toBe(0)
+    expect(scopeTimeOf(thirds, 100)).toBe(300)
+    expect(episodeTimeOf(undefined, 700)).toBe(700)
   })
 })

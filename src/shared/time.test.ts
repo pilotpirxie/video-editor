@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PROJECT_FRAME_RATES, SAMPLE_RATE, TICKS_PER_SAMPLE, TICKS_PER_SECOND, TIMELINE_GRID, exactFrameDuration, frameAt, frameDuration, frameIndexAt, isOnTimelineGrid, loopedTime, sampleAt, sourceTime, timecode } from './time.js'
+import { PROJECT_FRAME_RATES, SAMPLE_RATE, TICKS_PER_SAMPLE, TICKS_PER_SECOND, TIMELINE_GRID, exactFrameDuration, frameAt, frameDuration, frameIndexAt, frameNumber, isOnTimelineGrid, loopedTime, sampleAt, sourceTime, timecode } from './time.js'
 
 const TWENTY_HOURS_SECONDS = 20 * 60 * 60
 
@@ -136,5 +136,14 @@ describe('timecode', () => {
     const ntsc = { num: 30000, den: 1001 }
     expect(timecode(800_800 * 30, ntsc)).toBe('00:00:01:00')
     expect(timecode(1_001_000 * 23, { num: 24000, den: 1001 })).toBe('00:00:00:23')
+  })
+})
+
+describe('frameNumber', () => {
+  it('counts frames from zero without wrapping at each second', () => {
+    const twelve = { num: 12, den: 1 }
+    expect(frameNumber(0, twelve)).toBe('0')
+    expect(frameNumber(2_000_000 * 11, twelve)).toBe('11')
+    expect(frameNumber(2_000_000 * 30 + 1_999_900, twelve)).toBe('30')
   })
 })

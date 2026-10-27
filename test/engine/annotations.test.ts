@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ArrowClip, CalloutClip, Clip, TextClip, Transform } from '../../src/shared/project.js'
 import { SECOND } from '../fixtures.js'
-import { at, BLUE, FIRST_SECOND, frameOfTracks, RED, WHITE, WHITE_GROUND, bundledFfmpeg, cropPicture, expectGolden, expectPixel, imageOf, litFraction, pictureAt, pixelAt, projectOfTracks, renderFrames, renderProject, sameBytes, scratchDirectory, type Picture } from '../helpers.js'
+import { at, BLUE, FIRST_SECOND, frameOfTracks, RED, WHITE, WHITE_GROUND, bundledFfmpeg, cropPicture, expectGolden, expectPixel, imageOf, litFraction, pictureAt, pixelAt, projectOfTracks, renderFrames, renderProject, sameBytes, scratchDirectory, steepestEdge, type Picture } from '../helpers.js'
 
 const ffmpeg = bundledFfmpeg()
 const scratch = scratchDirectory('annotations')
@@ -26,15 +26,6 @@ function frameOf(name: string, tracks: readonly Clip[][], frame = 0): Promise<Pi
 
 async function referenceFrame(project: string, frame: number, size: { width: number; height: number }): Promise<Picture> {
   return pictureAt(await renderFrames(project, { via: 'paused', frames: [frame], size }), 0)
-}
-
-function steepestEdge(picture: Picture): number {
-  const pixels = new Uint8Array(picture.data)
-  let steepest = 0
-  for (let offset = 4; offset < pixels.length; offset += 4) {
-    if ((offset / 4) % picture.width !== 0) steepest = Math.max(steepest, Math.abs((pixels[offset] ?? 0) - (pixels[offset - 4] ?? 0)))
-  }
-  return steepest
 }
 
 function inkBounds(picture: Picture): { left: number; top: number; right: number; bottom: number } {

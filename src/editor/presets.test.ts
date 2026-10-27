@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SECOND, clipOf, groupClip, projectOf, reopened, textClip, track, videoClip } from '../../test/fixtures.js'
 import type { Project } from '../shared/project.js'
-import { setAnimation, takesAnimation } from './animations.js'
+import { setAnimation, takesAnimation } from './presets.js'
 
 function sample(): Project {
   return projectOf([track('t1', [videoClip('a', SECOND, 4 * SECOND)]), track('t2', [textClip('title', 0, 3 * SECOND)]), track('t3', [groupClip('group', 0, 2 * SECOND, [[videoClip('m', 0, 2 * SECOND)]])])])

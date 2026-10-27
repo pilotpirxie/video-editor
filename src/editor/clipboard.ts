@@ -19,6 +19,14 @@ export type Paste = {
   newTracks: readonly NewTrack[]
 }
 
+export function holdsDrawings(clipboard: Clipboard): boolean {
+  for (const { clip } of clipboard.clips) {
+    if (clip.type === 'drawing') return true
+    if (clip.type === 'group' && allClips(clip.tracks).some((member) => member.type === 'drawing')) return true
+  }
+  return false
+}
+
 export function deleteClips(project: Project, clipIds: readonly string[]): Project {
   return editClips(project, new Set(clipIds), () => undefined)
 }

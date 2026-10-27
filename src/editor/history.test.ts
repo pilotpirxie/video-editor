@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { projectOf, track } from '../../test/fixtures.js'
-import { EMPTY_HISTORY, record, redo, undo, type History } from './history.js'
+import { EMPTY_HISTORY, changedDocuments, record, redo, undo, type History } from './history.js'
 
 const MAX_UNDO_STEPS = 500
 
@@ -56,5 +56,15 @@ describe('history', () => {
     record(history, { label: 'Other', before: third, after: first }, MAX_UNDO_STEPS)
     expect(history.done).toHaveLength(2)
     expect(history.undone).toHaveLength(0)
+  })
+
+  it('brings back only the animation files a step changed', () => {
+    const documents = changedDocuments({ '/a.pbanim': first, '/b.pbanim': first }, { '/a.pbanim': second, '/b.pbanim': first, '/new.pbanim': third })
+    expect(documents).toEqual({ '/a.pbanim': { before: first, after: second } })
+    const history = record(EMPTY_HISTORY, { label: 'Edit', before: first, after: first, documents }, MAX_UNDO_STEPS)
+    const undone = undo(history)
+    expect(undone?.documents).toEqual({ '/a.pbanim': first })
+    expect(redo(undone?.history ?? EMPTY_HISTORY)?.documents).toEqual({ '/a.pbanim': second })
+    expect(undo(twoSteps())?.documents).toEqual({})
   })
 })

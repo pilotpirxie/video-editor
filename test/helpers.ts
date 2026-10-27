@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join } from 'node:path'
 import { afterAll, expect, onTestFinished } from 'vitest'
 import { allClips } from '../src/editor/clips.js'
 import { createFfmpegRunner, writeAll, type FfmpegRunner } from '../src/media/ffmpeg.js'
-import { parseProject, serializeProject, type CameraKeyframe, type Clip, type MediaRef, type Project, type Track, type Transform, type VideoClip } from '../src/shared/project.js'
+import { parseProject, serializeProject, type AnimationClip, type CameraKeyframe, type Clip, type MediaRef, type Project, type Track, type Transform, type VideoClip } from '../src/shared/project.js'
 import { FRAME, SECOND } from './fixtures.js'
 import { BARCODE_BITS, BARCODE_HEIGHT_FRACTION, barcodeSource, type VideoPattern } from './media/generate.js'
 
@@ -270,6 +270,22 @@ export function renderProject(directory: string, name: string, project: Project,
   return renderFrames(path, request)
 }
 
+export function writeAnimation(directory: string, name: string, canvas: Size, tracks: readonly Clip[][]): string {
+  const path = join(directory, `${name}.pbanim`)
+  writeFileSync(path, serializeProject(projectOfTracks(canvas, tracks)))
+  return path
+}
+
+export function animationOf(mediaId: string, id: string, span: Span, transform: Transform, settings: Partial<AnimationClip> = {}): AnimationClip {
+  return { id, type: 'animation', mediaId, ...span, sourceStart: 0, speedPercent: 100, volume: 1, transform, opacity: 1, ...settings }
+}
+
+export function episodeOf(tracks: readonly Clip[][], animationPaths: Readonly<Record<string, string>>, camera?: CameraKeyframe[]): Project {
+  const project = projectOfTracks(SMALL_CANVAS, tracks, camera)
+  const media = project.media.map((reference) => ({ ...reference, path: animationPaths[reference.id] ?? reference.path }))
+  return { ...project, media }
+}
+
 export const SMALL_CANVAS = { width: 640, height: 360 }
 export const FIRST_SECOND = { start: 0, duration: SECOND }
 export const WHITE = { red: 255, green: 255, blue: 255 }
@@ -372,6 +388,15 @@ export function litFraction(picture: Picture): number {
     if (brightness > 0) lit += 1
   }
   return lit / (picture.width * picture.height)
+}
+
+export function steepestEdge(picture: Picture): number {
+  const pixels = new Uint8Array(picture.data)
+  let steepest = 0
+  for (let offset = 4; offset < pixels.length; offset += 4) {
+    if ((offset / 4) % picture.width !== 0) steepest = Math.max(steepest, Math.abs((pixels[offset] ?? 0) - (pixels[offset - 4] ?? 0)))
+  }
+  return steepest
 }
 
 export function cropPicture(picture: Picture, left: number, top: number, width: number, height: number): Picture {

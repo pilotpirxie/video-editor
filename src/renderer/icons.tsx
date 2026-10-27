@@ -28,6 +28,7 @@ const PATHS = {
   list: 'M2 3h3.5v3.5H2zM8 4.75h6M2 9.5h3.5V13H2zM8 11.25h6',
   grid: 'M2.5 2.5h4.5V7H2.5zM9 2.5h4.5V7H9zM2.5 9h4.5v4.5H2.5zM9 9h4.5v4.5H9z',
   film: 'M2.5 3h11v10h-11zM5.5 3v10M10.5 3v10M2.5 6.5h3M2.5 9.5h3M10.5 6.5h3M10.5 9.5h3',
+  animation: 'M2 13.5c1.2-5.5 3.2-8 5.5-8.5M13.5 4a2 2 0 1 1-4 0 2 2 0 0 1 4 0zM2 13.5h12',
   move: 'M8 2v12M2 8h12M6 4l2-2 2 2M6 12l2 2 2-2M4 6L2 8l2 2M12 6l2 2-2 2',
   clock: 'M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11zM8 5v3l2 1.5',
   droplet: 'M8 2.5s4 4 4 7a4 4 0 0 1-8 0c0-3 4-7 4-7z',
@@ -48,6 +49,9 @@ const PATHS = {
   preview: 'M2 3h12v10H2zM6.5 5.5l4 2.5-4 2.5z',
   export: 'M8 10V2.5M5 5.5l3-3 3 3M3 9v4.5h10V9',
   search: 'M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9zM10.25 10.25L13.5 13.5',
+  pointer: 'M3.5 2.5l9 5.5-4.2 1.2-2 4.3z',
+  rectangle: 'M2.5 3.5h11v9h-11z',
+  ellipse: 'M8 3c3.3 0 5.5 2.2 5.5 5S11.3 13 8 13 2.5 10.8 2.5 8 4.7 3 8 3z',
 } as const
 
 export type IconName = keyof typeof PATHS

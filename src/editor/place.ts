@@ -1,7 +1,7 @@
 import type { Size } from '../shared/exportPresets.js'
 import type { MediaStates } from '../engine/resolve.js'
-import type { MediaInfo, MediaUse, UnlinkedMedia } from '../shared/mediaProtocol.js'
-import { MAX_CANVAS, MIN_CANVAS, type Canvas, type Clip, type MediaRef, type Project, type Track, type Transform } from '../shared/project.js'
+import type { Documents, MediaInfo, MediaUse, UnlinkedMedia } from '../shared/mediaProtocol.js'
+import { MAX_CANVAS, MIN_CANVAS, projectDuration, type Canvas, type Clip, type MediaRef, type Project, type Track, type Transform } from '../shared/project.js'
 import { NORMAL_SPEED_PERCENT, PROJECT_FRAME_RATES, frameDuration, type FrameRate } from '../shared/time.js'
 import { allClips, endOf, hasMedia, placeOnTrack, type NewTrack } from './clips.js'
 
@@ -28,9 +28,12 @@ export function centredStill(project: Project, added: NewStill): { id: string; s
   }
 }
 
+// An animation is placed by its document, which only the editor holds.
+export type PlaceableInfo = Exclude<MediaInfo, { kind: 'animation' }> | { kind: 'animation'; artboard: Canvas; length: number }
+
 export type DroppedMedia = {
   reference: MediaRef
-  info: MediaInfo
+  info: PlaceableInfo
   clipId: string
 }
 
@@ -51,12 +54,16 @@ function centred(natural: Size, canvas: Canvas): Transform {
   return { x: canvas.width / 2, y: canvas.height / 2, scaleX: fit, scaleY: fit, rotation: 0 }
 }
 
-export function clipForMedia(mediaId: string, info: MediaInfo, canvas: Canvas, clipId: string, start: number, stillDuration: number): Clip {
+export function clipForMedia(mediaId: string, info: PlaceableInfo, canvas: Canvas, clipId: string, start: number, stillDuration: number): Clip {
   const frameTicks = frameDuration(canvas.frameRate)
   if (info.kind === 'image') {
     return { id: clipId, type: 'image', mediaId, start, duration: stillDuration, transform: centred(info, canvas), opacity: 1 }
   }
   const source = { mediaId, sourceStart: 0, speedPercent: NORMAL_SPEED_PERCENT, volume: 1 }
+  if (info.kind === 'animation') {
+    const duration = info.length > 0 ? wholeFrames(info.length, frameTicks) : stillDuration
+    return { ...source, id: clipId, type: 'animation', start, duration, transform: centred(info.artboard, canvas), opacity: 1 }
+  }
   const timing = { id: clipId, start, duration: wholeFrames(info.duration, frameTicks) }
   if (info.kind === 'audio') return { ...timing, ...source, type: 'audio' }
   const video: Clip = { ...timing, ...source, type: 'video', transform: centred(info.video, canvas), opacity: 1 }
@@ -87,9 +94,10 @@ function canvasSizeFor(natural: Size): Size {
   }
 }
 
-export function canvasForFirstClip(info: MediaInfo, canvas: Canvas): Canvas {
+export function canvasForFirstClip(info: PlaceableInfo, canvas: Canvas): Canvas {
   if (info.kind === 'audio') return canvas
   if (info.kind === 'image') return { ...canvas, ...canvasSizeFor(info) }
+  if (info.kind === 'animation') return { ...canvas, ...canvasSizeFor(info.artboard) }
   if (info.isAnimatedImage === true) return { ...canvas, ...canvasSizeFor(info.video) }
   return { ...canvasSizeFor(info.video), frameRate: nearestProjectFrameRate(info.video.frameDuration) }
 }
@@ -159,6 +167,24 @@ function tracksWithoutMedia(tracks: readonly Track[], mediaIds: ReadonlySet<stri
   return kept
 }
 
+function tracksWithMediaIds(tracks: readonly Track[], renamed: ReadonlyMap<string, string>): Track[] {
+  return tracks.map((track) => {
+    const clips = track.clips.map((clip): Clip => {
+      if (clip.type === 'group') return { ...clip, tracks: tracksWithMediaIds(clip.tracks, renamed) }
+      if (!hasMedia(clip)) return clip
+      const mediaId = renamed.get(clip.mediaId)
+      return mediaId === undefined ? clip : { ...clip, mediaId }
+    })
+    return { ...track, clips }
+  })
+}
+
+export function withMediaIdsChanged(project: Project, renamed: ReadonlyMap<string, string>): Project {
+  if (renamed.size === 0) return project
+  const media = project.media.map((reference) => ({ ...reference, id: renamed.get(reference.id) ?? reference.id }))
+  return { ...project, media, tracks: tracksWithMediaIds(project.tracks, renamed) }
+}
+
 export function withoutMedia(project: Project, mediaIds: readonly string[]): Project {
   const removed = new Set(mediaIds)
   const media = project.media.filter((reference) => !removed.has(reference.id))
@@ -166,13 +192,47 @@ export function withoutMedia(project: Project, mediaIds: readonly string[]): Pro
   return { ...project, media, tracks: tracksWithoutMedia(project.tracks, removed) }
 }
 
-export function placeableMedia(project: Project, mediaStates: MediaStates, mediaIds: readonly string[], newClipId: (index: number) => string): DroppedMedia[] {
+function placeableInfo(info: MediaInfo, documents: Documents): PlaceableInfo | undefined {
+  if (info.kind !== 'animation') return info
+  const document = documents[info.path]
+  return document === undefined ? undefined : { kind: 'animation', artboard: document.canvas, length: projectDuration(document) }
+}
+
+export const SELF_CONTAINING_NOTICE = 'An animation cannot be placed inside itself.'
+
+function animationPathOf(mediaId: string, mediaStates: MediaStates): string | undefined {
+  const state = mediaStates[mediaId]
+  return state !== undefined && 'info' in state && state.info.kind === 'animation' ? state.info.path : undefined
+}
+
+export function containsAnimation(mediaIds: readonly string[], animationPath: string, mediaStates: MediaStates, documents: Documents): boolean {
+  const waiting: string[] = []
+  for (const mediaId of mediaIds) {
+    const path = animationPathOf(mediaId, mediaStates)
+    if (path !== undefined) waiting.push(path)
+  }
+  const seen = new Set<string>()
+  for (let path = waiting.pop(); path !== undefined; path = waiting.pop()) {
+    if (path === animationPath) return true
+    if (seen.has(path)) continue
+    seen.add(path)
+    for (const clip of allClips(documents[path]?.tracks ?? [])) {
+      const inner = clip.type === 'animation' ? animationPathOf(clip.mediaId, mediaStates) : undefined
+      if (inner !== undefined) waiting.push(inner)
+    }
+  }
+  return false
+}
+
+// The references come from the episode's media, so a drop inside an animation adds them to the animation's file.
+export function placeableMedia(pool: readonly MediaRef[], mediaStates: MediaStates, documents: Documents, mediaIds: readonly string[], newClipId: (index: number) => string): DroppedMedia[] {
   const placeable: DroppedMedia[] = []
   for (const mediaId of mediaIds) {
-    const reference = project.media.find((candidate) => candidate.id === mediaId)
+    const reference = pool.find((candidate) => candidate.id === mediaId)
     const state = mediaStates[mediaId]
     if (reference === undefined || state === undefined || 'error' in state) continue
-    placeable.push({ reference, info: state.info, clipId: newClipId(placeable.length) })
+    const info = placeableInfo(state.info, documents)
+    if (info !== undefined) placeable.push({ reference, info, clipId: newClipId(placeable.length) })
   }
   return placeable
 }

@@ -1,6 +1,8 @@
-import { onCanvas, scaledEffect, type GroupFrame } from '../engine/resolve.js'
-import { valueAt, type Clip, type GroupClip, type Keyframe, type Keyframes, type Project, type Track, type Transform } from '../shared/project.js'
-import { emptyTrack, endOf, hasVolume, isVisual, placeOnTrack, type NewTrack } from './clips.js'
+import { onCanvas, openedAnimation, scaledEffect, type GroupFrame, type MediaStates } from '../engine/resolve.js'
+import type { Documents } from '../shared/mediaProtocol.js'
+import { isVisual, valueAt, type Clip, type GroupClip, type Keyframe, type Keyframes, type Project, type Track, type Transform } from '../shared/project.js'
+import { NORMAL_SPEED_PERCENT, TIMELINE_GRID } from '../shared/time.js'
+import { emptyTrack, endOf, hasVolume, placeOnTrack, type NewTrack } from './clips.js'
 import { earlierPart, laterPart } from './split.js'
 
 const DEGREES_TO_RADIANS = Math.PI / 180
@@ -17,10 +19,21 @@ export type Ungrouping = {
   newTracks: readonly NewTrack[]
 }
 
+// Episode time = offset + time on the open tracks × timeScale; from and to are what the opened clip shows of them.
 export type Scope = {
   offset: number
+  timeScale: number
   from: number
   to: number
+}
+
+export type OpenScope = {
+  openGroups: readonly string[]
+  chain: readonly string[]
+  documentPath: string | undefined
+  groupsInDocument: readonly string[]
+  project: Project
+  scope: Scope | undefined
 }
 
 function movedKeyframes(keyframes: Keyframes | undefined, x: number, y: number): Keyframes | undefined {
@@ -228,21 +241,73 @@ function openedGroups(project: Project, openGroups: readonly string[]): GroupCli
   return groups
 }
 
-export function scopedProject(project: Project, openGroups: readonly string[]): Project | undefined {
+function scopedProject(project: Project, openGroups: readonly string[]): Project | undefined {
   const innermost = openedGroups(project, openGroups)?.at(-1)
   if (openGroups.length === 0) return project
   if (innermost === undefined) return undefined
   return { ...project, tracks: innermost.tracks, camera: undefined }
 }
 
-export function scopeOf(project: Project, openGroups: readonly string[]): Scope | undefined {
-  const groups = openedGroups(project, openGroups)
-  const innermost = groups?.at(-1)
-  if (groups === undefined || innermost === undefined) return undefined
+function clipIn(tracks: readonly Track[], clipId: string): Clip | undefined {
+  for (const track of tracks) {
+    const found = track.clips.find((clip) => clip.id === clipId)
+    if (found !== undefined) return found
+  }
+  return undefined
+}
+
+// Walks the opened clips as far as they still exist; an animation clip opens the tracks of its own file.
+export function resolveScope(wholeProject: Project, documents: Documents, mediaStates: MediaStates, wanted: readonly string[]): OpenScope {
+  const openGroups: string[] = []
+  const chain: string[] = []
+  let owner = wholeProject
+  let documentPath: string | undefined
+  let groupsInDocument: string[] = []
+  let tracks = wholeProject.tracks
+  let scope: Scope | undefined
   let offset = 0
-  for (const group of groups) offset += group.start - (group.contentStart ?? 0)
-  const from = innermost.contentStart ?? 0
-  return { offset, from, to: from + innermost.duration }
+  let timeScale = 1
+  for (const clipId of wanted) {
+    const clip = clipIn(tracks, clipId)
+    if (clip?.type === 'group') {
+      const from = clip.contentStart ?? 0
+      offset += (clip.start - from) * timeScale
+      scope = { offset, timeScale, from, to: from + clip.duration }
+      groupsInDocument.push(clipId)
+      tracks = clip.tracks
+    } else if (clip?.type === 'animation') {
+      const opened = openedAnimation(clip, mediaStates, documents, chain)
+      if (opened === undefined) break
+      const innerScale = (timeScale * NORMAL_SPEED_PERCENT) / clip.speedPercent
+      offset += clip.start * timeScale - clip.sourceStart * innerScale
+      timeScale = innerScale
+      scope = { offset, timeScale, from: clip.sourceStart, to: clip.sourceStart + (clip.duration * clip.speedPercent) / NORMAL_SPEED_PERCENT }
+      chain.push(opened.path)
+      owner = opened.project
+      documentPath = opened.path
+      groupsInDocument = []
+      tracks = owner.tracks
+    } else {
+      break
+    }
+    openGroups.push(clipId)
+  }
+  const project = groupsInDocument.length === 0 ? owner : { ...owner, tracks, camera: undefined }
+  return { openGroups, chain, documentPath, groupsInDocument, project, scope }
+}
+
+function onGrid(time: number): number {
+  return Math.round(time / TIMELINE_GRID) * TIMELINE_GRID
+}
+
+export function episodeTimeOf(scope: Scope | undefined, time: number): number {
+  if (scope === undefined) return time
+  return onGrid(scope.offset + time * scope.timeScale)
+}
+
+export function scopeTimeOf(scope: Scope | undefined, episodeTime: number): number {
+  if (scope === undefined) return episodeTime
+  return onGrid((episodeTime - scope.offset) / scope.timeScale)
 }
 
 function withTracksAt(tracks: readonly Track[], openGroups: readonly string[], edited: Track[]): Track[] {

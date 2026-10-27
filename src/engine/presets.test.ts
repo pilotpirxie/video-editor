@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ANIMATION_TYPES, valueAt, type Keyframe } from '../shared/project.js'
+import { ANIMATION_PRESET_TYPES, valueAt, type Keyframe } from '../shared/project.js'
 import { isOnTimelineGrid } from '../shared/time.js'
 import { animationChangeAt, animationCurves, largestAnimationScale, type AnimationCurves } from './presets.js'
 
@@ -12,7 +12,7 @@ function listsOf(curves: AnimationCurves): Keyframe[][] {
 
 describe('animationCurves', () => {
   it('ends every way in with the clip as it is, and starts every way out with it', () => {
-    for (const type of ANIMATION_TYPES) {
+    for (const type of ANIMATION_PRESET_TYPES) {
       const arriving = animationCurves({ type, duration: SECOND }, 'in', 5 * SECOND, CANVAS)
       const leaving = animationCurves({ type, duration: SECOND }, 'out', 5 * SECOND, CANVAS)
       for (const curve of [arriving.opacity, arriving.scale, arriving.letters]) expect(curve?.at(-1)?.value ?? 1, type).toBe(1)
@@ -24,7 +24,7 @@ describe('animationCurves', () => {
   })
 
   it('keeps every keyframe on the time grid, so the curves can become keyframes of the clip', () => {
-    for (const type of ANIMATION_TYPES) {
+    for (const type of ANIMATION_PRESET_TYPES) {
       for (const edge of ['in', 'out'] as const) {
         const curves = animationCurves({ type, duration: 1_234_500 }, edge, 7 * SECOND, CANVAS)
         for (const list of listsOf(curves)) {
@@ -35,7 +35,7 @@ describe('animationCurves', () => {
   })
 
   it('plays the way out as the way in backwards', () => {
-    for (const type of ANIMATION_TYPES) {
+    for (const type of ANIMATION_PRESET_TYPES) {
       const arriving = animationCurves({ type, duration: 2 * SECOND }, 'in', 6 * SECOND, CANVAS)
       const leaving = animationCurves({ type, duration: 2 * SECOND }, 'out', 6 * SECOND, CANVAS)
       const pairs = [[arriving.opacity, leaving.opacity], [arriving.scale, leaving.scale], [arriving.x, leaving.x], [arriving.y, leaving.y], [arriving.letters, leaving.letters]]

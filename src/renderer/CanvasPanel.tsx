@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { projectDuration } from '../shared/project.js'
-import { frameDuration, timecode } from '../shared/time.js'
+import { frameDuration, frameNumber, timecode } from '../shared/time.js'
 import { CameraTool } from './CameraTool.js'
 import { CanvasOverlay } from './CanvasOverlay.js'
+import { useWellColors } from './ColorFields.js'
 import { useEditorState, usePosition, useSession, useShortcutHint } from './context.js'
 import type { EditorState } from './store.js'
 import { IconButton } from './icons.js'
@@ -47,6 +48,43 @@ function canvasHintOf(state: EditorState): string | undefined {
   return undefined
 }
 
+function ToolStrip(): ReactElement {
+  const { store } = useSession()
+  const tool = useEditorState((state) => state.tool)
+  const moveKeys = useShortcutHint('tool-move')
+  const shapeKeys = useShortcutHint('tool-shape')
+  const colorPart = useEditorState((state) => state.colorPart)
+  const wells = useWellColors()
+  return (
+    <div className="tool-strip" role="toolbar" aria-label="Drawing tools" aria-orientation="vertical" data-testid="tool-strip">
+      <IconButton icon="pointer" label="Move" testId="tool-move" shortcut={moveKeys} isPressed={tool === 'move'} onClick={() => store.setTool('move')} />
+      <hr />
+      <IconButton icon="rectangle" label="Rectangle" testId="tool-rectangle" shortcut={shapeKeys} isPressed={tool === 'rectangle'} onClick={() => store.setTool('rectangle')} />
+      <IconButton icon="ellipse" label="Ellipse" testId="tool-ellipse" shortcut={shapeKeys} isPressed={tool === 'ellipse'} onClick={() => store.setTool('ellipse')} />
+      <div className="tool-wells" role="group" aria-label="Colour of" data-testid="tool-wells">
+        <button
+          type="button"
+          className="fill"
+          aria-label={`Fill ${wells.fill ?? 'none'}`}
+          aria-pressed={colorPart === 'fill'}
+          data-testid="tool-well-fill"
+          style={{ background: wells.fill ?? 'transparent' }}
+          onClick={() => store.setColorPart('fill')}
+        />
+        <button
+          type="button"
+          className="stroke"
+          aria-label={`Stroke ${wells.stroke ?? 'none'}`}
+          aria-pressed={colorPart === 'stroke'}
+          data-testid="tool-well-stroke"
+          style={{ boxShadow: `inset 0 0 0 4px ${wells.stroke ?? 'transparent'}, 0 0 0 1px var(--divider)` }}
+          onClick={() => store.setColorPart('stroke')}
+        />
+      </div>
+    </div>
+  )
+}
+
 type CanvasPanelProps = {
   // Created outside React: its surface is transferred to the engine worker, which can happen only once.
   preview: HTMLCanvasElement
@@ -54,8 +92,11 @@ type CanvasPanelProps = {
 
 export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
   const { engine, transport, store, actions } = useSession()
-  const canvas = useEditorState((state) => state.project.canvas)
+  const canvas = useEditorState((state) => state.wholeProject.canvas)
   const duration = useEditorState((state) => projectDuration(state.project))
+  const frameRate = useEditorState((state) => state.project.canvas.frameRate)
+  const isInAnimation = useEditorState((state) => state.openChain.length > 0)
+  const label = isInAnimation ? frameNumber : timecode
   const shuttleRate = usePosition((position) => position.shuttleRate)
   const isPlaying = usePosition((position) => position.isPlaying)
   const time = usePosition((position) => position.time)
@@ -78,6 +119,7 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
   const [isZoomToolOn, setIsZoomToolOn] = useState(false)
   const isGroupOpen = useEditorState((state) => state.openGroups.length > 0)
   const isZooming = isZoomToolOn && !isGroupOpen
+  const isDrawing = isInAnimation && !isPreviewing && !isZooming
   const isBusy = isPlaying || shuttleRate !== 0
 
   useEffect(() => {
@@ -147,6 +189,7 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
 
   return (
     <main className="canvas-panel" aria-label="Canvas">
+      {isDrawing && <ToolStrip />}
       <div className={zoom === 'fit' ? 'canvas-area' : 'canvas-area scrollable'} ref={areaRef}>
         <div className="preview-fit" ref={stageRef}>
           <div className="preview-frame" ref={frameRef}>
@@ -165,10 +208,10 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
         <IconButton icon="stepForward" label="Next frame" testId="step-forward" shortcut={stepForwardKeys} onClick={() => actions.stepFrames(1)} />
         <span className="timecodes">
           <output className="timecode" data-testid="timecode" aria-label="Timecode" data-frames={frameCount} data-full-quality={fullQualityMs !== undefined}>
-            {timecode(time, canvas.frameRate)}
+            {label(time, frameRate)}
           </output>{' '}
           <span className="timecode total" data-testid="duration" aria-label="Project length">
-            / {timecode(duration, canvas.frameRate)}
+            / {label(duration, frameRate)}
           </span>
         </span>
         {shuttleRate !== 0 && (

@@ -20,6 +20,8 @@ function notUsed(): never {
 function fakeMedia(): MediaClient {
   return {
     loadProject: notUsed,
+    loadAnimations: notUsed,
+    reopenAnimations: notUsed,
     openMedia: notUsed,
     whenPrepared: notUsed,
     readImage: () => Promise.resolve(new ArrayBuffer(1)),
@@ -77,6 +79,7 @@ function imageLayer(name: string): ImageLayer {
   return {
     kind: 'image',
     clipId: `clip-${name}`,
+    key: `clip-${name}`,
     mediaId: `media-${name}`,
     width: 320,
     height: 180,
@@ -215,6 +218,7 @@ function videoAt(frame: number): VideoLayer {
   return {
     kind: 'video',
     clipId: 'clip-video',
+    key: 'clip-video',
     mediaId: 'media-video',
     video: { width: 320, height: 180, frameDuration: 800_000, frameCount: 60, startOffset: 0, seekPreroll: 0, isVariableFrameRate: false, hasAlpha: false, colorMatrix: 'bt709', colorRange: 'tv', transfer: 'sdr', codec: 'h264' },
     frame,

@@ -1,6 +1,6 @@
-import type { Clip, Project, Track, Transition, TransitionType, VisualClip } from '../shared/project.js'
+import { isVisual, type Clip, type Project, type Track, type Transition, type TransitionType, type VisualClip } from '../shared/project.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
-import { coversTime, editClips, endOf, isVisual, locateClip, withOnlyAtEnd } from './clips.js'
+import { coversTime, editClips, endOf, locateClip, withOnlyAtEnd } from './clips.js'
 
 export const DEFAULT_TRANSITION = TICKS_PER_SECOND
 

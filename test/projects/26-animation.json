@@ -1,0 +1,109 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 24
+    },
+    "height": 720,
+    "width": 1280
+  },
+  "media": [
+    {
+      "id": "white",
+      "path": "",
+      "relativePath": "../media/generated/image-white.png"
+    },
+    {
+      "id": "scene",
+      "path": "",
+      "relativePath": "animations/scene.pbanim"
+    },
+    {
+      "id": "bounce",
+      "path": "",
+      "relativePath": "animations/bounce.pbanim"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 72000000,
+          "id": "ground",
+          "mediaId": "white",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 4,
+            "scaleY": 4,
+            "x": 640,
+            "y": 360
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "ground",
+      "locked": false,
+      "muted": false,
+      "name": "ground"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "scene",
+          "mediaId": "scene",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 640,
+            "y": 360
+          },
+          "type": "animation",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "scene",
+      "locked": false,
+      "muted": false,
+      "name": "scene"
+    },
+    {
+      "clips": [
+        {
+          "duration": 60000000,
+          "id": "loop",
+          "loop": true,
+          "mediaId": "bounce",
+          "opacity": 1,
+          "sourceStart": 6000000,
+          "speedPercent": 100,
+          "start": 12000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.5,
+            "scaleY": 0.5,
+            "x": 1100,
+            "y": 600
+          },
+          "type": "animation",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "loop",
+      "locked": false,
+      "muted": false,
+      "name": "loop"
+    }
+  ],
+  "version": 1
+}

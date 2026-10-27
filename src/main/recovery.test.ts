@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { temporaryPathFor } from '../shared/exportPresets.js'
-import { findRecoveries, rememberExportOutput, rememberProjectPath } from './recovery.js'
+import { discardRecovery, findRecoveries, rememberExportOutput, rememberProjectPath } from './recovery.js'
 
 describe('findRecoveries', () => {
   let directory = ''
@@ -35,8 +35,8 @@ describe('findRecoveries', () => {
     await writeFile(join(directory, 'gone.json.export'), '{}')
 
     expect(await findRecoveries(directory)).toEqual([
-      { recoveryPath: newer, projectPath: undefined },
-      { recoveryPath: older, projectPath: undefined },
+      { recoveryPath: newer, projectPath: undefined, recoveredAnimations: {} },
+      { recoveryPath: older, projectPath: undefined, recoveredAnimations: {} },
     ])
     expect((await readdir(directory)).sort()).toEqual(['newer.json', 'older.json'])
     await rm(projectPath)
@@ -47,7 +47,7 @@ describe('findRecoveries', () => {
     await rememberProjectPath(kept, '/projects/kept.json')
     await rememberProjectPath(join(directory, 'closed.json'), '/projects/closed.json')
 
-    expect(await findRecoveries(directory)).toEqual([{ recoveryPath: kept, projectPath: '/projects/kept.json' }])
+    expect(await findRecoveries(directory)).toEqual([{ recoveryPath: kept, projectPath: '/projects/kept.json', recoveredAnimations: {} }])
     expect((await readdir(directory)).sort()).toEqual(['kept.json', 'kept.json.path'])
   })
 
@@ -70,8 +70,40 @@ describe('findRecoveries', () => {
     await rememberProjectPath(unreadable, '/projects/unreadable.json')
     await chmod(`${unreadable}.path`, 0)
 
-    expect(await findRecoveries(directory)).toEqual([{ recoveryPath: readable, projectPath: undefined }])
+    expect(await findRecoveries(directory)).toEqual([{ recoveryPath: readable, projectPath: undefined, recoveredAnimations: {} }])
     await chmod(`${unreadable}.path`, 0o600)
+  })
+
+  it('restores the unsaved animations of a window, even after its episode was saved, but not one saved since', async () => {
+    const window = await recoveryWrittenAt('window.json', 30)
+    const projectPath = `${directory}-episode.json`
+    await writeFile(projectPath, '{}')
+    await rememberProjectPath(window, projectPath)
+    const unsaved = `${directory}-wave.pbanim`
+    const saved = `${directory}-saved.pbanim`
+    await recoveryWrittenAt('window.json.0.pbanim', 20)
+    await recoveryWrittenAt('window.json.1.pbanim', 20)
+    await writeFile(unsaved, '{}')
+    await utimes(unsaved, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
+    await writeFile(saved, '{}')
+    await writeFile(join(directory, 'window.json.animations'), JSON.stringify({ [unsaved]: 'window.json.0.pbanim', [saved]: 'window.json.1.pbanim' }))
+    await writeFile(join(directory, 'gone.json.0.pbanim'), '{}')
+    await writeFile(join(directory, 'gone.json.animations'), '{}')
+
+    expect(await findRecoveries(directory)).toEqual([{ recoveryPath: window, projectPath, recoveredAnimations: { [unsaved]: join(directory, 'window.json.0.pbanim') } }])
+    expect((await readdir(directory)).sort()).toEqual(['window.json', 'window.json.0.pbanim', 'window.json.1.pbanim', 'window.json.animations', 'window.json.path'])
+    await rm(projectPath)
+    await rm(unsaved)
+    await rm(saved)
+  })
+
+  it('discards the animation copies with the recovery of their window', async () => {
+    const window = await recoveryWrittenAt('window.json', 10)
+    await recoveryWrittenAt('window.json.0.pbanim', 10)
+    await writeFile(join(directory, 'window.json.animations'), '{}')
+    await recoveryWrittenAt('other.json.0.pbanim', 10)
+    await discardRecovery(window)
+    expect(await readdir(directory)).toEqual(['other.json.0.pbanim'])
   })
 
   it('finds nothing in a folder that is not there', async () => {

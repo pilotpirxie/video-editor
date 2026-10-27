@@ -38,13 +38,16 @@ import { DEFAULT_BINDINGS, MENU_SHORTCUT_ACTIONS, menuShortcutsOf } from '../edi
 import { MAX_LOG_BYTES, MAX_SLOW_FRAMES_PER_RUN, appendLogLine, isSlowFrame, trimLogFile } from './logFiles.js'
 import { footprintNow, isMemoryUnderPressure, startMemoryMonitor, type MemoryMonitor } from './memory.js'
 import { SAMPLE_RATE } from '../shared/time.js'
+import { ANIMATION_EXTENSION } from '../shared/project.js'
 import {
+  discardAnimationCopies,
   discardExportSnapshot,
   discardRecoveredWork,
   discardRecovery,
   exportSnapshotPath,
   findRecoveries,
   newRecoveryPath,
+  recoveredAnimations,
   rememberExportOutput,
   rememberProjectPath,
   type FoundRecovery,
@@ -92,6 +95,7 @@ const MEDIA_EXTENSIONS = [
   'mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'flv', 'ts', 'mts', '3gp',
   'mp3', 'm4a', 'aac', 'wav', 'aiff', 'aif', 'flac', 'ogg', 'opus',
   'jpg', 'jpeg', 'png', 'webp', 'gif', 'apng',
+  ANIMATION_EXTENSION,
 ]
 const UNSAVED_ANSWERS: readonly { choice: UnsavedChoice; label: string }[] = [
   { choice: 'save', label: 'Save' },
@@ -554,7 +558,7 @@ function startExportFor(state: AppState, requester: BrowserWindow, job: ExportJo
   window.on('closed', () => {
     state.exportWindow = undefined
     state.exportRequester = undefined
-    void discardExportSnapshot(job.projectPath, state.recoveryDirectory)
+    void discardExportSnapshot(job.projectPath, state.recoveryDirectory, job.animationOverrides)
     void outputNote.then(discardRecoveredWork)
   })
 }
@@ -574,7 +578,7 @@ function showDocument(state: AppState, editor: Editor): void {
 
 function documentFor(state: AppState, projectPath: string | undefined): DocumentInfo {
   const recoveryPath = newRecoveryPath(state.recoveryDirectory)
-  const document: DocumentInfo = { path: projectPath, loadFrom: projectPath, recoveryPath, exportSnapshotPath: exportSnapshotPath(recoveryPath) }
+  const document: DocumentInfo = { path: projectPath, loadFrom: projectPath, recoveryPath, exportSnapshotPath: exportSnapshotPath(recoveryPath), recoveredAnimations: {} }
   if (projectPath !== undefined) {
     if (state.remembersRecentDocuments) app.addRecentDocument(projectPath)
     void rememberProjectPath(document.recoveryPath, projectPath)
@@ -645,10 +649,10 @@ async function askUnsavedChanges(state: AppState, editor: Editor): Promise<Unsav
 }
 
 function registerDocumentIpc(state: AppState): void {
-  ipcMain.handle('document-info', (event): DocumentInfo | undefined => {
+  ipcMain.handle('document-info', async (event): Promise<DocumentInfo | undefined> => {
     const document = editorOf(state, event.sender)?.document
     if (document === undefined || !existsSync(document.recoveryPath)) return document
-    return { ...document, loadFrom: document.recoveryPath }
+    return { ...document, loadFrom: document.recoveryPath, recoveredAnimations: await recoveredAnimations(document.recoveryPath) }
   })
 
   ipcMain.on('document-state', (event, documentState: unknown) => {
@@ -672,6 +676,18 @@ function registerDocumentIpc(state: AppState): void {
     const owner = BrowserWindow.fromWebContents(event.sender)
     if (owner === null) return undefined
     const chosen = await dialog.showSaveDialog(owner, { defaultPath: `${UNTITLED}.${PROJECT_EXTENSION}`, filters: SAVE_PROJECT_FILTERS })
+    if (chosen.canceled || chosen.filePath === '') return undefined
+    return chosen.filePath
+  })
+
+  ipcMain.handle('new-animation-dialog', async (event): Promise<string | undefined> => {
+    if (state.dialogAnswers.newAnimation !== undefined) return state.dialogAnswers.newAnimation
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    if (owner === null) return undefined
+    const projectPath = editorOf(state, event.sender)?.document.path
+    const fileName = `${UNTITLED}.${ANIMATION_EXTENSION}`
+    const defaultPath = projectPath === undefined ? fileName : join(dirname(projectPath), fileName)
+    const chosen = await dialog.showSaveDialog(owner, { defaultPath, filters: [{ name: 'Animation', extensions: [ANIMATION_EXTENSION] }] })
     if (chosen.canceled || chosen.filePath === '') return undefined
     return chosen.filePath
   })
@@ -733,7 +749,9 @@ function registerDocumentIpc(state: AppState): void {
 
   ipcMain.on('discard-recovery', (event) => {
     const editor = editorOf(state, event.sender)
-    if (editor !== undefined) void discardRecoveredWork(editor.document.recoveryPath)
+    if (editor === undefined) return
+    void discardRecoveredWork(editor.document.recoveryPath)
+    void discardAnimationCopies(editor.document.recoveryPath)
   })
 
   ipcMain.on('close-document', (event) => {
@@ -902,6 +920,15 @@ function buildEditorMenu(state: AppState): void {
         rebindable('split-all', 'Split All Tracks'),
         rebindable('group', 'Group'),
         rebindable('ungroup', 'Ungroup'),
+        {
+          label: 'Arrange',
+          submenu: [
+            rebindable('bring-to-front', 'Bring to Front'),
+            rebindable('bring-forward', 'Bring Forward'),
+            rebindable('send-backward', 'Send Backward'),
+            rebindable('send-to-back', 'Send to Back'),
+          ],
+        },
         { type: 'separator' },
         item('select-all', 'Select All', 'CmdOrCtrl+A'),
         item('deselect-all', 'Deselect All', 'Shift+CmdOrCtrl+A'),
@@ -931,6 +958,7 @@ function buildEditorMenu(state: AppState): void {
       label: 'Media',
       submenu: [
         rebindable('import', 'Import Media…'),
+        rebindable('new-animation', 'New Animation…'),
         { type: 'separator' },
         sortItem('created', 'Sort by Date Created'),
         sortItem('name', 'Sort by Name'),
@@ -976,6 +1004,7 @@ function recoveredDocument(found: FoundRecovery): DocumentInfo {
     loadFrom: found.recoveryPath,
     recoveryPath: found.recoveryPath,
     exportSnapshotPath: exportSnapshotPath(found.recoveryPath),
+    recoveredAnimations: found.recoveredAnimations,
   }
 }
 

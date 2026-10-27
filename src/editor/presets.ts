@@ -1,12 +1,12 @@
-import type { Animation, AnimationType, Clip, Project } from '../shared/project.js'
+import { isVisual, type AnimationPreset, type AnimationPresetType, type Clip, type Project } from '../shared/project.js'
 import { TICKS_PER_SECOND, TIMELINE_GRID } from '../shared/time.js'
-import { editClips, isVisual, withOnlyAtEnd } from './clips.js'
+import { editClips, withOnlyAtEnd } from './clips.js'
 
 export type AnimationEdge = 'in' | 'out'
 
 export const DEFAULT_ANIMATION = TICKS_PER_SECOND / 2
 
-export const ANIMATION_NAMES: Record<AnimationType, string> = {
+export const ANIMATION_NAMES: Record<AnimationPresetType, string> = {
   fade: 'Fade',
   pop: 'Pop',
   slideLeft: 'Slide, left side',
@@ -17,12 +17,12 @@ export const ANIMATION_NAMES: Record<AnimationType, string> = {
   typewriter: 'Typewriter',
 }
 
-export function takesAnimation(clip: Clip, type: AnimationType): boolean {
+export function takesAnimation(clip: Clip, type: AnimationPresetType): boolean {
   if (!isVisual(clip)) return false
   return type !== 'typewriter' || clip.type === 'text'
 }
 
-export function setAnimation(project: Project, clipIds: readonly string[], edge: AnimationEdge, animation: Animation | undefined): Project {
+export function setAnimation(project: Project, clipIds: readonly string[], edge: AnimationEdge, animation: AnimationPreset | undefined): Project {
   const key = edge === 'in' ? 'animationIn' : 'animationOut'
   return editClips(project, new Set(clipIds), (clip) => {
     if (!isVisual(clip)) return clip

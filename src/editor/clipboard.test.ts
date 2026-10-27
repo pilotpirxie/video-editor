@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { SAMPLE_MEDIA, SECOND, audioClip, clipIds, clipOf, groupClip, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
+import { SAMPLE_MEDIA, SECOND, audioClip, clipIds, clipOf, drawingClip, groupClip, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import type { Project } from '../shared/project.js'
-import { copyClips, deleteClips, pasteClips, rippleDelete, spanEnd, type Paste } from './clipboard.js'
+import { copyClips, deleteClips, holdsDrawings, pasteClips, rippleDelete, spanEnd, type Paste } from './clipboard.js'
 
 function sample(): Project {
   return projectOf([
@@ -53,6 +53,14 @@ describe('rippleDelete', () => {
 })
 
 describe('copy and paste', () => {
+  it('knows when the copied clips hold a drawing, also inside a group', () => {
+    const group = groupClip('g', SECOND, SECOND, [[drawingClip('inner', 0, SECOND)]])
+    const project = projectOf([track('t1', [videoClip('a', 0, SECOND), group]), track('t2', [drawingClip('sketch', 0, SECOND)])])
+    expect(holdsDrawings(copyClips(project, ['a']))).toBe(false)
+    expect(holdsDrawings(copyClips(project, ['g']))).toBe(true)
+    expect(holdsDrawings(copyClips(project, ['sketch']))).toBe(true)
+  })
+
   it('pastes at the playhead with new ids, keeping the spacing between clips', () => {
     const project = sample()
     const pasted = pasteClips(project, paste(project, ['b', 'c'], 10 * SECOND))

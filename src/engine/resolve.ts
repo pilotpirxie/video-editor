@@ -1,14 +1,20 @@
 import type { Size } from '../shared/exportPresets.js'
 import { minimumHalvings } from '../shared/limits.js'
-import type { Cadence, MediaState, VideoInfo, WantedRange } from '../shared/mediaProtocol.js'
+import type { Cadence, Documents, MediaState, VideoInfo, WantedRange } from '../shared/mediaProtocol.js'
 import {
+  MAX_ANIMATION_DEPTH,
   ease,
+  isVisual,
+  projectDuration,
   valueAt,
   type AnimatableProperty,
+  type AnimationClip,
   type ArrowHead,
   type CalloutShape,
   type Clip,
   type Crop,
+  type DrawingClip,
+  type DrawingShape,
   type Effect,
   type GroupClip,
   type Keyframes,
@@ -23,8 +29,9 @@ import {
   type VideoClip,
   type VisualClip,
 } from '../shared/project.js'
-import { TIMELINE_GRID, frameDuration, frameIndexAt, loopedTime, sourceTime } from '../shared/time.js'
+import { NORMAL_SPEED_PERCENT, TIMELINE_GRID, frameDuration, frameIndexAt, loopedTime, sourceTime } from '../shared/time.js'
 import { largestScaleBetween } from './camera.js'
+import { shapesBounds, type DrawingBounds } from './curves.js'
 import { animationChangeAt, largestAnimationScale } from './presets.js'
 
 const MAX_HALVINGS = 6
@@ -66,6 +73,7 @@ export type TransitionLook = {
 
 type LayerBase = {
   clipId: string
+  key: string
   transform: Transform
   placed?: Transform
   opacity: number
@@ -118,6 +126,11 @@ export type ArrowLook = {
   endHead: ArrowHead
 }
 
+export type DrawingLook = {
+  shapes: readonly DrawingShape[]
+  bounds: DrawingBounds
+}
+
 const letters = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
 export function lettersOf(text: string): string[] {
@@ -147,6 +160,11 @@ type ArrowLayer = DrawnLayerBase & {
   look: ArrowLook
 }
 
+type DrawingLayer = DrawnLayerBase & {
+  kind: 'drawing'
+  look: DrawingLook
+}
+
 type ShapeLayerBase = LayerBase & {
   width: number
   height: number
@@ -166,7 +184,7 @@ export type HighlightLayer = ShapeLayerBase & {
   isSpotlight: boolean
 }
 
-export type DrawnLayer = TextLayer | CalloutLayer | ArrowLayer
+export type DrawnLayer = TextLayer | CalloutLayer | ArrowLayer | DrawingLayer
 export type PictureLayer = VideoLayer | ImageLayer | DrawnLayer
 export type Layer = PictureLayer | BlurLayer | HighlightLayer
 
@@ -347,13 +365,14 @@ function movedBy(transform: Transform, change: TransitionChange, canvas: Size): 
 }
 
 function cutTransition(earlier: Clip | undefined, later: Clip | undefined): Transition | undefined {
-  if (earlier === undefined || later === undefined || earlier.type === 'audio' || later.type === 'audio') return undefined
+  if (earlier === undefined || later === undefined || !isVisual(earlier) || !isVisual(later)) return undefined
   return earlier.start + earlier.duration === later.start ? later.transitionIn : undefined
 }
 
 type Drawing = {
   project: Project
   media: MediaStates
+  documents: Documents
   outputScale: number
 }
 
@@ -368,11 +387,13 @@ type Frame = {
   look: TransitionLook | undefined
   shift: number
   groups: readonly string[]
+  instance: string
+  chain: readonly string[]
 }
 
 export type GroupFrame = Pick<Frame, 'x' | 'y' | 'scale' | 'rotation'>
 
-const NO_FRAME: Frame = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, largestScale: 1, effects: [], look: undefined, shift: 0, groups: [] }
+const NO_FRAME: Frame = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, largestScale: 1, effects: [], look: undefined, shift: 0, groups: [], instance: '', chain: [] }
 
 export function onCanvas(frame: GroupFrame, transform: Transform): Transform {
   if (frame === NO_FRAME) return transform
@@ -409,15 +430,16 @@ function effectsOf(clip: { effects?: Effect[] }, frame: Frame): Effect[] {
 }
 
 // Must not change from frame to frame: an export opens each clip's decoder once, at this scale.
-function largestZoom(clip: VisualClip, track: Track, project: Project, shift: number): number {
-  if (project.camera === undefined) return 1
+function largestZoom(clip: VisualClip, track: Track, project: Project, frame: Frame): number {
+  // Inside an animation the camera zoom was already folded into the frame's largest scale.
+  if (project.camera === undefined || frame.chain.length > 0) return 1
   const end = clip.start + clip.duration
   const previous = track.clips.find((other) => other.start + other.duration === clip.start)
   const next = track.clips.find((other) => other.start === end)
   const cutIn = cutTransition(previous, clip)
   const cutOut = cutTransition(clip, next)
-  const from = clip.start + shift - (cutIn?.duration ?? 0) / 2
-  const to = end + shift + (cutOut?.duration ?? 0) / 2
+  const from = clip.start + frame.shift - (cutIn?.duration ?? 0) / 2
+  const to = end + frame.shift + (cutOut?.duration ?? 0) / 2
   return largestScaleBetween(project.camera, from, to, project.canvas)
 }
 
@@ -472,25 +494,71 @@ function placementOf(clip: VisualClip, localTime: number, frame: Frame, canvas: 
   }
 }
 
-function frameInside(group: GroupClip, frame: Frame, placement: Placement): Frame {
+function frameInside(container: GroupClip | AnimationClip, frame: Frame, placement: Placement): Frame {
   const at = placement.placed ?? placement.transform
-  const groupEffects: Effect[] = []
-  for (const effect of group.effects ?? []) {
-    if (effect.isOff !== true) groupEffects.push(scaledEffect(effect, frame.scale))
+  const containerEffects: Effect[] = []
+  for (const effect of container.effects ?? []) {
+    if (effect.isOff !== true) containerEffects.push(scaledEffect(effect, frame.scale))
   }
   const { tint, reveal } = placement.look ?? {}
+  const contentStart = container.type === 'group' ? (container.contentStart ?? 0) : 0
   return {
+    ...frame,
     x: at.x,
     y: at.y,
     scale: at.scaleX,
     rotation: at.rotation,
     opacity: placement.opacity,
-    largestScale: frame.largestScale * largestValue(group.keyframes, 'scaleX', group.transform.scaleX) * largestAnimationScale(group),
-    effects: [...groupEffects, ...frame.effects],
+    largestScale: frame.largestScale * largestValue(container.keyframes, 'scaleX', container.transform.scaleX) * largestAnimationScale(container),
+    effects: [...containerEffects, ...frame.effects],
     look: tint === undefined && reveal === undefined ? undefined : { tint, reveal },
-    shift: frame.shift + group.start - (group.contentStart ?? 0),
-    groups: [...frame.groups, group.id],
+    shift: frame.shift + container.start - contentStart,
+    groups: [...frame.groups, container.id],
   }
+}
+
+type Opened = {
+  path: string
+  project: Project
+}
+
+export function openedAnimation(clip: AnimationClip, media: MediaStates, documents: Documents, chain: readonly string[]): Opened | undefined {
+  const state = media[clip.mediaId]
+  if (state === undefined || 'error' in state || state.info.kind !== 'animation') return undefined
+  const path = state.info.path
+  const project = documents[path]
+  if (project === undefined || chain.includes(path) || chain.length >= MAX_ANIMATION_DEPTH) return undefined
+  return { path, project }
+}
+
+// The clip's transform places the artboard's centre; the inner clips are laid out from its top left corner.
+function animationFrame(clip: AnimationClip, track: Track, drawing: Drawing, frame: Frame, placement: Placement, opened: Opened): Frame {
+  const inside = frameInside(clip, frame, placement)
+  const { width, height } = opened.project.canvas
+  const centre = onCanvas({ x: 0, y: 0, scale: inside.scale, rotation: inside.rotation }, { x: width / 2, y: height / 2, scaleX: 1, scaleY: 1, rotation: 0 })
+  return {
+    ...inside,
+    x: inside.x - centre.x,
+    y: inside.y - centre.y,
+    largestScale: inside.largestScale * largestZoom(clip, track, drawing.project, frame),
+    instance: `${frame.instance}${clip.id}/`,
+    chain: [...frame.chain, opened.path],
+  }
+}
+
+// Pictures step on the animation's own frames; its sound is placed without stepping.
+function animationTime(clip: AnimationClip, opened: Opened, time: number): number {
+  const looped = loopedTime(sourceTime(clip, time), projectDuration(opened.project), clip.loop === true)
+  const frameTicks = frameDuration(opened.project.canvas.frameRate)
+  return Math.floor(looped / frameTicks) * frameTicks
+}
+
+function animationLayers(clip: AnimationClip, track: Track, drawing: Drawing, frame: Frame, time: number, placement: Placement): Layer[] {
+  const opened = openedAnimation(clip, drawing.media, drawing.documents, frame.chain)
+  if (opened === undefined) return []
+  const innerTime = animationTime(clip, opened, time)
+  if (innerTime >= projectDuration(opened.project)) return []
+  return layersOfTracks(opened.project.tracks, drawing, animationFrame(clip, track, drawing, frame, placement, opened), innerTime)
 }
 
 function textLookOf(clip: TextSettings): TextLook {
@@ -508,26 +576,64 @@ function textClipLook(clip: TextClip): TextLook {
   return look
 }
 
+function layerBase(clipId: string, frame: Frame, placement: Placement): LayerBase {
+  const base: LayerBase = { clipId, key: `${frame.instance}${clipId}`, transform: placement.transform, opacity: placement.opacity }
+  if (placement.placed !== undefined) base.placed = placement.placed
+  if (placement.look !== undefined) base.transition = placement.look
+  if (frame.groups.length > 0) base.groups = frame.groups
+  return base
+}
+
+// A hidden shape hides what is clipped inside it; with nothing hidden the list stays the same, and so does the raster's key.
+function shownShapes(shapes: DrawingShape[]): DrawingShape[] {
+  let isAnyHidden = false
+  const shown: DrawingShape[] = []
+  for (const shape of shapes) {
+    if (shape.hidden === true) {
+      isAnyHidden = true
+      continue
+    }
+    const children = shape.children === undefined ? undefined : shownShapes(shape.children)
+    if (children === shape.children) {
+      shown.push(shape)
+      continue
+    }
+    isAnyHidden = true
+    const { children: _children, ...childless } = shape
+    shown.push(children === undefined || children.length === 0 ? childless : { ...shape, children })
+  }
+  return isAnyHidden ? shown : shapes
+}
+
+// Shapes are in the artboard's pixels, so the layer sits where their bounds are.
+function drawingLayers(clip: DrawingClip, frame: Frame): Layer[] {
+  const shapes = shownShapes(clip.shapes)
+  const bounds = shapesBounds(shapes, true)
+  if (bounds === undefined || bounds.right <= bounds.left || bounds.bottom <= bounds.top) return []
+  const middle = { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2, scaleX: 1, scaleY: 1, rotation: 0 }
+  const placement: Placement = { transform: onCanvas(frame, middle), placed: undefined, opacity: frame.opacity, look: frame.look, letters: undefined }
+  const layer: DrawingLayer = {
+    ...layerBase(clip.id, frame, placement),
+    kind: 'drawing',
+    look: { shapes, bounds },
+    sharpScaleX: frame.largestScale,
+    sharpScaleY: frame.largestScale,
+  }
+  if (frame.effects.length > 0) layer.effects = frame.effects
+  return [layer]
+}
+
 function layersOf(clip: VisualClip, track: Track, drawing: Drawing, frame: Frame, time: number, played: Played | undefined): Layer[] {
   const { project, media } = drawing
   const localTime = time - clip.start
   const placement = placementOf(clip, localTime, frame, project.canvas, played)
 
   if (clip.type === 'group') {
-    const memberFrame = frameInside(clip, frame, placement)
-    const innerTime = localTime + (clip.contentStart ?? 0)
-    const layers: Layer[] = []
-    for (const innerTrack of clip.tracks) {
-      if (!innerTrack.hidden) layers.push(...trackLayers(innerTrack, drawing, memberFrame, innerTime))
-    }
-    return layers
+    return layersOfTracks(clip.tracks, drawing, frameInside(clip, frame, placement), localTime + (clip.contentStart ?? 0))
   }
+  if (clip.type === 'animation') return animationLayers(clip, track, drawing, frame, time, placement)
 
-  const base: LayerBase = { clipId: clip.id, transform: placement.transform, opacity: placement.opacity }
-  if (placement.placed !== undefined) base.placed = placement.placed
-  if (placement.look !== undefined) base.transition = placement.look
-  if (frame.groups.length > 0) base.groups = frame.groups
-
+  const base = layerBase(clip.id, frame, placement)
   if (clip.type === 'blur') {
     const blur: Layer = {
       ...base,
@@ -590,7 +696,7 @@ function layersOf(clip: VisualClip, track: Track, drawing: Drawing, frame: Frame
 
   if (info.kind !== 'video') return []
   const shownTime = loopedTime(sourceTime(clip, time), info.duration, clip.loop === true)
-  const largestShownScale = drawing.outputScale * largestZoom(clip, track, project, frame.shift) * largestAnimated
+  const largestShownScale = drawing.outputScale * largestZoom(clip, track, project, frame) * largestAnimated
   return [
     {
       ...picture,
@@ -605,12 +711,12 @@ function layersOf(clip: VisualClip, track: Track, drawing: Drawing, frame: Frame
 }
 
 function canBeAddedUp(clip: VisualClip): boolean {
-  return clip.type !== 'blur' && clip.type !== 'highlight' && clip.type !== 'group'
+  return clip.type !== 'blur' && clip.type !== 'highlight' && clip.type !== 'group' && clip.type !== 'animation'
 }
 
 function cutLayers(leaving: VisualClip, arriving: VisualClip, transition: Transition, progress: number, track: Track, drawing: Drawing, frame: Frame, time: number): Layer[] {
   const isSummed = ADDED_UP_TRANSITIONS.includes(transition.type) && canBeAddedUp(leaving) && canBeAddedUp(arriving)
-  const mixKey = isSummed ? arriving.id : undefined
+  const mixKey = isSummed ? `${frame.instance}${arriving.id}` : undefined
   const layers: Layer[] = []
   const inDrawingOrder = LEAVING_ON_TOP.includes(transition.type) ? [arriving, leaving] : [leaving, arriving]
   for (const clip of inDrawingOrder) {
@@ -623,6 +729,7 @@ function cutLayers(leaving: VisualClip, arriving: VisualClip, transition: Transi
 function trackLayers(track: Track, drawing: Drawing, frame: Frame, time: number): Layer[] {
   const shown = track.clips.find((clip) => time >= clip.start && time < clip.start + clip.duration)
   if (shown === undefined || shown.type === 'audio') return []
+  if (shown.type === 'drawing') return drawingLayers(shown, frame)
 
   const end = shown.start + shown.duration
   const previous = track.clips.find((clip) => clip.start + clip.duration === shown.start)
@@ -634,11 +741,11 @@ function trackLayers(track: Track, drawing: Drawing, frame: Frame, time: number)
   const isInCutIn = cutIn !== undefined && sinceStart < cutIn.duration / 2
   const isInCutOut = cutOut !== undefined && untilEnd <= cutOut.duration / 2
   const playsCutOut = isInCutOut && (!isInCutIn || untilEnd < sinceStart)
-  if (playsCutOut && cutOut !== undefined && next !== undefined && next.type !== 'audio') {
+  if (playsCutOut && cutOut !== undefined && next !== undefined && isVisual(next)) {
     const progress = (cutOut.duration / 2 - untilEnd) / cutOut.duration
     return cutLayers(shown, next, cutOut, progress, track, drawing, frame, time)
   }
-  if (isInCutIn && cutIn !== undefined && previous !== undefined && previous.type !== 'audio') {
+  if (isInCutIn && cutIn !== undefined && previous !== undefined && isVisual(previous)) {
     const progress = (cutIn.duration / 2 + sinceStart) / cutIn.duration
     return cutLayers(previous, shown, cutIn, progress, track, drawing, frame, time)
   }
@@ -655,44 +762,93 @@ function trackLayers(track: Track, drawing: Drawing, frame: Frame, time: number)
   return layersOf(shown, track, drawing, frame, time, { part, mixKey: undefined })
 }
 
-export function resolveFrame(project: Project, media: MediaStates, time: number, outputScale: number): Layer[] {
-  const drawing: Drawing = { project, media, outputScale }
+function layersOfTracks(tracks: readonly Track[], drawing: Drawing, frame: Frame, time: number): Layer[] {
   const layers: Layer[] = []
-  for (const track of project.tracks) {
-    if (!track.hidden) layers.push(...trackLayers(track, drawing, NO_FRAME, time))
+  for (const track of tracks) {
+    if (!track.hidden) layers.push(...trackLayers(track, drawing, frame, time))
   }
   return layers
 }
 
-export type Enclosing = {
-  group: GroupClip
-  shift: number
+export function resolveFrame(project: Project, media: MediaStates, documents: Documents, time: number, outputScale: number): Layer[] {
+  return layersOfTracks(project.tracks, { project, media, documents, outputScale }, NO_FRAME, time)
 }
 
-export type PlacedClip = {
-  clip: Exclude<Clip, GroupClip>
+// Episode time = shift + time on the tracks inside × timeScale.
+type TimeMapping = {
   shift: number
+  timeScale: number
+}
+
+type Enclosing = TimeMapping & {
+  container: GroupClip | AnimationClip
+}
+
+export type PlacedClip = TimeMapping & {
+  clip: Exclude<Clip, GroupClip | AnimationClip>
   from: number
   to: number
   groups: readonly Enclosing[]
 }
 
-export function forEachPlacedClip(tracks: readonly Track[], window: { from: number; to: number }, isLeftOut: (track: Track) => boolean, visit: (placed: PlacedClip) => void, shift = 0, groups: readonly Enclosing[] = []): void {
+type Window = {
+  from: number
+  to: number
+}
+
+type Walk = {
+  media: MediaStates
+  documents: Documents
+  isLeftOut: (track: Track) => boolean
+  visit: (placed: PlacedClip) => void
+}
+
+type Level = TimeMapping & {
+  groups: readonly Enclosing[]
+  chain: readonly string[]
+}
+
+function placeAnimation(clip: AnimationClip, window: Window, walk: Walk, level: Level): void {
+  const opened = openedAnimation(clip, walk.media, walk.documents, level.chain)
+  if (opened === undefined) return
+  const length = projectDuration(opened.project)
+  if (length <= 0) return
+  const timeScale = (level.timeScale * NORMAL_SPEED_PERCENT) / clip.speedPercent
+  const passLength = length * timeScale
+  const firstShift = level.shift + clip.start * level.timeScale - clip.sourceStart * timeScale
+  const firstPass = Math.max(0, Math.floor((window.from - firstShift) / passLength))
+  const endPass = clip.loop === true ? Math.ceil((window.to - firstShift) / passLength) : 1
+  const groups = [...level.groups, { container: clip, shift: level.shift, timeScale: level.timeScale }]
+  const chain = [...level.chain, opened.path]
+  for (let pass = firstPass; pass < endPass; pass++) {
+    const shift = firstShift + pass * passLength
+    const passWindow = { from: Math.max(window.from, shift), to: Math.min(window.to, shift + passLength) }
+    if (passWindow.from < passWindow.to) placeTracks(opened.project.tracks, passWindow, walk, { shift, timeScale, groups, chain })
+  }
+}
+
+function placeTracks(tracks: readonly Track[], window: Window, walk: Walk, level: Level): void {
+  const { shift, timeScale } = level
   for (const track of tracks) {
-    if (isLeftOut(track)) continue
+    if (walk.isLeftOut(track)) continue
     for (const clip of track.clips) {
-      const from = Math.max(window.from, clip.start + shift)
-      const to = Math.min(window.to, clip.start + clip.duration + shift)
+      const from = Math.max(window.from, shift + clip.start * timeScale)
+      const to = Math.min(window.to, shift + (clip.start + clip.duration) * timeScale)
       if (from >= to) continue
       if (clip.type === 'group') {
-        const innerShift = shift + clip.start - (clip.contentStart ?? 0)
-        const enclosing = [...groups, { group: clip, shift }]
-        forEachPlacedClip(clip.tracks, { from, to }, isLeftOut, visit, innerShift, enclosing)
+        const groups = [...level.groups, { container: clip, shift, timeScale }]
+        placeTracks(clip.tracks, { from, to }, walk, { ...level, shift: shift + (clip.start - (clip.contentStart ?? 0)) * timeScale, groups })
+      } else if (clip.type === 'animation') {
+        placeAnimation(clip, { from, to }, walk, level)
       } else {
-        visit({ clip, shift, from, to, groups })
+        walk.visit({ clip, shift, timeScale, from, to, groups: level.groups })
       }
     }
   }
+}
+
+export function forEachPlacedClip(project: Project, media: MediaStates, documents: Documents, window: Window, isLeftOut: (track: Track) => boolean, visit: (placed: PlacedClip) => void): void {
+  placeTracks(project.tracks, window, { media, documents, isLeftOut, visit }, { shift: 0, timeScale: 1, groups: [], chain: [] })
 }
 
 const SPARSE_COPY_MIN_STEP_FRAMES = 4
@@ -705,10 +861,10 @@ function cadenceOf(clip: VideoClip, shift: number, video: VideoInfo, frameTicks:
   return { step, phase: ((origin % step) + step) % step }
 }
 
-export function pictureRanges(project: Project, media: MediaStates): WantedRange[] {
+export function pictureRanges(project: Project, media: MediaStates, documents: Documents): WantedRange[] {
   const found: WantedRange[] = []
   const frameTicks = frameDuration(project.canvas.frameRate)
-  forEachPlacedClip(project.tracks, { from: 0, to: Infinity }, (track) => track.hidden, ({ clip, shift, from, to }) => {
+  forEachPlacedClip(project, media, documents, { from: 0, to: Infinity }, (track) => track.hidden, ({ clip, shift, timeScale, from, to, groups }) => {
     if (clip.type !== 'video') return
     const state = media[clip.mediaId]
     if (state === undefined || 'error' in state || state.info.kind !== 'video') return
@@ -717,32 +873,50 @@ export function pictureRanges(project: Project, media: MediaStates): WantedRange
       use: 'picture',
       timelineStart: from,
       timelineEnd: to,
-      sourceStart: sourceTime(clip, from - shift),
-      speedPercent: clip.speedPercent,
+      sourceStart: sourceTime(clip, (from - shift) / timeScale),
+      speedPercent: clip.speedPercent / timeScale,
       isLooping: clip.loop === true,
     }
-    const cadence = cadenceOf(clip, shift, state.info.video, frameTicks)
+    // An animation shows its own frames, so the episode's frame rate says nothing about which video frames it needs.
+    const isInAnimation = groups.some((enclosing) => enclosing.container.type === 'animation')
+    const cadence = isInAnimation ? undefined : cadenceOf(clip, shift, state.info.video, frameTicks)
     if (cadence !== undefined) range.cadence = cadence
     found.push(range)
   })
   return found
 }
 
-export function groupFrameAt(project: Project, groupIds: readonly string[], time: number): GroupFrame {
+function containerIn(tracks: readonly Track[], clipId: string): { clip: GroupClip | AnimationClip; track: Track } | undefined {
+  for (const track of tracks) {
+    const clip = track.clips.find((found) => found.id === clipId)
+    if (clip?.type === 'group' || clip?.type === 'animation') return { clip, track }
+  }
+  return undefined
+}
+
+// Where the open clips put their tracks on the episode's canvas, as the resolver draws them.
+export function scopeFrameAt(project: Project, media: MediaStates, documents: Documents, openGroups: readonly string[], time: number): GroupFrame {
+  const drawing: Drawing = { project, media, documents, outputScale: 1 }
   let frame = NO_FRAME
   let tracks: readonly Track[] = project.tracks
   let trackTime = time
-  for (const groupId of groupIds) {
-    let group: GroupClip | undefined
-    for (const track of tracks) {
-      const found = track.clips.find((clip) => clip.id === groupId)
-      if (found?.type === 'group') group = found
+  for (const clipId of openGroups) {
+    const found = containerIn(tracks, clipId)
+    if (found === undefined) break
+    const { clip, track } = found
+    const localTime = trackTime - clip.start
+    const placement = placementOf(clip, localTime, frame, project.canvas, undefined)
+    if (clip.type === 'group') {
+      frame = frameInside(clip, frame, placement)
+      trackTime = localTime + (clip.contentStart ?? 0)
+      tracks = clip.tracks
+      continue
     }
-    if (group === undefined) break
-    const localTime = trackTime - group.start
-    frame = frameInside(group, frame, placementOf(group, localTime, frame, project.canvas, undefined))
-    trackTime = localTime + (group.contentStart ?? 0)
-    tracks = group.tracks
+    const opened = openedAnimation(clip, media, documents, frame.chain)
+    if (opened === undefined) break
+    frame = animationFrame(clip, track, drawing, frame, placement, opened)
+    trackTime = animationTime(clip, opened, trackTime)
+    tracks = opened.project.tracks
   }
   return frame
 }

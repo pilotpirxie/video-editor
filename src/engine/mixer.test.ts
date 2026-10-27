@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { MediaInfo } from '../shared/mediaProtocol.js'
-import type { AudioClip, Clip, GroupClip, Project, Track, VideoClip } from '../shared/project.js'
+import type { Documents, MediaInfo } from '../shared/mediaProtocol.js'
+import type { AnimationClip, AudioClip, Clip, GroupClip, Project, Track, VideoClip } from '../shared/project.js'
 import { LIMITER_CEILING, LIMITER_WINDOW, cachedAudioReader, mix, soundRanges, type AudioReader } from './mixer.js'
 import type { MediaStates } from './resolve.js'
 
@@ -43,7 +43,7 @@ function project(...tracks: Clip[][]): Project {
 }
 
 function mixRange(mixedProject: Project, firstSample: number, sampleCount: number): Promise<Float32Array> {
-  return mix(mixedProject, MEDIA, firstSample, sampleCount, readSource)
+  return mix(mixedProject, MEDIA, {}, firstSample, sampleCount, readSource)
 }
 
 async function mixInBlocks(mixedProject: Project, firstSample: number, sampleCount: number, blockSize: number): Promise<Float32Array> {
@@ -203,7 +203,7 @@ const readStretched: AudioReader = async (mediaId, firstSample, sampleCount, str
 
 describe('clip speed', () => {
   function mixStretched(mixedProject: Project, firstSample: number, sampleCount: number): Promise<Float32Array> {
-    return mix(mixedProject, MEDIA, firstSample, sampleCount, readStretched)
+    return mix(mixedProject, MEDIA, {}, firstSample, sampleCount, readStretched)
   }
 
   it('reads a faster clip from the sound at that speed, counted from the start of the file', async () => {
@@ -362,7 +362,7 @@ describe('soundRanges', () => {
       [audioClip({ id: 'fast', mediaId: 'music', speedPercent: 200 }), audioClip({ id: 'timelapse', mediaId: 'music', start: 4 * SECOND, speedPercent: 1000 })],
     )
     heard.tracks.push(muted)
-    expect(soundRanges(heard, MEDIA)).toEqual([
+    expect(soundRanges(heard, MEDIA, {})).toEqual([
       { mediaId: 'voice', use: 'sound', timelineStart: SECOND, timelineEnd: 3 * SECOND, sourceStart: 3 * SECOND, speedPercent: 100, isLooping: false },
       { mediaId: 'music', use: 'sound', timelineStart: 0, timelineEnd: 2 * SECOND, sourceStart: 0, speedPercent: 200, isLooping: false, stretch: { speedPercent: 200, keepsPitch: true } },
     ])
@@ -371,7 +371,36 @@ describe('soundRanges', () => {
   it('counts a member of a group from where the group starts showing it', () => {
     const inner = audioClip({ id: 'inner', start: 0, duration: 5 * SECOND })
     const group: GroupClip = { id: 'group', type: 'group', start: 10 * SECOND, duration: 2 * SECOND, contentStart: SECOND, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, volume: 1, tracks: project([inner]).tracks }
-    expect(soundRanges(project([group]), MEDIA)).toEqual([{ mediaId: 'voice', use: 'sound', timelineStart: 10 * SECOND, timelineEnd: 12 * SECOND, sourceStart: SECOND, speedPercent: 100, isLooping: false }])
+    expect(soundRanges(project([group]), MEDIA, {})).toEqual([{ mediaId: 'voice', use: 'sound', timelineStart: 10 * SECOND, timelineEnd: 12 * SECOND, sourceStart: SECOND, speedPercent: 100, isLooping: false }])
+  })
+})
+
+describe('sound inside animations', () => {
+  const SCENE = '/films/scene.pbanim'
+  const media: MediaStates = { ...MEDIA, scene: { info: { kind: 'animation', path: SCENE } } }
+  const documents: Documents = { [SCENE]: project([audioClip({ id: 'line', start: SECOND, duration: 2 * SECOND })]) }
+
+  function animationClip(overrides: Partial<AnimationClip> = {}): AnimationClip {
+    return { id: 'scene', type: 'animation', mediaId: 'scene', start: 4 * SECOND, duration: 3 * SECOND, sourceStart: 0, speedPercent: 100, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, volume: 1, ...overrides }
+  }
+
+  it('plays a voice in sync with its animation, as loud as both clips make it', async () => {
+    const inside = project([animationClip({ sourceStart: SECOND / 2, volume: 0.5 })])
+    const direct = project([audioClip({ id: 'line', start: 4 * SECOND + SECOND / 2, duration: 2 * SECOND, volume: 0.5 })])
+    const samples = 8 * 48_000
+    expect(sameBits(await mix(inside, media, documents, 0, samples, readSource), await mix(direct, MEDIA, {}, 0, samples, readSource))).toBe(true)
+  })
+
+  it('plays the voice again on every pass of a looping animation', () => {
+    const looping = project([animationClip({ start: 0, duration: 7 * SECOND, loop: true })])
+    expect(soundRanges(looping, media, documents)).toEqual([
+      { mediaId: 'voice', use: 'sound', timelineStart: SECOND, timelineEnd: 3 * SECOND, sourceStart: 0, speedPercent: 100, isLooping: false },
+      { mediaId: 'voice', use: 'sound', timelineStart: 4 * SECOND, timelineEnd: 6 * SECOND, sourceStart: 0, speedPercent: 100, isLooping: false },
+    ])
+  })
+
+  it('keeps the voice silent while its animation plays at another speed', () => {
+    expect(soundRanges(project([animationClip({ speedPercent: 200 })]), media, documents)).toEqual([])
   })
 })
 
@@ -389,7 +418,7 @@ describe('mix with many sounds at once', () => {
       inFlight -= 1
       return readSource(mediaId, firstSample, sampleCount)
     }
-    await mix(crowded, MEDIA, 0, 2048, slowReader)
+    await mix(crowded, MEDIA, {}, 0, 2048, slowReader)
     expect(mostInFlight).toBe(8)
   })
 
@@ -400,8 +429,8 @@ describe('mix with many sounds at once', () => {
       await new Promise((resolve) => setTimeout(resolve, (calls * 7) % 5))
       return readSource(mediaId, firstSample, sampleCount)
     }
-    const inOrder = await mix(crowded, MEDIA, 1000, 4800, readSource)
-    const outOfOrder = await mix(crowded, MEDIA, 1000, 4800, shuffledReader)
+    const inOrder = await mix(crowded, MEDIA, {}, 1000, 4800, readSource)
+    const outOfOrder = await mix(crowded, MEDIA, {}, 1000, 4800, shuffledReader)
     expect(sameBits(inOrder, outOfOrder)).toBe(true)
     let peak = 0
     for (const sample of inOrder) {
@@ -416,6 +445,6 @@ describe('mix with many sounds at once', () => {
       if (mediaId === 'loud') throw new Error('media process restarted')
       return readSource(mediaId, firstSample, sampleCount)
     }
-    await expect(mix(crowded, MEDIA, 0, 2048, failingReader)).rejects.toThrow('media process restarted')
+    await expect(mix(crowded, MEDIA, {}, 0, 2048, failingReader)).rejects.toThrow('media process restarted')
   })
 })

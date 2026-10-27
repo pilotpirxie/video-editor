@@ -4,6 +4,7 @@ import type { MediaClient, RawFrame } from '../shared/mediaProtocol.js'
 import { createByteLru } from './byteLru.js'
 import type { Compositor, DrawItem, GpuTexture } from './compositor.js'
 import { rasterizeArrow, rasterizeCallout } from './annotations.js'
+import { rasterizeDrawing } from './drawings.js'
 import type { DrawnLayer, ImageLayer, Layer, PictureLayer, VideoLayer } from './resolve.js'
 import { rasterizeText, type Raster } from './text.js'
 
@@ -51,7 +52,7 @@ function isWorthRemembering(error: unknown): boolean {
 }
 
 function isDrawn(layer: PictureLayer): layer is DrawnLayer {
-  return layer.kind === 'text' || layer.kind === 'callout' || layer.kind === 'arrow'
+  return layer.kind === 'text' || layer.kind === 'callout' || layer.kind === 'arrow' || layer.kind === 'drawing'
 }
 
 function drawnKey(layer: DrawnLayer, outputScale: number): string {
@@ -111,16 +112,16 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     retired.push(texture)
   }
 
-  function show(clipId: string, picture: Picture): void {
-    const previous = lastShown.get(clipId)
-    lastShown.set(clipId, picture)
+  function show(layerKey: string, picture: Picture): void {
+    const previous = lastShown.get(layerKey)
+    lastShown.set(layerKey, picture)
     if (previous !== undefined && previous.texture !== picture.texture) releaseIfLetGo(previous.texture)
   }
 
-  function forgetShown(clipId: string): void {
-    const previous = lastShown.get(clipId)
+  function forgetShown(layerKey: string): void {
+    const previous = lastShown.get(layerKey)
     if (previous === undefined) return
-    lastShown.delete(clipId)
+    lastShown.delete(layerKey)
     releaseIfLetGo(previous.texture)
   }
 
@@ -174,6 +175,7 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
     let raster: Raster
     if (layer.kind === 'text') raster = rasterizeText(layer.look, layer.shownLetters, scaleX, scaleY)
     else if (layer.kind === 'callout') raster = rasterizeCallout(layer.look, scaleX, scaleY)
+    else if (layer.kind === 'drawing') raster = rasterizeDrawing(layer.look, scaleX, scaleY)
     else raster = rasterizeArrow(layer.look, scaleX, scaleY)
     const texture = compositor.uploadImage(raster.canvas)
     return { texture, naturalWidth: raster.naturalWidth, naturalHeight: raster.naturalHeight, hasAlphaBelow: false }
@@ -207,11 +209,11 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
   }
 
   function streamOf(layer: VideoLayer): OpenStream {
-    const known = streams.get(layer.clipId)
+    const known = streams.get(layer.key)
     if (known !== undefined) return known
     const id = media.openStream(layer.mediaId, layer.frame, layer.halvings)
     const opened: OpenStream = { id, shown: undefined, ahead: undefined }
-    streams.set(layer.clipId, opened)
+    streams.set(layer.key, opened)
     return opened
   }
 
@@ -257,11 +259,11 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
   }
 
   async function closeEndedStreams(layers: readonly Layer[]): Promise<void> {
-    const active = new Set(layers.map((layer) => layer.clipId))
+    const active = new Set(layers.map((layer) => layer.key))
     const closing: Promise<void>[] = []
-    for (const [clipId, stream] of streams) {
-      if (active.has(clipId)) continue
-      streams.delete(clipId)
+    for (const [layerKey, stream] of streams) {
+      if (active.has(layerKey)) continue
+      streams.delete(layerKey)
       if (stream.shown !== undefined) retired.push(stream.shown)
       closing.push(closeStream(stream))
     }
@@ -278,14 +280,14 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
 
   // Playback starts from these, so a video whose playback copy is not made yet is held at its paused picture rather than left out.
   function holdPausedVideo(layers: readonly Layer[], loaded: readonly (Picture | undefined)[]): void {
-    const pausedClips = new Set<string>()
+    const pausedLayers = new Set<string>()
     for (const [index, layer] of layers.entries()) {
-      pausedClips.add(layer.clipId)
+      pausedLayers.add(layer.key)
       const picture = loaded[index]
-      if (layer.kind === 'video' && picture !== undefined) show(layer.clipId, picture)
+      if (layer.kind === 'video' && picture !== undefined) show(layer.key, picture)
     }
-    for (const clipId of [...lastShown.keys()]) {
-      if (!pausedClips.has(clipId)) forgetShown(clipId)
+    for (const layerKey of [...lastShown.keys()]) {
+      if (!pausedLayers.has(layerKey)) forgetShown(layerKey)
     }
   }
 
@@ -342,14 +344,14 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
 
   function itemsNow(layers: readonly Layer[], outputScale: number): { items: DrawItem[]; lateLayers: number } {
     const items: DrawItem[] = []
-    const drawnClips = new Set<string>()
+    const drawnLayers = new Set<string>()
     let lateLayers = 0
     for (const layer of layers) {
       if (!hasPicture(layer)) {
         items.push(layer)
         continue
       }
-      drawnClips.add(layer.clipId)
+      drawnLayers.add(layer.key)
       const key = playbackKey(layer, outputScale)
       let ready = pictures.get(key)
       if (ready === undefined && isDrawn(layer)) {
@@ -357,12 +359,12 @@ export function createFrameProvider(media: MediaClient, compositor: Compositor):
         pictures.set(key, ready, ready.texture.bytes)
       }
       if (ready === undefined) lateLayers += 1
-      else show(layer.clipId, ready)
-      const picture = ready ?? lastShown.get(layer.clipId)
+      else show(layer.key, ready)
+      const picture = ready ?? lastShown.get(layer.key)
       if (picture !== undefined) items.push(itemOf(layer, picture))
     }
-    for (const clipId of [...lastShown.keys()]) {
-      if (!drawnClips.has(clipId)) forgetShown(clipId)
+    for (const layerKey of [...lastShown.keys()]) {
+      if (!drawnLayers.has(layerKey)) forgetShown(layerKey)
     }
     return { items, lateLayers }
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { FRAME, SECOND, audioClip, clipOf, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
-import type { Project, Transition, VideoClip } from '../shared/project.js'
+import { isVisual, type Project, type Transition, type VideoClip } from '../shared/project.js'
 import { endOf, locateClip } from './clips.js'
 import { longestTransition, setTransition, transitionSpans, transitionTargetAt } from './transitions.js'
 
@@ -15,7 +15,7 @@ function cutProject(first: Partial<VideoClip> = {}, second: Partial<VideoClip> =
 
 function spansOf(project: Project, clipId: string): ReturnType<typeof transitionSpans> {
   const located = locateClip(project, clipId)
-  if (located === undefined || located.clip.type === 'audio') throw new Error(`No visual clip "${clipId}"`)
+  if (located === undefined || !isVisual(located.clip)) throw new Error(`No visual clip "${clipId}"`)
   const { track, clip } = located
   const before = track.clips.find((other) => endOf(other) === clip.start)
   const after = track.clips.find((other) => other.start === endOf(clip))

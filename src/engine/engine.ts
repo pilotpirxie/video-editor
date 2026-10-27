@@ -1,13 +1,13 @@
 import { fitCanvas, type Size } from '../shared/exportPresets.js'
 import { AUDIO_CACHE_BYTES, AUDIO_QUEUE_SECONDS, READ_AHEAD_FRAMES, UNDER_PRESSURE_SHARE } from '../shared/limits.js'
 import { describeError } from '../shared/log.js'
-import type { ExportJob, FramesJob, LoadedProject, MediaClient } from '../shared/mediaProtocol.js'
+import type { AnimationOverrides, ExportJob, FramesJob, LoadedProject, MediaClient } from '../shared/mediaProtocol.js'
 import { projectDuration, type Canvas } from '../shared/project.js'
 import { SAMPLE_RATE, TICKS_PER_SAMPLE, TICKS_PER_SECOND, frameAt, frameDuration } from '../shared/time.js'
 import { viewAt, wholeCanvas, type View } from './camera.js'
 import { createPlaybackClock, type PlaybackClock } from './clock.js'
 import { CompositorError, createCompositor, type DrawItem } from './compositor.js'
-import { exportMedia, renderFrames, type JobSummary, type ProgressListener, type RenderContext } from './exporter.js'
+import { exportMedia, renderFrames, renderStill, type JobSummary, type ProgressListener, type RenderContext } from './exporter.js'
 import { createFrameProvider } from './frameProvider.js'
 import { cachedAudioReader, mix, soundRanges, type AudioReader } from './mixer.js'
 import { pictureRanges, resolveFrame, type Layer } from './resolve.js'
@@ -17,6 +17,7 @@ const WANT_AGAIN_AFTER_TICKS = 10 * TICKS_PER_SECOND
 const WANT_INTERVAL_MS = 500
 const START_WAIT_MS = 1000
 const START_RETRY_MS = 50
+const OUTSIDE_FOCUS_OPACITY = 0.4
 
 function decodesNeeded(layers: readonly Layer[]): string {
   const decodes: string[] = []
@@ -39,10 +40,11 @@ type OutputCommand = { type: 'start' } | { type: 'samples'; samples: Float32Arra
 type OutputReport = { type: 'consumed'; samples: number }
 
 export type Engine = {
-  load(projectPath: string, forPreview: boolean): Promise<void>
+  load(projectPath: string, forPreview: boolean, animationOverrides?: AnimationOverrides): Promise<void>
   setProject(project: LoadedProject): void
   setOutputSize(size: Size): void
   showWholeCanvasWhenPaused(isShown: boolean): void
+  setFocus(path: readonly string[]): void
   attachAudio(port: MessagePort): void
   setUnderPressure(isUnderPressure: boolean): void
   seek(time: number): void
@@ -50,6 +52,7 @@ export type Engine = {
   pause(): void
   exportMedia(job: ExportJob, onProgress: ProgressListener): Promise<JobSummary>
   renderFrames(job: FramesJob): Promise<JobSummary>
+  still(path: string, time: number, height: number): Promise<ImageBitmap | undefined>
 }
 
 type Playback = {
@@ -100,6 +103,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
   let wantedAt: number | undefined
   let wantSentAt = -Infinity
   let wantTimer: ReturnType<typeof setTimeout> | undefined
+  let focus: readonly string[] = []
 
   function requireLoaded(): LoadedProject {
     if (loaded === undefined) throw new EngineError('No project is loaded')
@@ -110,8 +114,16 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     return fitCanvas(project.project.canvas, output).scale
   }
 
+  function isInFocus(layer: Layer): boolean {
+    const groups = layer.groups ?? []
+    return focus.every((clipId, depth) => groups[depth] === clipId)
+  }
+
+  // Only the preview dims what is outside an open animation; exports draw the episode as it is.
   function layersAt(project: LoadedProject, frameTime: number): Layer[] {
-    return resolveFrame(project.project, project.media, frameTime, outputScale(project))
+    const layers = resolveFrame(project.project, project.media, project.documents, frameTime, outputScale(project))
+    if (focus.length === 0) return layers
+    return layers.map((layer) => (isInFocus(layer) ? layer : { ...layer, opacity: layer.opacity * OUTSIDE_FOCUS_OPACITY }))
   }
 
   function draw(project: LoadedProject, view: View, items: readonly DrawItem[]): void {
@@ -133,7 +145,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     wantedFor = project
     wantedAt = time
     wantSentAt = performance.now()
-    const ranges = [...pictureRanges(project.project, project.media), ...soundRanges(project.project, project.media)]
+    const ranges = [...pictureRanges(project.project, project.media, project.documents), ...soundRanges(project.project, project.media, project.documents)]
     try {
       await media.want({ playhead: time, ranges })
     } catch (error) {
@@ -199,7 +211,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
       while (playback === playing) {
         const queuedSamples = playing.mixedUntil - (playing.startSample + playing.consumedSamples)
         if (queuedSamples >= queueTarget) break
-        const samples = await mix(project.project, project.media, playing.mixedUntil, AUDIO_BLOCK_SAMPLES, readAudio)
+        const samples = await mix(project.project, project.media, project.documents, playing.mixedUntil, AUDIO_BLOCK_SAMPLES, readAudio)
         if (playback !== playing) return
         const command: OutputCommand = { type: 'samples', samples }
         audioPort?.postMessage(command, [samples.buffer])
@@ -393,6 +405,13 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     void showPaused()
   })
 
+  function setFocus(path: readonly string[]): void {
+    const isSame = path.length === focus.length && path.every((clipId, depth) => focus[depth] === clipId)
+    if (isSame) return
+    focus = path
+    if (playback === undefined) void showPaused()
+  }
+
   function showWholeCanvasWhenPaused(isShown: boolean): void {
     if (isShown === isWholeCanvasShownWhenPaused) return
     isWholeCanvasShownWhenPaused = isShown
@@ -407,13 +426,13 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     void showPaused()
   }
 
-  async function load(projectPath: string, forPreview: boolean): Promise<void> {
+  async function load(projectPath: string, forPreview: boolean, animationOverrides?: AnimationOverrides): Promise<void> {
     stopPlayback()
     generation += 1
     refining?.abort()
     loaded = undefined
     provider.clear()
-    const project = await media.loadProject(projectPath, forPreview)
+    const project = await media.loadProject(projectPath, forPreview, animationOverrides)
     loaded = project
     time = 0
 
@@ -442,11 +461,21 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     return { loaded: requireLoaded(), media, compositor, provider, readAudio }
   }
 
+  async function still(path: string, time: number, height: number): Promise<ImageBitmap | undefined> {
+    const project = loaded
+    const document = project?.documents[path]
+    if (project === undefined || document === undefined || isContextLost) return undefined
+    const output = { width: Math.max(1, Math.round((document.canvas.width * height) / document.canvas.height)), height }
+    const pixels = await renderStill({ ...renderContext(), loaded: { ...project, project: document } }, time, output)
+    return createImageBitmap(new ImageData(new Uint8ClampedArray(pixels), output.width, output.height))
+  }
+
   return {
     load,
     setProject,
     setOutputSize,
     showWholeCanvasWhenPaused,
+    setFocus,
     attachAudio,
     setUnderPressure,
     seek,
@@ -454,5 +483,6 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     pause,
     exportMedia: (job, onProgress) => exportMedia(renderContext(), job, onProgress),
     renderFrames: (job) => renderFrames(renderContext(), job),
+    still,
   }
 }

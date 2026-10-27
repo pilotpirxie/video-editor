@@ -38,6 +38,8 @@ describe('actionFor with the default keys', () => {
     expect(defaultFor('Backspace')).toBe('delete')
     expect(defaultFor('Delete', { metaKey: true })).toBe('ripple-delete')
     expect(defaultFor('KeyF', { metaKey: true, shiftKey: true })).toBe('preview-mode')
+    expect(defaultFor('BracketRight', { metaKey: true })).toBe('bring-forward')
+    expect(defaultFor('BracketLeft', { metaKey: true, shiftKey: true })).toBe('send-to-back')
   })
 
   it('needs exactly the modifiers of the shortcut', () => {

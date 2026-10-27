@@ -1,4 +1,4 @@
-import type { AddedMedia, CacheUsage, LoadedProject, MediaClient, MediaMessage, MediaReply, MediaRequest, MediaState, Preparation, RawFrame, RelinkedMedia, WaveformLevel } from '../shared/mediaProtocol.js'
+import type { AddedMedia, CacheUsage, LoadedAnimations, LoadedProject, MediaClient, MediaMessage, MediaReply, MediaRequest, MediaState, Preparation, RawFrame, RelinkedMedia, WaveformLevel } from '../shared/mediaProtocol.js'
 
 type Pending = {
   resolve(answer: unknown): void
@@ -17,7 +17,11 @@ function isReply(value: unknown): value is MediaReply {
 }
 
 function isLoadedProject(value: unknown): value is LoadedProject {
-  return typeof value === 'object' && value !== null && 'project' in value && 'media' in value
+  return typeof value === 'object' && value !== null && 'project' in value && 'media' in value && 'documents' in value
+}
+
+function isLoadedAnimations(value: unknown): value is LoadedAnimations {
+  return typeof value === 'object' && value !== null && 'documents' in value && 'media' in value
 }
 
 function isRawFrame(value: unknown): value is RawFrame {
@@ -165,10 +169,22 @@ export function createMediaClient(firstPort: MessagePort): MediaConnection {
   }
 
   return {
-    async loadProject(path, forPreview) {
-      const request: MediaRequest = { method: 'loadProject', path, forPreview }
+    async loadProject(path, forPreview, animationOverrides) {
+      const request: MediaRequest = { method: 'loadProject', path, forPreview, animationOverrides }
       const answer = await call(request)
       if (!isLoadedProject(answer)) throw unexpectedAnswer(request)
+      return answer
+    },
+    async loadAnimations(paths) {
+      const request: MediaRequest = { method: 'loadAnimations', paths: [...paths] }
+      const answer = await call(request)
+      if (!isLoadedAnimations(answer)) throw unexpectedAnswer(request)
+      return answer
+    },
+    async reopenAnimations(documents) {
+      const request: MediaRequest = { method: 'reopenAnimations', documents }
+      const answer = await call(request)
+      if (!isMediaStates(answer)) throw unexpectedAnswer(request)
       return answer
     },
     whenPrepared: () => callForNothing({ method: 'whenPrepared' }),
@@ -224,8 +240,8 @@ export function createMediaClient(firstPort: MessagePort): MediaConnection {
       if (answer !== undefined && !isWaveform(answer)) throw unexpectedAnswer(request)
       return answer
     },
-    async saveProject(path, project) {
-      await callWithin({ method: 'saveProject', path, project }, SAVE_TIMEOUT_MS)
+    async saveProject(path, project, animationPath) {
+      await callWithin({ method: 'saveProject', path, project, animationPath }, SAVE_TIMEOUT_MS)
     },
     want: (wanted) => callForNothing({ method: 'want', wanted }),
     async cacheUsage() {

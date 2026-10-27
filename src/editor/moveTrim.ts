@@ -1,4 +1,5 @@
 import type { MediaStates } from '../engine/resolve.js'
+import { isTimed } from '../shared/mediaProtocol.js'
 import type { Clip, Project, Track } from '../shared/project.js'
 import { TIMELINE_GRID, sourceTime } from '../shared/time.js'
 import { editClips, emptyTrack, endOf, hasSource, locateClip, placeOnTrack, shiftedKeyframes, withFadesWithin, type NewTrack } from './clips.js'
@@ -139,7 +140,7 @@ function neighbours(track: Track, clip: Clip): { previousEnd: number; nextStart:
 export function sourceDuration(clip: Clip, mediaStates: MediaStates): number | undefined {
   if (!hasSource(clip) || (clip.type === 'video' && clip.loop === true)) return undefined
   const state = mediaStates[clip.mediaId]
-  if (state === undefined || 'error' in state || state.info.kind === 'image') return undefined
+  if (state === undefined || 'error' in state || !isTimed(state.info)) return undefined
   return state.info.duration
 }
 

@@ -654,6 +654,61 @@ legend.field-label {
   margin-right: var(--space-1);
 }
 
+.field-row.with-track > .field-box {
+  flex: none;
+  width: 52px;
+  margin-right: 0;
+}
+
+/* Gradients here are the colours being picked, not decoration. */
+.slider-track {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  margin-right: var(--space-2);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius);
+  box-shadow: var(--sunken-edge);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.slider-knob {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--text-primary);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--window-background);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.hsl-field {
+  position: relative;
+  height: 96px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.colour-wells .button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+.colour-chip {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--divider);
+  border-radius: 50%;
+}
+
 .field-pair {
   display: flex;
   align-items: flex-end;

@@ -1,0 +1,320 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 12
+    },
+    "height": 360,
+    "width": 640
+  },
+  "media": [
+    {
+      "id": "blue",
+      "path": "",
+      "relativePath": "../../media/generated/image-blue.png"
+    },
+    {
+      "id": "bounce",
+      "path": "",
+      "relativePath": "bounce.pbanim"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "sky",
+          "mediaId": "blue",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 2,
+            "scaleY": 2,
+            "x": 320,
+            "y": 180
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "sky",
+      "locked": false,
+      "muted": false,
+      "name": "sky"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "id": "inner-bounce",
+          "loop": true,
+          "mediaId": "bounce",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1,
+            "x": 320,
+            "y": 180
+          },
+          "type": "animation",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "bounce",
+      "locked": false,
+      "muted": false,
+      "name": "bounce"
+    },
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "id": "face-1",
+          "shapes": [
+            {
+              "children": [
+                {
+                  "fill": "#E8A07F80",
+                  "id": "cheek",
+                  "isClosed": true,
+                  "nodes": [
+                    {
+                      "x": 150,
+                      "y": 95
+                    },
+                    {
+                      "x": 190,
+                      "y": 95
+                    },
+                    {
+                      "x": 190,
+                      "y": 120
+                    },
+                    {
+                      "x": 150,
+                      "y": 120
+                    }
+                  ]
+                }
+              ],
+              "fill": "#F2C9A0",
+              "id": "head",
+              "isClosed": true,
+              "nodes": [
+                {
+                  "in": {
+                    "x": -27.615000000000002,
+                    "y": 0
+                  },
+                  "out": {
+                    "x": 27.615000000000002,
+                    "y": 0
+                  },
+                  "x": 130,
+                  "y": 40
+                },
+                {
+                  "in": {
+                    "x": 0,
+                    "y": -27.615000000000002
+                  },
+                  "out": {
+                    "x": 0,
+                    "y": 27.615000000000002
+                  },
+                  "x": 180,
+                  "y": 90
+                },
+                {
+                  "in": {
+                    "x": 27.615000000000002,
+                    "y": 0
+                  },
+                  "out": {
+                    "x": -27.615000000000002,
+                    "y": 0
+                  },
+                  "x": 130,
+                  "y": 140
+                },
+                {
+                  "in": {
+                    "x": 0,
+                    "y": 27.615000000000002
+                  },
+                  "out": {
+                    "x": 0,
+                    "y": -27.615000000000002
+                  },
+                  "x": 80,
+                  "y": 90
+                }
+              ],
+              "stroke": {
+                "color": "#14171D",
+                "width": 3
+              }
+            },
+            {
+              "id": "mouth",
+              "nodes": [
+                {
+                  "out": {
+                    "x": 10,
+                    "y": 0
+                  },
+                  "x": 110,
+                  "y": 110
+                },
+                {
+                  "in": {
+                    "x": -10,
+                    "y": 0
+                  },
+                  "x": 150,
+                  "y": 110
+                }
+              ],
+              "stroke": {
+                "color": "#14171D",
+                "width": 4
+              }
+            }
+          ],
+          "start": 0,
+          "type": "drawing"
+        },
+        {
+          "duration": 24000000,
+          "id": "face-2",
+          "shapes": [
+            {
+              "children": [
+                {
+                  "fill": "#E8A07F80",
+                  "id": "cheek",
+                  "isClosed": true,
+                  "nodes": [
+                    {
+                      "x": 150,
+                      "y": 95
+                    },
+                    {
+                      "x": 190,
+                      "y": 95
+                    },
+                    {
+                      "x": 190,
+                      "y": 120
+                    },
+                    {
+                      "x": 150,
+                      "y": 120
+                    }
+                  ]
+                }
+              ],
+              "fill": "#F2C9A0",
+              "id": "head",
+              "isClosed": true,
+              "nodes": [
+                {
+                  "in": {
+                    "x": -27.615000000000002,
+                    "y": 0
+                  },
+                  "out": {
+                    "x": 27.615000000000002,
+                    "y": 0
+                  },
+                  "x": 130,
+                  "y": 40
+                },
+                {
+                  "in": {
+                    "x": 0,
+                    "y": -27.615000000000002
+                  },
+                  "out": {
+                    "x": 0,
+                    "y": 27.615000000000002
+                  },
+                  "x": 180,
+                  "y": 90
+                },
+                {
+                  "in": {
+                    "x": 27.615000000000002,
+                    "y": 0
+                  },
+                  "out": {
+                    "x": -27.615000000000002,
+                    "y": 0
+                  },
+                  "x": 130,
+                  "y": 140
+                },
+                {
+                  "in": {
+                    "x": 0,
+                    "y": 27.615000000000002
+                  },
+                  "out": {
+                    "x": 0,
+                    "y": -27.615000000000002
+                  },
+                  "x": 80,
+                  "y": 90
+                }
+              ],
+              "stroke": {
+                "color": "#14171D",
+                "width": 3
+              }
+            },
+            {
+              "id": "mouth",
+              "nodes": [
+                {
+                  "out": {
+                    "x": 10,
+                    "y": 12
+                  },
+                  "x": 110,
+                  "y": 110
+                },
+                {
+                  "in": {
+                    "x": -10,
+                    "y": 12
+                  },
+                  "x": 150,
+                  "y": 110
+                }
+              ],
+              "stroke": {
+                "color": "#14171D",
+                "width": 4
+              }
+            }
+          ],
+          "start": 24000000,
+          "type": "drawing"
+        }
+      ],
+      "hidden": false,
+      "id": "face",
+      "locked": false,
+      "muted": false,
+      "name": "face"
+    }
+  ],
+  "version": 1
+}

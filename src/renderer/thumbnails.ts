@@ -22,14 +22,18 @@ export type Thumbnails = {
   waveform(mediaId: string): readonly WaveformLevel[] | undefined
   subscribe(listener: () => void): () => void
   setUnderPressure(isUnderPressure: boolean): void
+  refreshAnimations(paths: readonly string[]): void
 }
 
-export function createThumbnails(media: MediaClient, isPlaying: () => boolean): Thumbnails {
+type StillRenderer = (path: string, time: number, height: number) => Promise<ImageBitmap | undefined>
+
+export function createThumbnails(media: MediaClient, renderStill: StillRenderer, isPlaying: () => boolean): Thumbnails {
   const pictures = createByteLru<ImageBitmap>(CACHE_BYTES, (bitmap) => bitmap.close())
   const waveforms = new Map<string, WaveformLevel[]>()
   const inFlight = new Set<string>()
   const notReadyAt = new Map<string, number>()
   const listeners = new Set<() => void>()
+  const animationRevisions = new Map<string, number>()
   let frameRequests = 0
   let retryTimer: number | undefined
 
@@ -80,6 +84,10 @@ export function createThumbnails(media: MediaClient, isPlaying: () => boolean): 
 
   async function loadPoster(key: string, mediaId: string, info: MediaInfo): Promise<boolean> {
     if (info.kind === 'audio') return false
+    if (info.kind === 'animation') {
+      const still = await renderStill(info.path, 0, POSTER_HEIGHT)
+      return still !== undefined && keep(key, still)
+    }
     if (info.kind === 'image') {
       const bytes = await media.readImage(mediaId)
       return keep(key, await createImageBitmap(new Blob([bytes]), { resizeHeight: POSTER_HEIGHT, resizeQuality: 'medium' }))
@@ -127,7 +135,8 @@ export function createThumbnails(media: MediaClient, isPlaying: () => boolean): 
 
   return {
     poster(mediaId, info) {
-      const key = `poster:${mediaId}`
+      const revision = info.kind === 'animation' ? `:${animationRevisions.get(info.path) ?? 0}` : ''
+      const key = `poster:${mediaId}${revision}`
       const known = pictures.get(key)
       if (known === undefined && canRequest(key)) void fetchOnce(key, () => loadPoster(key, mediaId, info))
       return known
@@ -151,6 +160,10 @@ export function createThumbnails(media: MediaClient, isPlaying: () => boolean): 
     },
     setUnderPressure(isUnderPressure) {
       pictures.setLimit(isUnderPressure ? CACHE_BYTES * UNDER_PRESSURE_SHARE : CACHE_BYTES)
+    },
+    refreshAnimations(paths) {
+      for (const path of paths) animationRevisions.set(path, (animationRevisions.get(path) ?? 0) + 1)
+      if (paths.length > 0) for (const listener of listeners) listener()
     },
   }
 }

@@ -27,7 +27,11 @@ function unknownRequest(request: never): never {
 function perform(session: MediaSession, request: MediaRequest, signal: AbortSignal): Promise<unknown> {
   switch (request.method) {
     case 'loadProject':
-      return session.loadProject(request.path, request.forPreview)
+      return session.loadProject(request.path, request.forPreview, request.animationOverrides)
+    case 'loadAnimations':
+      return session.loadAnimations(request.paths)
+    case 'reopenAnimations':
+      return session.reopenAnimations(request.documents)
     case 'openMedia':
       return session.openMedia(request.media, request.projectPath)
     case 'whenPrepared':
@@ -69,7 +73,7 @@ function perform(session: MediaSession, request: MediaRequest, signal: AbortSign
     case 'waveform':
       return session.waveform(request.mediaId)
     case 'saveProject':
-      return session.saveProject(request.path, request.project)
+      return session.saveProject(request.path, request.project, request.animationPath)
     case 'cacheUsage':
       return session.cacheUsage()
     case 'clearCache':

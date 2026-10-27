@@ -5,7 +5,7 @@ import { useSession } from './context.js'
 import { EditingSettings, PerformanceSettings } from './AppSettings.js'
 import { IconButton } from './icons.js'
 
-const SECTIONS = ['Playback', 'Timeline', 'Editing', 'File and view'] as const
+const SECTIONS = ['Playback', 'Timeline', 'Editing', 'Drawing', 'File and view'] as const
 const TABS = ['Performance', 'Editing', 'Shortcuts'] as const
 
 type SettingsTab = (typeof TABS)[number]

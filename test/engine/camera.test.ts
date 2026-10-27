@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { CameraKeyframe, Clip, Transform } from '../../src/shared/project.js'
+import { isVisual, type CameraKeyframe, type Clip, type Transform } from '../../src/shared/project.js'
 import { FRAME, SECOND } from '../fixtures.js'
 import { bundledFfmpeg, expectGolden, imageOf, litFraction, cropPicture, pictureAt, projectOfTracks, renderFrames, renderProject, sameBytes, scratchDirectory, videoOf } from '../helpers.js'
 
@@ -17,7 +17,7 @@ function at(x: number, y: number, scale: number, rotation = 0): Transform {
 const TITLE: Clip = { id: 'title', type: 'text', text: 'Sharp 清晰', font: { family: 'Helvetica Neue', size: 60 }, color: '#FFFFFF', align: 'center', ...SPAN, transform: at(700, 300, 1), opacity: 1 }
 
 function zoomedByHand(clip: Clip): Clip {
-  if (clip.type === 'audio') return clip
+  if (!isVisual(clip)) return clip
   const { transform } = clip
   const x = (transform.x - CENTRE.x) * ZOOM + CANVAS.width / 2
   const y = (transform.y - CENTRE.y) * ZOOM + CANVAS.height / 2

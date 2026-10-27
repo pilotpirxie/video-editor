@@ -3,6 +3,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { BrowserWindow, Menu } from 'electron'
+import { CAMERA_LANE_HEIGHT, RULER_HEIGHT, TRACK_HEIGHT, trackRows, trackTop } from '../editor/timelineView.js'
 import type { MenuAction, UnsavedChoice } from '../shared/mediaProtocol.js'
 import type { MediaSort } from '../shared/settings.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
@@ -14,14 +15,13 @@ const DRAG_STEPS = 8
 const INPUT_SETTLE_MS = 30
 const WHEEL_INTERVAL_MS = 8
 export const P95 = 0.95
-export const RULER_HEIGHT = 24
-export const CAMERA_LANE_HEIGHT = 22
-export const TRACK_HEIGHT = 56
+export { CAMERA_LANE_HEIGHT, RULER_HEIGHT, TRACK_HEIGHT }
 
 export type DialogAnswers = {
   openProject?: string
   saveProject?: string
   importMedia?: string[]
+  newAnimation?: string
   relinkMedia?: string
   exportPath?: string
   unsavedChanges?: UnsavedChoice
@@ -248,13 +248,20 @@ function driverOf(window: BrowserWindow, options: UiTestOptions): Driver {
     }
   }
 
+  // Lays out `trackCount` tracks, so a point can aim at a track a drop is about to make; the ones shown keep their heights.
   async function timelinePoint(time: number, trackIndex: number, trackCount: number): Promise<Point> {
     const box = await rect('timeline')
     const view: unknown = JSON.parse(String(await page.evaluate(`${selector('timeline')}.dataset.view`)))
     if (!isTimelineView(view)) throw new PageError('The timeline does not report its view')
+    const shown: unknown = JSON.parse(String(await page.evaluate(`${selector('timeline')}.dataset.rows ?? '[]'`)))
+    const heights: number[] = []
+    for (let index = 0; index < trackCount; index++) {
+      const height = Array.isArray(shown) ? shown[index] : undefined
+      heights.push(typeof height === 'number' ? height : TRACK_HEIGHT)
+    }
     return {
       x: box.x + (time / TICKS_PER_SECOND) * view.pixelsPerSecond - view.scrollX,
-      y: box.y + RULER_HEIGHT + CAMERA_LANE_HEIGHT + (trackCount - 1 - trackIndex) * TRACK_HEIGHT - view.scrollY + TRACK_HEIGHT / 2,
+      y: box.y + trackTop(trackIndex, trackRows(heights), view) + TRACK_HEIGHT / 2,
     }
   }
 

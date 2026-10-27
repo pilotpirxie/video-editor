@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { MediaInfo, VideoInfo } from '../shared/mediaProtocol.js'
+import type { Documents, MediaInfo, MediaState, VideoInfo } from '../shared/mediaProtocol.js'
 import { TRANSITION_TYPES, ease, valueAt, type CameraKeyframe, type Clip, type Easing, type Keyframe, type Project, type Track, type TransitionType, type VideoClip } from '../shared/project.js'
-import { fadeFactor, groupFrameAt, pictureRanges, resolveFrame, sourceHalvings, transitionChange, type Layer, type MediaStates, type TransitionPart, type VideoLayer } from './resolve.js'
+import { fadeFactor, scopeFrameAt, pictureRanges, resolveFrame, sourceHalvings, transitionChange, type Layer, type MediaStates, type TransitionPart, type VideoLayer } from './resolve.js'
 
 const SECOND = 24_000_000
 const FRAME_30 = 800_000
@@ -56,7 +56,7 @@ function project(tracks: Track[]): Project {
 }
 
 function layersAt(clips: Clip[], time: number): Layer[] {
-  return resolveFrame(project([track(clips)]), MEDIA, time, 1)
+  return resolveFrame(project([track(clips)]), MEDIA, {}, time, 1)
 }
 
 function videoLayerAt(clip: VideoClip, time: number): VideoLayer {
@@ -95,13 +95,13 @@ describe('active clips', () => {
       track([videoClip({ id: 'muted' })], { muted: true }),
       track([videoClip({ id: 'top' })]),
     ]
-    const layers = resolveFrame(project(tracks), MEDIA, 0, 1)
+    const layers = resolveFrame(project(tracks), MEDIA, {}, 0, 1)
     expect(layers.map((layer) => layer.clipId)).toEqual(['bottom', 'muted', 'top'])
   })
 
   it('skips clips whose media failed, without affecting the others', () => {
     const tracks = [track([videoClip({ id: 'bad', mediaId: 'broken' })]), track([videoClip({ id: 'missing', mediaId: 'nowhere' })]), track([videoClip({ id: 'good' })])]
-    expect(resolveFrame(project(tracks), MEDIA, 0, 1).map((layer) => layer.clipId)).toEqual(['good'])
+    expect(resolveFrame(project(tracks), MEDIA, {}, 0, 1).map((layer) => layer.clipId)).toEqual(['good'])
   })
 
   it('never produces a layer for an audio clip', () => {
@@ -147,7 +147,7 @@ describe('source frame', () => {
   it('starts a looping clip over when its source ends, and holds the last frame of one that does not loop', () => {
     const short: MediaStates = { footage: { info: { kind: 'video', duration: 12 * FRAME_30, containerStart: 0, video: { ...VIDEO, frameCount: 12 }, isAnimatedImage: true } } }
     function frameAt(clip: VideoClip, frame: number): number {
-      const layer = resolveFrame(project([track([clip])]), short, frame * FRAME_30, 1)[0]
+      const layer = resolveFrame(project([track([clip])]), short, {}, frame * FRAME_30, 1)[0]
       return layer?.kind === 'video' ? layer.frame : -1
     }
     const looping = videoClip({ loop: true })
@@ -159,7 +159,7 @@ describe('source frame', () => {
   it('accounts for a picture that starts after the container', () => {
     const delayed: MediaStates = { footage: { info: videoMedia({ startOffset: FRAME_30 * 3 }) } }
     function layers(time: number): Layer[] {
-      return resolveFrame(project([track([videoClip()])]), delayed, time, 1)
+      return resolveFrame(project([track([videoClip()])]), delayed, {}, time, 1)
     }
     expect(layers(0)[0]).toMatchObject({ frame: 0 })
     expect(layers(FRAME_30 * 3)[0]).toMatchObject({ frame: 0 })
@@ -168,7 +168,7 @@ describe('source frame', () => {
 
   it('maps a 24 fps source onto a 30 fps timeline', () => {
     const film: MediaStates = { footage: { info: videoMedia({ frameDuration: 1_000_000 }) } }
-    const frames = [0, 1, 2, 3, 4, 5].map((index) => resolveFrame(project([track([videoClip()])]), film, index * FRAME_30, 1)[0])
+    const frames = [0, 1, 2, 3, 4, 5].map((index) => resolveFrame(project([track([videoClip()])]), film, {}, index * FRAME_30, 1)[0])
     expect(frames.map((layer) => (layer?.kind === 'video' ? layer.frame : -1))).toEqual([0, 0, 1, 2, 3, 4])
   })
 })
@@ -283,14 +283,14 @@ describe('other layer kinds', () => {
   it('resolves an image with its natural size', () => {
     const image: Clip = { id: 'logo', type: 'image', mediaId: 'logo', start: 0, duration: SECOND, transform: { x: 100, y: 50, scaleX: 0.5, scaleY: 0.5, rotation: 10 }, opacity: 0.5 }
     expect(layersAt([image], 0)).toEqual([
-      { kind: 'image', clipId: 'logo', mediaId: 'logo', width: 400, height: 200, transform: { x: 100, y: 50, scaleX: 0.5, scaleY: 0.5, rotation: 10 }, opacity: 0.5, crop: { left: 0, top: 0, right: 0, bottom: 0 } },
+      { kind: 'image', clipId: 'logo', key: 'logo', mediaId: 'logo', width: 400, height: 200, transform: { x: 100, y: 50, scaleX: 0.5, scaleY: 0.5, rotation: 10 }, opacity: 0.5, crop: { left: 0, top: 0, right: 0, bottom: 0 } },
     ])
   })
 
   it('resolves text without needing any media', () => {
     const text: Clip = { id: 'title', type: 'text', start: 0, duration: SECOND, text: 'Hello', font: { family: 'Helvetica', size: 72 }, color: '#FFFFFF', align: 'center', transform: { x: 960, y: 540, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1 }
-    expect(resolveFrame(project([track([text])]), {}, 0, 1)).toEqual([
-      { kind: 'text', clipId: 'title', look: { text: 'Hello', font: { family: 'Helvetica', size: 72 }, color: '#FFFFFF', align: 'center' }, sharpScaleX: 1, sharpScaleY: 1, transform: text.transform, opacity: 1 },
+    expect(resolveFrame(project([track([text])]), {}, {}, 0, 1)).toEqual([
+      { kind: 'text', clipId: 'title', key: 'title', look: { text: 'Hello', font: { family: 'Helvetica', size: 72 }, color: '#FFFFFF', align: 'center' }, sharpScaleX: 1, sharpScaleY: 1, transform: text.transform, opacity: 1 },
     ])
   })
 })
@@ -580,16 +580,16 @@ describe('effects and shapes', () => {
   })
 
   it('resolves a blur clip and a highlight clip without any media', () => {
-    expect(resolveFrame(project([track([blur])]), {}, 0, 1)).toEqual([
-      { kind: 'blur', clipId: 'blur', transform: PLACE, opacity: 1, width: 300, height: 100, shape: 'rectangle', softEdge: 4, strength: 12, isPixelated: false },
+    expect(resolveFrame(project([track([blur])]), {}, {}, 0, 1)).toEqual([
+      { kind: 'blur', clipId: 'blur', key: 'blur', transform: PLACE, opacity: 1, width: 300, height: 100, shape: 'rectangle', softEdge: 4, strength: 12, isPixelated: false },
     ])
-    expect(resolveFrame(project([track([{ ...spotlight, transitionIn: undefined }])]), {}, SECOND, 1)).toEqual([
-      { kind: 'highlight', clipId: 'spot', transform: PLACE, opacity: 0.5, width: 200, height: 200, shape: 'ellipse', softEdge: 0, color: '#404040', isSpotlight: true },
+    expect(resolveFrame(project([track([{ ...spotlight, transitionIn: undefined }])]), {}, {}, SECOND, 1)).toEqual([
+      { kind: 'highlight', clipId: 'spot', key: 'spot', transform: PLACE, opacity: 0.5, width: 200, height: 200, shape: 'ellipse', softEdge: 0, color: '#404040', isSpotlight: true },
     ])
   })
 
   it('never adds a clip without a picture to its neighbour, whatever the transition', () => {
-    const layers = resolveFrame(project([track([blur, spotlight])]), {}, SECOND, 1)
+    const layers = resolveFrame(project([track([blur, spotlight])]), {}, {}, SECOND, 1)
     expect(layers.map((layer) => layer.clipId)).toEqual(['blur', 'spot'])
     expect(layers.map((layer) => layer.transition?.mixKey)).toEqual([undefined, undefined])
     expect(layers[1]?.opacity).toBeCloseTo(0.25, 12)
@@ -600,7 +600,7 @@ describe('decode size under a camera zoom', () => {
   const half = { x: 960, y: 540, scaleX: 0.5, scaleY: 0.5, rotation: 0 }
 
   function halvingsWith(camera: CameraKeyframe[], clips: Clip[], time: number): number {
-    const layer = resolveFrame({ ...project([track(clips)]), camera }, MEDIA, time, 1).at(-1)
+    const layer = resolveFrame({ ...project([track(clips)]), camera }, MEDIA, {}, time, 1).at(-1)
     if (layer?.kind !== 'video') throw new Error('Expected a video layer')
     return layer.halvings
   }
@@ -623,7 +623,7 @@ describe('decode size under a camera zoom', () => {
       videoClip({ id: 'first', transform: half, duration: 2 * SECOND }),
       videoClip({ id: 'second', transform: half, start: 2 * SECOND, duration: 2 * SECOND, transitionIn: { type: 'crossDissolve', duration: SECOND } }),
     ]
-    const layers = resolveFrame({ ...project([track(clips)]), camera: zoomAtThree }, MEDIA, SECOND, 1)
+    const layers = resolveFrame({ ...project([track(clips)]), camera: zoomAtThree }, MEDIA, {}, SECOND, 1)
     expect(layers[0]).toMatchObject({ clipId: 'first', halvings: 0 })
   })
 })
@@ -633,10 +633,10 @@ describe('callouts and arrows', () => {
     const base = { start: 0, duration: SECOND, transform: { x: 100, y: 200, scaleX: 2, scaleY: 3, rotation: 0 }, opacity: 1 }
     const callout: Clip = { ...base, id: 'note', type: 'callout', width: 300, height: 100, shape: 'speechBubble', fill: '#FFFFFF', borderColor: '#000000', borderWidth: 4, tail: { x: -200, y: 90 }, text: 'Here', font: { family: 'Helvetica', size: 40, weight: 700 }, color: '#000000', align: 'center' }
     const arrow: Clip = { ...base, id: 'pointer', type: 'arrow', length: 250, thickness: 10, color: '#FF0000', startHead: 'none', endHead: 'triangle' }
-    const [calloutLayer, arrowLayer] = resolveFrame(project([track([callout]), track([arrow])]), {}, 0, 1)
+    const [calloutLayer, arrowLayer] = resolveFrame(project([track([callout]), track([arrow])]), {}, {}, 0, 1)
     expect(calloutLayer).toEqual({
       kind: 'callout',
-      clipId: 'note',
+      clipId: 'note', key: 'note',
       transform: base.transform,
       opacity: 1,
       sharpScaleX: 2,
@@ -784,7 +784,7 @@ describe('groups', () => {
   it('scales the strength and the soft edge of a blur inside, and gives it no effects', () => {
     const blur: Clip = { id: 'blur', type: 'blur', start: 0, duration: 4 * SECOND, transform: IDENTITY, opacity: 1, width: 100, height: 50, shape: 'ellipse', softEdge: 4, strength: 10 }
     const grouped = group({ transform: { ...IDENTITY, scaleX: 2, scaleY: 2 }, effects: [{ type: 'blackAndWhite', amount: 1 }] }, [blur])
-    expect(layersAt([grouped], 2 * SECOND)[0]).toEqual({ kind: 'blur', clipId: 'blur', groups: ['group'], transform: { ...IDENTITY, scaleX: 2, scaleY: 2 }, opacity: 1, width: 100, height: 50, shape: 'ellipse', softEdge: 8, strength: 20, isPixelated: false })
+    expect(layersAt([grouped], 2 * SECOND)[0]).toEqual({ kind: 'blur', clipId: 'blur', key: 'blur', groups: ['group'], transform: { ...IDENTITY, scaleX: 2, scaleY: 2 }, opacity: 1, width: 100, height: 50, shape: 'ellipse', softEdge: 8, strength: 20, isPixelated: false })
   })
 
   it('composes groups inside groups', () => {
@@ -829,12 +829,151 @@ describe('groups', () => {
     const inner = group({ id: 'inner', start: SECOND, duration: SECOND, transform: { x: 100, y: 0, scaleX: 2, scaleY: 2, rotation: 0 } }, [member('m', 0, 0)])
     const outer = group({ id: 'outer', transform: { x: 1000, y: 500, scaleX: 0.5, scaleY: 0.5, rotation: 90 } }, [inner])
     const whole = project([track([outer])])
-    expect(groupFrameAt(whole, [], 3 * SECOND)).toMatchObject({ x: 0, y: 0, scale: 1, rotation: 0 })
-    expect(groupFrameAt(whole, ['outer'], 3 * SECOND)).toMatchObject({ x: 1000, y: 500, scale: 0.5, rotation: 90 })
-    const frame = groupFrameAt(whole, ['outer', 'inner'], 3 * SECOND)
+    expect(scopeFrameAt(whole, MEDIA, {}, [], 3 * SECOND)).toMatchObject({ x: 0, y: 0, scale: 1, rotation: 0 })
+    expect(scopeFrameAt(whole, MEDIA, {}, ['outer'], 3 * SECOND)).toMatchObject({ x: 1000, y: 500, scale: 0.5, rotation: 90 })
+    const frame = scopeFrameAt(whole, MEDIA, {}, ['outer', 'inner'], 3 * SECOND)
     expect(frame.x).toBeCloseTo(1000)
     expect(frame.y).toBeCloseTo(550)
     expect(frame).toMatchObject({ scale: 1, rotation: 90 })
+  })
+})
+
+describe('animation clips', () => {
+  type Animation = Extract<Clip, { type: 'animation' }>
+  const WAVE = '/films/wave.pbanim'
+  const ARTBOARD = { width: 400, height: 200, frameRate: { num: 12, den: 1 } }
+  const hand = videoClip({ id: 'hand', start: 0, duration: 2 * SECOND, transform: { x: 100, y: 50, scaleX: 0.25, scaleY: 0.25, rotation: 0 } })
+
+  function animationClip(overrides: Partial<Animation> = {}): Animation {
+    return { id: 'wave', type: 'animation', mediaId: 'wave', start: SECOND, duration: 4 * SECOND, sourceStart: 0, speedPercent: 100, transform: { x: 960, y: 540, scaleX: 2, scaleY: 2, rotation: 0 }, opacity: 1, volume: 1, ...overrides }
+  }
+
+  function animation(...clips: Clip[]): Project {
+    return { version: 1, canvas: ARTBOARD, media: [], tracks: [track(clips)] }
+  }
+
+  function mediaOf(paths: Record<string, string>): MediaStates {
+    const states: Record<string, MediaState> = { ...MEDIA }
+    for (const [mediaId, path] of Object.entries(paths)) states[mediaId] = { info: { kind: 'animation', path } }
+    return states
+  }
+
+  const WAVE_MEDIA = mediaOf({ wave: WAVE })
+  const WAVE_DOCUMENTS: Documents = { [WAVE]: animation(hand) }
+
+  function layersIn(clips: Clip[], time: number, documents = WAVE_DOCUMENTS, media = WAVE_MEDIA): Layer[] {
+    return resolveFrame(project([track(clips)]), media, documents, time, 1)
+  }
+
+  it('draws its clips with the centre of its artboard where the clip is placed', () => {
+    const [layer] = layersIn([animationClip()], SECOND)
+    expect(layer).toMatchObject({ clipId: 'hand', key: 'wave/hand', groups: ['wave'], frame: 0, transform: { x: 760, y: 440, scaleX: 0.5, scaleY: 0.5 } })
+    const turned = layersIn([animationClip({ transform: { x: 960, y: 540, scaleX: 2, scaleY: 2, rotation: 90 } })], SECOND)[0]
+    expect(turned?.transform.x).toBeCloseTo(1060)
+    expect(turned?.transform.y).toBeCloseTo(340)
+    expect(turned?.transform.rotation).toBe(90)
+  })
+
+  it('draws a drawing where its shapes are, as sharp as the clip is large, and nothing for an empty one', () => {
+    const square = { id: 'square', nodes: [{ x: 100, y: 40 }, { x: 140, y: 40 }, { x: 140, y: 80 }, { x: 100, y: 80 }], isClosed: true as const, stroke: { color: '#000000', width: 4 } }
+    const sketch: Clip = { id: 'sketch', type: 'drawing', start: 0, duration: 2 * SECOND, shapes: [square] }
+    const [layer] = layersIn([animationClip()], SECOND, { [WAVE]: animation(sketch) })
+    expect(layer).toMatchObject({
+      kind: 'drawing',
+      clipId: 'sketch',
+      key: 'wave/sketch',
+      groups: ['wave'],
+      transform: { x: 800, y: 460, scaleX: 2, scaleY: 2 },
+      sharpScaleX: 2,
+      look: { bounds: { left: 98, top: 38, right: 142, bottom: 82 } },
+    })
+    expect(layersIn([animationClip()], SECOND, { [WAVE]: animation({ ...sketch, shapes: [] }) })).toEqual([])
+  })
+
+  it('leaves out hidden shapes and what is clipped inside them, keeping the same list when nothing is hidden', () => {
+    const square = { id: 'square', nodes: [{ x: 100, y: 40 }, { x: 140, y: 80 }], fill: '#FFFFFF' }
+    const dot = { id: 'dot', nodes: [{ x: 0, y: 0 }, { x: 10, y: 10 }], fill: '#000000' }
+    const shapes = [{ ...square, children: [{ ...dot, hidden: true as const }] }, { ...dot, id: 'far', nodes: [{ x: 300, y: 0 }, { x: 310, y: 10 }], hidden: true as const, children: [dot] }]
+    const sketch: Clip = { id: 'sketch', type: 'drawing', start: 0, duration: 2 * SECOND, shapes }
+    const [layer] = layersIn([animationClip()], SECOND, { [WAVE]: animation(sketch) })
+    expect(layer?.kind === 'drawing' && layer.look).toEqual({ shapes: [square], bounds: { left: 100, top: 40, right: 140, bottom: 80 } })
+    const visible: Clip = { ...sketch, shapes: [square] }
+    const [whole] = layersIn([animationClip()], SECOND, { [WAVE]: animation(visible) })
+    expect(whole?.kind === 'drawing' && whole.look.shapes).toBe(visible.shapes)
+    expect(layersIn([animationClip()], SECOND, { [WAVE]: animation({ ...sketch, shapes: [{ ...square, hidden: true }] }) })).toEqual([])
+  })
+
+  it('does not mix a drawing into a cut: the clip after it plays its transition in on its own', () => {
+    const sketch: Clip = { id: 'sketch', type: 'drawing', start: 0, duration: 2 * SECOND, shapes: [{ id: 'line', nodes: [{ x: 0, y: 0 }, { x: 10, y: 10 }], stroke: { color: '#000000', width: 2 } }] }
+    const next = { ...hand, id: 'next', start: 2 * SECOND, transitionIn: { type: 'crossDissolve' as const, duration: SECOND } }
+    const documents = { [WAVE]: animation(sketch, next) }
+    expect(layersIn([animationClip()], SECOND + (7 * SECOND) / 4, documents).map((shown) => shown.clipId)).toEqual(['sketch'])
+    expect(layersIn([animationClip()], SECOND + (9 * SECOND) / 4, documents)).toMatchObject([{ clipId: 'next', opacity: 0.25 }])
+  })
+
+  it('plays its timeline at the speed of the clip and from its source start', () => {
+    expect(layersIn([animationClip({ speedPercent: 200 })], SECOND + SECOND / 2)[0]).toMatchObject({ frame: 30 })
+    expect(layersIn([animationClip({ sourceStart: SECOND / 2 })], SECOND)[0]).toMatchObject({ frame: 15 })
+  })
+
+  it('holds each picture for a whole frame of the animation', () => {
+    expect(layersIn([animationClip()], SECOND + SECOND / 24)[0]).toMatchObject({ frame: 0 })
+    expect(layersIn([animationClip()], SECOND + SECOND / 12)[0]).toMatchObject({ frame: 2 })
+  })
+
+  it('shows nothing past the end of its animation unless it loops', () => {
+    expect(layersIn([animationClip()], 4 * SECOND)).toEqual([])
+    expect(layersIn([animationClip({ loop: true })], 4 * SECOND)[0]).toMatchObject({ frame: 30 })
+  })
+
+  it('keys every copy of an animation apart', () => {
+    const early = animationClip({ id: 'early', start: 0 })
+    const late = animationClip({ id: 'late', start: SECOND })
+    const layers = resolveFrame(project([track([early]), track([late])]), WAVE_MEDIA, WAVE_DOCUMENTS, SECOND + SECOND / 2, 1)
+    expect(layers).toMatchObject([
+      { clipId: 'hand', key: 'early/hand', frame: 45 },
+      { clipId: 'hand', key: 'late/hand', frame: 15 },
+    ])
+  })
+
+  it('draws nothing for an animation that is not loaded or that contains itself', () => {
+    expect(layersIn([animationClip()], SECOND, {})).toEqual([])
+    const looped = animation(hand, animationClip({ start: 0 }))
+    looped.tracks.push(track([animationClip({ id: 'again', start: 0 })]))
+    expect(layersIn([animationClip()], SECOND, { [WAVE]: looped }).map((layer) => layer.key)).toEqual(['wave/hand'])
+  })
+
+  it('draws animations nested eight deep and no deeper', () => {
+    function nested(levels: number): Layer[] {
+      const paths: Record<string, string> = {}
+      const documents: Record<string, Project> = {}
+      for (let level = 0; level < levels; level++) {
+        paths[`level-${level}`] = `/films/level-${level}.pbanim`
+        const inner = level === levels - 1 ? hand : animationClip({ id: `in-${level + 1}`, mediaId: `level-${level + 1}`, start: 0 })
+        documents[`/films/level-${level}.pbanim`] = animation(inner)
+      }
+      return layersIn([animationClip({ mediaId: 'level-0' })], SECOND, documents, mediaOf(paths))
+    }
+    expect(nested(8)).toHaveLength(1)
+    expect(nested(9)).toEqual([])
+  })
+
+  it('asks for the video frames an animation shows, at its speed and on every pass', () => {
+    const looping = animationClip({ speedPercent: 200, duration: 3 * SECOND, loop: true })
+    const range = { mediaId: 'footage', use: 'picture', sourceStart: 0, speedPercent: 200, isLooping: false }
+    expect(pictureRanges(project([track([looping])]), WAVE_MEDIA, WAVE_DOCUMENTS)).toEqual([
+      { ...range, timelineStart: SECOND, timelineEnd: 2 * SECOND },
+      { ...range, timelineStart: 2 * SECOND, timelineEnd: 3 * SECOND },
+      { ...range, timelineStart: 3 * SECOND, timelineEnd: 4 * SECOND },
+    ])
+  })
+
+  it('decodes a video inside for the largest size the clip and the camera reach', () => {
+    const small = animationClip({ start: 0, transform: { x: 960, y: 540, scaleX: 1, scaleY: 1, rotation: 0 } })
+    const zoomAtThree: CameraKeyframe[] = [{ time: 3 * SECOND, duration: SECOND, easing: 'linear', x: 960, y: 540, scale: 2 }]
+    const zoomed = resolveFrame({ ...project([track([small])]), camera: zoomAtThree }, WAVE_MEDIA, WAVE_DOCUMENTS, 0, 1)
+    expect(layersIn([small], 0)[0]).toMatchObject({ halvings: 2 })
+    expect(zoomed[0]).toMatchObject({ halvings: 1 })
   })
 })
 
@@ -845,7 +984,7 @@ describe('pictureRanges', () => {
     const looping = videoClip({ id: 'looping', mediaId: 'sticker', loop: true })
     const group: Clip = { id: 'group', type: 'group', start: 10 * SECOND, duration: 2 * SECOND, contentStart: SECOND, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, volume: 1, tracks: [track([looping])] }
     const media: MediaStates = { ...MEDIA, sticker: { info: videoMedia({ codec: 'gif' }) } }
-    expect(pictureRanges(project([track([shown]), hidden, track([group])]), media)).toEqual([
+    expect(pictureRanges(project([track([shown]), hidden, track([group])]), media, {})).toEqual([
       { mediaId: 'footage', use: 'picture', timelineStart: 2 * SECOND, timelineEnd: 6 * SECOND, sourceStart: SECOND, speedPercent: 200, isLooping: false },
       { mediaId: 'sticker', use: 'picture', timelineStart: 10 * SECOND, timelineEnd: 12 * SECOND, sourceStart: SECOND, speedPercent: 100, isLooping: true },
     ])

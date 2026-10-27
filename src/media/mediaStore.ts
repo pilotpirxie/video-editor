@@ -12,6 +12,9 @@ import type {
   CacheUsage,
   Cadence,
   ExportTarget,
+  AnimationOverrides,
+  Documents,
+  LoadedAnimations,
   LoadedProject,
   MediaClient,
   MediaInfo,
@@ -24,7 +27,8 @@ import type {
   Wanted,
   WaveformLevel,
 } from '../shared/mediaProtocol.js'
-import { parseProject, type MediaRef, type Project } from '../shared/project.js'
+import { isTimed } from '../shared/mediaProtocol.js'
+import { MAX_ANIMATION_DEPTH, isAnimationPath, parseProject, type DocumentKind, type MediaRef, type Project } from '../shared/project.js'
 import { DEFAULT_SETTINGS, mediaSettingsOf, type MediaSettings } from '../shared/settings.js'
 import { WAVEFORM_FILE, audioSegmentPath, buildAudioRun, buildStretchedSegment, buildWaveform, readSegmentedAudio, readWaveform, stretchedLayout, tempoFilter, type AudioLayout } from './audio.js'
 import type { DiskCache } from './cache.js'
@@ -35,6 +39,7 @@ import { audioLayoutOf, planPreparation, previewLayoutOf, type PreparationJob } 
 import { buildPreviewRun, createPreviewReader, previewSegmentFiles, type PreviewLayout, type PreviewReader, type SegmentInProgress } from './previewCopy.js'
 import { ProbeError, probeMedia } from './probe.js'
 import { withSavedPaths, writeProjectFile } from './projectFile.js'
+import { withMediaIdsChanged } from '../editor/place.js'
 
 const CACHE_KEY_LENGTH = 32
 const PREPARATION_GRACE_MS = 250
@@ -69,6 +74,21 @@ type OpenProject = {
   lifetime: AbortController
 }
 
+type MediaSource = {
+  references: readonly MediaRef[]
+  directory: string | undefined
+}
+
+type OpenedSources = {
+  entries: Map<string, MediaEntry>
+  states: Record<string, MediaState>
+}
+
+type DocumentTree = {
+  documents: Record<string, Project>
+  sources: MediaSource[]
+}
+
 function emptyProject(): OpenProject {
   return { media: new Map(), directory: undefined, lifetime: new AbortController() }
 }
@@ -76,6 +96,18 @@ function emptyProject(): OpenProject {
 function cacheKey(text: string): string {
   const digest = createHash('sha256').update(text).digest('hex')
   return digest.slice(0, CACHE_KEY_LENGTH)
+}
+
+async function readDocument(path: string, kind: DocumentKind, readFrom = path): Promise<Project> {
+  let text: string
+  try {
+    text = await readFile(readFrom, 'utf8')
+  } catch (error) {
+    throw new MediaError(`"${basename(path)}" could not be opened: ${describeError(error)}`, { cause: error })
+  }
+  const parsed = parseProject(text, kind)
+  if (parsed.ok) return parsed.project
+  throw new MediaError(kind === 'project' ? parsed.message : `"${basename(path)}" cannot be used: ${parsed.message}`)
 }
 
 function isMediaInfo(value: unknown): value is MediaInfo {
@@ -157,21 +189,30 @@ export class MediaSession implements MediaClient {
     this.previews = createPreviewReader(cache)
   }
 
-  async loadProject(path: string, forPreview: boolean): Promise<LoadedProject> {
-    let text: string
-    try {
-      text = await readFile(path, 'utf8')
-    } catch (error) {
-      throw new MediaError(`"${basename(path)}" could not be opened: ${describeError(error)}`, { cause: error })
-    }
-    const parsed = parseProject(text)
-    if (!parsed.ok) throw new MediaError(parsed.message)
-    const media = await this.open(parsed.project.media, path, forPreview)
-    return { project: parsed.project, media }
+  async loadProject(path: string, forPreview: boolean, animationOverrides: AnimationOverrides = {}): Promise<LoadedProject> {
+    const project = await readDocument(path, 'project')
+    const episode: MediaSource = { references: project.media, directory: dirname(path) }
+    const tree = await readDocumentTree(animationPathsOf(episode), mediaPathsOf(episode), animationOverrides)
+    const media = await this.open([episode, ...tree.sources], path, forPreview)
+    return { project, media, documents: tree.documents }
   }
 
   openMedia(media: readonly MediaRef[], projectPath: string | undefined): Promise<Record<string, MediaState>> {
-    return this.open(media, projectPath, true)
+    return this.open([{ references: media, directory: projectPath === undefined ? undefined : dirname(projectPath) }], projectPath, true)
+  }
+
+  async loadAnimations(paths: readonly string[]): Promise<LoadedAnimations> {
+    const project = this.project
+    const knownPaths = new Map<string, string>()
+    for (const [id, entry] of project.media) knownPaths.set(id, entry.path)
+    const tree = await readDocumentTree(paths, knownPaths, {})
+    const media = await this.openMore(project, tree.sources)
+    return { documents: tree.documents, media }
+  }
+
+  reopenAnimations(documents: Documents): Promise<Record<string, MediaState>> {
+    const sources = Object.entries(documents).map(([path, document]) => ({ references: document.media, directory: dirname(path) }))
+    return this.openMore(this.project, sources)
   }
 
   whenPrepared(): Promise<void> {
@@ -188,7 +229,7 @@ export class MediaSession implements MediaClient {
     const project = this.project
     const id = randomUUID()
     const entry = await this.openFile(path)
-    this.register(project, id, entry)
+    this.register(project, new Map([[id, entry]]))
     return { id, info: entry.info, createdAt: entry.createdAt }
   }
 
@@ -199,7 +240,7 @@ export class MediaSession implements MediaClient {
     if (lacking !== undefined) {
       throw new MediaError(`"${basename(path)}" cannot take the place of "${fileNameOf(wanted.reference)}": the project uses that file for its ${lacking}.`)
     }
-    this.register(project, wanted.reference.id, chosen)
+    this.register(project, new Map([[wanted.reference.id, chosen]]))
     const relinked: RelinkedMedia[] = [{ id: wanted.reference.id, path, info: chosen.info, createdAt: chosen.createdAt }]
 
     for (const other of others) {
@@ -208,7 +249,7 @@ export class MediaSession implements MediaClient {
       try {
         const entry = await this.openFile(beside)
         if (!other.uses.every((use) => offers(entry.info, use))) continue
-        this.register(project, other.reference.id, entry)
+        this.register(project, new Map([[other.reference.id, entry]]))
         relinked.push({ id: other.reference.id, path: beside, info: entry.info, createdAt: entry.createdAt })
       } catch (error) {
         if (!(error instanceof ProbeError) && !(error instanceof MediaError)) throw error
@@ -291,11 +332,12 @@ export class MediaSession implements MediaClient {
     return readWaveform(entry.directory)
   }
 
-  saveProject(path: string, project: Project): Promise<void> {
+  saveProject(path: string, project: Project, animationPath?: string): Promise<void> {
     const resolvedPaths = new Map<string, string>()
     for (const [id, entry] of this.project.media) resolvedPaths.set(id, entry.path)
-    const saved = withSavedPaths(project, { resolvedPaths, sourceDirectory: this.project.directory }, path)
-    const done = this.saveAfter(this.saving, path, saved)
+    const sourceDirectory = animationPath === undefined ? this.project.directory : dirname(animationPath)
+    const saved = withSavedPaths(project, { resolvedPaths, sourceDirectory }, path)
+    const done = this.saveAfter(this.saving, path, saved, animationPath === undefined ? 'project' : 'animation')
     this.saving = settled(done)
     return done
   }
@@ -414,19 +456,10 @@ export class MediaSession implements MediaClient {
     this.settleWaiters()
   }
 
-  private async open(references: readonly MediaRef[], projectPath: string | undefined, forPreview: boolean): Promise<Record<string, MediaState>> {
+  private async open(sources: readonly MediaSource[], projectPath: string | undefined, forPreview: boolean): Promise<Record<string, MediaState>> {
     await this.closeProject()
     const directory = projectPath === undefined ? undefined : dirname(projectPath)
-    const opened = await Promise.all(references.map((reference) => this.openReference(reference, directory)))
-    const media = new Map<string, MediaEntry>()
-    const states: Record<string, MediaState> = {}
-    for (const [index, reference] of references.entries()) {
-      const result = opened[index]
-      if (result === undefined) continue
-      states[reference.id] = result.state
-      if (result.entry !== undefined) media.set(reference.id, result.entry)
-    }
-
+    const { entries: media, states } = await this.openSources(sources, new Map())
     const lifetime = new AbortController()
     this.project = { media, directory, lifetime }
     this.wanted = undefined
@@ -448,8 +481,36 @@ export class MediaSession implements MediaClient {
     }
   }
 
-  private register(project: OpenProject, id: string, entry: MediaEntry): void {
-    project.media.set(id, entry)
+  private async openSources(sources: readonly MediaSource[], alreadyOpen: ReadonlyMap<string, MediaEntry>): Promise<OpenedSources> {
+    const states: Record<string, MediaState> = {}
+    const wanted = new Map<string, { reference: MediaRef; directory: string | undefined }>()
+    for (const source of sources) {
+      for (const reference of source.references) {
+        const entry = alreadyOpen.get(reference.id)
+        if (entry !== undefined) states[reference.id] = { info: entry.info, createdAt: entry.createdAt }
+        else if (!wanted.has(reference.id)) wanted.set(reference.id, { reference, directory: source.directory })
+      }
+    }
+    const items = [...wanted.values()]
+    const opened = await Promise.all(items.map((item) => this.openReference(item.reference, item.directory)))
+    const entries = new Map<string, MediaEntry>()
+    for (const [index, item] of items.entries()) {
+      const result = opened[index]
+      if (result === undefined) continue
+      states[item.reference.id] = result.state
+      if (result.entry !== undefined) entries.set(item.reference.id, result.entry)
+    }
+    return { entries, states }
+  }
+
+  private async openMore(project: OpenProject, sources: readonly MediaSource[]): Promise<Record<string, MediaState>> {
+    const opened = await this.openSources(sources, project.media)
+    this.register(project, opened.entries)
+    return opened.states
+  }
+
+  private register(project: OpenProject, entries: ReadonlyMap<string, MediaEntry>): void {
+    for (const [id, entry] of entries) project.media.set(id, entry)
     if (project !== this.project) return
     this.replan()
     this.startPreparing(project)
@@ -470,11 +531,15 @@ export class MediaSession implements MediaClient {
     } catch (error) {
       throw new MediaError(`"${basename(path)}" was not found.`, { cause: error })
     }
+    // A disk without creation times reports 0.
+    const createdAt = file.birthtimeMs > 0 ? file.birthtimeMs : file.mtimeMs
+    if (isAnimationPath(path)) {
+      await readDocument(path, 'animation')
+      return { path, info: { kind: 'animation', path }, createdAt, directory: '', failures: 0, hasFailed: false, emptySegmentPaths: new Set() }
+    }
     const directory = join(this.cache.directory, cacheKey(`${path}\n${file.size}\n${file.mtimeMs}`))
     await mkdir(directory, { recursive: true })
     const info = await this.infoOf(path, directory)
-    // A disk without creation times reports 0.
-    const createdAt = file.birthtimeMs > 0 ? file.birthtimeMs : file.mtimeMs
     return { path, info, createdAt, directory, failures: 0, hasFailed: false, emptySegmentPaths: new Set() }
   }
 
@@ -488,9 +553,9 @@ export class MediaSession implements MediaClient {
     return info
   }
 
-  private async saveAfter(earlier: Promise<void>, path: string, project: Project): Promise<void> {
+  private async saveAfter(earlier: Promise<void>, path: string, project: Project, kind: DocumentKind): Promise<void> {
     await earlier
-    await writeProjectFile(path, project)
+    await writeProjectFile(path, project, kind)
   }
 
   private replan(): void {
@@ -772,9 +837,82 @@ function existingPath(reference: MediaRef, projectDirectory: string | undefined)
   return candidates.find((candidate) => existsSync(candidate))
 }
 
+function referencePath(reference: MediaRef, directory: string | undefined): string {
+  const found = existingPath(reference, directory)
+  if (found !== undefined) return found
+  if (reference.path !== '' || directory === undefined) return reference.path
+  return resolve(directory, reference.relativePath)
+}
+
+function mediaPathsOf(source: MediaSource): Map<string, string> {
+  return new Map(source.references.map((reference) => [reference.id, referencePath(reference, source.directory)]))
+}
+
+function animationPathsOf(source: MediaSource): string[] {
+  const paths: string[] = []
+  for (const reference of source.references) {
+    const found = existingPath(reference, source.directory)
+    if (found !== undefined && isAnimationPath(found)) paths.push(found)
+  }
+  return paths
+}
+
+// Ids only collide in copied files; a copy keeps its ids for the same files, so only other files get new ones.
+function withUniqueMediaIds(document: Project, directory: string, knownPaths: Map<string, string>): Project {
+  const renamed = new Map<string, string>()
+  for (const reference of document.media) {
+    const path = referencePath(reference, directory)
+    const known = knownPaths.get(reference.id)
+    if (known === undefined) {
+      knownPaths.set(reference.id, path)
+    } else if (known !== path) {
+      const id = randomUUID()
+      renamed.set(reference.id, id)
+      knownPaths.set(id, path)
+    }
+  }
+  return withMediaIdsChanged(document, renamed)
+}
+
+async function readAnimationDocument(path: string, override: string | undefined): Promise<Project | undefined> {
+  try {
+    const document = await readDocument(path, 'animation', override)
+    if (override === undefined) return document
+    // A copy's relative paths start from the copy's folder; everything else reads them from the real file's folder.
+    return withSavedPaths(document, { resolvedPaths: new Map(), sourceDirectory: dirname(override) }, path)
+  } catch (error) {
+    // The clips of a file that cannot be read show why through its media state, which opening the file reports.
+    if (error instanceof MediaError) return undefined
+    throw error
+  }
+}
+
+async function readDocumentTree(startPaths: readonly string[], knownPaths: Map<string, string>, overrides: AnimationOverrides): Promise<DocumentTree> {
+  const documents: Record<string, Project> = {}
+  const sources: MediaSource[] = []
+  let level = [...new Set(startPaths)]
+  for (let depth = 0; depth < MAX_ANIMATION_DEPTH && level.length > 0; depth += 1) {
+    const unread = level.filter((path) => documents[path] === undefined)
+    const read = await Promise.all(unread.map((path) => readAnimationDocument(path, overrides[path])))
+    const next: string[] = []
+    for (const [index, path] of unread.entries()) {
+      const document = read[index]
+      if (document === undefined) continue
+      const source: MediaSource = { references: document.media, directory: dirname(path) }
+      const unique = withUniqueMediaIds(document, dirname(path), knownPaths)
+      documents[path] = unique
+      sources.push({ ...source, references: unique.media })
+      next.push(...animationPathsOf(source))
+    }
+    level = [...new Set(next)]
+  }
+  return { documents, sources }
+}
+
 function offers(info: MediaInfo, use: MediaUse): boolean {
   if (use === 'video') return info.kind === 'video'
   if (use === 'image') return info.kind === 'image'
+  if (use === 'animation') return info.kind === 'animation'
   return info.kind === 'audio' || (info.kind === 'video' && info.audio !== undefined)
 }
 
@@ -816,7 +954,7 @@ function videoSource(entry: MediaEntry): VideoSource {
 }
 
 function audioSource(entry: MediaEntry): { path: string; containerStart: number } {
-  const containerStart = entry.info.kind === 'image' ? 0 : entry.info.containerStart
+  const containerStart = isTimed(entry.info) ? entry.info.containerStart : 0
   return { path: entry.path, containerStart }
 }
 

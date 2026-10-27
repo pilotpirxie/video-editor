@@ -140,6 +140,10 @@ describe('isExportJob', () => {
     expect(isExportJob({ ...VALID, format: 'gif', frameRate: { num: 60, den: 1 } })).toBe(false)
   })
 
+  it('accepts the copies of unsaved animations it reads instead of their files', () => {
+    expect(isExportJob({ ...VALID, animationOverrides: { '/films/wave.pbanim': '/tmp/snapshot.json.0.export' } })).toBe(true)
+  })
+
   it('accepts the rates above the project rate that MP4 and WebM offer', () => {
     expect(isExportJob({ ...VALID, format: 'mp4', frameRate: { num: 120, den: 1 } })).toBe(true)
     expect(isExportJob({ ...VALID, format: 'webm', frameRate: { num: 160, den: 1 } })).toBe(true)
@@ -158,6 +162,7 @@ describe('isExportJob', () => {
     ['a rate as text', { ...VALID, frameRate: '30/1' }],
     ['a rate without a denominator', { ...VALID, frameRate: { num: 30 } }],
     ['an unknown quality', { ...VALID, quality: 'ultra' }],
+    ['animation copies that are not paths', { ...VALID, animationOverrides: { '/wave.pbanim': 3 } }],
     ['a backwards range', { ...VALID, range: { start: 2 * SECOND, end: SECOND } }],
     ['an empty range', { ...VALID, range: { start: SECOND, end: SECOND } }],
     ['a range before the start', { ...VALID, range: { start: -1, end: SECOND } }],

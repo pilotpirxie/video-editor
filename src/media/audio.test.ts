@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { audioClip, projectOf, track } from '../../test/fixtures.js'
 import { bundledFfmpeg, clickHeardAt } from '../../test/helpers.js'
 import { CLICK_SAMPLE_44K, GAP_CLICK_SECONDS, LONG_CLICK_SECOND, LONG_MINUTES, mediaPath } from '../../test/media/generate.js'
-import type { AudioStretch } from '../shared/mediaProtocol.js'
+import { isTimed, type AudioStretch } from '../shared/mediaProtocol.js'
 import { WAVEFORM_BUCKET_SAMPLES, WAVEFORM_FILE, audioSegmentPath, buildWaveform, createPeakFolder, tempoFilter, waveformLevels } from './audio.js'
 import { createDiskCache } from './cache.js'
 import { MediaSession } from './mediaStore.js'
@@ -43,7 +43,7 @@ async function open(name: string, segmentSeconds = SHORT_SEGMENT_SECONDS): Promi
   const directory = join(scratch, `cache-${cacheCount}`)
   const session = new MediaSession(ffmpeg, createDiskCache(directory, PLENTY_OF_ROOM), segmentSeconds)
   const added = await session.addMedia(mediaPath(name))
-  if (added.info.kind === 'image') throw new Error(`${name} is an image`)
+  if (!isTimed(added.info)) throw new Error(`${name} has no duration`)
   const [mediaFolder] = await readdir(directory)
   return { session, id: added.id, directory: join(directory, mediaFolder ?? ''), totalSamples: Math.ceil(added.info.duration / TICKS_PER_SAMPLE) }
 }
@@ -419,7 +419,7 @@ describe('a project that was never saved', () => {
     const session = new MediaSession(ffmpeg, cache)
     try {
       const added = await session.addMedia(mediaPath('h264.mp4'))
-      if (added.info.kind === 'image') throw new Error('The test file was read as an image')
+      if (!isTimed(added.info)) throw new Error('The test file was read without a duration')
       const end = added.info.duration
       await session.want({
         playhead: 0,

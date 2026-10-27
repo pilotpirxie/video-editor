@@ -122,7 +122,7 @@ describe('sparse layout', () => {
   ])('holds every frame a clip at $speedPercent% shows in a project at $rate.num/$rate.den fps', ({ speedPercent, rate }: { speedPercent: number; rate: FrameRate }) => {
     const clip = videoClip('fast', 7 * SECOND + 300, 20 * SECOND, { speedPercent, sourceStart: 3 * SECOND + 1700 })
     const project = { ...projectOf([track('t1', [clip])]), canvas: { width: 1920, height: 1080, frameRate: rate } }
-    const [range] = pictureRanges(project, states)
+    const [range] = pictureRanges(project, states, {})
     const cadence = range?.cadence
     if (cadence === undefined) throw new Error('A fast clip gets a cadence')
     const layout = previewLayout(LONG_VIDEO, 30, cadence)
@@ -135,7 +135,7 @@ describe('sparse layout', () => {
 
   it('gives no cadence to a clip that shows most of its frames', () => {
     const project = projectOf([track('t1', [videoClip('slow', 0, SECOND, { speedPercent: 300 })])])
-    expect(pictureRanges(project, states)[0]?.cadence).toBeUndefined()
+    expect(pictureRanges(project, states, {})[0]?.cadence).toBeUndefined()
   })
 })
 

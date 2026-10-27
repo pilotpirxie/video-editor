@@ -1,7 +1,8 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactElement, type RefObject } from 'react'
 import { arrowBetween, arrowEnds, canvasPointToClip, clipPointToCanvas, setArrowStyle, setCalloutStyle } from '../editor/annotations.js'
 import { frameOf, type ZoomFrame } from '../editor/camera.js'
-import { locateClip } from '../editor/clips.js'
+import { isContainer, locateClip } from '../editor/clips.js'
+import { addDrawingShapes, dragBox, drawingPlace, ellipseShape, findShape, pickableShape, rectangleShape, shapeRefsOf, transformShapes, type DrawingPlace, type ShapeRef } from '../editor/drawings.js'
 import { addEffect } from '../editor/effects.js'
 import {
   HANDLES,
@@ -18,15 +19,18 @@ import {
   type Point,
   type SizeTargets,
 } from '../editor/geometry.js'
-import { intoGroup } from '../editor/groups.js'
+import { episodeTimeOf, intoGroup } from '../editor/groups.js'
 import { motionPath, propertyAt, setProperties, type PropertyValues } from '../editor/properties.js'
 import { positionTargets, snapPosition, sortedTargets, type Bounds } from '../editor/snapping.js'
 import { arrowSize } from '../engine/annotations.js'
 import { viewAt } from '../engine/camera.js'
-import { groupFrameAt, onCanvas, resolveFrame, type GroupFrame, type Layer, type MediaStates } from '../engine/resolve.js'
+import { shapesBounds } from '../engine/curves.js'
+import { shapePath } from '../engine/drawings.js'
+import { onCanvas, resolveFrame, scopeFrameAt, type GroupFrame, type Layer, type MediaStates } from '../engine/resolve.js'
 import { measureText } from '../engine/text.js'
 import type { Size } from '../shared/exportPresets.js'
-import type { Clip, Crop, GroupClip, Project, Transform } from '../shared/project.js'
+import type { Documents } from '../shared/mediaProtocol.js'
+import type { AnimationClip, Clip, Crop, DrawingShape, GroupClip, Project, Transform } from '../shared/project.js'
 import { useEditorState, usePosition, useSession } from './context.js'
 import type { Edit } from './store.js'
 import { TextEditor } from './TextEditor.js'
@@ -41,6 +45,9 @@ const MIN_BOX_PIXELS = 6
 // Must match `inset: -14px` in editor.css.
 export const MARGIN_PIXELS = 14
 const EDGE_TOLERANCE_CANVAS_PIXELS = 0.5
+const STROKE_HIT_PIXELS = 6
+// The box around the chosen shapes is not a clip, so it takes an id no clip has.
+const SHAPES_BOX_ID = ''
 
 const CORNERS = ['nw', 'ne', 'se', 'sw'] as const
 const TRANSFORM_KEYS = ['x', 'y', 'scaleX', 'scaleY', 'rotation'] as const
@@ -48,7 +55,7 @@ const NO_PIVOT: Point = { x: 0, y: 0 }
 
 type ShownClip = {
   clipId: string
-  kind: 'picture' | 'text' | 'callout' | 'arrow' | 'shape' | 'group'
+  kind: 'picture' | 'text' | 'callout' | 'arrow' | 'shape' | 'group' | 'shapes'
   natural: Size
   crop: Crop
   transform: Transform
@@ -57,6 +64,21 @@ type ShownClip = {
   pivot: Point
   arrowLength?: number
   tail?: Point
+  shapes?: readonly ShapeRef[]
+}
+
+// One shape of a drawing on the open tracks, picked by its outline rather than a box.
+type ShownShape = {
+  kind: 'drawn'
+  clipId: string
+  shape: DrawingShape
+  path: Path2D
+}
+
+type Pickable = ShownClip | ShownShape
+
+function isClipItem(item: Pickable): item is ShownClip {
+  return item.kind !== 'drawn'
 }
 
 type Gesture =
@@ -66,6 +88,7 @@ type Gesture =
   | { kind: 'arrow'; item: ShownClip; moves: 'start' | 'end'; fixed: Point }
   | { kind: 'tail'; item: ShownClip }
   | { kind: 'path'; item: ShownClip; time: number; from: Point; start: Point }
+  | { kind: 'draw'; tool: 'rectangle' | 'ellipse'; from: Point; place: DrawingPlace; shapeId: string }
 
 type Guides = {
   x: number | undefined
@@ -79,6 +102,7 @@ function naturalSize(layer: Layer): Size {
   if (layer.kind === 'video') return { width: layer.video.width, height: layer.video.height }
   if (layer.kind === 'arrow') return arrowSize(layer.look)
   if (layer.kind === 'callout') return { width: layer.look.width, height: layer.look.height }
+  if (layer.kind === 'drawing') return { width: layer.look.bounds.right - layer.look.bounds.left, height: layer.look.bounds.bottom - layer.look.bounds.top }
   if (layer.kind !== 'text') return { width: layer.width, height: layer.height }
   const measured = measureText(layer.look)
   return { width: measured.naturalWidth, height: measured.naturalHeight }
@@ -97,7 +121,7 @@ function shownLayer(layer: Layer): ShownClip {
   return shown
 }
 
-function shownGroup(group: GroupClip, members: readonly ShownClip[], transform: Transform): ShownClip {
+function shownGroup(group: GroupClip | AnimationClip, members: readonly ShownClip[], transform: Transform): ShownClip {
   const xs: number[] = []
   const ys: number[] = []
   for (const member of members) {
@@ -121,13 +145,17 @@ type Open = {
   frame: GroupFrame
 }
 
-function shownClips(wholeProject: Project, mediaStates: MediaStates, wholeTime: number, open: Open): ShownClip[] {
-  const order: (ShownClip | string)[] = []
+function shownClips(wholeProject: Project, mediaStates: MediaStates, documents: Documents, wholeTime: number, open: Open): Pickable[] {
+  const order: (Pickable | string)[] = []
   const membersOf = new Map<string, ShownClip[]>()
-  for (const layer of resolveFrame(wholeProject, mediaStates, wholeTime, 1)) {
+  for (const layer of resolveFrame(wholeProject, mediaStates, documents, wholeTime, 1)) {
     const path = layer.groups ?? []
     if (!open.groups.every((groupId, depth) => path[depth] === groupId)) continue
     const closedGroupId = path[open.groups.length]
+    if (closedGroupId === undefined && layer.kind === 'drawing') {
+      for (const shape of layer.look.shapes) order.push({ kind: 'drawn', clipId: layer.clipId, shape, path: shapePath(shape) })
+      continue
+    }
     if (closedGroupId === undefined) {
       order.push(shownLayer(layer))
       continue
@@ -141,7 +169,7 @@ function shownClips(wholeProject: Project, mediaStates: MediaStates, wholeTime: 
     }
   }
 
-  const shown: ShownClip[] = []
+  const shown: Pickable[] = []
   for (const entry of order) {
     if (typeof entry !== 'string') {
       shown.push(entry)
@@ -149,7 +177,7 @@ function shownClips(wholeProject: Project, mediaStates: MediaStates, wholeTime: 
     }
     const group = locateClip(open.project, entry)?.clip
     const members = membersOf.get(entry)
-    if (group?.type !== 'group' || members === undefined) continue
+    if (group === undefined || !isContainer(group) || members === undefined) continue
     const own: Transform = {
       x: propertyAt(group, 'x', open.time) ?? group.transform.x,
       y: propertyAt(group, 'y', open.time) ?? group.transform.y,
@@ -287,9 +315,14 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
   const project = useEditorState((state) => state.project)
   const wholeProject = useEditorState((state) => state.wholeProject)
   const openGroups = useEditorState((state) => state.openGroups)
-  const offset = useEditorState((state) => state.scope?.offset ?? 0)
+  const scope = useEditorState((state) => state.scope)
   const mediaStates = useEditorState((state) => state.mediaStates)
+  const documents = useEditorState((state) => state.documents)
   const selection = useEditorState((state) => state.selection)
+  const selectedShapes = useEditorState((state) => state.selectedShapes)
+  const tool = useEditorState((state) => state.tool)
+  const drawingStyle = useEditorState((state) => state.drawingStyle)
+  const isInAnimation = useEditorState((state) => state.openChain.length > 0)
   const editingTextId = useEditorState((state) => state.editingTextId)
   const isPlaying = usePosition((position) => position.isPlaying)
   const time = usePosition((position) => position.time)
@@ -298,17 +331,27 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
   const { reach, pictureWidth } = useOverlayReach(svgRef, areaRef)
   const [guides, setGuides] = useState<Guides>(NO_GUIDES)
   const [dropTargetId, setDropTargetId] = useState<string | undefined>(undefined)
-  const { canvas } = project
-  const wholeTime = time + offset
+  const { canvas } = wholeProject
+  const wholeTime = episodeTimeOf(scope, time)
   const frame = frameOf(canvas, viewAt(wholeProject.camera, wholeTime, canvas))
   const canvasPerPixel = frame.width / pictureWidth
-  const openFrame = useMemo(() => groupFrameAt(wholeProject, openGroups, wholeTime), [wholeProject, openGroups, wholeTime])
+  const openFrame = useMemo(() => scopeFrameAt(wholeProject, mediaStates, documents, openGroups, wholeTime), [wholeProject, mediaStates, documents, openGroups, wholeTime])
 
-  const shown = useMemo(
-    () => (isPlaying ? [] : shownClips(wholeProject, mediaStates, wholeTime, { project, time, groups: openGroups, frame: openFrame })),
-    [isPlaying, wholeProject, mediaStates, wholeTime, project, time, openGroups, openFrame],
+  const pickables = useMemo(
+    () => (isPlaying ? [] : shownClips(wholeProject, mediaStates, documents, wholeTime, { project, time, groups: openGroups, frame: openFrame })),
+    [isPlaying, wholeProject, mediaStates, documents, wholeTime, project, time, openGroups, openFrame],
   )
-  const selected = shown.filter((item) => selection.includes(item.clipId))
+  const hitContext = useMemo(() => {
+    const context = new OffscreenCanvas(1, 1).getContext('2d')
+    if (context === null) return undefined
+    context.lineCap = 'round'
+    context.lineJoin = 'round'
+    return context
+  }, [])
+  const shown = pickables.filter(isClipItem)
+  const isDrawingTool = isInAnimation && tool !== 'move'
+  const shapesBox = isPlaying ? undefined : shapesBoxOf(selectedShapes)
+  const selected = shapesBox === undefined ? shown.filter((item) => selection.includes(item.clipId)) : [shapesBox]
   const locked = lockedClipIds(project)
   const outside: ShownClip[] = []
   for (const item of shown) {
@@ -338,13 +381,51 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     return pointOnCanvas(event, event.currentTarget, frame, pictureWidth, pictureOffset)
   }
 
+  function artboardPoint(point: Point): Point {
+    const inside = intoGroup(openFrame, { x: point.x, y: point.y, scaleX: 1, scaleY: 1, rotation: 0 })
+    return { x: inside.x, y: inside.y }
+  }
+
+  function shapesBoxOf(shapes: readonly ShapeRef[]): ShownClip | undefined {
+    const picked: DrawingShape[] = []
+    for (const { clipId, shapeId } of shapes) {
+      const clip = locateClip(project, clipId)?.clip
+      const shape = clip?.type === 'drawing' ? findShape(clip.shapes, shapeId) : undefined
+      if (shape !== undefined) picked.push(shape)
+    }
+    const bounds = shapesBounds(picked, false)
+    if (bounds === undefined) return undefined
+    // A straight line has no height, which the handles cannot scale from.
+    const natural = { width: Math.max(1, bounds.right - bounds.left), height: Math.max(1, bounds.bottom - bounds.top) }
+    const transform = onCanvas(openFrame, { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2, scaleX: 1, scaleY: 1, rotation: 0 })
+    const box = boxOf(natural, NO_CROP, transform)
+    return { clipId: SHAPES_BOX_ID, kind: 'shapes', natural, crop: NO_CROP, transform, box, hitBoxes: [box], pivot: NO_PIVOT, shapes }
+  }
+
+  function shapeContains(shape: DrawingShape, path: Path2D, at: Point): boolean {
+    if (hitContext === undefined) return false
+    if (shape.fill !== undefined && hitContext.isPointInPath(path, at.x, at.y)) return true
+    if (shape.stroke === undefined) return false
+    hitContext.lineWidth = Math.max(shape.stroke.width, (STROKE_HIT_PIXELS * canvasPerPixel) / openFrame.scale)
+    return hitContext.isPointInStroke(path, at.x, at.y)
+  }
+
   function isUnlockedAt(item: ShownClip, point: Point): boolean {
     if (locked.has(item.clipId)) return false
     return item.hitBoxes.some((box) => containsPoint(box, point))
   }
 
-  function topmostAt(point: Point): ShownClip | undefined {
-    return shown.findLast((item) => isUnlockedAt(item, point))
+  function topmostAt(point: Point): Pickable | undefined {
+    const at = artboardPoint(point)
+    return pickables.findLast((item) => {
+      if (isClipItem(item)) return isUnlockedAt(item, point)
+      return !locked.has(item.clipId) && item.shape.locked !== true && shapeContains(item.shape, item.path, at)
+    })
+  }
+
+  function nounOf(item: ShownClip): string {
+    if (item.kind !== 'shapes') return 'Clip'
+    return item.shapes?.length === 1 ? 'Shape' : 'Shapes'
   }
 
   function effectTargetAt(detail: LibraryDragDetail): ShownClip | undefined {
@@ -398,10 +479,46 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     return target instanceof Element && target.closest('foreignObject') !== null
   }
 
+  function startDrawing(shapeTool: 'rectangle' | 'ellipse', point: Point): void {
+    const { selection: chosenClips, selectedShapes: chosenShapes } = store.getState()
+    const place = drawingPlace(project, time, chosenClips, chosenShapes, { clipId: crypto.randomUUID(), trackId: crypto.randomUUID() })
+    store.begin(shapeTool === 'rectangle' ? 'Add Rectangle' : 'Add Ellipse')
+    gestureRef.current = { kind: 'draw', tool: shapeTool, from: artboardPoint(point), place, shapeId: crypto.randomUUID() }
+  }
+
+  // A clipped child chosen by a double-click stays the one a press on it picks.
+  function shapeUnder(hit: ShownShape, at: Point): DrawingShape {
+    for (const chosen of selectedShapes) {
+      if (chosen.clipId !== hit.clipId) continue
+      const inside = pickableShape(hit.shape.children ?? [], chosen.shapeId)
+      if (inside !== undefined && shapeContains(inside, shapePath(inside), at)) return inside
+    }
+    return hit.shape
+  }
+
+  function pickShape(hit: ShownShape, point: Point, isAdding: boolean): void {
+    const picked = { clipId: hit.clipId, shapeId: shapeUnder(hit, artboardPoint(point)).id }
+    const isPicked = (shape: ShapeRef): boolean => shape.clipId === picked.clipId && shape.shapeId === picked.shapeId
+    const isSelected = selectedShapes.some(isPicked)
+    let moving = selectedShapes
+    if (isAdding && isSelected) moving = selectedShapes.filter((shape) => !isPicked(shape))
+    else if (isAdding) moving = [...selectedShapes, picked]
+    else if (!isSelected) moving = [picked]
+    if (moving !== selectedShapes) store.selectShapes(moving)
+    const box = shapesBoxOf(moving)
+    if (box === undefined) return
+    store.begin(`Move ${nounOf(box)}`)
+    gestureRef.current = { kind: 'move', from: point, items: [box], others: shown.map((item) => boundsOf(item.box)) }
+  }
+
   function onPointerDown(event: PointerEvent<SVGSVGElement>): void {
     if (event.button !== 0 || isPlaying || isInTextEditor(event.target)) return
     event.currentTarget.setPointerCapture(event.pointerId)
     const point = pointOf(event)
+    if (isDrawingTool) {
+      startDrawing(tool, point)
+      return
+    }
     const grabbed = event.target instanceof SVGElement ? event.target.dataset.handle : undefined
 
     if (only?.arrowLength !== undefined && (grabbed === 'arrow-start' || grabbed === 'arrow-end')) {
@@ -430,13 +547,13 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
       return
     }
     if (only !== undefined && grabbed === 'rotate') {
-      store.begin('Rotate Clip')
+      store.begin(`Rotate ${nounOf(only)}`)
       gestureRef.current = { kind: 'rotate', item: only, from: point }
       return
     }
     if (only !== undefined && isHandle(grabbed)) {
       const kind = only.kind === 'picture' && (isCropping || event.altKey) ? 'crop' : 'scale'
-      store.begin(kind === 'crop' ? 'Crop Clip' : 'Resize Clip')
+      store.begin(kind === 'crop' ? 'Crop Clip' : `Resize ${nounOf(only)}`)
       gestureRef.current = { kind, item: only, handle: grabbed, others: shown.filter((item) => item !== only) }
       return
     }
@@ -444,6 +561,10 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     const hit = topmostAt(point)
     if (hit === undefined) {
       store.select([])
+      return
+    }
+    if (!isClipItem(hit)) {
+      pickShape(hit, point, event.shiftKey)
       return
     }
     const isSelected = selection.includes(hit.clipId)
@@ -466,8 +587,15 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
 
   function onDoubleClick(event: MouseEvent<SVGSVGElement>): void {
     if (isPlaying || isInTextEditor(event.target)) return
-    const hit = topmostAt(pointOf(event))
+    const point = pointOf(event)
+    const hit = topmostAt(point)
     if (hit === undefined) return
+    if (!isClipItem(hit)) {
+      const at = artboardPoint(point)
+      const child = hit.shape.children?.findLast((candidate) => candidate.locked !== true && shapeContains(candidate, shapePath(candidate), at))
+      if (child !== undefined) store.selectShapes([{ clipId: hit.clipId, shapeId: child.id }])
+      return
+    }
     store.select([hit.clipId])
     if (hit.kind === 'text' || hit.kind === 'callout') store.editText(hit.clipId)
     if (hit.kind === 'group') actions.openGroup()
@@ -479,6 +607,12 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
   }
 
   function edit(item: ShownClip, placed: Partial<Transform>, crop: PropertyValues = {}): Edit {
+    const { shapes } = item
+    if (shapes !== undefined) {
+      const from = intoGroup(openFrame, item.transform)
+      const to = intoGroup(openFrame, { ...item.transform, ...placed })
+      return (current) => transformShapes(current, shapes, from, to)
+    }
     const values = { ...valuesInOpenTracks(openGroups, openFrame, item, placed), ...crop }
     return (current) => setProperties(current, [item.clipId], values, time)
   }
@@ -488,6 +622,19 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     if (gesture === undefined) return
     const point = pointOf(event)
     const range = snapRange(event)
+
+    if (gesture.kind === 'draw') {
+      const box = dragBox(gesture.from, artboardPoint(point), event.shiftKey)
+      const longSidePixels = (Math.max(box.right - box.left, box.bottom - box.top) * openFrame.scale) / canvasPerPixel
+      if (longSidePixels < MIN_BOX_PIXELS) {
+        store.update((current) => current)
+        return
+      }
+      const shape = gesture.tool === 'rectangle' ? rectangleShape(gesture.shapeId, box, drawingStyle) : ellipseShape(gesture.shapeId, box, drawingStyle)
+      const { place } = gesture
+      store.update((current) => addDrawingShapes(current, place, [shape]))
+      return
+    }
 
     if (gesture.kind === 'move') {
       let dx = point.x - gesture.from.x
@@ -556,6 +703,14 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
     finish()
   }
 
+  function onPointerUp(): void {
+    const gesture = gestureRef.current
+    endGesture(store.commit)
+    if (gesture?.kind !== 'draw') return
+    const drawn = shapeRefsOf(store.getState().project, [gesture.shapeId])
+    if (drawn.length > 0) store.selectShapes(drawn)
+  }
+
   const handleSize = HANDLE_PIXELS * canvasPerPixel
   const minBox = MIN_BOX_PIXELS * canvasPerPixel
   const dropTarget = shown.find((item) => item.clipId === dropTargetId)
@@ -569,18 +724,19 @@ export function CanvasOverlay({ isCropping, areaRef }: { isCropping: boolean; ar
   return (
     <svg
       ref={svgRef}
-      className="canvas-overlay"
+      className={isDrawingTool ? 'canvas-overlay drawing' : 'canvas-overlay'}
       viewBox={`${viewLeft} ${viewTop} ${viewWidth} ${viewHeight}`}
       preserveAspectRatio="none"
       style={{ left: -reach.left, top: -reach.top, width: `calc(100% + ${reach.left + reach.right}px)`, height: `calc(100% + ${reach.top + reach.bottom}px)` }}
       data-testid="canvas-overlay"
       data-selected={selected.length}
+      data-selected-shapes={selectedShapes.length}
       data-outside={outside.length}
       data-drop-target={dropTargetId}
       onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}
       onPointerMove={onPointerMove}
-      onPointerUp={() => endGesture(store.commit)}
+      onPointerUp={onPointerUp}
       onPointerCancel={() => endGesture(store.cancel)}
       onLostPointerCapture={() => endGesture(store.cancel)}
     >

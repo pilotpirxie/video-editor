@@ -1,19 +1,25 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
 import { deleteZoom, setZoom } from '../editor/camera.js'
 import { hasSource, locateClip } from '../editor/clips.js'
+import { drawingAt, renameShape, reorderShape, setShapeFlag, shapeRows, type ShapeRef, type ShapeRow } from '../editor/drawings.js'
+import { resolveScope } from '../editor/groups.js'
 import { changeKeyframe, removeKeyframe, setSpeed, sharedValue } from '../editor/properties.js'
 import { actionFor } from '../editor/shortcuts.js'
-import { TRACK_HEIGHT } from '../editor/timelineView.js'
+import { SHAPE_ROW_HEIGHT, TRACK_HEIGHT, trackIndexAtOffset, trackRowsOf, type TrackRows } from '../editor/timelineView.js'
 import { addTrack, deleteTrack, moveTrack, renameTrack, setTrackFlag, type TrackFlag } from '../editor/tracks.js'
 import { projectDuration, type Easing, type Project, type Track } from '../shared/project.js'
 import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, frameDuration } from '../shared/time.js'
-import { useEditorState, useSession, useShortcutHint } from './context.js'
+import { useEditorState, usePosition, useSession, useShortcutHint } from './context.js'
 import { Icon, IconButton, type IconName } from './icons.js'
 import { PopupMenu, type MenuItem } from './Menu.js'
 import { createTimelineController, type MenuTarget, type TimelineController } from './timelineController.js'
 import { isKeyForTheEditor } from './transport.js'
 
 const ZOOM_STEP = 1.5
+const DRAG_THRESHOLD = 3
+const SHAPE_ROW_PADDING = 8
+const SHAPE_INDENT = 14
+const UNNAMED_SHAPE = 'Shape'
 
 type Point = {
   x: number
@@ -43,8 +49,130 @@ const FLAGS: readonly { flag: TrackFlag; icon: IconName; onIcon: IconName; isDan
   { flag: 'muted', icon: 'speaker', onIcon: 'speakerMuted', isDanger: true, on: 'Unmute Track', off: 'Mute Track' },
 ]
 
-function TrackHeader({ track, index }: { track: Track; index: number }): ReactElement {
+type ShapePress = {
+  row: ShapeRow
+  fromY: number
+  listTop: number
+}
+
+function ShapeRows({ track, height }: { track: Track; height: number }): ReactElement {
   const { store } = useSession()
+  const drawingId = usePosition((position) => drawingAt(track, position.time)?.id)
+  const selectedShapes = useEditorState((state) => state.selectedShapes)
+  const [renaming, setRenaming] = useState<{ shapeId: string; name: string } | undefined>(undefined)
+  const listRef = useRef<HTMLDivElement>(null)
+  const pressRef = useRef<ShapePress | undefined>(undefined)
+  const drawing = track.clips.find((clip) => clip.id === drawingId)
+  if (drawing?.type !== 'drawing') {
+    return (
+      <div className="shape-rows" style={{ height }}>
+        <div className="shape-row empty">No drawing at the playhead</div>
+      </div>
+    )
+  }
+  const clipId = drawing.id
+  const rows = shapeRows(drawing.shapes)
+
+  function refOf(row: ShapeRow): ShapeRef {
+    return { clipId, shapeId: row.shape.id }
+  }
+
+  function isChosen(row: ShapeRow): boolean {
+    return selectedShapes.some((chosen) => chosen.clipId === clipId && chosen.shapeId === row.shape.id)
+  }
+
+  function choose(row: ShapeRow, isAdding: boolean): void {
+    if (!row.isPickable) return
+    if (!isAdding) store.selectShapes([refOf(row)])
+    else if (isChosen(row)) store.selectShapes(selectedShapes.filter((chosen) => chosen.clipId !== clipId || chosen.shapeId !== row.shape.id))
+    else store.selectShapes([...selectedShapes, refOf(row)])
+  }
+
+  function onRowDown(event: PointerEvent<HTMLDivElement>, row: ShapeRow): void {
+    const isOnControl = event.target instanceof Element && event.target.closest('button, input') !== null
+    const list = listRef.current
+    if (event.button !== 0 || isOnControl || list === null) return
+    pressRef.current = { row, fromY: event.clientY, listTop: list.getBoundingClientRect().top }
+  }
+
+  // Without pointer capture, so a double-click still reaches the name; letting go outside the list does nothing.
+  function onListUp(event: PointerEvent<HTMLDivElement>): void {
+    const press = pressRef.current
+    pressRef.current = undefined
+    if (press === undefined) return
+    if (Math.abs(event.clientY - press.fromY) < DRAG_THRESHOLD) {
+      choose(press.row, event.shiftKey)
+      return
+    }
+    const target = rows[Math.floor((event.clientY - press.listTop) / SHAPE_ROW_HEIGHT)]
+    if (target === undefined || target === press.row) return
+    store.apply('Reorder Shapes', (project) => reorderShape(project, refOf(press.row), target.shape.id))
+  }
+
+  function switchFlag(row: ShapeRow, flag: 'hidden' | 'locked', label: string): void {
+    const isOn = row.shape[flag] === true
+    store.apply(label, (project) => setShapeFlag(project, refOf(row), flag, !isOn))
+  }
+
+  function rename(row: ShapeRow): void {
+    const name = renaming?.name
+    setRenaming(undefined)
+    if (name !== undefined && name !== row.shape.name) store.apply('Rename Shape', (project) => renameShape(project, refOf(row), name))
+  }
+
+  function onNameKey(event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === 'Enter') event.currentTarget.blur()
+    if (event.key === 'Escape') setRenaming(undefined)
+  }
+
+  return (
+    <div className="shape-rows" style={{ height }} ref={listRef} aria-label="Shapes" onPointerUp={onListUp} onPointerLeave={() => (pressRef.current = undefined)}>
+      {rows.map((row) => {
+        const { shape } = row
+        const isHidden = shape.hidden === true
+        const isLocked = shape.locked === true
+        const name = shape.name ?? UNNAMED_SHAPE
+        let className = 'shape-row'
+        if (isChosen(row)) className += ' selected'
+        if (!row.isPickable) className += ' muted'
+        return (
+          <div
+            key={shape.id}
+            className={className}
+            style={{ paddingLeft: SHAPE_ROW_PADDING + row.depth * SHAPE_INDENT }}
+            data-testid={`shape-row-${shape.id}`}
+            data-selected={isChosen(row)}
+            onPointerDown={(event) => onRowDown(event, row)}
+          >
+            {renaming?.shapeId === shape.id ? (
+              <input
+                className="field"
+                aria-label="Shape name"
+                data-testid="shape-name-input"
+                autoFocus
+                value={renaming.name}
+                onChange={(event) => setRenaming({ shapeId: shape.id, name: event.target.value })}
+                onKeyDown={onNameKey}
+                onBlur={() => rename(row)}
+              />
+            ) : (
+              <span className="shape-name" data-testid={`shape-name-${shape.id}`} onDoubleClick={() => setRenaming({ shapeId: shape.id, name })}>
+                {name}
+              </span>
+            )}
+            <IconButton icon="eye" label={isHidden ? 'Show Shape' : 'Hide Shape'} testId={`shape-hidden-${shape.id}`} isPressed={isHidden} onClick={() => switchFlag(row, 'hidden', isHidden ? 'Show Shape' : 'Hide Shape')} />
+            <IconButton icon="lock" label={isLocked ? 'Unlock Shape' : 'Lock Shape'} testId={`shape-locked-${shape.id}`} isPressed={isLocked} onClick={() => switchFlag(row, 'locked', isLocked ? 'Unlock Shape' : 'Lock Shape')} />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function TrackHeader({ track, index, rows }: { track: Track; index: number; rows: TrackRows }): ReactElement {
+  const { store } = useSession()
+  const isExpanded = useEditorState((state) => state.expandedTracks.has(track.id))
+  const holdsDrawing = track.clips.some((clip) => clip.type === 'drawing')
   const [draftName, setDraftName] = useState<string | undefined>(undefined)
   const [menuAt, setMenuAt] = useState<Point | undefined>(undefined)
   const dragFromRef = useRef<number | undefined>(undefined)
@@ -71,8 +199,9 @@ function TrackHeader({ track, index }: { track: Track; index: number }): ReactEl
     const from = dragFromRef.current
     dragFromRef.current = undefined
     if (from === undefined) return
-    const rows = Math.round((event.clientY - from) / TRACK_HEIGHT)
-    if (rows !== 0) moveBy(-rows)
+    const grabbed = (rows.tops[index] ?? 0) + TRACK_HEIGHT / 2
+    const target = trackIndexAtOffset(grabbed + event.clientY - from, rows)
+    if (target !== index) store.apply('Reorder Tracks', (project) => moveTrack(project, track.id, target))
   }
 
   function cancelGrip(): void {
@@ -106,7 +235,9 @@ function TrackHeader({ track, index }: { track: Track; index: number }): ReactEl
     { label: 'Delete Track', testId: 'track-delete', onSelect: removeTrack },
   ]
 
+  const rowHeight = rows.heights[index] ?? TRACK_HEIGHT
   return (
+    <>
     <div
       className="track-header"
       data-testid={`track-${index}`}
@@ -115,6 +246,19 @@ function TrackHeader({ track, index }: { track: Track; index: number }): ReactEl
         setMenuAt({ x: event.clientX, y: event.clientY })
       }}
     >
+      {holdsDrawing && (
+        <button
+          type="button"
+          className="button icon"
+          aria-label={isExpanded ? 'Hide shapes' : 'Show shapes'}
+          aria-expanded={isExpanded}
+          data-tooltip={isExpanded ? 'Hide shapes' : 'Show shapes'}
+          data-testid={`track-expand-${index}`}
+          onClick={() => store.expandTrack(track.id, !isExpanded)}
+        >
+          <Icon name={isExpanded ? 'chevronDown' : 'chevronRight'} />
+        </button>
+      )}
       <div className="track-grip" onPointerDown={onGripDown} onPointerUp={onGripUp} onPointerCancel={cancelGrip} onDoubleClick={() => setDraftName(track.name)}>
         {draftName === undefined ? (
           <span className="track-name" data-testid={`track-name-${index}`}>
@@ -150,6 +294,8 @@ function TrackHeader({ track, index }: { track: Track; index: number }): ReactEl
       })}
       {menuAt !== undefined && <PopupMenu label="Track" items={menuItems} at={menuAt} onClose={closeMenu} />}
     </div>
+    {rowHeight > TRACK_HEIGHT && <ShapeRows track={track} height={rowHeight - TRACK_HEIGHT} />}
+    </>
   )
 }
 
@@ -236,16 +382,24 @@ function SpeedDialog({ clipIds, onClose }: { clipIds: readonly string[]; onClose
   )
 }
 
+function animationName(path: string): string {
+  const fileName = path.split('/').at(-1) ?? path
+  return fileName.replace(/\.pbanim$/i, '')
+}
+
 function GroupPath({ openGroups }: { openGroups: readonly string[] }): ReactElement {
   const { store } = useSession()
   const wholeProject = useEditorState((state) => state.wholeProject)
+  const documents = useEditorState((state) => state.documents)
+  const mediaStates = useEditorState((state) => state.mediaStates)
   const steps: { label: string; depth: number }[] = [{ label: 'Project', depth: 0 }]
-  let project = wholeProject
-  for (const [index, groupId] of openGroups.entries()) {
-    const group = locateClip(project, groupId)?.clip
-    if (group?.type !== 'group') break
-    steps.push({ label: openGroups.length === 1 ? 'Group' : `Group ${index + 1}`, depth: index + 1 })
-    project = { ...project, tracks: group.tracks }
+  let documentPath: string | undefined
+  for (const depth of openGroups.keys()) {
+    const opened = resolveScope(wholeProject, documents, mediaStates, openGroups.slice(0, depth + 1))
+    let label = openGroups.length === 1 ? 'Group' : `Group ${depth + 1}`
+    if (opened.documentPath !== undefined && opened.documentPath !== documentPath) label = animationName(opened.documentPath)
+    documentPath = opened.documentPath
+    steps.push({ label, depth: depth + 1 })
   }
   return (
     <nav className="group-path" aria-label="Open group" data-testid="group-path">
@@ -274,6 +428,8 @@ export function Timeline(): ReactElement {
   const splitKeys = useShortcutHint('split')
   const exportKeys = useShortcutHint('export')
   const tracks = useEditorState((state) => state.project.tracks)
+  const expandedTracks = useEditorState((state) => state.expandedTracks)
+  const rows = useMemo(() => trackRowsOf(tracks, expandedTracks), [tracks, expandedTracks])
   const isSnapping = useEditorState((state) => state.isSnapping)
   const hasSelection = useEditorState((state) => state.selection.length > 0)
   const openCount = useEditorState((state) => state.openCount)
@@ -393,7 +549,7 @@ export function Timeline(): ReactElement {
             Camera
           </div>
           <div className="track-headers" ref={headersRef}>
-            {tracks.map((track, index) => <TrackHeader key={track.id} track={track} index={index} />).reverse()}
+            {tracks.map((track, index) => <TrackHeader key={track.id} track={track} index={index} rows={rows} />).reverse()}
           </div>
         </div>
         <div className="timeline-canvases" ref={hostRef} data-testid="timeline">

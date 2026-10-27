@@ -13,18 +13,20 @@ export function clipsToSplit(project: Project, selection: readonly string[], cut
 
 export function earlierPart(clip: Clip, cut: number): Clip {
   const duration = cut - clip.start
+  if (clip.type === 'drawing') return { ...clip, duration }
   if (clip.type === 'audio') return withFadesWithin({ ...clip, duration, volumeFadeOut: undefined })
   const ending = { duration, fadeOut: undefined, transitionOut: undefined, animationOut: undefined }
-  if (clip.type === 'video' || clip.type === 'group') return withFadesWithin({ ...clip, ...ending, volumeFadeOut: undefined })
+  if (clip.type === 'video' || clip.type === 'group' || clip.type === 'animation') return withFadesWithin({ ...clip, ...ending, volumeFadeOut: undefined })
   return withFadesWithin({ ...clip, ...ending })
 }
 
 export function laterPart(clip: Clip, cut: number): Clip {
   const local = cut - clip.start
   const timing = { start: cut, duration: clip.duration - local, keyframes: shiftedKeyframes(clip.keyframes, -local) }
+  if (clip.type === 'drawing') return { ...clip, ...timing }
   if (clip.type === 'audio') return withFadesWithin({ ...clip, ...timing, sourceStart: sourceTime(clip, cut), volumeFadeIn: undefined })
   const starting = { fadeIn: undefined, transitionIn: undefined, animationIn: undefined }
-  if (clip.type === 'video') return withFadesWithin({ ...clip, ...timing, ...starting, sourceStart: sourceTime(clip, cut), volumeFadeIn: undefined })
+  if (clip.type === 'video' || clip.type === 'animation') return withFadesWithin({ ...clip, ...timing, ...starting, sourceStart: sourceTime(clip, cut), volumeFadeIn: undefined })
   if (clip.type === 'group') return withFadesWithin({ ...clip, ...timing, ...starting, contentStart: (clip.contentStart ?? 0) + local, volumeFadeIn: undefined })
   return withFadesWithin({ ...clip, ...timing, ...starting })
 }

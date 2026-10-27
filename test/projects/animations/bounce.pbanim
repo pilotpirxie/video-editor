@@ -1,0 +1,70 @@
+{
+  "canvas": {
+    "frameRate": {
+      "den": 1,
+      "num": 12
+    },
+    "height": 180,
+    "width": 320
+  },
+  "media": [
+    {
+      "id": "red",
+      "path": "",
+      "relativePath": "../../media/generated/image-red.png"
+    }
+  ],
+  "tracks": [
+    {
+      "clips": [
+        {
+          "duration": 24000000,
+          "id": "card",
+          "keyframes": {
+            "rotation": [
+              {
+                "easing": "linear",
+                "time": 0,
+                "value": 0
+              },
+              {
+                "easing": "linear",
+                "time": 24000000,
+                "value": 180
+              }
+            ],
+            "x": [
+              {
+                "easing": "linear",
+                "time": 0,
+                "value": 40
+              },
+              {
+                "easing": "linear",
+                "time": 24000000,
+                "value": 280
+              }
+            ]
+          },
+          "mediaId": "red",
+          "opacity": 1,
+          "start": 0,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.25,
+            "scaleY": 0.25,
+            "x": 160,
+            "y": 90
+          },
+          "type": "image"
+        }
+      ],
+      "hidden": false,
+      "id": "card",
+      "locked": false,
+      "muted": false,
+      "name": "card"
+    }
+  ],
+  "version": 1
+}

@@ -1,5 +1,5 @@
 import { createEngine, type Engine, type EngineEvent } from '../engine/engine.js'
-import { describeError } from '../shared/log.js'
+import { describeError, logError } from '../shared/log.js'
 import type { HeadlessJob, JobEvent, LoadedProject } from '../shared/mediaProtocol.js'
 import { createMediaClient, type MediaConnection } from './mediaClient.js'
 
@@ -11,13 +11,15 @@ export type WorkerCommand =
   | { type: 'project'; loaded: LoadedProject }
   | { type: 'resize'; width: number; height: number }
   | { type: 'whole-canvas'; isShown: boolean }
+  | { type: 'focus'; path: string[] }
   | { type: 'seek'; time: number }
   | { type: 'play'; outputLatency: number }
   | { type: 'pause' }
   | { type: 'job'; job: HeadlessJob }
   | { type: 'memory-pressure'; isUnderPressure: boolean }
+  | { type: 'still'; id: number; path: string; time: number; height: number }
 
-export type WorkerEvent = EngineEvent | { type: 'job'; event: JobEvent }
+export type WorkerEvent = EngineEvent | { type: 'job'; event: JobEvent } | { type: 'still'; id: number; bitmap: ImageBitmap | undefined }
 
 const HEADLESS_SURFACE_SIZE = 2
 
@@ -46,7 +48,7 @@ function createStartup(): Startup {
 
 async function runJob(engine: Engine, job: HeadlessJob): Promise<void> {
   try {
-    await engine.load(job.projectPath, false)
+    await engine.load(job.projectPath, false, job.kind === 'export' ? job.animationOverrides : undefined)
     const summary =
       job.kind === 'export'
         ? await engine.exportMedia(job, (done, total) => post({ type: 'job', event: { type: 'progress', done, total } }))
@@ -55,6 +57,16 @@ async function runJob(engine: Engine, job: HeadlessJob): Promise<void> {
   } catch (error) {
     post({ type: 'job', event: { type: 'error', message: describeError(error) } })
   }
+}
+
+async function sendStill(engine: Engine, command: Extract<WorkerCommand, { type: 'still' }>): Promise<void> {
+  let bitmap: ImageBitmap | undefined
+  try {
+    bitmap = await engine.still(command.path, command.time, command.height)
+  } catch (error) {
+    logError('Could not draw a still of an animation', error, { path: command.path })
+  }
+  postMessage({ type: 'still', id: command.id, bitmap } satisfies WorkerEvent, { transfer: bitmap === undefined ? [] : [bitmap] })
 }
 
 async function handle(engine: Engine, command: WorkerCommand, ports: readonly MessagePort[]): Promise<void> {
@@ -66,6 +78,8 @@ async function handle(engine: Engine, command: WorkerCommand, ports: readonly Me
     engine.setOutputSize({ width: command.width, height: command.height })
   } else if (command.type === 'whole-canvas') {
     engine.showWholeCanvasWhenPaused(command.isShown)
+  } else if (command.type === 'focus') {
+    engine.setFocus(command.path)
   } else if (command.type === 'seek') {
     engine.seek(command.time)
   } else if (command.type === 'play') {
@@ -79,6 +93,8 @@ async function handle(engine: Engine, command: WorkerCommand, ports: readonly Me
     if (port !== undefined) engine.attachAudio(port)
   } else if (command.type === 'memory-pressure') {
     engine.setUnderPressure(command.isUnderPressure)
+  } else if (command.type === 'still') {
+    await sendStill(engine, command)
   }
 }
 

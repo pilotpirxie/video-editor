@@ -1,3 +1,4 @@
+import { episodeTimeOf, scopeTimeOf, type Scope } from '../editor/groups.js'
 import { describeError, describeErrorAsSentence } from '../shared/log.js'
 import { TICKS_PER_SECOND, frameAt } from '../shared/time.js'
 import { createAudioOutput, type AudioOutput } from './audioOutput.js'
@@ -27,7 +28,7 @@ export type Transport = {
   pause(): void
   seek(time: number): void
   shuttle(direction: 1 | -1, limits: TimelineLimits): void
-  setOffset(offset: number): void
+  setScope(scope: Scope | undefined): void
 }
 
 type Shuttle = {
@@ -44,7 +45,7 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
   let position = START_POSITION
   let audio: Promise<AudioOutput> | undefined
   let shuttling: Shuttle | undefined
-  let offset = 0
+  let scope: Scope | undefined
   const listeners = new Set<() => void>()
 
   function announce(): void {
@@ -63,7 +64,7 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
     if (event.type !== 'position') return
     const hasStopped = position.isPlaying && !event.isPlaying
     position = {
-      time: event.time - offset,
+      time: scopeTimeOf(scope, event.time),
       isPlaying: event.isPlaying,
       droppedFrames: event.droppedFrames,
       fullQualityMs: event.fullQualityMs,
@@ -75,7 +76,7 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
   })
 
   function seekEngine(time: number): void {
-    engine.send({ type: 'seek', time: Math.max(0, time + offset) })
+    engine.send({ type: 'seek', time: Math.max(0, episodeTimeOf(scope, time)) })
   }
 
   function endShuttle(): void {
@@ -180,11 +181,12 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
       seekEngine(time)
     },
     shuttle,
-    setOffset(next) {
-      if (next === offset) return
+    setScope(next) {
+      const isSameTime = next?.offset === scope?.offset && next?.timeScale === scope?.timeScale
+      if (isSameTime) return
       endShuttle()
-      position = { ...position, time: position.time + offset - next, sequence: position.sequence + 1 }
-      offset = next
+      position = { ...position, time: scopeTimeOf(next, episodeTimeOf(scope, position.time)), sequence: position.sequence + 1 }
+      scope = next
       announce()
     },
   }

@@ -3,6 +3,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { app, type BrowserWindow } from 'electron'
+import { SHAPE_ROW_HEIGHT } from '../editor/timelineView.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
 import { PageError, selector } from './page.js'
 import {
@@ -31,7 +32,7 @@ import {
   untilWindowCount,
 } from './uiDriver.js'
 import { OUTPUT_SCENARIOS } from './uiOutputScenarios.js'
-import { FEATURE_SCENARIOS, framesShown, pick, rowInView, seekDelays, splitFirstTrackAtOneSecond, untilPrepared } from './uiScenarios.js'
+import { FEATURE_SCENARIOS, framesShown, pick, rowInView, seekDelays, splitFirstTrackAtOneSecond, timelinePointInView, untilPrepared } from './uiScenarios.js'
 
 const AUTOSAVE_TIMEOUT_MS = 20_000
 const MS_PER_SECOND = 1000
@@ -304,11 +305,11 @@ function recoveryDirectory(): string {
   return join(app.getPath('userData'), 'recovery')
 }
 
-async function untilRecoveryFiles(count: number): Promise<void> {
+async function untilRecoveryFiles(count: number, extension = '.json'): Promise<void> {
   const deadline = Date.now() + AUTOSAVE_TIMEOUT_MS
   for (;;) {
     const files = existsSync(recoveryDirectory()) ? await readdir(recoveryDirectory()) : []
-    if (files.filter((name) => name.endsWith('.json')).length === count) return
+    if (files.filter((name) => name.endsWith(extension)).length === count) return
     if (Date.now() > deadline) throw new PageError('Timed out waiting for the autosave')
     await sleep(POLL_INTERVAL_MS)
   }
@@ -416,6 +417,234 @@ async function testRestore(driver: Driver): Promise<UiTestReport> {
   return { ...documentShown(driver), windows: editorWindows().length, width, widths, saved: await driver.savedProject('restored.json') }
 }
 
+// The episode has a ground track under one animation clip, whose file holds one card on one track.
+async function openCardAnimation(driver: Driver): Promise<void> {
+  await fullQualityFrame(driver, 0)
+  await driver.doubleClickAt(await driver.timelinePoint(TICKS_PER_SECOND / 2, 1, 2))
+  await driver.until(`${selector('group-path')} !== null`, 'the animation to open')
+}
+
+async function fadeCardInsideAnimation(driver: Driver): Promise<void> {
+  await openCardAnimation(driver)
+  await driver.clickAt(await driver.timelinePoint(TICKS_PER_SECOND / 2, 0, 1))
+  await driver.until(`${selector('clip-opacity')} !== null`, 'the card inside to be selected')
+  await driver.typeInto('clip-opacity', '40')
+  await driver.untilUndoLabel('Undo Change Opacity')
+}
+
+async function testAnimationFiles(driver: Driver): Promise<UiTestReport> {
+  if (driver.options.outputDirectory === undefined) throw new PageError('This UI test needs --out <directory>')
+  await fadeCardInsideAnimation(driver)
+  const inside = await driver.page.evaluate(`({
+    path: ${selector('group-path')}.textContent,
+    timecode: ${selector('timecode')}.textContent,
+    duration: ${selector('duration')}.textContent,
+    isTimingInFrames: document.body.textContent.includes('Start (frames)'),
+  })`)
+  await driver.picture('animation-open')
+  driver.menu('undo')
+  await driver.untilRedoLabel('Redo Change Opacity')
+  driver.menu('redo')
+  await driver.untilUndoLabel('Undo Change Opacity')
+  const isEditedByAnimation = driver.window.isDocumentEdited()
+  driver.menu('save')
+  await untilEdited(driver, false)
+
+  await driver.press('Escape')
+  await driver.press('Escape')
+  await driver.until(`${selector('group-path')} === null`, 'the animation to close')
+  driver.options.answers.newAnimation = join(driver.options.outputDirectory, 'new.pbanim')
+  driver.menu('new-animation')
+  await driver.until(`${selector('group-path')}?.textContent.includes('new') === true`, 'the new animation to open')
+  return { inside, isEditedByAnimation, newPath: await driver.page.evaluate(`${selector('group-path')}.textContent`) }
+}
+
+function isPressed(testId: string): string {
+  return `${selector(testId)}?.getAttribute('aria-pressed') === 'true'`
+}
+
+// The card also holds a shape with a clipped child, which is moved from the inside; then a rectangle and a circle are drawn and the rectangle is moved.
+// The report holds the preview's place so the test can find the points.
+async function testDrawingTools(driver: Driver): Promise<UiTestReport> {
+  await openCardAnimation(driver)
+  await driver.until(`${selector('tool-strip')} !== null`, 'the drawing tools to show')
+  const tools = await driver.page.evaluate(`[...${selector('tool-strip')}.querySelectorAll(':scope > button')].map((button) => button.getAttribute('aria-label'))`)
+  const preview = await driver.rect('preview')
+  const pointAt = (shareX: number, shareY: number): Point => ({ x: preview.x + preview.width * shareX, y: preview.y + preview.height * shareY })
+
+  await driver.doubleClickAt(pointAt(0.6875, 0.6875))
+  await driver.until(`${selector('canvas-overlay')}.dataset.selectedShapes === '1'`, 'the clipped child to be selected')
+  await driver.drag(pointAt(0.6875, 0.6875), pointAt(0.6375, 0.6875), ['meta'])
+  await driver.untilUndoLabel('Undo Move Shape')
+  await driver.press('Escape')
+  await driver.until(`${selector('canvas-overlay')}.dataset.selectedShapes === '0'`, 'the child to be let go')
+
+  await driver.press('M')
+  await driver.until(isPressed('tool-rectangle'), 'the rectangle tool to be chosen')
+  await driver.drag(pointAt(0.3, 0.3), pointAt(0.45, 0.45))
+  await driver.untilUndoLabel('Undo Add Rectangle')
+  await driver.press('M')
+  await driver.until(isPressed('tool-ellipse'), 'the ellipse tool to be chosen')
+  await driver.drag(pointAt(0.55, 0.55), pointAt(0.7, 0.6), ['shift'])
+  await driver.untilUndoLabel('Undo Add Ellipse')
+
+  await driver.press('V')
+  await driver.until(isPressed('tool-move'), 'the move tool to be chosen')
+  await driver.clickAt(pointAt(0.375, 0.375))
+  await driver.until(`${selector('canvas-overlay')}.dataset.selectedShapes === '1'`, 'the rectangle to be selected')
+  await driver.drag(pointAt(0.375, 0.375), pointAt(0.425, 0.375), ['meta'])
+  await driver.untilUndoLabel('Undo Move Shape')
+  await driver.picture('drawing-tools')
+
+  const corner = centerOf(await driver.rect('handle-se'))
+  await driver.drag(corner, { x: corner.x + 40, y: corner.y + 40 }, ['meta'])
+  await driver.untilUndoLabel('Undo Resize Shape')
+  const turn = centerOf(await driver.rect('handle-rotate'))
+  await driver.drag(turn, { x: turn.x + 60, y: turn.y + 20 })
+  await driver.untilUndoLabel('Undo Rotate Shape')
+  driver.menu('undo')
+  await driver.untilUndoLabel('Undo Resize Shape')
+  driver.menu('undo')
+  await driver.untilUndoLabel('Undo Move Shape')
+  driver.menu('save')
+  await untilEdited(driver, false)
+  return { tools, preview }
+}
+
+const CHOSEN_SHAPES = `${selector('canvas-overlay')}.dataset.selectedShapes`
+
+// The card's 320x180 artboard sits in the middle of the 640x360 episode at full size.
+async function artboardPointer(driver: Driver): Promise<(x: number, y: number) => Point> {
+  const preview = await driver.rect('preview')
+  return (x, y) => ({ x: preview.x + (preview.width * (x + 160)) / 640, y: preview.y + (preview.height * (y + 90)) / 360 })
+}
+
+async function openShapeRows(driver: Driver): Promise<void> {
+  await openCardAnimation(driver)
+  await driver.clickAt(centerOf(await driver.rect('track-expand-0')))
+  await driver.until(`${selector('shape-row-coat')} !== null`, 'the shapes of the drawing to show')
+}
+
+function shownRows(driver: Driver): Promise<unknown> {
+  return driver.page.evaluate(`[...document.querySelectorAll('.shape-row')].map((row) => row.querySelector('.shape-name')?.textContent)`)
+}
+
+// Shape rows sit under the track header, so the bottom ones can be below the timeline until it scrolls.
+async function shapeRowPoint(driver: Driver, testId: string): Promise<Point> {
+  return timelinePointInView(driver, async () => centerOf(await driver.rect(testId)), SHAPE_ROW_HEIGHT, `The "${testId}" row`)
+}
+
+async function chooseRow(driver: Driver, shapeId: string): Promise<void> {
+  await driver.clickAt(await shapeRowPoint(driver, `shape-row-${shapeId}`))
+  await driver.until(`${selector(`shape-row-${shapeId}`)}?.dataset.selected === 'true'`, `the ${shapeId} row to be chosen`)
+}
+
+async function shapesPickedAt(driver: Driver, point: Point): Promise<unknown> {
+  await driver.clickAt(point)
+  await sleep(POLL_INTERVAL_MS)
+  return driver.page.evaluate(CHOSEN_SHAPES)
+}
+
+// The card's drawing holds, back to front, Left, Coat (with an unnamed pocket clipped inside) and Right.
+async function testShapeRows(driver: Driver): Promise<UiTestReport> {
+  await openShapeRows(driver)
+  const pointAt = await artboardPointer(driver)
+  const rowsAtFirst = await shownRows(driver)
+
+  await driver.doubleClickAt(await shapeRowPoint(driver, 'shape-name-coat'))
+  await driver.until(`${selector('shape-name-input')} !== null`, 'the name field')
+  await driver.typeInto('shape-name-input', 'Big coat')
+  await driver.untilUndoLabel('Undo Rename Shape')
+
+  await chooseRow(driver, 'pocket')
+  await driver.clickAt(await shapeRowPoint(driver, 'shape-name-left'), ['shift'])
+  await driver.until(`${CHOSEN_SHAPES} === '2'`, 'a second shape to be added')
+  await driver.page.click('shape-hidden-left')
+  await driver.untilUndoLabel('Undo Hide Shape')
+  await driver.until(`${CHOSEN_SHAPES} === '1'`, 'the hidden shape to be let go')
+  const pickedWhereHidden = await shapesPickedAt(driver, pointAt(40, 40))
+  await driver.page.click('shape-locked-coat')
+  await driver.untilUndoLabel('Undo Lock Shape')
+  const pickedWhereLocked = await shapesPickedAt(driver, pointAt(255, 145))
+
+  const lowestRow = await shapeRowPoint(driver, 'shape-row-left')
+  await driver.drag(await shapeRowPoint(driver, 'shape-row-right'), lowestRow)
+  await driver.untilUndoLabel('Undo Reorder Shapes')
+  const rowsAfter = await shownRows(driver)
+  driver.menu('save')
+  await untilEdited(driver, false)
+  await driver.picture('shape-rows')
+  return { rowsAtFirst, pickedWhereHidden, pickedWhereLocked, rowsAfter }
+}
+
+async function testShapeEdits(driver: Driver): Promise<UiTestReport> {
+  await openShapeRows(driver)
+  const pointAt = await artboardPointer(driver)
+
+  await chooseRow(driver, 'left')
+  await driver.press('Backspace')
+  await driver.untilUndoLabel('Undo Delete Shape')
+  driver.menu('undo')
+  await driver.untilRedoLabel('Redo Delete Shape')
+  await chooseRow(driver, 'left')
+  driver.window.webContents.copy()
+  driver.window.webContents.paste()
+  await driver.untilUndoLabel('Undo Paste Shape')
+  await driver.press('D', ['meta'])
+  await driver.untilUndoLabel('Undo Duplicate Shape')
+  const rowsWithCopies = await shownRows(driver)
+
+  await chooseRow(driver, 'left')
+  await driver.press(']', ['meta', 'shift'])
+  await driver.untilUndoLabel('Undo Bring to Front')
+  await driver.press('[', ['meta'])
+  await driver.untilUndoLabel('Undo Send Backward')
+
+  await chooseRow(driver, 'coat')
+  await driver.clickAt(centerOf(await driver.rect('colour-stroke')))
+  await driver.until(isPressed('colour-stroke'), 'the stroke colour to be chosen')
+  const hue = await driver.rect('colour-hue-track')
+  await driver.drag({ x: hue.x + 1, y: hue.y + hue.height / 2 }, { x: hue.x + hue.width / 3, y: hue.y + hue.height / 2 })
+  await driver.untilUndoLabel('Undo Change Stroke')
+  await driver.clickAt(centerOf(await driver.rect('colour-fill')))
+  await driver.until(isPressed('colour-fill'), 'the fill colour to be chosen')
+  await driver.typeInto('colour-hex', '#336699')
+  await driver.untilUndoLabel('Undo Change Fill')
+
+  await driver.press('Escape')
+  await driver.until(`${CHOSEN_SHAPES} === '0'`, 'the coat to be let go')
+  await driver.typeInto('colour-hex', 'ff8800')
+  await driver.until(`${selector('tool-well-fill')}?.getAttribute('aria-label') === 'Fill #FF8800'`, 'the colour for new shapes to change')
+  await driver.press('M')
+  await driver.until(isPressed('tool-rectangle'), 'the rectangle tool to be chosen')
+  await driver.drag(pointAt(150, 100), pointAt(200, 130))
+  await driver.untilUndoLabel('Undo Add Rectangle')
+  driver.menu('save')
+  await untilEdited(driver, false)
+  await driver.picture('shape-colours')
+
+  await driver.press('Escape')
+  await driver.press('Escape')
+  await driver.until(`${selector('group-path')} === null`, 'the animation to close')
+  driver.window.webContents.paste()
+  await driver.until(`${selector('notice')} !== null`, 'the paste to be refused')
+  return { rowsWithCopies, notice: await driver.page.text('notice') }
+}
+
+async function testAnimationCrash(driver: Driver): Promise<UiTestReport> {
+  await fadeCardInsideAnimation(driver)
+  await untilRecoveryFiles(1, '.animations')
+  process.kill(process.pid, 'SIGKILL')
+  return {}
+}
+
+async function testAnimationRestore(driver: Driver): Promise<UiTestReport> {
+  await untilEdited(driver, true)
+  driver.menu('save')
+  await untilEdited(driver, false)
+  return { title: driver.window.getTitle() }
+}
+
 const PREPARED_SEEK_HOURS = [3, 17, 9, 14, 1, 19]
 const SECONDS_PER_HOUR = 3600
 const PROJECT_HOURS = 20
@@ -498,6 +727,12 @@ const SCENARIOS: Record<string, Scenario> = {
   'page-crash': testPageCrash,
   'media-crash': testMediaCrash,
   restore: testRestore,
+  'animation-files': testAnimationFiles,
+  'drawing-tools': testDrawingTools,
+  'shape-rows': testShapeRows,
+  'shape-edits': testShapeEdits,
+  'animation-crash': testAnimationCrash,
+  'animation-restore': testAnimationRestore,
   budgets: testBudgets,
   'open-and-save': testOpenAndSave,
   ...FEATURE_SCENARIOS,

@@ -1,7 +1,7 @@
 import { mkdir, open, rename, rm } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { describeError } from '../shared/log.js'
-import { parseProject, serializeProject, type MediaRef, type Project } from '../shared/project.js'
+import { parseProject, serializeProject, type DocumentKind, type MediaRef, type Project } from '../shared/project.js'
 
 export class ProjectFileError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -50,11 +50,11 @@ async function writeAndSync(path: string, text: string): Promise<void> {
   }
 }
 
-export async function writeProjectFile(path: string, project: Project): Promise<void> {
+export async function writeProjectFile(path: string, project: Project, kind: DocumentKind = 'project'): Promise<void> {
   const name = basename(path)
   const text = serializeProject(project)
-  const check = parseProject(text)
-  if (!check.ok) throw new ProjectFileError(`"${name}" was not saved because the project is not valid: ${check.message}`)
+  const check = parseProject(text, kind)
+  if (!check.ok) throw new ProjectFileError(`"${name}" was not saved because the ${kind} is not valid: ${check.message}`)
 
   const directory = dirname(path)
   const temporaryPath = join(directory, `.${name}.saving`)

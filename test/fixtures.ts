@@ -1,6 +1,6 @@
 import type { MediaStates } from '../src/engine/resolve.js'
 import type { MediaInfo, VideoInfo } from '../src/shared/mediaProtocol.js'
-import { parseProject, serializeProject, type AudioClip, type Clip, type GroupClip, type MediaRef, type Project, type TextClip, type Track, type VideoClip } from '../src/shared/project.js'
+import { parseProject, serializeProject, type AnimationClip, type AudioClip, type Clip, type DrawingClip, type DrawingShape, type GroupClip, type MediaRef, type Project, type TextClip, type Track, type VideoClip } from '../src/shared/project.js'
 
 export const SECOND = 24_000_000
 export const FRAME = SECOND / 30
@@ -53,6 +53,14 @@ export function groupClip(id: string, start: number, duration: number, tracks: C
     tracks: tracks.map((clips, index) => track(`track-${index + 1}`, clips)),
     ...settings,
   }
+}
+
+export function animationClip(id: string, start: number, duration: number, settings: Partial<AnimationClip> = {}): AnimationClip {
+  return { ...videoClip(id, start, duration), type: 'animation', mediaId: 'wave', ...settings }
+}
+
+export function drawingClip(id: string, start: number, duration: number, shapes: DrawingShape[] = []): DrawingClip {
+  return { id, type: 'drawing', start, duration, shapes }
 }
 
 export function track(id: string, clips: Clip[], settings: Partial<Track> = {}): Track {

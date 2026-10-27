@@ -5,6 +5,7 @@ import {
   CAMERA_LANE_HEIGHT,
   CLIP_INSET,
   RULER_HEIGHT,
+  SHAPE_ROW_HEIGHT,
   TRACKS_TOP,
   TRACK_HEIGHT,
   clipBands,
@@ -23,14 +24,15 @@ import {
   type FadeHandle,
   type Marquee,
   type TimelineView,
+  type TrackRows,
   type TransitionBand,
   type VolumePoint,
 } from '../editor/timelineView.js'
 import type { MediaStates } from '../engine/resolve.js'
 import type { Size } from '../shared/exportPresets.js'
-import type { MediaInfo, Preparation, WaveformLevel } from '../shared/mediaProtocol.js'
-import type { AudioClip, Clip, GroupClip, Project, Track, VideoClip } from '../shared/project.js'
-import { TICKS_PER_SAMPLE, TICKS_PER_SECOND, frameDuration, frameIndexAt, loopedTime, sourceTime, timecode } from '../shared/time.js'
+import type { Documents, MediaInfo, Preparation, WaveformLevel } from '../shared/mediaProtocol.js'
+import { isVisual, type AudioClip, type Clip, type GroupClip, type Project, type Track, type VideoClip } from '../shared/project.js'
+import { TICKS_PER_SAMPLE, TICKS_PER_SECOND, frameDuration, frameIndexAt, frameNumber, loopedTime, sourceTime, timecode } from '../shared/time.js'
 import type { Thumbnails } from './thumbnails.js'
 
 const CLIP_RADIUS = 4
@@ -83,6 +85,7 @@ export type TimelineColors = {
   image: string
   annotation: string
   blur: string
+  animation: string
 }
 
 export type TimelineFonts = {
@@ -93,10 +96,13 @@ export type TimelineFonts = {
 export type ContentScene = {
   project: Project
   mediaStates: MediaStates
+  documents: Documents
+  openChain: readonly string[]
   preparation: Readonly<Record<string, Preparation>>
   mediaNames: ReadonlyMap<string, string>
   selection: ReadonlySet<string>
   selectedZoom: number | undefined
+  rows: TrackRows
   view: TimelineView
   size: Size
   colors: TimelineColors
@@ -160,6 +166,7 @@ export function readColors(element: Element): TimelineColors {
     image: token('--clip-image'),
     annotation: token('--clip-annotation'),
     blur: token('--clip-blur'),
+    animation: token('--clip-animation'),
   }
 }
 
@@ -184,8 +191,9 @@ function clipColor(clip: Clip, scene: ContentScene): string {
   const { colors } = scene
   if (clip.type === 'video') return videoOf(clip, scene.mediaStates)?.isAnimatedImage === true ? colors.image : colors.video
   if (clip.type === 'audio') return colors.audio
-  if (clip.type === 'image') return colors.image
+  if (clip.type === 'image' || clip.type === 'drawing') return colors.image
   if (clip.type === 'blur' || clip.type === 'group') return colors.blur
+  if (clip.type === 'animation') return colors.animation
   return colors.annotation
 }
 
@@ -202,6 +210,7 @@ function clipName(clip: Clip, mediaNames: ReadonlyMap<string, string>): string {
   if (clip.type === 'callout') return clip.text.split('\n')[0] || CALLOUT_NAMES[clip.shape]
   if (clip.type === 'arrow') return clip.startHead === 'none' && clip.endHead === 'none' ? 'Line' : 'Arrow'
   if (clip.type === 'group') return `Group of ${memberCount(clip)}`
+  if (clip.type === 'drawing') return 'Drawing'
   return mediaNames.get(clip.mediaId) ?? clip.mediaId
 }
 
@@ -210,6 +219,7 @@ function badgeOf(clip: Clip, scene: ContentScene): { text: string; color: string
   const state = scene.mediaStates[clip.mediaId]
   if (state === undefined || ('error' in state && state.isMissing)) return { text: 'Media missing', color: scene.colors.danger }
   if ('error' in state) return { text: 'Media error', color: scene.colors.danger }
+  if (state.info.kind === 'animation' && scene.openChain.includes(state.info.path)) return { text: 'Contains itself', color: scene.colors.danger }
   const preparation = scene.preparation[clip.mediaId]
   if (preparation?.hasFailed === true) return { text: 'Media error', color: scene.colors.danger }
   if (preparation !== undefined && preparation.progress < 1) return { text: 'Preparing', color: scene.colors.warning }
@@ -355,12 +365,12 @@ type ClipShape = {
 function shapeOf(clip: Clip, scene: ContentScene, rowTop: number): ClipShape {
   const left = timeToX(clip.start, scene.view)
   const width = Math.max(1, timeToX(endOf(clip), scene.view) - left)
-  const bands = clipBands(clip, makesSound(clip, scene.mediaStates), rowTop)
+  const bands = clipBands(clip, makesSound(clip, scene.mediaStates, scene.documents), rowTop)
   return { clip, left, top: rowTop + CLIP_INSET, width, height: TRACK_HEIGHT - 2 * CLIP_INSET, radius: Math.min(CLIP_RADIUS, width / 2), ...bands }
 }
 
 function hasFades(clip: Clip): boolean {
-  const pictureFades = clip.type !== 'audio' && (clip.fadeIn !== undefined || clip.fadeOut !== undefined)
+  const pictureFades = isVisual(clip) && (clip.fadeIn !== undefined || clip.fadeOut !== undefined)
   const soundFades = hasVolume(clip) && (clip.volumeFadeIn !== undefined || clip.volumeFadeOut !== undefined)
   return pictureFades || soundFades
 }
@@ -406,7 +416,7 @@ function drawClipDetails(context: CanvasRenderingContext2D, shape: ClipShape, sc
     const hasSound = clip.type === 'audio' || clip.type === 'video'
     if (hasSound && sound !== undefined && isAvailable) drawWaveform(context, clip, scene, sound.top, sound.height)
   }
-  if (clip.type !== 'audio' && picture !== undefined) {
+  if (isVisual(clip) && picture !== undefined) {
     drawRamp(context, picture, left, clip.fadeIn, 1, scene)
     drawRamp(context, picture, left + width, clip.fadeOut, -1, scene)
   }
@@ -447,8 +457,22 @@ function drawSelection(context: CanvasRenderingContext2D, shape: ClipShape, scen
   context.stroke()
 }
 
-function drawTrack(context: CanvasRenderingContext2D, track: Track, scene: ContentScene, rowTop: number): void {
+// The shape rows of an expanded track stay empty until node keys show there.
+function drawShapeLanes(context: CanvasRenderingContext2D, scene: ContentScene, top: number, bottom: number): void {
+  const { size, colors } = scene
+  context.fillStyle = colors.panel
+  context.fillRect(0, top, size.width, bottom - top)
+  context.fillStyle = colors.divider
+  for (let rowBottom = top + SHAPE_ROW_HEIGHT; rowBottom <= bottom; rowBottom += SHAPE_ROW_HEIGHT) {
+    context.fillRect(0, rowBottom - 1, size.width, 1)
+  }
+}
+
+function drawTrack(context: CanvasRenderingContext2D, track: Track, scene: ContentScene, rowTop: number, rowHeight: number): void {
   const { view, size, colors } = scene
+  context.globalAlpha = track.hidden ? HIDDEN_TRACK_OPACITY : 1
+  if (rowHeight > TRACK_HEIGHT) drawShapeLanes(context, scene, rowTop + TRACK_HEIGHT, rowTop + rowHeight)
+  context.globalAlpha = 1
   context.fillStyle = colors.divider
   context.fillRect(0, rowTop + TRACK_HEIGHT - 1, size.width, 1)
 
@@ -517,6 +541,7 @@ function drawRuler(context: CanvasRenderingContext2D, scene: ContentScene): void
   context.fillRect(0, RULER_HEIGHT - 1, size.width, 1)
 
   const step = rulerStep(view.pixelsPerSecond, frameDuration(project.canvas.frameRate))
+  const label = scene.openChain.length > 0 ? frameNumber : timecode
   const firstTime = Math.max(0, Math.floor(xToTime(0, view) / step) * step)
   const lastTime = xToTime(size.width, view)
   context.font = fonts.small
@@ -526,7 +551,7 @@ function drawRuler(context: CanvasRenderingContext2D, scene: ContentScene): void
     context.fillStyle = colors.divider
     context.fillRect(x, RULER_HEIGHT - TICK_HEIGHT, 1, TICK_HEIGHT)
     context.fillStyle = colors.textSecondary
-    context.fillText(timecode(time, project.canvas.frameRate), x + 4, RULER_HEIGHT / 2 - 1)
+    context.fillText(label(time, project.canvas.frameRate), x + 4, RULER_HEIGHT / 2 - 1)
   }
 }
 
@@ -535,9 +560,10 @@ export function drawContent(context: CanvasRenderingContext2D, scene: ContentSce
   context.fillStyle = colors.background
   context.fillRect(0, 0, size.width, size.height)
   for (const [trackIndex, track] of project.tracks.entries()) {
-    const rowTop = trackTop(trackIndex, project.tracks.length, view)
-    const isVisible = rowTop + TRACK_HEIGHT > TRACKS_TOP && rowTop < size.height
-    if (isVisible) drawTrack(context, track, scene, rowTop)
+    const rowTop = trackTop(trackIndex, scene.rows, view)
+    const rowHeight = scene.rows.heights[trackIndex] ?? TRACK_HEIGHT
+    const isVisible = rowTop + rowHeight > TRACKS_TOP && rowTop < size.height
+    if (isVisible) drawTrack(context, track, scene, rowTop, rowHeight)
   }
   if (scene.shown !== undefined) {
     const from = Math.max(0, timeToX(scene.shown.from, view))

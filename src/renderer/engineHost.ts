@@ -18,6 +18,7 @@ export type EngineHost = {
   onEvent(listener: (event: WorkerEvent) => void): () => void
   uiMediaPort: Promise<MessagePort>
   onReconnect(listener: (ports: MediaPorts) => void): void
+  renderStill(path: string, time: number, height: number): Promise<ImageBitmap | undefined>
 }
 
 function isMediaPortMessage(event: MessageEvent<unknown>): boolean {
@@ -88,5 +89,22 @@ export function startEngine(canvas: HTMLCanvasElement | undefined): EngineHost {
     listener(ports)
   }
 
-  return { send, onEvent, uiMediaPort, onReconnect }
+  const stillRequests = new Map<number, (bitmap: ImageBitmap | undefined) => void>()
+  let nextStillId = 0
+  onEvent((event) => {
+    if (event.type !== 'still') return
+    stillRequests.get(event.id)?.(event.bitmap)
+    stillRequests.delete(event.id)
+  })
+
+  function renderStill(path: string, time: number, height: number): Promise<ImageBitmap | undefined> {
+    const id = nextStillId
+    nextStillId += 1
+    return new Promise((resolve) => {
+      stillRequests.set(id, resolve)
+      send({ type: 'still', id, path, time, height })
+    })
+  }
+
+  return { send, onEvent, uiMediaPort, onReconnect, renderStill }
 }

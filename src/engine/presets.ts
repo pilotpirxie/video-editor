@@ -1,5 +1,5 @@
 import type { Size } from '../shared/exportPresets.js'
-import { valueAt, type Animation, type Keyframe } from '../shared/project.js'
+import { valueAt, type AnimationPreset, type Keyframe } from '../shared/project.js'
 import { TIMELINE_GRID } from '../shared/time.js'
 
 const POP_OVERSHOOT = 1.1
@@ -16,8 +16,8 @@ export type AnimationCurves = {
 
 export type AnimatedClip = {
   duration: number
-  animationIn?: Animation
-  animationOut?: Animation
+  animationIn?: AnimationPreset
+  animationOut?: AnimationPreset
 }
 
 export type AnimationChange = {
@@ -32,7 +32,7 @@ function onGrid(time: number): number {
   return Math.round(time / TIMELINE_GRID) * TIMELINE_GRID
 }
 
-function curvesIn(animation: Animation, canvas: Size): AnimationCurves {
+function curvesIn(animation: AnimationPreset, canvas: Size): AnimationCurves {
   const { type, duration } = animation
   function rise(from: number, to: number, easing: Keyframe['easing']): Keyframe[] {
     return [
@@ -70,7 +70,7 @@ function mirrored(keyframes: readonly Keyframe[], clipDuration: number): Keyfram
   return backwards
 }
 
-export function animationCurves(animation: Animation, edge: 'in' | 'out', clipDuration: number, canvas: Size): AnimationCurves {
+export function animationCurves(animation: AnimationPreset, edge: 'in' | 'out', clipDuration: number, canvas: Size): AnimationCurves {
   const arriving = curvesIn(animation, canvas)
   if (edge === 'in') return arriving
   const leaving: AnimationCurves = {}

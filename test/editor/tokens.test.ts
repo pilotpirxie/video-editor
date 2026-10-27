@@ -17,6 +17,7 @@ const TEXT_ON_SURFACE: readonly [string, string][] = [
   ['text-primary', 'clip-audio'],
   ['text-primary', 'clip-image'],
   ['text-primary', 'clip-annotation'],
+  ['text-primary', 'clip-animation'],
   ['text-secondary', 'window-background'],
   ['text-secondary', 'panel-background'],
   ['text-secondary', 'raised-surface'],
@@ -75,6 +76,7 @@ describe('design tokens', () => {
       'clip-image': '#5e4f8c',
       'clip-annotation': '#8a6a3a',
       'clip-blur': '#5b6474',
+      'clip-animation': '#8c4a68',
     })
   })
 

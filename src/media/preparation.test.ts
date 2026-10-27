@@ -103,3 +103,11 @@ describe('planPreparation', () => {
     expect(names).toEqual(['recording sound 0 near', 'recording sound 1 near', 'recording waveform', 'music waveform', 'music sound 0', 'music sound 1', 'music sound 2', 'music sound 3'])
   })
 })
+
+describe('animation files', () => {
+  it('are never prepared, even when the timeline wants them', () => {
+    const animation: PreparableMedia = { id: 'recording', info: { kind: 'animation', path: '/episode/wave.pbanim' } }
+    const plan = planPreparation({ playhead: 0, ranges: [rangeOf('picture', 0, MINUTE), rangeOf('sound', 0, MINUTE)] }, [animation], SEGMENT_SECONDS)
+    expect(plan).toEqual([])
+  })
+})

@@ -364,6 +364,106 @@ describe('groups', () => {
   })
 })
 
+function sampleAnimation(): Project {
+  const { camera: _camera, ...animation } = sampleProject()
+  return { ...animation, canvas: { ...animation.canvas, frameRate: { num: 12, den: 1 } } }
+}
+
+describe('animation files', () => {
+  it('load then save is byte-identical', () => {
+    const saved = serializeProject(sampleAnimation())
+    const loaded = parseProject(saved, 'animation')
+    expect(loaded.ok && serializeProject(loaded.project)).toBe(saved)
+  })
+
+  it('have no camera', () => {
+    const result = parseProject(serializeProject({ ...sampleAnimation(), camera: sampleProject().camera }), 'animation')
+    expect(result.ok || result.message).toBe('camera is not allowed: an animation has no camera')
+  })
+
+  it('may run at 8, 12 or 15 frames per second, which projects may not', () => {
+    const saved = serializeProject(sampleAnimation())
+    expect(parseProject(saved, 'animation').ok).toBe(true)
+    expect(messageFor(saved)).toBe('canvas.frameRate must be 24000/1001, 24, 25, 30000/1001, 30, 50, 60, 120 or 160 frames per second')
+  })
+})
+
+describe('animation clips', () => {
+  const clip = { id: 'wave', type: 'animation', mediaId: 'm-logo', start: 0, duration: SECOND, sourceStart: 0, speedPercent: 100, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, volume: 1, loop: true }
+
+  it('load and save with their source, volume and loop', () => {
+    const text = withValue('tracks.3.clips', [clip])
+    const parsed = parseProject(text)
+    expect(parsed.ok && parsed.project.tracks[3]?.clips).toEqual([clip])
+  })
+
+  it('scale evenly, like groups', () => {
+    const stretched = { ...clip, transform: { ...clip.transform, scaleX: 2 } }
+    expect(messageFor(withValue('tracks.3.clips', [stretched]))).toMatch(/transform of an animation must have the same scaleX and scaleY/)
+  })
+})
+
+describe('drawing clips', () => {
+  const eye = { id: 'eye', name: 'Left eye', hidden: true, locked: true, nodes: [{ x: 4, y: 4 }, { x: 6, y: 6 }] }
+  const face = {
+    id: 'face',
+    nodes: [{ x: 0, y: 0, out: { x: 5, y: -2 } }, { x: 20, y: 0, in: { x: -5, y: -2 } }, { x: 10, y: 15 }],
+    isClosed: true,
+    fill: '#FFCC99',
+    stroke: { color: '#000000', width: 4 },
+    children: [eye],
+  }
+  const drawing = { id: 'head', type: 'drawing', start: 0, duration: SECOND, shapes: [face] }
+
+  function animationWith(clips: readonly unknown[]): string {
+    return JSON.stringify({ ...sampleAnimation(), tracks: [{ id: 't', name: '', hidden: false, locked: false, muted: false, clips }] })
+  }
+
+  function shapesRejectedWith(shapes: readonly unknown[]): string {
+    const result = parseProject(animationWith([{ ...drawing, shapes }]), 'animation')
+    if (result.ok) throw new Error('expected the animation to be rejected')
+    return result.message
+  }
+
+  function clippedInside(depth: number): unknown {
+    return depth === 0 ? eye : { ...eye, id: `level-${depth}`, children: [clippedInside(depth - 1)] }
+  }
+
+  it('load and save in an animation with their names, flags, nodes, handles, fill, stroke and clipped children', () => {
+    const parsed = parseProject(animationWith([drawing]), 'animation')
+    expect(parsed.ok && parsed.project.tracks[0]?.clips).toEqual([drawing])
+    expect(parsed.ok && parseProject(serializeProject(parsed.project), 'animation')).toEqual(parsed)
+  })
+
+  it('cannot be in a project, not even inside a group', () => {
+    expect(messageFor(withValue('tracks.3.clips', [drawing]))).toBe('tracks[3].clips[0] is a drawing, which only an animation can hold')
+    expect(messageFor(withValue('tracks.3.clips.2.tracks.0.clips', [drawing]))).toMatch(/is a drawing, which only an animation can hold$/)
+  })
+
+  it('reject shapes with too few nodes, repeated ids, empty children, a thin stroke or a bad colour', () => {
+    expect(shapesRejectedWith([{ ...eye, nodes: [{ x: 0, y: 0 }] }])).toBe('tracks[0].clips[0].shapes[0].nodes must have at least 2 nodes')
+    expect(shapesRejectedWith([face, { ...eye, id: 'face' }])).toBe('tracks[0].clips[0].shapes[1].id "face" is used by more than one shape in this drawing')
+    expect(shapesRejectedWith([{ ...face, children: [{ ...eye, id: 'face' }] }])).toMatch(/children\[0\]\.id "face" is used by more than one shape/)
+    expect(shapesRejectedWith([{ ...face, children: [] }])).toBe('tracks[0].clips[0].shapes[0].children is empty; leave it out instead')
+    expect(shapesRejectedWith([{ ...face, stroke: { color: '#000000', width: 0 } }])).toBe('tracks[0].clips[0].shapes[0].stroke.width must be greater than 0')
+    expect(shapesRejectedWith([{ ...face, fill: 'red' }])).toBe('tracks[0].clips[0].shapes[0].fill must look like #RRGGBB or #RRGGBBAA')
+    expect(shapesRejectedWith([{ ...face, isClosed: false }])).toBe('tracks[0].clips[0].shapes[0].isClosed must be true or left out')
+    expect(shapesRejectedWith([{ ...face, hidden: false }])).toBe('tracks[0].clips[0].shapes[0].hidden must be true or left out')
+    expect(shapesRejectedWith([{ ...face, name: 3 }])).toMatch(/^tracks\[0\]\.clips\[0\]\.shapes\[0\]\.name /)
+  })
+
+  it('clip shapes inside each other up to 8 deep', () => {
+    expect(parseProject(animationWith([{ ...drawing, shapes: [clippedInside(8)] }]), 'animation').ok).toBe(true)
+    expect(shapesRejectedWith([clippedInside(9)])).toMatch(/children go deeper than 8 shapes clipped inside each other$/)
+  })
+
+  it('have no keyframes yet', () => {
+    const keyed = { ...drawing, keyframes: { x: [{ time: 0, value: 1, easing: 'linear' }] } }
+    const result = parseProject(animationWith([keyed]), 'animation')
+    expect(result.ok || result.message).toBe('tracks[0].clips[0].keyframes is not a known setting')
+  })
+})
+
 describe('serializeProject', () => {
   it('sorts keys at every level and ends with a newline', () => {
     const text = serializeProject(sampleProject())
@@ -459,7 +559,7 @@ describe('parseProject', () => {
     ['a group member that ends past exact time on the timeline', memberEndingPastExactTime(), /^tracks\[3\]\.clips\[2\]\.tracks\[0\]\.clips\[0\]\.duration ends the clip too far along the timeline$/],
     ['a source read past exact time', withValue('tracks.0.clips.0.sourceStart', Number.MAX_SAFE_INTEGER - 1), /^tracks\[0\]\.clips\[0\]\.sourceStart reaches too far into the source$/],
     ['an unknown media reference', withValue('tracks.0.clips.0.mediaId', 'nope'), /mediaId "nope" is not in the media list$/],
-    ['an unknown clip type', withValue('tracks.0.clips.0.type', 'sticker'), /^tracks\[0\]\.clips\[0\]\.type must be one of video, audio, image, text, blur, highlight, callout, arrow, group;/],
+    ['an unknown clip type', withValue('tracks.0.clips.0.type', 'sticker'), /^tracks\[0\]\.clips\[0\]\.type must be one of video, audio, image, text, blur, highlight, callout, arrow, group, animation, drawing;/],
     ['an unknown clip setting', withValue('tracks.0.clips.1.volume', 1), /^tracks\[0\]\.clips\[1\]\.volume is not a known setting$/],
     ['overlapping clips', withValue('tracks.0.clips.1.start', 2 * SECOND), /^tracks\[0\]\.clips has overlapping clips "c-video" and "c-image"$/],
     ['an opacity above 1', withValue('tracks.0.clips.0.opacity', 1.5), /opacity must be at most 1$/],

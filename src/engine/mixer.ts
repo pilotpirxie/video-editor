@@ -1,5 +1,6 @@
-import type { AudioStretch, WantedRange } from '../shared/mediaProtocol.js'
-import { valueAt, type AudioClip, type Clip, type GroupClip, type Project, type Track, type VideoClip } from '../shared/project.js'
+import { isTimed, type AudioStretch, type WantedRange } from '../shared/mediaProtocol.js'
+import type { Documents } from '../shared/mediaProtocol.js'
+import { valueAt, type AnimationClip, type AudioClip, type Clip, type GroupClip, type Project, type VideoClip } from '../shared/project.js'
 import { FAST_SOUND_ABOVE_PERCENT, NORMAL_SPEED_PERCENT, SAMPLE_RATE, TICKS_PER_SAMPLE, sourceTime } from '../shared/time.js'
 import { createByteLru } from './byteLru.js'
 import { fadeFactor, forEachPlacedClip, type MediaStates, type PlacedClip } from './resolve.js'
@@ -30,14 +31,15 @@ function hasSound(clip: Clip, media: MediaStates): clip is SoundClip {
   if (clip.type === 'video' && clip.isAudioSeparated === true) return false
   if (clip.speedPercent > FAST_SOUND_ABOVE_PERCENT && clip.hasFastSound !== true) return false
   const state = media[clip.mediaId]
-  if (state === undefined || 'error' in state || state.info.kind === 'image') return false
+  if (state === undefined || 'error' in state || !isTimed(state.info)) return false
   return state.info.audio !== undefined
 }
 
-function collectSounds(tracks: readonly Track[], media: MediaStates, window: { from: number; to: number }, found: AudibleClip[]): void {
-  forEachPlacedClip(tracks, window, (track) => track.muted, (placed) => {
+function collectSounds(project: Project, media: MediaStates, documents: Documents, window: { from: number; to: number }, found: AudibleClip[]): void {
+  forEachPlacedClip(project, media, documents, window, (track) => track.muted, (placed) => {
     const { clip } = placed
-    if (hasSound(clip, media)) found.push({ ...placed, clip })
+    // Played faster or slower by its animation, it would need its own stretched copy; it stays silent instead.
+    if (placed.timeScale === 1 && hasSound(clip, media)) found.push({ ...placed, clip })
   })
 }
 
@@ -46,9 +48,9 @@ function stretchOf(clip: SoundClip): AudioStretch | undefined {
   return { speedPercent: clip.speedPercent, keepsPitch: clip.changesPitch !== true }
 }
 
-export function soundRanges(project: Project, media: MediaStates): WantedRange[] {
+export function soundRanges(project: Project, media: MediaStates, documents: Documents): WantedRange[] {
   const found: AudibleClip[] = []
-  collectSounds(project.tracks, media, { from: 0, to: Infinity }, found)
+  collectSounds(project, media, documents, { from: 0, to: Infinity }, found)
   const ranges: WantedRange[] = []
   for (const audible of found) {
     const { clip, shift, from, to } = audible
@@ -68,7 +70,7 @@ export function soundRanges(project: Project, media: MediaStates): WantedRange[]
   return ranges
 }
 
-function gainAt(sound: SoundClip | GroupClip, localTime: number): number {
+function gainAt(sound: SoundClip | GroupClip | AnimationClip, localTime: number): number {
   const keyframes = sound.keyframes?.volume
   const volume = keyframes === undefined ? sound.volume : (valueAt(keyframes, localTime) ?? sound.volume)
   return volume * fadeFactor(localTime, sound.duration, sound.volumeFadeIn, sound.volumeFadeOut)
@@ -91,7 +93,7 @@ async function contributionOf(audible: AudibleClip, rangeFirst: number, readAudi
   for (let sample = first; sample < end; sample++) {
     const time = sample * TICKS_PER_SAMPLE
     let gain = gainAt(clip, time - shift - clip.start)
-    for (const enclosing of groups) gain *= gainAt(enclosing.group, time - enclosing.shift - enclosing.group.start)
+    for (const { container, shift: containerShift, timeScale } of groups) gain *= gainAt(container, (time - containerShift) / timeScale - container.start)
     const index = (sample - first) * CHANNELS
     samples[index] = (source[index] ?? 0) * gain
     samples[index + 1] = (source[index + 1] ?? 0) * gain
@@ -155,14 +157,14 @@ function limit(mixed: Float64Array, sampleCount: number): Float32Array {
   return output
 }
 
-export async function mix(project: Project, media: MediaStates, firstSample: number, sampleCount: number, readAudio: AudioReader): Promise<Float32Array> {
+export async function mix(project: Project, media: MediaStates, documents: Documents, firstSample: number, sampleCount: number, readAudio: AudioReader): Promise<Float32Array> {
   const rangeFirst = firstSample - LIMITER_REACH
   const rangeCount = sampleCount + 2 * LIMITER_REACH
   const mixed = new Float64Array(rangeCount * CHANNELS)
 
   const sounds: AudibleClip[] = []
   const range = { from: rangeFirst * TICKS_PER_SAMPLE, to: (rangeFirst + rangeCount) * TICKS_PER_SAMPLE }
-  collectSounds(project.tracks, media, range, sounds)
+  collectSounds(project, media, documents, range, sounds)
   for (let batchStart = 0; batchStart < sounds.length; batchStart += READS_IN_FLIGHT) {
     const batch = sounds.slice(batchStart, batchStart + READS_IN_FLIGHT)
     const contributions = await Promise.all(batch.map((audible) => contributionOf(audible, rangeFirst, readAudio)))

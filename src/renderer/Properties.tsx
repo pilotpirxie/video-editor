@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
-import { ANIMATION_NAMES, DEFAULT_ANIMATION, setAnimation, takesAnimation } from '../editor/animations.js'
+import { ANIMATION_NAMES, DEFAULT_ANIMATION, setAnimation, takesAnimation } from '../editor/presets.js'
 import { CALLOUT_NAMES, setArrowStyle, setCalloutStyle } from '../editor/annotations.js'
 import { deleteZoom, setZoom, type ZoomChanges } from '../editor/camera.js'
-import { allClips, coversTime, freeTrackId, hasMedia, hasSource, isCroppable, isVisual, makesSound, nextTrackName } from '../editor/clips.js'
+import { allClips, coversTime, freeTrackId, hasMedia, hasSource, isCroppable, isContainer, makesSound, nextTrackName } from '../editor/clips.js'
 import { cropFromValue } from '../editor/geometry.js'
+import { resolveScope } from '../editor/groups.js'
 import { moveClips } from '../editor/moveTrim.js'
 import {
   hasKeyframesAt,
@@ -33,15 +34,17 @@ import { measureText } from '../engine/text.js'
 import type { Size } from '../shared/exportPresets.js'
 import { describeErrorAsSentence, logError } from '../shared/log.js'
 import {
-  ANIMATION_TYPES,
+  ANIMATION_PRESET_TYPES,
   ARROW_HEADS,
   CALLOUT_SHAPES,
   MAX_CAMERA_SCALE,
   MAX_CANVAS,
   MIN_CANVAS,
   TRANSITION_TYPES,
+  isVisual,
   type AnimatableProperty,
-  type AnimationType,
+  type AnimationClip,
+  type AnimationPresetType,
   type ArrowClip,
   type ArrowHead,
   type BlurClip,
@@ -59,13 +62,14 @@ import {
   type VideoClip,
   type VisualClip,
 } from '../shared/project.js'
-import { FAST_SOUND_ABOVE_PERCENT, MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, PROJECT_FRAME_RATES, TICKS_PER_SECOND, frameDuration, type FrameRate } from '../shared/time.js'
+import { ANIMATION_FRAME_RATES, FAST_SOUND_ABOVE_PERCENT, MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, PROJECT_FRAME_RATES, TICKS_PER_SECOND, frameDuration, type FrameRate } from '../shared/time.js'
+import { ColorFields } from './ColorFields.js'
 import { useEditorState, usePosition, useSession } from './context.js'
 import { installedFontFamilies } from './fonts.js'
 import { Icon, IconButton, type IconName } from './icons.js'
 import { NumberField } from './NumberField.js'
 import { Picker, type Choice } from './Picker.js'
-import { updateStep, type Edit } from './store.js'
+import { updateStep, type Edit, type EditorState } from './store.js'
 import { endTextEdit, typeText } from './TextEditor.js'
 
 const FRAME_RATE_DECIMALS = 3
@@ -260,13 +264,18 @@ export function Group({ title, icon, actions, isOpenAtStart = false, children }:
   )
 }
 
-function ProjectSettings(): ReactElement {
+type CanvasSettingsProps = {
+  title: 'Project' | 'Animation'
+  frameRates: readonly FrameRate[]
+}
+
+function CanvasSettings({ title, frameRates }: CanvasSettingsProps): ReactElement {
   const { store } = useSession()
   const canvas = useEditorState((state) => state.project.canvas)
   const [keepsAspect, setKeepsAspect] = useState(true)
 
   function onFrameRate(key: string): void {
-    const chosen = PROJECT_FRAME_RATES.find((rate) => rateKey(rate) === key)
+    const chosen = frameRates.find((rate) => rateKey(rate) === key)
     if (chosen !== undefined) store.apply('Change Frame Rate', (project) => setFrameRate(project, chosen))
   }
 
@@ -284,7 +293,7 @@ function ProjectSettings(): ReactElement {
 
   const aspectLock = <IconButton icon="link" label="Keep the aspect ratio" testId="canvas-aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />
   return (
-    <Group title="Project" icon="film" isOpenAtStart actions={aspectLock}>
+    <Group title={title} icon={title === 'Project' ? 'film' : 'animation'} isOpenAtStart actions={aspectLock}>
       <EditField label="Width" testId="canvas-width" command="Change Canvas Size" value={canvas.width} min={MIN_CANVAS.width} max={MAX_CANVAS.width} edit={setSide('width')} />
       <EditField label="Height" testId="canvas-height" command="Change Canvas Size" value={canvas.height} min={MIN_CANVAS.height} max={MAX_CANVAS.height} edit={setSide('height')} />
       <div className="labelled">
@@ -292,13 +301,18 @@ function ProjectSettings(): ReactElement {
         <Picker
           label="Frame rate"
           testId="frame-rate"
-          choices={PROJECT_FRAME_RATES.map((rate) => ({ value: rateKey(rate), label: rateLabel(rate) }))}
+          choices={frameRates.map((rate) => ({ value: rateKey(rate), label: rateLabel(rate) }))}
           value={rateKey(canvas.frameRate)}
           onChoose={onFrameRate}
         />
       </div>
     </Group>
   )
+}
+
+function isAnimationRootOpen(state: EditorState): boolean {
+  if (state.openDocument === undefined) return false
+  return resolveScope(state.wholeProject, state.documents, state.mediaStates, state.openGroups).groupsInDocument.length === 0
 }
 
 export function selectedClips(project: Project, selection: readonly string[]): Clip[] {
@@ -320,8 +334,10 @@ export function selectedClips(project: Project, selection: readonly string[]): C
 function pictureSize(clip: Clip, mediaStates: MediaStates): Size | undefined {
   if (!hasMedia(clip) || clip.type === 'audio') return undefined
   const state = mediaStates[clip.mediaId]
-  if (state === undefined || 'error' in state || state.info.kind === 'audio') return undefined
-  return state.info.kind === 'video' ? state.info.video : state.info
+  if (state === undefined || 'error' in state) return undefined
+  if (state.info.kind === 'video') return state.info.video
+  if (state.info.kind === 'image') return state.info
+  return undefined
 }
 
 function shownSize(clip: Clip, mediaStates: MediaStates, time: number): Size | undefined {
@@ -381,7 +397,8 @@ function isHighlight(clip: Clip): clip is HighlightClip {
   return clip.type === 'highlight'
 }
 
-function isAnimatedImage(clip: Clip, mediaStates: MediaStates): clip is VideoClip {
+function isLoopable(clip: Clip, mediaStates: MediaStates): clip is VideoClip | AnimationClip {
+  if (clip.type === 'animation') return true
   if (clip.type !== 'video') return false
   const state = mediaStates[clip.mediaId]
   if (state === undefined || !('info' in state)) return false
@@ -915,7 +932,7 @@ type ClipEnd = {
 
 const FADE = 'fade'
 const ANIMATION_PREFIX = 'animation-'
-const OFFERED_ANIMATIONS: readonly AnimationType[] = ['pop', 'typewriter']
+const OFFERED_ANIMATIONS: readonly AnimationPresetType[] = ['pop', 'typewriter']
 
 function clipEnd(clip: VisualClip, edge: TransitionEdge): ClipEnd | undefined {
   const transition = edge === 'in' ? clip.transitionIn : clip.transitionOut
@@ -927,8 +944,8 @@ function clipEnd(clip: VisualClip, edge: TransitionEdge): ClipEnd | undefined {
   return undefined
 }
 
-function animationOf(value: string): AnimationType | undefined {
-  return ANIMATION_TYPES.find((type) => `${ANIMATION_PREFIX}${type}` === value)
+function animationOf(value: string): AnimationPresetType | undefined {
+  return ANIMATION_PRESET_TYPES.find((type) => `${ANIMATION_PREFIX}${type}` === value)
 }
 
 function withEnd(project: Project, clip: VisualClip, edge: TransitionEdge, end: ClipEnd | undefined, frameTicks: number): Project {
@@ -1142,12 +1159,15 @@ function KeyframeButtons({ clips, set, testId }: KeyframeButtonsProps): ReactEle
 
 function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const mediaStates = useEditorState((state) => state.mediaStates)
+  const documents = useEditorState((state) => state.documents)
   const canvas = useEditorState((state) => state.project.canvas)
   const isAnimated = clips.some((clip) => clip.keyframes !== undefined)
   const time = usePosition((position) => (isAnimated ? position.time : 0))
   const [keepsAspect, setKeepsAspect] = useState(true)
   const ids = useMemo(() => clips.map((clip) => clip.id), [clips])
   const frameTicks = frameDuration(canvas.frameRate)
+  const isInAnimation = useEditorState((state) => state.openChain.length > 0)
+  const timing = isInAnimation ? { unit: 'frames', ticks: frameTicks, decimals: 0 } : { unit: 's', ticks: TICKS_PER_SECOND, decimals: SECONDS_DECIMALS }
   const { store, actions } = useSession()
   const visual = clips.filter(isVisual)
   const croppable = clips.filter(isCroppable)
@@ -1155,14 +1175,15 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const callouts = clips.filter(isCallout)
   const arrows = clips.filter(isArrow)
   const groups = clips.filter((clip) => clip.type === 'group')
+  const animations = clips.filter((clip) => clip.type === 'animation')
   const sourced = clips.filter(hasSource)
-  const loopable = clips.filter((clip) => isAnimatedImage(clip, mediaStates))
+  const loopable = clips.filter((clip) => isLoopable(clip, mediaStates))
   const isLooping = loopable.length > 0 && loopable.every((clip) => clip.loop === true)
-  const sounding = clips.filter((clip) => makesSound(clip, mediaStates))
+  const sounding = clips.filter((clip) => makesSound(clip, mediaStates, documents))
   const soundingIds = sounding.map((clip) => clip.id)
-  const stretched = sounding.filter(hasSource)
+  const stretched = sourced.filter((clip) => soundingIds.includes(clip.id))
   const fast = stretched.filter((clip) => clip.speedPercent > FAST_SOUND_ABOVE_PERCENT)
-  const hasSize = visual.some((clip) => clip.type !== 'group')
+  const hasSize = visual.some((clip) => !isContainer(clip))
   const blurs = clips.filter(isBlur)
   const highlights = clips.filter(isHighlight)
   const isPixelated = blurs.length > 0 && blurs.every((clip) => clip.isPixelated === true)
@@ -1180,8 +1201,12 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
     return (value) => (project) => setProperties(project, ids, { [property]: value }, time)
   }
 
-  function wholeFrames(valueInSeconds: number): number {
-    return Math.round((valueInSeconds * TICKS_PER_SECOND) / frameTicks) * frameTicks
+  function wholeFrames(ticks: number): number {
+    return Math.round(ticks / frameTicks) * frameTicks
+  }
+
+  function inTimingUnits(ticks: number | undefined): number | undefined {
+    return ticks === undefined ? undefined : ticks / timing.ticks
   }
 
   function setSide(side: 'width' | 'height'): (value: number) => Edit {
@@ -1231,8 +1256,8 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
     }
   }
 
-  function setStart(valueInSeconds: number): Edit {
-    const start = wholeFrames(valueInSeconds)
+  function setStart(value: number): Edit {
+    const start = wholeFrames(value * timing.ticks)
     return (project) => {
       let edited = project
       for (const clip of clips) {
@@ -1256,7 +1281,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
         step={frameTicks / TICKS_PER_SECOND}
         decimals={SECONDS_DECIMALS}
         presets={FADE_SECONDS}
-        edit={(next) => (project) => setFade(project, ids, fade, wholeFrames(next))}
+        edit={(next) => (project) => setFade(project, ids, fade, wholeFrames(next * TICKS_PER_SECOND))}
       />
     )
   }
@@ -1292,7 +1317,8 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const scaleX = shared('scaleX')
   const isUniform = scaleX !== undefined && scaleX === shared('scaleY')
   const uniformScale = isUniform ? scaleX * PERCENT : undefined
-  const frameSeconds = frameTicks / TICKS_PER_SECOND
+  const frameInTimingUnits = frameTicks / timing.ticks
+  const maxInTimingUnits = (MAX_SECONDS * TICKS_PER_SECOND) / timing.ticks
   const aspectLock = <IconButton icon="link" label="Keep the aspect ratio" testId="aspect-lock" isPressed={keepsAspect} onClick={() => setKeepsAspect(!keepsAspect)} />
   return (
     <>
@@ -1338,39 +1364,39 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
       )}
       <Group title="Timing" icon="clock" isOpenAtStart>
         <EditField
-          label="Start (s)"
+          label={`Start (${timing.unit})`}
           testId="clip-start"
           command="Move Clip"
-          value={seconds(sharedValue(clips.map((clip) => clip.start)))}
+          value={inTimingUnits(sharedValue(clips.map((clip) => clip.start)))}
           min={0}
-          max={MAX_SECONDS}
-          step={frameSeconds}
-          decimals={SECONDS_DECIMALS}
+          max={maxInTimingUnits}
+          step={frameInTimingUnits}
+          decimals={timing.decimals}
           edit={setStart}
         />
         <EditField
-          label="Duration (s)"
+          label={`Duration (${timing.unit})`}
           testId="clip-duration"
           command="Trim Clip"
-          value={seconds(sharedValue(clips.map((clip) => clip.duration)))}
-          min={frameSeconds}
-          max={MAX_SECONDS}
-          step={frameSeconds}
-          decimals={SECONDS_DECIMALS}
-          edit={(next) => (project) => setDuration(project, ids, wholeFrames(next), frameTicks, mediaStates)}
+          value={inTimingUnits(sharedValue(clips.map((clip) => clip.duration)))}
+          min={frameInTimingUnits}
+          max={maxInTimingUnits}
+          step={frameInTimingUnits}
+          decimals={timing.decimals}
+          edit={(next) => (project) => setDuration(project, ids, wholeFrames(next * timing.ticks), frameTicks, mediaStates)}
         />
         {sourced.length > 0 && (
           <>
             <EditField
-              label="Source offset (s)"
+              label={`Source offset (${timing.unit})`}
               testId="clip-source-start"
               command="Change Source Offset"
-              value={seconds(sharedValue(sourced.map((clip) => clip.sourceStart)))}
+              value={inTimingUnits(sharedValue(sourced.map((clip) => clip.sourceStart)))}
               min={0}
-              max={MAX_SECONDS}
-              step={frameSeconds}
-              decimals={SECONDS_DECIMALS}
-              edit={(next) => (project) => setSourceStart(project, ids, next * TICKS_PER_SECOND, mediaStates)}
+              max={maxInTimingUnits}
+              step={frameInTimingUnits}
+              decimals={timing.decimals}
+              edit={(next) => (project) => setSourceStart(project, ids, next * timing.ticks, mediaStates)}
             />
             <EditField
               label="Speed (%)"
@@ -1437,6 +1463,13 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
           </button>
           <button type="button" className="button" data-testid="group-ungroup" onClick={actions.ungroup}>
             Ungroup
+          </button>
+        </Group>
+      )}
+      {animations.length > 0 && (
+        <Group title="Animation" icon="animation">
+          <button type="button" className="button" data-testid="animation-open" disabled={clips.length !== 1} onClick={actions.openGroup}>
+            Open animation
           </button>
         </Group>
       )}
@@ -1531,8 +1564,33 @@ export function Properties(): ReactElement | undefined {
   const selection = useEditorState((state) => state.selection)
   const selectedZoom = useEditorState((state) => state.selectedZoom)
   const isGroupOpen = useEditorState((state) => state.openGroups.length > 0)
+  const isAnimationOpen = useEditorState(isAnimationRootOpen)
+  const isInAnimation = useEditorState((state) => state.openChain.length > 0)
+  const hasShapes = useEditorState((state) => state.selectedShapes.length > 0)
   const clips = useMemo(() => selectedClips(project, selection), [project, selection])
   if (selectedZoom !== undefined) return <ZoomProperties index={selectedZoom} />
   if (clips.length > 0) return <ClipProperties clips={clips} />
-  return isGroupOpen ? <OpenGroupNote /> : <ProjectSettings />
+  const colour = (
+    <Group title="Colour" icon="droplet" isOpenAtStart>
+      <ColorFields />
+    </Group>
+  )
+  if (hasShapes) return colour
+  if (isAnimationOpen) {
+    return (
+      <>
+        <CanvasSettings title="Animation" frameRates={ANIMATION_FRAME_RATES} />
+        {colour}
+      </>
+    )
+  }
+  if (isInAnimation) {
+    return (
+      <>
+        <OpenGroupNote />
+        {colour}
+      </>
+    )
+  }
+  return isGroupOpen ? <OpenGroupNote /> : <CanvasSettings title="Project" frameRates={PROJECT_FRAME_RATES} />
 }

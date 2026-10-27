@@ -23,7 +23,14 @@ export type ShortcutAction =
   | 'ripple-delete'
   | 'group'
   | 'ungroup'
+  | 'tool-move'
+  | 'tool-shape'
+  | 'bring-to-front'
+  | 'bring-forward'
+  | 'send-backward'
+  | 'send-to-back'
   | 'import'
+  | 'new-animation'
   | 'export'
   | 'preview-mode'
 
@@ -44,7 +51,7 @@ export type Binding = {
 
 export type Bindings = Readonly<Record<ShortcutAction, readonly Binding[]>>
 
-type ShortcutSection = 'Playback' | 'Timeline' | 'Editing' | 'File and view'
+type ShortcutSection = 'Playback' | 'Timeline' | 'Editing' | 'Drawing' | 'File and view'
 
 export const SHORTCUT_ACTIONS: readonly { action: ShortcutAction; name: string; section: ShortcutSection }[] = [
   { action: 'play-pause', name: 'Play or pause', section: 'Playback' },
@@ -69,7 +76,14 @@ export const SHORTCUT_ACTIONS: readonly { action: ShortcutAction; name: string; 
   { action: 'ripple-delete', name: 'Ripple delete', section: 'Editing' },
   { action: 'group', name: 'Group', section: 'Editing' },
   { action: 'ungroup', name: 'Ungroup', section: 'Editing' },
+  { action: 'tool-move', name: 'Move tool', section: 'Drawing' },
+  { action: 'tool-shape', name: 'Rectangle or ellipse tool', section: 'Drawing' },
+  { action: 'bring-to-front', name: 'Bring to front', section: 'Drawing' },
+  { action: 'bring-forward', name: 'Bring forward', section: 'Drawing' },
+  { action: 'send-backward', name: 'Send backward', section: 'Drawing' },
+  { action: 'send-to-back', name: 'Send to back', section: 'Drawing' },
   { action: 'import', name: 'Import media', section: 'File and view' },
+  { action: 'new-animation', name: 'New animation', section: 'File and view' },
   { action: 'export', name: 'Export', section: 'File and view' },
   { action: 'preview-mode', name: 'Preview mode', section: 'File and view' },
 ]
@@ -103,7 +117,14 @@ export const DEFAULT_BINDINGS: Bindings = {
   'ripple-delete': [key('Backspace', 'meta'), key('Delete', 'meta')],
   group: [key('KeyG', 'meta')],
   ungroup: [key('KeyU', 'meta')],
+  'tool-move': [key('KeyV')],
+  'tool-shape': [key('KeyM')],
+  'bring-to-front': [key('BracketRight', 'shift', 'meta')],
+  'bring-forward': [key('BracketRight', 'meta')],
+  'send-backward': [key('BracketLeft', 'meta')],
+  'send-to-back': [key('BracketLeft', 'shift', 'meta')],
   import: [key('KeyI', 'meta')],
+  'new-animation': [],
   export: [key('KeyE', 'meta')],
   'preview-mode': [key('KeyF', 'shift', 'meta')],
 }
@@ -287,7 +308,12 @@ export const MENU_SHORTCUT_ACTIONS = [
   'ripple-delete',
   'group',
   'ungroup',
+  'bring-to-front',
+  'bring-forward',
+  'send-backward',
+  'send-to-back',
   'import',
+  'new-animation',
   'export',
   'preview-mode',
 ] as const satisfies readonly (ShortcutAction & MenuAction)[]

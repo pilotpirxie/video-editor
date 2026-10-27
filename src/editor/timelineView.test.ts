@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { FRAME, SECOND, audioClip, track, videoClip } from '../../test/fixtures.js'
+import { FRAME, SECOND, audioClip, drawingClip, track, videoClip } from '../../test/fixtures.js'
 import type { CameraKeyframe, Clip } from '../shared/project.js'
 import {
   CAMERA_LANE_HEIGHT,
   CLIP_INSET,
   RULER_HEIGHT,
+  SHAPE_ROW_HEIGHT,
   TRACKS_TOP,
   TRACK_HEIGHT,
   clipBands,
@@ -20,6 +21,9 @@ import {
   rulerStep,
   timeToX,
   trackIndexAt,
+  trackIndexAtOffset,
+  trackRows,
+  trackRowsOf,
   trackTop,
   transitionBandAt,
   transitionBands,
@@ -43,12 +47,50 @@ describe('time and pixels', () => {
   })
 
   it('shows the top layer in the top row', () => {
-    expect(trackTop(2, 3, view)).toBe(TRACKS_TOP)
-    expect(trackTop(0, 3, view)).toBe(TRACKS_TOP + 2 * TRACK_HEIGHT)
-    expect(trackIndexAt(TRACKS_TOP + 5, 3, view)).toBe(2)
-    expect(trackIndexAt(TRACKS_TOP + 2 * TRACK_HEIGHT + 5, 3, view)).toBe(0)
-    expect(trackIndexAt(TRACKS_TOP + 3 * TRACK_HEIGHT + 5, 3, view)).toBe(-1)
-    expect(trackIndexAt(TRACKS_TOP + 5, 3, { ...view, scrollY: TRACK_HEIGHT })).toBe(1)
+    const rows = trackRows([TRACK_HEIGHT, TRACK_HEIGHT, TRACK_HEIGHT])
+    expect(trackTop(2, rows, view)).toBe(TRACKS_TOP)
+    expect(trackTop(0, rows, view)).toBe(TRACKS_TOP + 2 * TRACK_HEIGHT)
+    expect(trackIndexAt(TRACKS_TOP + 5, rows, view)).toBe(2)
+    expect(trackIndexAt(TRACKS_TOP + 2 * TRACK_HEIGHT + 5, rows, view)).toBe(0)
+    expect(trackIndexAt(TRACKS_TOP + 3 * TRACK_HEIGHT + 5, rows, view)).toBe(-1)
+    expect(trackIndexAt(TRACKS_TOP + 5, rows, { ...view, scrollY: TRACK_HEIGHT })).toBe(1)
+  })
+})
+
+describe('track rows of different heights', () => {
+  const tall = TRACK_HEIGHT + 2 * SHAPE_ROW_HEIGHT
+  const rows = trackRows([TRACK_HEIGHT, tall, TRACK_HEIGHT])
+
+  it('stacks each track under the taller ones above it', () => {
+    expect(rows.tops).toEqual([TRACK_HEIGHT + tall, TRACK_HEIGHT, 0])
+    expect(rows.total).toBe(2 * TRACK_HEIGHT + tall)
+    expect(trackTop(0, rows, view)).toBe(TRACKS_TOP + TRACK_HEIGHT + tall)
+  })
+
+  it('finds the track at any height of its rows', () => {
+    expect(trackIndexAtOffset(TRACK_HEIGHT - 1, rows)).toBe(2)
+    expect(trackIndexAtOffset(TRACK_HEIGHT, rows)).toBe(1)
+    expect(trackIndexAtOffset(TRACK_HEIGHT + tall - 1, rows)).toBe(1)
+    expect(trackIndexAtOffset(TRACK_HEIGHT + tall, rows)).toBe(0)
+  })
+
+  it('counts collapsed tracks past either end', () => {
+    expect(trackIndexAtOffset(-1, rows)).toBe(3)
+    expect(trackIndexAtOffset(-TRACK_HEIGHT - 1, rows)).toBe(4)
+    expect(trackIndexAtOffset(rows.total, rows)).toBe(-1)
+    expect(trackTop(3, rows, view)).toBe(TRACKS_TOP - TRACK_HEIGHT)
+    expect(trackTop(-1, rows, view)).toBe(TRACKS_TOP + rows.total)
+  })
+
+  it('makes an expanded track as tall as its drawing with the most shapes', () => {
+    const child = { id: 'child', nodes: [{ x: 0, y: 0 }, { x: 1, y: 1 }] }
+    const tracks = [
+      track('plain', [videoClip('v', 0, SECOND)]),
+      track('drawn', [drawingClip('d1', 0, SECOND, [{ ...child, id: 'a', children: [child] }]), drawingClip('d2', SECOND, SECOND)]),
+      track('empty', [drawingClip('d3', 0, SECOND)]),
+    ]
+    expect(trackRowsOf(tracks, new Set(['plain', 'drawn', 'empty'])).heights).toEqual([TRACK_HEIGHT, tall, TRACK_HEIGHT + SHAPE_ROW_HEIGHT])
+    expect(trackRowsOf(tracks, new Set()).heights).toEqual([TRACK_HEIGHT, TRACK_HEIGHT, TRACK_HEIGHT])
   })
 })
 
@@ -128,33 +170,42 @@ describe('hitClip and clipsInMarquee', () => {
     track('top', [videoClip('c', SECOND, SECOND)], { locked: true }),
   ]
   const inOrder = createClipIndex()
+  const rows = trackRows([TRACK_HEIGHT, TRACK_HEIGHT])
   const bottomRow = TRACKS_TOP + TRACK_HEIGHT + 10
   const topRow = TRACKS_TOP + 10
 
   it('finds the clip under the pointer and the edge it is near', () => {
-    expect(hitClip(tracks, inOrder, flat, 100, bottomRow)).toMatchObject({ clip: { id: 'a' }, trackIndex: 0, edge: undefined })
-    expect(hitClip(tracks, inOrder, flat, 3, bottomRow)?.edge).toBe('start')
-    expect(hitClip(tracks, inOrder, flat, 197, bottomRow)?.edge).toBe('end')
-    expect(hitClip(tracks, inOrder, flat, 150, topRow)).toMatchObject({ clip: { id: 'c' }, trackIndex: 1 })
+    expect(hitClip(tracks, rows, inOrder, flat, 100, bottomRow)).toMatchObject({ clip: { id: 'a' }, trackIndex: 0, edge: undefined })
+    expect(hitClip(tracks, rows, inOrder, flat, 3, bottomRow)?.edge).toBe('start')
+    expect(hitClip(tracks, rows, inOrder, flat, 197, bottomRow)?.edge).toBe('end')
+    expect(hitClip(tracks, rows, inOrder, flat, 150, topRow)).toMatchObject({ clip: { id: 'c' }, trackIndex: 1 })
   })
 
   it('finds nothing in a gap, on the ruler or below the tracks', () => {
-    expect(hitClip(tracks, inOrder, flat, 250, bottomRow)).toBeUndefined()
-    expect(hitClip(tracks, inOrder, flat, 100, 10)).toBeUndefined()
-    expect(hitClip(tracks, inOrder, flat, 100, RULER_HEIGHT + CAMERA_LANE_HEIGHT / 2)).toBeUndefined()
-    expect(hitClip(tracks, inOrder, flat, 100, TRACKS_TOP + 2 * TRACK_HEIGHT + 10)).toBeUndefined()
+    expect(hitClip(tracks, rows, inOrder, flat, 250, bottomRow)).toBeUndefined()
+    expect(hitClip(tracks, rows, inOrder, flat, 100, 10)).toBeUndefined()
+    expect(hitClip(tracks, rows, inOrder, flat, 100, RULER_HEIGHT + CAMERA_LANE_HEIGHT / 2)).toBeUndefined()
+    expect(hitClip(tracks, rows, inOrder, flat, 100, TRACKS_TOP + 2 * TRACK_HEIGHT + 10)).toBeUndefined()
+  })
+
+  it('finds no clip in the shape rows of an expanded track', () => {
+    const expanded = trackRows([TRACK_HEIGHT + SHAPE_ROW_HEIGHT, TRACK_HEIGHT])
+    const shapeRow = TRACKS_TOP + 2 * TRACK_HEIGHT + 10
+    expect(hitClip(tracks, expanded, inOrder, flat, 100, shapeRow)).toBeUndefined()
+    expect(hitClip(tracks, expanded, inOrder, flat, 100, bottomRow)).toMatchObject({ clip: { id: 'a' } })
+    expect(clipsInMarquee(tracks, expanded, inOrder, flat, { left: 0, top: shapeRow, right: 1000, bottom: shapeRow + 5 })).toEqual([])
   })
 
   it('offers no trim edges on a clip too narrow to grab in the middle', () => {
     const zoomedOut = { pixelsPerSecond: 5, scrollX: 0, scrollY: 0 }
-    expect(hitClip(tracks, inOrder, zoomedOut, 1, bottomRow)).toMatchObject({ clip: { id: 'a' }, edge: undefined })
+    expect(hitClip(tracks, rows, inOrder, zoomedOut, 1, bottomRow)).toMatchObject({ clip: { id: 'a' }, edge: undefined })
   })
 
   it('selects the clips a marquee touches, skipping locked tracks', () => {
     const everything = { left: 0, top: 0, right: 1000, bottom: 1000 }
-    expect(clipsInMarquee(tracks, inOrder, flat, everything)).toEqual(['a', 'b'])
-    expect(clipsInMarquee(tracks, inOrder, flat, { left: 250, top: bottomRow, right: 320, bottom: bottomRow + 5 })).toEqual(['b'])
-    expect(clipsInMarquee(tracks, inOrder, flat, { left: 0, top: topRow, right: 1000, bottom: topRow + 5 })).toEqual([])
+    expect(clipsInMarquee(tracks, rows, inOrder, flat, everything)).toEqual(['a', 'b'])
+    expect(clipsInMarquee(tracks, rows, inOrder, flat, { left: 250, top: bottomRow, right: 320, bottom: bottomRow + 5 })).toEqual(['b'])
+    expect(clipsInMarquee(tracks, rows, inOrder, flat, { left: 0, top: topRow, right: 1000, bottom: topRow + 5 })).toEqual([])
   })
 })
 

@@ -2043,16 +2043,21 @@ type ClipPlace = { type: string; start: number; duration: number }
 const ROW_SCROLL_PIXELS = 40
 const MAX_ROW_SCROLLS = 50
 
-export async function rowInView(driver: Driver, time: number, trackIndex: number, trackCount: number): Promise<Point> {
+// Scrolls the timeline until the middle of a row, read again after each scroll, is in full view.
+export async function timelinePointInView(driver: Driver, pointNow: () => Promise<Point>, rowHeight: number, what: string): Promise<Point> {
   const area = await driver.rect('timeline')
-  const lowest = area.y + RULER_HEIGHT + CAMERA_LANE_HEIGHT + TRACK_HEIGHT / 2
-  const highest = area.y + area.height - TRACK_HEIGHT / 2
+  const lowest = area.y + RULER_HEIGHT + CAMERA_LANE_HEIGHT + rowHeight / 2
+  const highest = area.y + area.height - rowHeight / 2
   for (let scroll = 0; scroll < MAX_ROW_SCROLLS; scroll++) {
-    const point = await driver.timelinePoint(time, trackIndex, trackCount)
+    const point = await pointNow()
     if (point.y >= lowest && point.y <= highest) return point
     await driver.scrollAt(centerOf(area), 0, point.y > highest ? -ROW_SCROLL_PIXELS : ROW_SCROLL_PIXELS, false)
   }
-  throw new PageError(`Track ${trackIndex + 1} could not be scrolled into view`)
+  throw new PageError(`${what} could not be scrolled into view`)
+}
+
+export function rowInView(driver: Driver, time: number, trackIndex: number, trackCount: number): Promise<Point> {
+  return timelinePointInView(driver, () => driver.timelinePoint(time, trackIndex, trackCount), TRACK_HEIGHT, `Track ${trackIndex + 1}`)
 }
 
 function isProjectLike(value: unknown): value is { tracks: { clips: ClipPlace[] }[] } {

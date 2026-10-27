@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FRAME, MEDIA_STATES, SECOND, audioClip, clipIds, clipOf, groupClip, projectOf, reopened, textClip, track, videoClip } from '../../test/fixtures.js'
+import { FRAME, MEDIA_STATES, SECOND, animationClip, audioClip, clipIds, clipOf, drawingClip, groupClip, projectOf, reopened, textClip, track, videoClip } from '../../test/fixtures.js'
 import { mix, type AudioReader } from '../engine/mixer.js'
 import { resolveFrame, type Layer, type MediaStates } from '../engine/resolve.js'
 import type { Project } from '../shared/project.js'
@@ -21,7 +21,7 @@ const animated = videoClip('a', 2 * SECOND, 6 * SECOND, {
 })
 
 function withoutClipIds(layers: Layer[]): unknown[] {
-  return layers.map((layer) => ({ ...layer, clipId: '' }))
+  return layers.map((layer) => ({ ...layer, clipId: '', key: '' }))
 }
 
 function split(project: Project, cut: number, selection: readonly string[] = []): Project {
@@ -112,7 +112,7 @@ describe('splitClips', () => {
     const after = reopened(split(before, cut))
     expect(clipIds(after)).toEqual([['a', 'a-2']])
     for (let time = 0; time < 9 * SECOND; time += FRAME) {
-      expect(withoutClipIds(resolveFrame(after, MEDIA_STATES, time, 0.5)), `frame at ${time}`).toEqual(withoutClipIds(resolveFrame(before, MEDIA_STATES, time, 0.5)))
+      expect(withoutClipIds(resolveFrame(after, MEDIA_STATES, {}, time, 0.5)), `frame at ${time}`).toEqual(withoutClipIds(resolveFrame(before, MEDIA_STATES, {}, time, 0.5)))
     }
   })
 
@@ -125,8 +125,8 @@ describe('splitClips', () => {
     const after = reopened(split(before, 2 * SECOND + 3 * FRAME))
     expect(clipIds(after)).toEqual([['a', 'a-2'], ['music', 'music-2']])
 
-    const expected = await mix(before, sounding, 0, 4 * SAMPLES_PER_SECOND, readSource)
-    const actual = await mix(after, sounding, 0, 4 * SAMPLES_PER_SECOND, readSource)
+    const expected = await mix(before, sounding, {}, 0, 4 * SAMPLES_PER_SECOND, readSource)
+    const actual = await mix(after, sounding, {}, 0, 4 * SAMPLES_PER_SECOND, readSource)
     expect(Buffer.from(actual.buffer).equals(Buffer.from(expected.buffer))).toBe(true)
   })
 
@@ -165,10 +165,10 @@ describe('splitting groups and animated clips', () => {
       for (let index = 0; index < sampleCount; index++) samples[index * 2] = ((firstSample + index) % 977) / 4000
       return Promise.resolve(samples)
     }
-    expect(await mix(parts, MEDIA_STATES, 0, 9 * SAMPLES_PER_SECOND, reader)).toEqual(await mix(grouped, MEDIA_STATES, 0, 9 * SAMPLES_PER_SECOND, reader))
+    expect(await mix(parts, MEDIA_STATES, {}, 0, 9 * SAMPLES_PER_SECOND, reader)).toEqual(await mix(grouped, MEDIA_STATES, {}, 0, 9 * SAMPLES_PER_SECOND, reader))
     for (let time = 0; time < 9 * SECOND; time += FRAME * 7) {
-      const before = resolveFrame(grouped, MEDIA_STATES, time, 1).map((layer) => ({ ...layer, clipId: layer.clipId.replace('-2', ''), groups: [] }))
-      const after = resolveFrame(parts, MEDIA_STATES, time, 1).map((layer) => ({ ...layer, clipId: layer.clipId.replace('-2', ''), groups: [] }))
+      const before = resolveFrame(grouped, MEDIA_STATES, {}, time, 1).map((layer) => ({ ...layer, clipId: layer.clipId.replace('-2', ''), key: layer.key.replace('-2', ''), groups: [] }))
+      const after = resolveFrame(parts, MEDIA_STATES, {}, time, 1).map((layer) => ({ ...layer, clipId: layer.clipId.replace('-2', ''), key: layer.key.replace('-2', ''), groups: [] }))
       expect(after).toEqual(before)
     }
   })
@@ -184,5 +184,24 @@ describe('splitting groups and animated clips', () => {
     expect(clipOf(parts, 'title')).not.toHaveProperty('animationOut')
     expect(clipOf(parts, 'title-2')).toMatchObject({ animationOut: animated.animationOut })
     expect(clipOf(parts, 'title-2')).not.toHaveProperty('animationIn')
+  })
+})
+
+describe('splitting animation clips', () => {
+  it('starts the second part where the first one stopped in the animation', () => {
+    const project = projectOf([track('t1', [animationClip('wave', 2 * SECOND, 6 * SECOND, { speedPercent: 200, loop: true })])], [{ id: 'wave', path: '/episode/wave.pbanim', relativePath: '' }])
+    const parts = splitClips(project, 5 * SECOND, new Map([['wave', 'wave-2']]))
+    expect(clipOf(parts, 'wave')).toMatchObject({ start: 2 * SECOND, duration: 3 * SECOND, sourceStart: 0 })
+    expect(clipOf(parts, 'wave-2')).toMatchObject({ start: 5 * SECOND, duration: 3 * SECOND, sourceStart: 6 * SECOND, loop: true })
+    expect(reopened(parts)).toEqual(parts)
+  })
+})
+
+describe('splitting drawing clips', () => {
+  it('keeps every shape in both parts', () => {
+    const shapes = [{ id: 'dot', nodes: [{ x: 0, y: 0 }, { x: 4, y: 4 }] }]
+    const parts = splitClips(projectOf([track('t1', [drawingClip('sketch', 0, 2 * SECOND, shapes)])]), SECOND, new Map([['sketch', 'sketch-2']]))
+    expect(clipOf(parts, 'sketch')).toEqual(drawingClip('sketch', 0, SECOND, shapes))
+    expect(clipOf(parts, 'sketch-2')).toEqual(drawingClip('sketch-2', SECOND, SECOND, shapes))
   })
 })

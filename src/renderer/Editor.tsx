@@ -220,7 +220,7 @@ function Notice(): ReactElement {
   )
 }
 
-function runShortcut({ actions, transport, runMenuAction }: Session, action: ShortcutAction): boolean {
+function runShortcut({ actions, transport, store, runMenuAction }: Session, action: ShortcutAction): boolean {
   switch (action) {
     case 'play-pause':
       void transport.toggle()
@@ -262,6 +262,14 @@ function runShortcut({ actions, transport, runMenuAction }: Session, action: Sho
     case 'timeline-zoom-out':
     case 'timeline-zoom-fit':
       return false
+    case 'tool-move':
+      if (store.getState().openChain.length === 0) return false
+      store.setTool('move')
+      return true
+    case 'tool-shape':
+      if (store.getState().openChain.length === 0) return false
+      store.setTool(store.getState().tool === 'rectangle' ? 'ellipse' : 'rectangle')
+      return true
     case 'split':
     case 'split-all':
     case 'duplicate':
@@ -269,7 +277,12 @@ function runShortcut({ actions, transport, runMenuAction }: Session, action: Sho
     case 'ripple-delete':
     case 'group':
     case 'ungroup':
+    case 'bring-to-front':
+    case 'bring-forward':
+    case 'send-backward':
+    case 'send-to-back':
     case 'import':
+    case 'new-animation':
     case 'export':
     case 'preview-mode':
       runMenuAction(action)
@@ -301,7 +314,7 @@ function listenForEditingKeys(session: Session): () => void {
     const hasCancelledGesture = store.cancel()
     if (hasCancelledGesture) event.preventDefault()
     else if (store.getState().isPreviewing) store.setPreviewing(false)
-    else if (store.getState().selection.length > 0) store.select([])
+    else if (store.getState().selection.length > 0 || store.getState().selectedShapes.length > 0) store.select([])
     else actions.closeGroup()
   }
 

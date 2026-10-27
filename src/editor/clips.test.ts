@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MEDIA_STATES, SECOND, audioClip, projectOf, track, videoClip } from '../../test/fixtures.js'
+import { MEDIA_STATES, SECOND, animationClip, audioClip, projectOf, track, videoClip } from '../../test/fixtures.js'
 import { hasLinkedAudio, makesSound, nearestClipEdge, trackAboveAll } from './clips.js'
 
 describe('nearestClipEdge', () => {
@@ -26,19 +26,29 @@ describe('nearestClipEdge', () => {
 describe('hasLinkedAudio and makesSound', () => {
   it('finds the sound of a video clip whose file has sound', () => {
     expect(hasLinkedAudio(videoClip('a', 0, SECOND, { mediaId: 'talk' }), MEDIA_STATES)).toBe(true)
-    expect(makesSound(videoClip('a', 0, SECOND, { mediaId: 'talk' }), MEDIA_STATES)).toBe(true)
+    expect(makesSound(videoClip('a', 0, SECOND, { mediaId: 'talk' }), MEDIA_STATES, {})).toBe(true)
   })
 
   it('finds none in a silent file, a separated clip or missing media', () => {
     expect(hasLinkedAudio(videoClip('a', 0, SECOND), MEDIA_STATES)).toBe(false)
     expect(hasLinkedAudio(videoClip('a', 0, SECOND, { mediaId: 'talk', isAudioSeparated: true }), MEDIA_STATES)).toBe(false)
     expect(hasLinkedAudio(videoClip('a', 0, SECOND, { mediaId: 'gone' }), MEDIA_STATES)).toBe(false)
-    expect(makesSound(videoClip('a', 0, SECOND), MEDIA_STATES)).toBe(false)
+    expect(makesSound(videoClip('a', 0, SECOND), MEDIA_STATES, {})).toBe(false)
   })
 
   it('counts every audio clip as sound, and never treats it as linked', () => {
-    expect(makesSound(audioClip('a', 0, SECOND), MEDIA_STATES)).toBe(true)
+    expect(makesSound(audioClip('a', 0, SECOND), MEDIA_STATES, {})).toBe(true)
     expect(hasLinkedAudio(audioClip('a', 0, SECOND), MEDIA_STATES)).toBe(false)
+  })
+
+  it('finds the sound of an animation in its own clips, and none in one that contains itself', () => {
+    const wave = '/films/wave.pbanim'
+    const states = { ...MEDIA_STATES, wave: { info: { kind: 'animation' as const, path: wave } } }
+    const clip = animationClip('a', 0, SECOND)
+    expect(makesSound(clip, states, { [wave]: projectOf([track('t1', [audioClip('voice', 0, SECOND)])]) })).toBe(true)
+    expect(makesSound(clip, states, { [wave]: projectOf([track('t1', [videoClip('silent', 0, SECOND)])]) })).toBe(false)
+    expect(makesSound(clip, states, { [wave]: projectOf([track('t1', [animationClip('again', 0, SECOND)])]) })).toBe(false)
+    expect(makesSound(clip, states, {})).toBe(false)
   })
 })
 

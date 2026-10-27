@@ -1,6 +1,6 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement } from 'react'
 import { mediaFileName } from '../editor/place.js'
-import type { MediaInfo, MediaState, Preparation } from '../shared/mediaProtocol.js'
+import { isTimed, type MediaInfo, type MediaState, type Preparation } from '../shared/mediaProtocol.js'
 import type { MediaRef } from '../shared/project.js'
 import type { MediaSort } from '../shared/settings.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
@@ -21,7 +21,7 @@ function createdAtOf(state: MediaState | undefined): number {
 }
 
 function durationOf(state: MediaState | undefined): number {
-  if (state === undefined || !('info' in state) || state.info.kind === 'image') return UNKNOWN_DURATION
+  if (state === undefined || !('info' in state) || !isTimed(state.info)) return UNKNOWN_DURATION
   return state.info.duration
 }
 
@@ -37,6 +37,7 @@ function nameOf(path: string): string {
 
 function durationLabel(info: MediaInfo): string {
   if (info.kind === 'image') return `${info.width}x${info.height}`
+  if (info.kind === 'animation') return 'Animation'
   const seconds = Math.round(info.duration / TICKS_PER_SECOND)
   return `${Math.floor(seconds / SECONDS_PER_MINUTE)}:${String(seconds % SECONDS_PER_MINUTE).padStart(2, '0')}`
 }
@@ -103,6 +104,7 @@ function MediaItem({ reference, state, preparation, isSelected, isTabStop, dragg
       <div className={isPreparing ? 'library-thumbnail preparing' : 'library-thumbnail'}>
         {picture !== undefined && <Poster picture={picture} />}
         {info?.kind === 'audio' && <Icon name="music" />}
+        {info?.kind === 'animation' && picture === undefined && <Icon name="animation" />}
         {isPreparing && (
           <span className="badge warning thumbnail-progress" role="img" aria-label={`Preparing ${percent}%`}>
             {percent}%
@@ -205,7 +207,7 @@ function filesBetween(shownIds: readonly string[], from: string, to: string): st
 
 export function MediaTab(): ReactElement {
   const session = useSession()
-  const media = useEditorState((state) => state.project.media)
+  const media = useEditorState((state) => state.wholeProject.media)
   const mediaStates = useEditorState((state) => state.mediaStates)
   const pending = useEditorState((state) => state.pendingImports)
   const sort = useEditorState((state) => state.settings.mediaSort)

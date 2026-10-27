@@ -1,5 +1,6 @@
-import type { MediaStates } from '../engine/resolve.js'
-import type { AudioClip, Clip, GroupClip, Keyframe, Keyframes, Project, Track, VideoClip, VisualClip } from '../shared/project.js'
+import { openedAnimation, type MediaStates } from '../engine/resolve.js'
+import type { Documents } from '../shared/mediaProtocol.js'
+import type { AnimationClip, AudioClip, Clip, GroupClip, Keyframe, Keyframes, Project, Track, VideoClip, VisualClip } from '../shared/project.js'
 
 export type NewTrack = {
   id: string
@@ -20,16 +21,12 @@ export function coversTime(clip: Clip, time: number): boolean {
   return time >= clip.start && time < endOf(clip)
 }
 
-export function isVisual(clip: Clip): clip is VisualClip {
-  return clip.type !== 'audio'
+export function hasSource(clip: Clip): clip is VideoClip | AudioClip | AnimationClip {
+  return clip.type === 'video' || clip.type === 'audio' || clip.type === 'animation'
 }
 
-export function hasSource(clip: Clip): clip is VideoClip | AudioClip {
-  return clip.type === 'video' || clip.type === 'audio'
-}
-
-export function hasVolume(clip: Clip): clip is VideoClip | AudioClip | GroupClip {
-  return clip.type === 'video' || clip.type === 'audio' || clip.type === 'group'
+export function hasVolume(clip: Clip): clip is VideoClip | AudioClip | GroupClip | AnimationClip {
+  return clip.type === 'video' || clip.type === 'audio' || clip.type === 'group' || clip.type === 'animation'
 }
 
 export function allClips(tracks: readonly Track[]): Clip[] {
@@ -60,7 +57,11 @@ export function withMemberIds(clip: Clip, newIds: ReadonlyMap<string, string>): 
 }
 
 export function hasMedia(clip: Clip): clip is Extract<Clip, { mediaId: string }> {
-  return clip.type === 'video' || clip.type === 'audio' || clip.type === 'image'
+  return clip.type === 'video' || clip.type === 'audio' || clip.type === 'image' || clip.type === 'animation'
+}
+
+export function isContainer(clip: Clip): clip is GroupClip | AnimationClip {
+  return clip.type === 'group' || clip.type === 'animation'
 }
 
 export function isCroppable(clip: Clip): clip is Extract<Clip, { type: 'video' | 'image' }> {
@@ -73,9 +74,12 @@ export function hasLinkedAudio(clip: Clip, mediaStates: MediaStates): clip is Vi
   return state !== undefined && 'info' in state && state.info.kind === 'video' && state.info.audio !== undefined
 }
 
-export function makesSound(clip: Clip, mediaStates: MediaStates): clip is VideoClip | AudioClip | GroupClip {
-  if (clip.type === 'group') return allClips(clip.tracks).some((member) => member.type !== 'group' && makesSound(member, mediaStates))
-  return clip.type === 'audio' || hasLinkedAudio(clip, mediaStates)
+export function makesSound(clip: Clip, mediaStates: MediaStates, documents: Documents, chain: readonly string[] = []): clip is VideoClip | AudioClip | GroupClip | AnimationClip {
+  if (clip.type === 'group') return allClips(clip.tracks).some((member) => member.type !== 'group' && makesSound(member, mediaStates, documents, chain))
+  if (clip.type !== 'animation') return clip.type === 'audio' || hasLinkedAudio(clip, mediaStates)
+  const opened = openedAnimation(clip, mediaStates, documents, chain)
+  if (opened === undefined) return false
+  return allClips(opened.project.tracks).some((member) => member.type !== 'group' && makesSound(member, mediaStates, documents, [...chain, opened.path]))
 }
 
 export function locateClip(project: Project, clipId: string): ClipLocation | undefined {
@@ -152,8 +156,9 @@ export function withFadesWithin(clip: Clip): Clip {
   if (clip.type === 'audio') {
     return { ...clip, volumeFadeIn: fadeWithin(clip.volumeFadeIn, duration), volumeFadeOut: fadeWithin(clip.volumeFadeOut, duration) }
   }
+  if (clip.type === 'drawing') return clip
   const visual = { ...clip, fadeIn: fadeWithin(clip.fadeIn, duration), fadeOut: fadeWithin(clip.fadeOut, duration) }
-  if (visual.type !== 'video' && visual.type !== 'group') return visual
+  if (visual.type !== 'video' && visual.type !== 'group' && visual.type !== 'animation') return visual
   return { ...visual, volumeFadeIn: fadeWithin(visual.volumeFadeIn, duration), volumeFadeOut: fadeWithin(visual.volumeFadeOut, duration) }
 }
 

@@ -1,12 +1,27 @@
 import { exportJobFor, selectionRange, type ExportChoices } from '../editor/export.js'
 import { allClips } from '../editor/clips.js'
+import { episodeTimeOf } from '../editor/groups.js'
 import { mediaFileName, mediaUses, relinkedMedia, unlinkedMedia, withMedia } from '../editor/place.js'
 import { menuShortcutsOf, parseBindings, type Bindings } from '../editor/shortcuts.js'
 import { missingFonts } from '../editor/text.js'
 import type { MediaStates } from '../engine/resolve.js'
 import { describeError, describeErrorAsSentence, logError } from '../shared/log.js'
-import type { AddedMedia, CacheUsage, DocumentInfo, DocumentState, HostCommand, JobEvent, MenuAction, Preparation } from '../shared/mediaProtocol.js'
-import { projectDuration, type Project } from '../shared/project.js'
+import {
+  animationCopyName,
+  animationManifestPath,
+  type AddedMedia,
+  type CacheUsage,
+  type DocumentInfo,
+  type DocumentState,
+  type Documents,
+  type HostCommand,
+  type JobEvent,
+  type MediaUse,
+  type MenuAction,
+  type Preparation,
+  type UnlinkedMedia,
+} from '../shared/mediaProtocol.js'
+import { PROJECT_VERSION, projectDuration, type Project } from '../shared/project.js'
 import { cacheLimitOffer, type AppSettings } from '../shared/settings.js'
 import { frameDuration } from '../shared/time.js'
 import { createActions, type Actions } from './actions.js'
@@ -96,6 +111,7 @@ function createShortcuts(): Shortcuts {
 type SentProject = {
   project: Project
   mediaStates: MediaStates
+  documents: Documents
 }
 
 async function missingFontsNotice(project: Project): Promise<string | undefined> {
@@ -117,16 +133,20 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   const store = createEditorStore(settings)
   const transport = createTransport(engine, store.notify)
   const actions = createActions(store, transport)
-  const thumbnails = createThumbnails(media, () => transport.position().isPlaying)
+  const thumbnails = createThumbnails(media, engine.renderStill, () => transport.position().isPlaying)
   const preparationListeners = new Set<() => void>()
   const panelListeners = new Set<(panel: Panel) => void>()
   let preparation: PreparationStates = {}
   let preparationTimer: number | undefined
   let isCacheOffered = false
   let sent: SentProject | undefined
+  let sentFocus = ''
   let isSendScheduled = false
   let reportedState = ''
   let recovered: Project | undefined = store.getState().wholeProject
+  let recoveredDocuments: Documents | undefined = store.getState().documents
+  const copiedDocuments = new Map<string, Project>()
+  const copyIndexes = new Map<string, number>()
   let recoveryWork: Promise<void> = Promise.resolve()
   let hasRecoveryFailed = false
   let isMediaConnected = true
@@ -195,7 +215,7 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
 
   async function importFiles(paths: readonly string[]): Promise<void> {
     await mediaReopened
-    const known = new Set(store.getState().project.media.map((reference) => reference.path))
+    const known = new Set(store.getState().wholeProject.media.map((reference) => reference.path))
     const fresh = [...new Set(paths)].filter((path) => !known.has(path))
     const additions = fresh.map(settledAddition)
     const failures: string[] = []
@@ -209,30 +229,71 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
       }
       const added = addition.value
       store.setMediaState(added.id, { info: added.info, createdAt: added.createdAt })
-      store.apply('Import Media', (project) => withMedia(project, { id: added.id, path, relativePath: '' }))
+      if (added.info.kind === 'animation') await loadAnimation(added.info.path)
+      store.applyToFiles('Import Media', (project) => withMedia(project, { id: added.id, path, relativePath: '' }))
       watchPreparation()
     }
     store.setPendingImports([])
     if (failures.length > 0) store.notify(failures.join(' '))
   }
 
+  async function loadAnimation(path: string): Promise<void> {
+    if (store.getState().documents[path] !== undefined) return
+    try {
+      store.addDocuments(await media.loadAnimations([path]))
+    } catch (error) {
+      if (!isMediaConnected) return
+      logError('Could not load an imported animation', error, { path })
+      store.notify(describeError(error))
+    }
+  }
+
   async function chooseAndImport(): Promise<void> {
     await importFiles(await window.host.importMediaDialog())
   }
 
+  async function newAnimation(): Promise<void> {
+    const path = await window.host.newAnimationDialog()
+    if (path === undefined) return
+    const { canvas } = store.getState().wholeProject
+    try {
+      await media.saveProject(path, { version: PROJECT_VERSION, canvas, media: [], tracks: [] }, path)
+    } catch (error) {
+      store.notify(describeError(error))
+      return
+    }
+    await importFiles([path])
+    const added = store.getState().wholeProject.media.find((reference) => reference.path === path)
+    if (added === undefined) return
+    actions.addMedia([added.id])
+    actions.openGroup()
+  }
+
   async function relink(mediaId: string): Promise<void> {
-    const { wholeProject: project, mediaStates } = store.getState()
-    const reference = project.media.find((candidate) => candidate.id === mediaId)
+    const { wholeProject, documents, mediaStates } = store.getState()
+    const files = [wholeProject, ...Object.values(documents)]
+    const reference = files.flatMap((file) => file.media).find((candidate) => candidate.id === mediaId)
     if (reference === undefined) return
     const path = await window.host.chooseMediaFile(mediaFileName(reference))
     if (path === undefined) return
 
-    const others = unlinkedMedia(project, mediaStates).filter((unlinked) => unlinked.reference.id !== mediaId)
+    const others = new Map<string, UnlinkedMedia>()
+    const uses = new Set<MediaUse>()
+    for (const file of files) {
+      for (const unlinked of unlinkedMedia(file, mediaStates)) {
+        if (unlinked.reference.id !== mediaId) others.set(unlinked.reference.id, unlinked)
+      }
+      for (const use of mediaUses(file, mediaId)) uses.add(use)
+    }
     await mediaReopened
     try {
-      const found = await media.relinkMedia(path, { reference, uses: mediaUses(project, mediaId) }, others)
+      const found = await media.relinkMedia(path, { reference, uses: [...uses] }, [...others.values()])
       for (const item of found) store.setMediaState(item.id, { info: item.info, createdAt: item.createdAt })
-      store.apply('Relink Media', (current) => relinkedMedia(current, found))
+      for (const item of found) {
+        if (item.info.kind === 'animation') await loadAnimation(item.info.path)
+      }
+      const relinkFile = (file: Project): Project => relinkedMedia(file, found)
+      store.applyToFiles('Relink Media', relinkFile, relinkFile)
       watchPreparation()
       const moreCount = found.length - 1
       if (moreCount === 1) store.notify('1 more missing file was found in the same folder.')
@@ -242,18 +303,34 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     }
   }
 
+  function sendFocus(): void {
+    const { openDocument, openGroups } = store.getState()
+    const path = openDocument === undefined ? [] : [...openGroups]
+    const key = path.join('/')
+    if (key === sentFocus) return
+    sentFocus = key
+    engine.send({ type: 'focus', path })
+  }
+
   function sendToEngine(): void {
     isSendScheduled = false
-    const { wholeProject: project, mediaStates } = store.getState()
-    if (sent !== undefined && sent.project === project && sent.mediaStates === mediaStates) return
-    sent = { project, mediaStates }
-    engine.send({ type: 'project', loaded: { project, media: mediaStates } })
+    sendFocus()
+    const { wholeProject: project, mediaStates, documents } = store.getState()
+    if (sent !== undefined && sent.project === project && sent.mediaStates === mediaStates && sent.documents === documents) return
+    sent = { project, mediaStates, documents }
+    engine.send({ type: 'project', loaded: { project, media: mediaStates, documents } })
+  }
+
+  function hasUnsavedChanges(): boolean {
+    const { wholeProject, savedProject, documents, savedDocuments } = store.getState()
+    if (wholeProject !== savedProject) return true
+    return Object.entries(documents).some(([path, document]) => document !== savedDocuments[path])
   }
 
   function reportDocumentState(): void {
-    const { wholeProject: project, savedProject, history } = store.getState()
+    const { history } = store.getState()
     const state: DocumentState = {
-      isDirty: project !== savedProject,
+      isDirty: hasUnsavedChanges(),
       undoLabel: history.done.at(-1)?.label,
       redoLabel: history.undone.at(-1)?.label,
     }
@@ -264,21 +341,47 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   }
 
   store.subscribe(() => {
-    transport.setOffset(store.getState().scope?.offset ?? 0)
+    transport.setScope(store.getState().scope)
     reportDocumentState()
     if (isSendScheduled) return
     isSendScheduled = true
     requestAnimationFrame(sendToEngine)
   })
 
-  async function writeRecovery(earlier: Promise<void>, project: Project): Promise<void> {
+  function copyNameOf(path: string): string {
+    const index = copyIndexes.get(path) ?? copyIndexes.size
+    copyIndexes.set(path, index)
+    return animationCopyName(info.recoveryPath, index)
+  }
+
+  // Unsaved animations are copied beside the recovery file and listed in its manifest, which is written last.
+  async function writeAnimationCopies(documents: Documents): Promise<void> {
+    const { savedDocuments } = store.getState()
+    const directory = info.recoveryPath.slice(0, info.recoveryPath.lastIndexOf('/'))
+    const manifest: Record<string, string> = {}
+    for (const [path, document] of Object.entries(documents)) {
+      if (document === savedDocuments[path]) continue
+      const copyName = copyNameOf(path)
+      if (copiedDocuments.get(path) !== document) await media.saveProject(`${directory}/${copyName}`, document, path)
+      copiedDocuments.set(path, document)
+      manifest[path] = copyName
+    }
+    if (copyIndexes.size === 0) return
+    const manifestName = animationManifestPath(info.recoveryPath).slice(directory.length + 1)
+    await media.writeFile(directory, manifestName, new TextEncoder().encode(JSON.stringify(manifest)).buffer)
+  }
+
+  // The episode's recovery is kept while any animation is unsaved, since a restore starts from it.
+  async function writeRecovery(earlier: Promise<void>, project: Project, documents: Documents): Promise<void> {
     await earlier
-    if (project === store.getState().savedProject) {
+    if (!hasUnsavedChanges()) {
+      copiedDocuments.clear()
       window.host.discardRecovery()
       return
     }
     try {
       await media.saveProject(info.recoveryPath, project)
+      await writeAnimationCopies(documents)
       hasRecoveryFailed = false
     } catch (error) {
       if (recovered === project) recovered = undefined
@@ -291,9 +394,11 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   function autosave(): void {
     if (!isMediaConnected) return
     const project = store.committedProject()
-    if (project === recovered) return
+    const documents = store.committedDocuments()
+    if (project === recovered && documents === recoveredDocuments) return
     recovered = project
-    recoveryWork = writeRecovery(recoveryWork, project)
+    recoveredDocuments = documents
+    recoveryWork = writeRecovery(recoveryWork, project, documents)
   }
 
   let autosaveTimer: number | undefined = window.setInterval(autosave, settings.autosaveSeconds * MS_PER_SECOND)
@@ -316,14 +421,39 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     }
     store.markSaved(project, path)
     window.host.setDocumentPath(path)
+    recovered = undefined
     autosave()
     return true
   }
 
+  async function saveAnimations(): Promise<boolean> {
+    const { savedDocuments } = store.getState()
+    const changed: { path: string; document: Project }[] = []
+    for (const [path, document] of Object.entries(store.committedDocuments())) {
+      if (document !== savedDocuments[path]) changed.push({ path, document })
+    }
+    const results = await Promise.allSettled(changed.map(({ path, document }) => media.saveProject(path, document, path)))
+    const saved: Record<string, Project> = {}
+    const failures: string[] = []
+    for (const [index, result] of results.entries()) {
+      const entry = changed[index]
+      if (entry === undefined) continue
+      if (result.status === 'fulfilled') saved[entry.path] = entry.document
+      else failures.push(describeErrorAsSentence(result.reason))
+    }
+    store.markDocumentsSaved(saved)
+    thumbnails.refreshAnimations(Object.keys(saved))
+    recovered = undefined
+    autosave()
+    if (failures.length > 0) store.notify(failures.join(' '))
+    return failures.length === 0
+  }
+
+  // The episode first: an animation that fails to save stays unsaved and is still kept by autosave.
   async function save(): Promise<boolean> {
     const { documentPath } = store.getState()
-    if (documentPath !== undefined) return saveTo(documentPath)
-    return saveAs()
+    const isEpisodeSaved = documentPath === undefined ? await saveAs() : await saveTo(documentPath)
+    return isEpisodeSaved && (await saveAnimations())
   }
 
   async function saveAs(): Promise<boolean> {
@@ -335,6 +465,19 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     return path.split('/').at(-1) ?? path
   }
 
+  // The export reads unsaved animations from these copies, so it shows the edits as they are on screen.
+  async function writeAnimationSnapshots(): Promise<Record<string, string>> {
+    const { savedDocuments } = store.getState()
+    const copies: Record<string, string> = {}
+    for (const [path, document] of Object.entries(store.committedDocuments())) {
+      if (document === savedDocuments[path]) continue
+      const copyPath = `${info.exportSnapshotPath}.${Object.keys(copies).length}.export`
+      await media.saveProject(copyPath, document, path)
+      copies[path] = copyPath
+    }
+    return copies
+  }
+
   async function exportVideo(choices: ExportChoices): Promise<void> {
     transport.pause()
     const { documentPath, selection } = store.getState()
@@ -343,15 +486,18 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     if (outputPath === undefined) return
 
     const snapshot = store.committedProject()
+    let animationOverrides: Record<string, string> = {}
     try {
       await media.saveProject(info.exportSnapshotPath, snapshot)
+      animationOverrides = await writeAnimationSnapshots()
     } catch (error) {
       store.notify(`The export could not start: ${describeErrorAsSentence(error)} Check that the disk has room, then export again.`)
       return
     }
-    const playheadTime = transport.position().time + (store.getState().scope?.offset ?? 0)
+    const playheadTime = episodeTimeOf(store.getState().scope, transport.position().time)
     const frame = Math.round(playheadTime / frameDuration(snapshot.canvas.frameRate))
     const job = exportJobFor(choices, selectionRange(snapshot, selection), { projectPath: info.exportSnapshotPath, outputPath }, frame)
+    if (Object.keys(animationOverrides).length > 0) job.animationOverrides = animationOverrides
     store.setExportStatus({ phase: 'running', fileName: fileNameOf(outputPath), done: 0, total: 1, startedAt: performance.now() })
     window.host.startExport(job)
   }
@@ -377,8 +523,7 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
 
   async function close(): Promise<void> {
     store.cancel()
-    const { wholeProject, savedProject } = store.getState()
-    if (wholeProject !== savedProject) {
+    if (hasUnsavedChanges()) {
       const choice = await window.host.confirmUnsavedChanges()
       if (choice === 'cancel') return
       if (choice === 'save' && !(await save())) return
@@ -421,6 +566,7 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     else if (action === 'save-as') void saveAs()
     else if (action === 'undo' || action === 'redo') undoOrRedo(action)
     else if (action === 'import') void chooseAndImport()
+    else if (action === 'new-animation') void newAnimation()
     else if (action === 'split') actions.split()
     else if (action === 'split-all') actions.splitAll()
     else if (action === 'select-all') selectAll()
@@ -430,6 +576,10 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     else if (action === 'ripple-delete') deleteSelection(true)
     else if (action === 'group') actions.group()
     else if (action === 'ungroup') actions.ungroup()
+    else if (action === 'bring-to-front') actions.arrange('front')
+    else if (action === 'bring-forward') actions.arrange('forward')
+    else if (action === 'send-backward') actions.arrange('backward')
+    else if (action === 'send-to-back') actions.arrange('back')
     else if (action === 'toggle-library') togglePanel('library')
     else if (action === 'toggle-properties') togglePanel('properties')
     else if (action === 'toggle-timeline') togglePanel('timeline')
@@ -466,11 +616,12 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     if (info.loadFrom === undefined) return
     store.setOpening(info.path === undefined ? 'Untitled' : fileNameOf(info.path))
     try {
-      const loaded = await media.loadProject(info.loadFrom, true)
+      const loaded = await media.loadProject(info.loadFrom, true, info.recoveredAnimations)
       isOpenNeeded = false
       const isRecovered = info.loadFrom !== info.path
-      store.open(loaded, info.path, !isRecovered)
+      store.open(loaded, info.path, !isRecovered, Object.keys(info.recoveredAnimations))
       recovered = loaded.project
+      recoveredDocuments = loaded.documents
       watchPreparation()
       const notices: string[] = []
       const missingCount = unlinkedMedia(loaded.project, loaded.media).length
@@ -509,9 +660,10 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   }
 
   async function reopenMedia(): Promise<void> {
-    const { wholeProject } = store.getState()
+    const { wholeProject, documents } = store.getState()
     try {
-      store.setMediaStates(await media.openMedia(wholeProject.media, info.loadFrom))
+      const reopened = await media.openMedia(wholeProject.media, info.loadFrom)
+      store.setMediaStates({ ...reopened, ...(await media.reopenAnimations(documents)) })
     } catch (error) {
       if (!isMediaConnected) return
       logError('Could not open the media again in the restarted media process', error)

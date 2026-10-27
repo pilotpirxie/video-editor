@@ -1,8 +1,9 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parseProject, serializeProject, type Project, type Transform } from '../../src/shared/project.js'
-import { ROOT, probeExport, projectIn, projectPath, scratchDirectory, uiTest } from '../helpers.js'
+import { partsOf } from '../../src/editor/colors.js'
+import { parseProject, serializeProject, type Clip, type DrawingClip, type DrawingShape, type Project, type Transform } from '../../src/shared/project.js'
+import { ROOT, at, imageOf, probeExport, projectIn, projectOfTracks, projectPath, runApp, scratchDirectory, uiTest } from '../helpers.js'
 
 const SECOND = 24_000_000
 const MAX_STEP_MS = 50
@@ -311,6 +312,163 @@ describe('in and out', () => {
     const removed = projectIn(report, 'removed').tracks[0]?.clips[0]
     expect(removed).toMatchObject({ transitionOut: { type: 'slideRight' } })
     expect(removed).not.toHaveProperty('animationIn')
+  })
+})
+
+describe('animation files', () => {
+  const RED_PATH = join(MEDIA_DIRECTORY, 'image-red.png')
+
+  function writeEpisode(directory: string, tracksBelow: Clip[][] = []): { episodePath: string; cardPath: string } {
+    mkdirSync(directory, { recursive: true })
+    const span = { start: 0, duration: 2 * SECOND }
+    const card = projectOfTracks({ width: 320, height: 180 }, [...tracksBelow, [imageOf('image-red.png', 'red', span, at(160, 90, 0.5))]])
+    const cardPath = join(directory, 'card.pbanim')
+    writeFileSync(cardPath, serializeProject({ ...card, canvas: { ...card.canvas, frameRate: { num: 12, den: 1 } } }))
+    const animation = { id: 'card', type: 'animation' as const, mediaId: 'card', ...span, sourceStart: 0, speedPercent: 100, volume: 1, transform: at(320, 180), opacity: 1 }
+    const episode = projectOfTracks({ width: 640, height: 360 }, [[imageOf('image-white.png', 'ground', span, at(320, 180, 2))], [animation]])
+    const media = episode.media.map((reference) => (reference.id === 'card' ? { ...reference, path: cardPath } : reference))
+    const episodePath = join(directory, 'episode.json')
+    writeFileSync(episodePath, serializeProject({ ...episode, media }))
+    return { episodePath, cardPath }
+  }
+
+  function animationIn(path: string): Project {
+    const parsed = parseProject(readFileSync(path, 'utf8'), 'animation')
+    if (!parsed.ok) throw new Error(`${path} is not a valid animation: ${parsed.message}`)
+    return parsed.project
+  }
+
+  it('opens an animation in place in frames, undoes inside it, saves its own file and creates a new one', async () => {
+    const directory = join(scratch, 'animation-files')
+    const { episodePath, cardPath } = writeEpisode(directory)
+    const report = await uiTest('animation-files', ['--project', episodePath, '--out', directory])
+    expect(report.inside).toEqual({ path: expect.stringContaining('card'), timecode: '0', duration: '/ 24', isTimingInFrames: true })
+    expect(report.isEditedByAnimation).toBe(true)
+    expect(report.newPath).toContain('new')
+
+    const saved = animationIn(cardPath)
+    expect(saved.tracks[0]?.clips[0]).toMatchObject({ id: 'red', opacity: 0.4 })
+    const red = saved.media.find((reference) => reference.id === 'image-red.png')
+    expect(resolve(dirname(cardPath), red?.relativePath ?? '')).toBe(RED_PATH)
+    const created = animationIn(join(directory, 'new.pbanim'))
+    expect(created).toMatchObject({ canvas: { width: 640, height: 360 }, tracks: [] })
+  })
+
+  it('moves a clipped child from the inside, draws a rectangle and a circle, and moves the rectangle', async () => {
+    const directory = join(scratch, 'drawing-tools')
+    const child = { id: 'pocket', nodes: [{ x: 270, y: 150 }, { x: 290, y: 150 }, { x: 290, y: 166 }, { x: 270, y: 166 }], isClosed: true as const, fill: '#0000FF' }
+    const parent = { id: 'coat', nodes: [{ x: 250, y: 140 }, { x: 310, y: 140 }, { x: 310, y: 176 }, { x: 250, y: 176 }], isClosed: true as const, fill: '#FFFFFF', children: [child] }
+    const coat: Clip = { id: 'coat', type: 'drawing', start: 0, duration: 2 * SECOND, shapes: [parent] }
+    const { episodePath, cardPath } = writeEpisode(directory, [[coat]])
+    const report = await uiTest('drawing-tools', ['--project', episodePath, '--out', directory])
+    expect(report.tools).toEqual(['Move', 'Rectangle', 'Ellipse'])
+
+    // The card's 320x180 artboard sits in the middle of the 640x360 episode at full size; a pointer lands on whole screen pixels.
+    const { preview } = report
+    if (typeof preview !== 'object' || preview === null || !('width' in preview) || typeof preview.width !== 'number') throw new Error('The report has no preview size')
+    const tolerance = (2 * 640) / preview.width
+    const toArtboard = (shareX: number, shareY: number): { x: number; y: number } => ({ x: shareX * 640 - 160, y: shareY * 360 - 90 })
+    const near = (actual: number | undefined, expected: number): boolean => actual !== undefined && Math.abs(actual - expected) < tolerance
+    const drawings: Clip[] = []
+    for (const track of animationIn(cardPath).tracks) {
+      for (const clip of track.clips) {
+        if (clip.type === 'drawing') drawings.push(clip)
+      }
+    }
+    expect(drawings).toHaveLength(2)
+    const [movedCoat, drawing] = drawings
+    const [savedParent] = movedCoat?.type === 'drawing' ? movedCoat.shapes : []
+    expect(savedParent?.nodes).toEqual(parent.nodes)
+    const pocketCorner = savedParent?.children?.[0]?.nodes[0]
+    expect(near(pocketCorner?.x, 270 - 0.05 * 640) && near(pocketCorner?.y, 150)).toBe(true)
+    expect(drawing).toMatchObject({ start: 0, duration: SECOND })
+    const [rectangle, circle] = drawing?.type === 'drawing' ? drawing.shapes : []
+    const corner = toArtboard(0.3 + 0.05, 0.3)
+    const opposite = toArtboard(0.45 + 0.05, 0.45)
+    expect(rectangle?.nodes.map((node) => node.in === undefined && node.out === undefined)).toEqual([true, true, true, true])
+    expect(near(rectangle?.nodes[0]?.x, corner.x) && near(rectangle?.nodes[0]?.y, corner.y)).toBe(true)
+    expect(near(rectangle?.nodes[2]?.x, opposite.x) && near(rectangle?.nodes[2]?.y, opposite.y)).toBe(true)
+    const across = (circle?.nodes[1]?.x ?? 0) - (circle?.nodes[3]?.x ?? 0)
+    const down = (circle?.nodes[2]?.y ?? 0) - (circle?.nodes[0]?.y ?? 0)
+    expect(across).toBeCloseTo(down, 6)
+    expect(near(across, 0.15 * 640)).toBe(true)
+  })
+
+  // Back to front: Left, Coat with a pocket clipped inside, then Right.
+  function shapesDrawing(): Clip {
+    const square = (id: string, left: number, top: number, side: number, fill: string): DrawingShape => ({
+      id,
+      nodes: [
+        { x: left, y: top },
+        { x: left + side, y: top },
+        { x: left + side, y: top + side },
+        { x: left, y: top + side },
+      ],
+      isClosed: true,
+      fill,
+    })
+    const pocket = square('pocket', 270, 150, 16, '#0000FF')
+    const coat = { ...square('coat', 250, 140, 36, '#FFFFFF'), name: 'Coat', stroke: { color: '#FF0000', width: 2 }, children: [pocket] }
+    const shapes = [{ ...square('left', 20, 20, 40, '#FF0000'), name: 'Left' }, coat, { ...square('right', 100, 20, 40, '#00FF00'), name: 'Right' }]
+    return { id: 'sketch', type: 'drawing', start: 0, duration: 2 * SECOND, shapes }
+  }
+
+  function drawingsIn(path: string): DrawingClip[] {
+    const drawings: DrawingClip[] = []
+    for (const track of animationIn(path).tracks) {
+      for (const clip of track.clips) {
+        if (clip.type === 'drawing') drawings.push(clip)
+      }
+    }
+    return drawings
+  }
+
+  it('lists the shapes of the drawing on an expanded track, and renames, hides, locks and reorders them there', async () => {
+    const directory = join(scratch, 'shape-rows')
+    const { episodePath, cardPath } = writeEpisode(directory, [[shapesDrawing()]])
+    const report = await uiTest('shape-rows', ['--project', episodePath, '--out', directory])
+    expect(report.rowsAtFirst).toEqual(['Right', 'Coat', 'Shape', 'Left'])
+    expect(report.pickedWhereHidden).toBe('0')
+    expect(report.pickedWhereLocked).toBe('0')
+    expect(report.rowsAfter).toEqual(['Big coat', 'Shape', 'Left', 'Right'])
+
+    const [sketch] = drawingsIn(cardPath)
+    expect(sketch?.shapes.map((shape) => shape.id)).toEqual(['right', 'left', 'coat'])
+    expect(sketch?.shapes[1]).toMatchObject({ name: 'Left', hidden: true })
+    expect(sketch?.shapes[2]).toMatchObject({ name: 'Big coat', locked: true, children: [{ id: 'pocket' }] })
+  })
+
+  it('deletes, copies, pastes, duplicates, arranges and colours shapes, and draws in the colour last set', async () => {
+    const directory = join(scratch, 'shape-edits')
+    const { episodePath, cardPath } = writeEpisode(directory, [[shapesDrawing()]])
+    const report = await uiTest('shape-edits', ['--project', episodePath, '--out', directory])
+    expect(report.rowsWithCopies).toEqual(['Left', 'Left', 'Right', 'Coat', 'Shape', 'Left'])
+    expect(report.notice).toBe('Shapes can only be pasted inside an animation.')
+
+    const [sketch, drawn] = drawingsIn(cardPath)
+    const ids = sketch?.shapes.map((shape) => shape.id) ?? []
+    expect(ids.slice(0, 2)).toEqual(['coat', 'right'])
+    expect(ids[3]).toBe('left')
+    expect(ids.filter((id) => id !== 'left')).toHaveLength(4)
+    const coat = sketch?.shapes[0]
+    expect(coat?.fill).toBe('#336699')
+    expect(coat?.stroke?.width).toBe(2)
+    expect(partsOf(coat?.stroke?.color ?? '#000000').hue).toBeGreaterThan(100)
+    expect(partsOf(coat?.stroke?.color ?? '#000000').hue).toBeLessThan(140)
+    expect(drawn?.shapes).toEqual([expect.objectContaining({ name: 'Rectangle', fill: '#FF8800', stroke: { color: coat?.stroke?.color, width: 4 } })])
+  })
+
+  it('restores an unsaved animation after the editor was killed', async () => {
+    const directory = join(scratch, 'animation-crash')
+    const { episodePath, cardPath } = writeEpisode(directory)
+    const profile = join(directory, 'profile')
+    mkdirSync(profile, { recursive: true })
+    const crashed = await runApp(['--uitest', 'animation-crash', '--project', episodePath], 120_000, profile)
+    expect(crashed.exitCode).not.toBe(0)
+    expect(animationIn(cardPath).tracks[0]?.clips[0]).toMatchObject({ opacity: 1 })
+
+    await uiTest('animation-restore', [], profile)
+    expect(animationIn(cardPath).tracks[0]?.clips[0]).toMatchObject({ opacity: 0.4 })
   })
 })
 

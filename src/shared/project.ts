@@ -1,13 +1,24 @@
 import {
+  ANIMATION_FRAME_RATES,
   MAX_SPEED_PERCENT,
   MIN_SPEED_PERCENT,
+  PROJECT_FRAME_RATES,
   TIMELINE_GRID,
+  isFrameRateIn,
   isOnTimelineGrid,
-  isProjectFrameRate,
   type FrameRate,
 } from './time.js'
 
 export const PROJECT_VERSION = 1
+
+export type DocumentKind = 'project' | 'animation'
+
+export const ANIMATION_EXTENSION = 'pbanim'
+export const MAX_ANIMATION_DEPTH = 8
+
+export function isAnimationPath(path: string): boolean {
+  return path.toLowerCase().endsWith(`.${ANIMATION_EXTENSION}`)
+}
 
 export type Easing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'hold'
 
@@ -120,10 +131,10 @@ export type Transition = {
   duration: number
 }
 
-export type AnimationType = 'fade' | 'pop' | 'slideLeft' | 'slideRight' | 'slideUp' | 'slideDown' | 'zoom' | 'typewriter'
+export type AnimationPresetType = 'fade' | 'pop' | 'slideLeft' | 'slideRight' | 'slideUp' | 'slideDown' | 'zoom' | 'typewriter'
 
-export type Animation = {
-  type: AnimationType
+export type AnimationPreset = {
+  type: AnimationPresetType
   duration: number
 }
 
@@ -134,8 +145,8 @@ type VisualSettings = {
   fadeOut?: number
   transitionIn?: Transition
   transitionOut?: Transition
-  animationIn?: Animation
-  animationOut?: Animation
+  animationIn?: AnimationPreset
+  animationOut?: AnimationPreset
 }
 
 type EffectSwitch = {
@@ -302,10 +313,60 @@ export type GroupClip = ClipTiming &
     contentStart?: number
   }
 
-export type Clip = VideoClip | AudioClip | ImageClip | TextClip | BlurClip | HighlightClip | CalloutClip | ArrowClip | GroupClip
+export type AnimationClip = ClipTiming &
+  VisualSettings &
+  EffectSettings &
+  SourceSettings &
+  VolumeSettings & {
+    type: 'animation'
+    loop?: true
+  }
+
+// Offset from its node, so a moved node takes its handles along.
+type ShapeHandle = {
+  x: number
+  y: number
+}
+
+// A side without a handle is sharp there.
+export type ShapeNode = {
+  x: number
+  y: number
+  in?: ShapeHandle
+  out?: ShapeHandle
+}
+
+export type ShapeStroke = {
+  color: string
+  width: number
+}
+
+export type DrawingShape = {
+  id: string
+  name?: string
+  hidden?: true
+  locked?: true
+  nodes: ShapeNode[]
+  isClosed?: true
+  fill?: string
+  stroke?: ShapeStroke
+  children?: DrawingShape[]
+}
+
+// Shapes are listed back to front, in the artboard's pixels.
+export type DrawingClip = ClipTiming & {
+  type: 'drawing'
+  shapes: DrawingShape[]
+}
+
+export type Clip = VideoClip | AudioClip | ImageClip | TextClip | BlurClip | HighlightClip | CalloutClip | ArrowClip | GroupClip | AnimationClip | DrawingClip
 export type PictureClip = VideoClip | ImageClip | TextClip | CalloutClip | ArrowClip
 export type ShapeClip = BlurClip | HighlightClip
-export type VisualClip = PictureClip | ShapeClip | GroupClip
+export type VisualClip = PictureClip | ShapeClip | GroupClip | AnimationClip
+
+export function isVisual(clip: Clip): clip is VisualClip {
+  return clip.type !== 'audio' && clip.type !== 'drawing'
+}
 
 export type Track = {
   id: string
@@ -352,6 +413,8 @@ export const MAX_CANVAS = { width: 3840, height: 2160 }
 export const MAX_CAMERA_SCALE = 10
 const MAX_VOLUME = 2
 const MAX_GROUP_DEPTH = 8
+const MAX_SHAPE_DEPTH = 8
+const MIN_SHAPE_NODES = 2
 const FONT_WEIGHT_STEP = 100
 const FONT_WEIGHT = { min: 100, max: 900 }
 const LINE_SPACING: NumberRule = { min: 0.5, max: 3 }
@@ -360,7 +423,7 @@ const EASINGS: readonly Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut', 
 const TRANSFORM_PROPERTIES: readonly AnimatableProperty[] = ['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity']
 const CROP_PROPERTIES: readonly AnimatableProperty[] = ['cropLeft', 'cropTop', 'cropRight', 'cropBottom']
 const TEXT_ALIGNMENTS: readonly TextAlign[] = ['left', 'center', 'right']
-const CLIP_TYPES = ['video', 'audio', 'image', 'text', 'blur', 'highlight', 'callout', 'arrow', 'group']
+const CLIP_TYPES = ['video', 'audio', 'image', 'text', 'blur', 'highlight', 'callout', 'arrow', 'group', 'animation', 'drawing']
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/
 const OPAQUE_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
 export const TRANSITION_TYPES: readonly TransitionType[] = [
@@ -406,7 +469,7 @@ export const EFFECT_TYPES: readonly EffectType[] = [
   'blurFill',
 ]
 const SHAPES: readonly Shape[] = ['rectangle', 'ellipse']
-export const ANIMATION_TYPES: readonly AnimationType[] = ['fade', 'pop', 'slideLeft', 'slideRight', 'slideUp', 'slideDown', 'zoom', 'typewriter']
+export const ANIMATION_PRESET_TYPES: readonly AnimationPresetType[] = ['fade', 'pop', 'slideLeft', 'slideRight', 'slideUp', 'slideDown', 'zoom', 'typewriter']
 export const CALLOUT_SHAPES: readonly CalloutShape[] = ['rectangle', 'roundedBox', 'ellipse', 'speechBubble', 'thoughtBubble', 'arrowBox', 'banner', 'burst']
 export const ARROW_HEADS: readonly ArrowHead[] = ['none', 'triangle', 'open', 'dot']
 const AMOUNT: NumberRule = { min: 0, max: 1 }
@@ -534,19 +597,25 @@ class Fields {
   }
 }
 
-function parseFrameRate(value: unknown, path: string): FrameRate {
+function rateNames(rates: readonly FrameRate[]): string {
+  const names = rates.map((rate) => (rate.den === 1 ? String(rate.num) : `${rate.num}/${rate.den}`))
+  return `${names.slice(0, -1).join(', ')} or ${names.at(-1) ?? ''}`
+}
+
+function parseFrameRate(value: unknown, path: string, kind: DocumentKind): FrameRate {
   const fields = readFields(value, path, ['num', 'den'])
   const rate = { num: fields.integer('num', { min: 1 }), den: fields.integer('den', { min: 1 }) }
-  if (!isProjectFrameRate(rate)) fail(path, 'must be 24000/1001, 24, 25, 30000/1001, 30, 50, 60, 120 or 160 frames per second')
+  const allowed = kind === 'animation' ? ANIMATION_FRAME_RATES : PROJECT_FRAME_RATES
+  if (!isFrameRateIn(allowed, rate)) fail(path, `must be ${rateNames(allowed)} frames per second`)
   return rate
 }
 
-function parseCanvas(value: unknown, path: string): Canvas {
+function parseCanvas(value: unknown, path: string, kind: DocumentKind): Canvas {
   const fields = readFields(value, path, ['width', 'height', 'frameRate'])
   return {
     width: fields.integer('width', { min: MIN_CANVAS.width, max: MAX_CANVAS.width }),
     height: fields.integer('height', { min: MIN_CANVAS.height, max: MAX_CANVAS.height }),
-    frameRate: parseFrameRate(fields.raw('frameRate'), fields.at('frameRate')),
+    frameRate: parseFrameRate(fields.raw('frameRate'), fields.at('frameRate'), kind),
   }
 }
 
@@ -743,6 +812,7 @@ const OPTIONAL_SOURCE_KEYS = ['changesPitch', 'hasFastSound']
 const OPTIONAL_TEXT_KEYS = ['outline', 'shadow', 'lineSpacing']
 
 type ParseContext = {
+  kind: DocumentKind
   mediaIds: ReadonlySet<string>
   clipIds: Set<string>
   depth: number
@@ -767,9 +837,9 @@ function parseTiming(fields: Fields, context: ParseContext, animatable: readonly
   return timing
 }
 
-function parseAnimation(fields: Fields, key: string): Animation {
+function parseAnimationPreset(fields: Fields, key: string): AnimationPreset {
   const animation = readFields(fields.raw(key), fields.at(key), ['type', 'duration'])
-  const type = animation.oneOf('type', ANIMATION_TYPES)
+  const type = animation.oneOf('type', ANIMATION_PRESET_TYPES)
   if (type === 'typewriter' && fields.raw('type') !== 'text') fail(animation.at('type'), 'can only be "typewriter" on a text clip')
   return { type, duration: animation.gridTime('duration', 'positive') }
 }
@@ -783,8 +853,8 @@ function parseVisual(fields: Fields, clipDuration: number): VisualSettings {
   if (fields.has('fadeOut')) visual.fadeOut = parseFade(fields, 'fadeOut', clipDuration)
   if (fields.has('transitionIn')) visual.transitionIn = parseTransition(fields, 'transitionIn')
   if (fields.has('transitionOut')) visual.transitionOut = parseTransition(fields, 'transitionOut')
-  if (fields.has('animationIn')) visual.animationIn = parseAnimation(fields, 'animationIn')
-  if (fields.has('animationOut')) visual.animationOut = parseAnimation(fields, 'animationOut')
+  if (fields.has('animationIn')) visual.animationIn = parseAnimationPreset(fields, 'animationIn')
+  if (fields.has('animationOut')) visual.animationOut = parseAnimationPreset(fields, 'animationOut')
   return visual
 }
 
@@ -972,6 +1042,31 @@ function parseTracks(value: readonly unknown[], path: string, context: ParseCont
   return tracks
 }
 
+// Groups and animations scale their members by one factor, so both of their scales have to match.
+function rejectUnevenScale(fields: Fields, clip: { transform: Transform; keyframes?: Keyframes }, kind: string): void {
+  const hasSameScaleKeyframes = JSON.stringify(clip.keyframes?.scaleX) === JSON.stringify(clip.keyframes?.scaleY)
+  const isEvenlyScaled = clip.transform.scaleX === clip.transform.scaleY && hasSameScaleKeyframes
+  if (!isEvenlyScaled) fail(fields.at('transform'), `of ${kind} must have the same scaleX and scaleY, in its keyframes too`)
+}
+
+function parseAnimationClip(value: unknown, path: string, context: ParseContext): AnimationClip {
+  const required = [...TIMING_KEYS, ...VISUAL_KEYS, ...SOURCE_KEYS, 'volume']
+  const optional = [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_VOLUME_KEYS, ...OPTIONAL_SOURCE_KEYS, 'loop']
+  const fields = readFields(value, path, required, optional)
+  const timing = parseTiming(fields, context, [...TRANSFORM_PROPERTIES, 'volume'])
+  const clip: AnimationClip = {
+    type: 'animation',
+    ...timing,
+    ...parseVisual(fields, timing.duration),
+    ...parseSource(fields, context, timing.duration),
+    ...parseVolume(fields, timing.duration),
+  }
+  rejectUnevenScale(fields, clip, 'an animation')
+  if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'))
+  if (fields.has('loop')) clip.loop = parseSwitch(fields, 'loop')
+  return clip
+}
+
 function parseGroupClip(value: unknown, path: string, context: ParseContext): GroupClip {
   if (context.depth >= MAX_GROUP_DEPTH) fail(path, `is a group inside more than ${MAX_GROUP_DEPTH} groups`)
   const required = [...TIMING_KEYS, ...VISUAL_KEYS, 'volume', 'tracks']
@@ -988,9 +1083,7 @@ function parseGroupClip(value: unknown, path: string, context: ParseContext): Gr
     ...parseVolume(fields, timing.duration),
     tracks: parseTracks(fields.array('tracks'), fields.at('tracks'), memberContext),
   }
-  const hasSameScaleKeyframes = JSON.stringify(timing.keyframes?.scaleX) === JSON.stringify(timing.keyframes?.scaleY)
-  const isEvenlyScaled = clip.transform.scaleX === clip.transform.scaleY && hasSameScaleKeyframes
-  if (!isEvenlyScaled) fail(fields.at('transform'), 'of a group must have the same scaleX and scaleY, in its keyframes too')
+  rejectUnevenScale(fields, clip, 'a group')
   if (contentStart !== undefined) clip.contentStart = contentStart
   if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'))
   return clip
@@ -1033,6 +1126,64 @@ function parseHighlightClip(value: unknown, path: string, context: ParseContext)
   return clip
 }
 
+function parseShapeHandle(fields: Fields, key: string): ShapeHandle {
+  const handle = readFields(fields.raw(key), fields.at(key), ['x', 'y'])
+  return { x: handle.number('x'), y: handle.number('y') }
+}
+
+function parseShapeNode(value: unknown, path: string): ShapeNode {
+  const fields = readFields(value, path, ['x', 'y'], ['in', 'out'])
+  const node: ShapeNode = { x: fields.number('x'), y: fields.number('y') }
+  if (fields.has('in')) node.in = parseShapeHandle(fields, 'in')
+  if (fields.has('out')) node.out = parseShapeHandle(fields, 'out')
+  return node
+}
+
+function parseDrawingShapes(value: unknown, path: string, depth: number, shapeIds: Set<string>): DrawingShape[] {
+  if (!Array.isArray(value)) fail(path, 'must be a list')
+  const shapes: DrawingShape[] = []
+  for (const [index, entry] of value.entries()) {
+    shapes.push(parseDrawingShape(entry, `${path}[${index}]`, depth, shapeIds))
+  }
+  return shapes
+}
+
+function parseDrawingShape(value: unknown, path: string, depth: number, shapeIds: Set<string>): DrawingShape {
+  const fields = readFields(value, path, ['id', 'nodes'], ['name', 'hidden', 'locked', 'isClosed', 'fill', 'stroke', 'children'])
+  const id = fields.nonEmptyString('id')
+  if (shapeIds.has(id)) fail(fields.at('id'), `"${id}" is used by more than one shape in this drawing`)
+  shapeIds.add(id)
+
+  const nodes: ShapeNode[] = []
+  for (const [index, entry] of fields.array('nodes').entries()) {
+    nodes.push(parseShapeNode(entry, `${fields.at('nodes')}[${index}]`))
+  }
+  if (nodes.length < MIN_SHAPE_NODES) fail(fields.at('nodes'), `must have at least ${MIN_SHAPE_NODES} nodes`)
+  const shape: DrawingShape = { id, nodes }
+  if (fields.has('name')) shape.name = fields.string('name')
+  if (fields.has('hidden')) shape.hidden = parseSwitch(fields, 'hidden')
+  if (fields.has('locked')) shape.locked = parseSwitch(fields, 'locked')
+  if (fields.has('isClosed')) shape.isClosed = parseSwitch(fields, 'isClosed')
+  if (fields.has('fill')) shape.fill = fields.color('fill')
+  if (fields.has('stroke')) {
+    const stroke = readFields(fields.raw('stroke'), fields.at('stroke'), ['color', 'width'])
+    shape.stroke = { color: stroke.color('color'), width: stroke.number('width', { above: 0 }) }
+  }
+  if (fields.has('children')) {
+    if (depth >= MAX_SHAPE_DEPTH) fail(fields.at('children'), `go deeper than ${MAX_SHAPE_DEPTH} shapes clipped inside each other`)
+    const children = parseDrawingShapes(fields.raw('children'), fields.at('children'), depth + 1, shapeIds)
+    if (children.length === 0) fail(fields.at('children'), 'is empty; leave it out instead')
+    shape.children = children
+  }
+  return shape
+}
+
+function parseDrawingClip(value: unknown, path: string, context: ParseContext): DrawingClip {
+  if (context.kind !== 'animation') fail(path, 'is a drawing, which only an animation can hold')
+  const fields = readFields(value, path, [...TIMING_KEYS, 'shapes'])
+  return { type: 'drawing', ...parseTiming(fields, context, []), shapes: parseDrawingShapes(fields.raw('shapes'), fields.at('shapes'), 0, new Set()) }
+}
+
 function parseClip(value: unknown, path: string, context: ParseContext): Clip {
   const type = isRecord(value) ? value.type : undefined
   if (type === 'video') {
@@ -1053,6 +1204,10 @@ function parseClip(value: unknown, path: string, context: ParseContext): Clip {
     return parseArrowClip(value, path, context)
   } else if (type === 'group') {
     return parseGroupClip(value, path, context)
+  } else if (type === 'animation') {
+    return parseAnimationClip(value, path, context)
+  } else if (type === 'drawing') {
+    return parseDrawingClip(value, path, context)
   } else {
     return fail(`${path}.type`, `must be one of ${CLIP_TYPES.join(', ')}; this version cannot open other clip types`)
   }
@@ -1127,23 +1282,24 @@ function rejectUnreadableVersion(document: Record<string, unknown>): void {
   }
 }
 
-function parseDocument(document: unknown): Project {
-  if (!isRecord(document)) fail('The project', 'must be a JSON object')
+function parseDocument(document: unknown, kind: DocumentKind): Project {
+  if (!isRecord(document)) fail(`The ${kind}`, 'must be a JSON object')
   rejectUnreadableVersion(document)
+  if (kind === 'animation' && 'camera' in document) fail('camera', 'is not allowed: an animation has no camera')
 
-  const fields = readFields(document, 'project', ['version', 'canvas', 'media', 'tracks'], ['camera'])
+  const fields = readFields(document, kind, ['version', 'canvas', 'media', 'tracks'], kind === 'project' ? ['camera'] : [])
   const media: MediaRef[] = []
   for (const [index, entry] of fields.array('media').entries()) {
     media.push(parseMedia(entry, `media[${index}]`))
   }
   rejectDuplicateIds(media, 'media')
 
-  const context: ParseContext = { mediaIds: new Set(media.map((entry) => entry.id)), clipIds: new Set(), depth: 0, shift: 0 }
+  const context: ParseContext = { kind, mediaIds: new Set(media.map((entry) => entry.id)), clipIds: new Set(), depth: 0, shift: 0 }
   const tracks = parseTracks(fields.array('tracks'), 'tracks', context)
 
   const project: Project = {
     version: PROJECT_VERSION,
-    canvas: parseCanvas(fields.raw('canvas'), 'canvas'),
+    canvas: parseCanvas(fields.raw('canvas'), 'canvas', kind),
     media,
     tracks,
   }
@@ -1151,17 +1307,17 @@ function parseDocument(document: unknown): Project {
   return project
 }
 
-export function parseProject(text: string): ParseResult {
+export function parseProject(text: string, kind: DocumentKind = 'project'): ParseResult {
   let document: unknown
   try {
     document = JSON.parse(text)
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
-    return { ok: false, message: `The project file is not valid JSON: ${detail}` }
+    return { ok: false, message: `The ${kind} file is not valid JSON: ${detail}` }
   }
 
   try {
-    return { ok: true, project: parseDocument(document) }
+    return { ok: true, project: parseDocument(document, kind) }
   } catch (error) {
     if (error instanceof FormatError) return { ok: false, message: error.message }
     throw error

@@ -73,7 +73,13 @@ export function isExportJob(value: unknown): value is ExportJob {
   if ('quality' in value && value.quality !== undefined && !(typeof value.quality === 'string' && isExportQuality(value.quality))) return false
   if ('range' in value && value.range !== undefined && !isTimeRange(value.range)) return false
   if ('frame' in value && value.frame !== undefined && !(Number.isInteger(value.frame) && Number(value.frame) >= 0)) return false
+  if ('animationOverrides' in value && value.animationOverrides !== undefined && !isPathMap(value.animationOverrides)) return false
   return !('hasAudio' in value) || value.hasAudio === undefined || typeof value.hasAudio === 'boolean'
+}
+
+function isPathMap(value: unknown): value is Record<string, string> {
+  if (typeof value !== 'object' || value === null) return false
+  return Object.values(value).every((path) => typeof path === 'string')
 }
 
 export function withFormat(choices: ExportChoices, format: ExportFormat, projectRate: FrameRate): ExportChoices {

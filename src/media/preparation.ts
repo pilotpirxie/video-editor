@@ -1,4 +1,4 @@
-import type { AudioStretch, Cadence, MediaInfo, Wanted, WantedRange } from '../shared/mediaProtocol.js'
+import { isTimed, type AudioStretch, type Cadence, type MediaInfo, type Wanted, type WantedRange } from '../shared/mediaProtocol.js'
 import { NORMAL_SPEED_PERCENT, TICKS_PER_SAMPLE, TICKS_PER_SECOND, frameIndexAt } from '../shared/time.js'
 import { audioLayout, stretchedLayout, stretchKey, type AudioLayout } from './audio.js'
 import { previewLayout, type PreviewLayout } from './previewCopy.js'
@@ -31,12 +31,12 @@ export function previewLayoutOf(info: MediaInfo, segmentSeconds: number, cadence
 }
 
 export function audioLayoutOf(info: MediaInfo, segmentSeconds: number): AudioLayout | undefined {
-  if (info.kind === 'image' || info.audio === undefined) return undefined
+  if (!isTimed(info) || info.audio === undefined) return undefined
   return audioLayout(info.duration, segmentSeconds, info.audio.seeksExactly)
 }
 
 function sourceSpanOf(range: WantedRange, info: MediaInfo): SourceSpan {
-  if (range.isLooping && info.kind !== 'image') return { from: 0, to: info.duration }
+  if (range.isLooping && isTimed(info)) return { from: 0, to: info.duration }
   const length = ((range.timelineEnd - range.timelineStart) * range.speedPercent) / NORMAL_SPEED_PERCENT
   return { from: range.sourceStart, to: range.sourceStart + length }
 }
@@ -192,7 +192,7 @@ export function planPreparation(wanted: Wanted | undefined, media: readonly Prep
   for (const item of media) {
     if (used.has(item.id)) continue
     if (item.info.kind === 'video') ranges.push(unusedRange(item, 'picture'))
-    if (item.info.kind !== 'image' && item.info.audio !== undefined) ranges.push(unusedRange(item, 'sound'))
+    if (isTimed(item.info) && item.info.audio !== undefined) ranges.push(unusedRange(item, 'sound'))
   }
 
   const best = new Map<string, PreparationJob>()
