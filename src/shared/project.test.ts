@@ -481,10 +481,65 @@ describe('drawing clips', () => {
     expect(messageFor(withValue('swatches', [{ id: 'a', name: 'A', color: '#000000' }]))).toBe('project.swatches is not a known setting')
   })
 
-  it('have no keyframes yet', () => {
+  it('keep their keys on the nodes and node sets, never on the clip itself', () => {
     const keyed = { ...drawing, keyframes: { x: [{ time: 0, value: 1, easing: 'linear' }] } }
     const result = parseProject(animationWith([keyed]), 'animation')
     expect(result.ok || result.message).toBe('tracks[0].clips[0].keyframes is not a known setting')
+  })
+
+  const wave = [
+    { time: 0, value: 0, easing: 'easeInOut' },
+    { time: SECOND, value: -75, easing: 'linear' },
+  ]
+  const arm = { id: 'arm', name: 'Arm', pivot: { x: 10, y: 0 }, keyframes: { rotation: wave } }
+  const keyedFace = { ...face, nodes: [{ x: 0, y: 0, keyframes: { x: [{ time: 0, value: 2, easing: 'hold' }] } }, { x: 20, y: 0, sets: ['arm'] }, { x: 10, y: 15, sets: ['arm'] }] }
+
+  it('load and save node offset keys and node sets with their pivots and keys', () => {
+    const animated = { ...drawing, shapes: [keyedFace], nodeSets: [arm] }
+    const parsed = parseProject(animationWith([animated]), 'animation')
+    expect(parsed.ok && parsed.project.tracks[0]?.clips).toEqual([animated])
+    expect(parsed.ok && parseProject(serializeProject(parsed.project), 'animation')).toEqual(parsed)
+  })
+
+  it('reject node sets that nodes do not have, repeated set ids, empty lists and keys other than offsets', () => {
+    const setsRejectedWith = (clip: unknown): string => {
+      const result = parseProject(animationWith([clip]), 'animation')
+      return result.ok ? 'accepted' : result.message
+    }
+    expect(setsRejectedWith({ ...drawing, shapes: [keyedFace] })).toBe('tracks[0].clips[0].shapes[0].nodes[1].sets[0] must name a node set of this drawing')
+    expect(setsRejectedWith({ ...drawing, shapes: [face], nodeSets: [arm, arm] })).toBe('tracks[0].clips[0].nodeSets uses the id "arm" more than once')
+    expect(setsRejectedWith({ ...drawing, shapes: [face], nodeSets: [] })).toBe('tracks[0].clips[0].nodeSets must be a list with at least one node set; leave it out instead')
+    const twice = { ...face, nodes: [{ x: 0, y: 0, sets: ['arm', 'arm'] }, { x: 20, y: 0 }] }
+    expect(setsRejectedWith({ ...drawing, shapes: [twice], nodeSets: [arm] })).toBe('tracks[0].clips[0].shapes[0].nodes[0].sets[1] lists "arm" twice')
+    const empty = { ...face, nodes: [{ x: 0, y: 0, sets: [] }, { x: 20, y: 0 }] }
+    expect(setsRejectedWith({ ...drawing, shapes: [empty], nodeSets: [arm] })).toBe('tracks[0].clips[0].shapes[0].nodes[0].sets is empty; leave it out instead')
+    const turned = { ...face, nodes: [{ x: 0, y: 0, keyframes: { rotation: wave } }, { x: 20, y: 0 }] }
+    expect(setsRejectedWith({ ...drawing, shapes: [turned] })).toBe('tracks[0].clips[0].shapes[0].nodes[0].keyframes.rotation is not a known setting')
+  })
+
+  const hand = { id: 'hand', name: 'Hand', pivot: { x: 20, y: 0 }, parent: 'arm', keyframes: { scale: [{ time: 0, value: 1.5, easing: 'linear' }] } }
+
+  it('load and save shapes that follow a set, and sets with a parent', () => {
+    const rigged = { ...drawing, shapes: [{ ...face, follows: 'hand', ownsSet: true, children: [{ ...face, id: 'inner' }] }], nodeSets: [arm, hand] }
+    const parsed = parseProject(animationWith([rigged]), 'animation')
+    expect(parsed.ok && parsed.project.tracks[0]?.clips).toEqual([rigged])
+    expect(parsed.ok && parseProject(serializeProject(parsed.project), 'animation')).toEqual(parsed)
+  })
+
+  it('reject following or parenting a set the drawing lacks, a set parenting itself, and parent loops', () => {
+    const rejectedWith = (clip: unknown): string => {
+      const result = parseProject(animationWith([clip]), 'animation')
+      return result.ok ? 'accepted' : result.message
+    }
+    expect(rejectedWith({ ...drawing, shapes: [{ ...face, follows: 'leg' }], nodeSets: [arm] })).toBe('tracks[0].clips[0].shapes[0].follows must name a node set of this drawing')
+    expect(rejectedWith({ ...drawing, shapes: [face], nodeSets: [arm, { ...hand, parent: 'leg' }] })).toBe('tracks[0].clips[0].nodeSets[1].parent must name another node set of this drawing')
+    expect(rejectedWith({ ...drawing, shapes: [face], nodeSets: [{ ...arm, parent: 'arm' }] })).toBe('tracks[0].clips[0].nodeSets[0].parent must name another node set of this drawing')
+    expect(rejectedWith({ ...drawing, shapes: [face], nodeSets: [{ ...arm, parent: 'hand' }, hand] })).toBe('tracks[0].clips[0].nodeSets[0].parent makes node sets parent each other')
+    expect(rejectedWith({ ...drawing, shapes: [{ ...face, ownsSet: true }], nodeSets: [arm] })).toBe('tracks[0].clips[0].shapes[0].ownsSet needs a set it follows next to it')
+    const owner = { ...face, follows: 'arm', ownsSet: true }
+    expect(rejectedWith({ ...drawing, shapes: [owner, { ...owner, id: 'twin' }], nodeSets: [arm] })).toBe('tracks[0].clips[0].shapes[1].ownsSet "arm" is owned by more than one shape')
+    const flat = { ...arm, keyframes: { scale: [{ time: 0, value: 0, easing: 'linear' }] } }
+    expect(rejectedWith({ ...drawing, shapes: [face], nodeSets: [flat] })).toBe('tracks[0].clips[0].nodeSets[0].keyframes.scale[0].value must be greater than 0')
   })
 })
 

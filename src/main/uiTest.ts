@@ -730,6 +730,350 @@ async function testShapeStrokes(driver: Driver): Promise<UiTestReport> {
   return { rows }
 }
 
+const PEN_PATH = selector('pen-path')
+const CHOSEN_NODES = `${selector('canvas-overlay')}.dataset.selectedNodes`
+
+function nodesShown(shapeId: string): string {
+  return `document.querySelectorAll('[data-testid^="node-${shapeId}-"]').length`
+}
+
+// A closed path with a smooth node and a broken one, then an open path without a fill and one with it.
+async function testPenTool(driver: Driver): Promise<UiTestReport> {
+  await openCardAnimation(driver)
+  const pointAt = await artboardPointer(driver)
+  await driver.press('P')
+  await driver.until(isPressed('tool-pen'), 'the pen to be chosen')
+
+  await driver.clickAt(pointAt(160, 30))
+  await driver.clickAt(pointAt(200, 30))
+  await driver.drag(pointAt(200, 70), pointAt(220, 70))
+  await driver.drag(pointAt(160, 70), pointAt(160, 90), ['alt'])
+  await driver.hover(pointAt(170, 50))
+  await driver.until(`${selector('pen-preview')} !== null`, 'the next segment to show')
+  const nodesWhileDrawing = await driver.page.evaluate(`${PEN_PATH}.dataset.nodes`)
+  await driver.picture('pen-drawing')
+  await driver.clickAt(pointAt(160, 30))
+  await driver.untilUndoLabel('Undo Add Path')
+  await driver.until(`${PEN_PATH} === null`, 'the closed path to end')
+  driver.menu('undo')
+  await driver.untilUndoLabel('Undo')
+  driver.menu('redo')
+  await driver.untilUndoLabel('Undo Add Path')
+
+  await driver.clickAt(pointAt(240, 30))
+  await driver.clickAt(pointAt(280, 40))
+  await driver.until(`${PEN_PATH}?.dataset.nodes === '2'`, 'the open path to have two nodes')
+  await driver.press('Enter')
+  await driver.until(`${PEN_PATH} === null`, 'Enter to end the path')
+
+  await driver.page.click('pen-fill-open')
+  await driver.until(`${selector('pen-fill-open')}?.checked === true`, 'open paths to be filled')
+  await driver.clickAt(pointAt(240, 100))
+  await driver.clickAt(pointAt(280, 110))
+  await driver.until(`${PEN_PATH}?.dataset.nodes === '2'`, 'the filled path to have two nodes')
+  await driver.press('Escape')
+  await driver.until(`${PEN_PATH} === null`, 'Esc to end the path')
+  const isAnimationOpen = await driver.page.evaluate(`${selector('group-path')} !== null`)
+  driver.menu('save')
+  await untilEdited(driver, false)
+  return { nodesWhileDrawing, isAnimationOpen }
+}
+
+async function chooseRightSquare(driver: Driver): Promise<(x: number, y: number) => Point> {
+  await openCardAnimation(driver)
+  const pointAt = await artboardPointer(driver)
+  await driver.press('A')
+  await driver.until(isPressed('tool-node'), 'the node tool to be chosen')
+  await driver.clickAt(pointAt(120, 40))
+  await driver.until(`${nodesShown('right')} === 4`, 'the nodes of the right square')
+  return pointAt
+}
+
+// Right's nodes are moved, boxed, nudged and smoothed; then Left gets a node, loses it, and is broken in two.
+async function testNodeTool(driver: Driver): Promise<UiTestReport> {
+  const pointAt = await chooseRightSquare(driver)
+  const corner = centerOf(await driver.rect('node-right-0'))
+  await driver.drag(corner, { x: corner.x - 10, y: corner.y - 10 })
+  await driver.untilUndoLabel('Undo Move Node')
+  await clickTestId(driver, 'node-right-2')
+  await driver.until(`${CHOSEN_NODES} === '1'`, 'one node to be chosen')
+  await driver.clickAt(centerOf(await driver.rect('node-right-1')), ['shift'])
+  await driver.until(`${CHOSEN_NODES} === '2'`, 'a second node to be added')
+
+  driver.holdAt(pointAt(85, 50))
+  await driver.dragOn(pointAt(85, 50), pointAt(150, 70))
+  await driver.until(`${selector('marquee')} !== null`, 'the box to show')
+  await driver.picture('node-box')
+  await driver.releaseAt(pointAt(150, 70))
+  const isBoxed = `${selector('node-right-3')}?.classList.contains('chosen') === true && ${selector('node-right-1')}?.classList.contains('chosen') === false`
+  await driver.until(`${CHOSEN_NODES} === '2' && ${isBoxed}`, 'the bottom nodes to be boxed')
+
+  const timecode = `${selector('timecode')}.textContent`
+  const timeBefore = await driver.page.evaluate(timecode)
+  await driver.press('Up', ['shift'])
+  await driver.untilUndoLabel('Undo Nudge Nodes')
+  await driver.press('Right')
+  await sleep(POLL_INTERVAL_MS)
+  const timeAfter = await driver.page.evaluate(timecode)
+  await driver.page.click('node-type-smooth')
+  await driver.untilUndoLabel('Undo Change Node Type')
+  await driver.typeInto('node-y', '55')
+  await driver.untilUndoLabel('Undo Move Nodes')
+
+  await driver.clickAt(pointAt(85, 50))
+  await driver.until(`${CHOSEN_SHAPES} === '0'`, 'a click on nothing to let go')
+  await driver.clickAt(pointAt(120, 40))
+  await driver.until(`${nodesShown('right')} === 4`, 'the right square to be chosen again')
+  await clickTestId(driver, 'node-right-2')
+  await driver.until(`${selector('node-out-right-2')} !== null`, 'the handles of the smooth node')
+  const handle = centerOf(await driver.rect('node-out-right-2'))
+  await driver.drag(handle, { x: handle.x, y: handle.y + 20 })
+  await driver.untilUndoLabel('Undo Move Handle')
+  await driver.picture('node-handles')
+
+  await driver.clickAt(pointAt(40, 40))
+  await driver.until(`${nodesShown('left')} === 4`, 'the nodes of the left square')
+  await driver.clickAt(pointAt(40, 20))
+  await driver.untilUndoLabel('Undo Add Node')
+  const nodesAfterAdding = await driver.page.evaluate(nodesShown('left'))
+  await driver.press('Backspace')
+  await driver.untilUndoLabel('Undo Delete Node')
+
+  await clickTestId(driver, 'node-left-0')
+  await driver.page.click('node-break')
+  await driver.until(`${nodesShown('left')} === 5`, 'the left square to open')
+  await clickTestId(driver, 'node-left-2')
+  await driver.page.click('node-break')
+  await driver.until(`${nodesShown('left')} === 3`, 'the left path to split')
+  await driver.page.click('node-close')
+  await driver.untilUndoLabel('Undo Close Path')
+  driver.menu('save')
+  await untilEdited(driver, false)
+  return { timeBefore, timeAfter, nodesAfterAdding }
+}
+
+const SNAP_GUIDES = `document.querySelectorAll('.snap-guide').length`
+
+async function dragNodeHeld(driver: Driver, testId: string, to: Point, guides: number): Promise<void> {
+  const from = centerOf(await driver.rect(testId))
+  driver.holdAt(from)
+  await driver.dragOn(from, to)
+  await driver.until(`${SNAP_GUIDES} === ${guides}`, `${guides} snap guides`)
+}
+
+// Right's corners snap onto Left's corner, then the top edge, and not with ⌘; a pen path and a rectangle snap the same way.
+async function testNodeSnapping(driver: Driver): Promise<UiTestReport> {
+  const pointAt = await chooseRightSquare(driver)
+
+  await dragNodeHeld(driver, 'node-right-0', pointAt(63, 22), 2)
+  await driver.picture('node-snap-guides')
+  await driver.releaseAt(pointAt(63, 22))
+  await driver.untilUndoLabel('Undo Move Node')
+  await driver.until(`${SNAP_GUIDES} === 0`, 'the guides to go')
+  await dragNodeHeld(driver, 'node-right-1', pointAt(150, 3), 1)
+  await driver.releaseAt(pointAt(150, 3))
+  await driver.until(`${SNAP_GUIDES} === 0`, 'the edge guide to go')
+  const corner = centerOf(await driver.rect('node-right-3'))
+  await driver.drag(corner, pointAt(63, 62), ['meta'])
+  await driver.until(`${SNAP_GUIDES} === 0`, 'no guides without snapping')
+
+  await driver.press('P')
+  await driver.until(isPressed('tool-pen'), 'the pen to be chosen')
+  await driver.clickAt(pointAt(22, 62))
+  await driver.clickAt(pointAt(200, 100))
+  await driver.until(`${PEN_PATH}?.dataset.nodes === '2'`, 'the path to have two nodes')
+  await driver.press('Enter')
+  await driver.untilUndoLabel('Undo Add Path')
+
+  await driver.press('M')
+  await driver.until(isPressed('tool-rectangle'), 'the rectangle tool to be chosen')
+  await driver.drag(pointAt(3, 150), pointAt(40, 177))
+  await driver.untilUndoLabel('Undo Add Rectangle')
+  driver.menu('save')
+  await untilEdited(driver, false)
+  const preview = await driver.rect('preview')
+  return { previewWidth: preview.width }
+}
+
+const CARD_TRACKS = 2
+const CLIP_DIAMOND_BELOW_MIDDLE = TRACK_HEIGHT / 2 - 8
+
+// Inside the 12 fps card the timecode shows frame numbers; even ones start on a frame of the 30 fps episode, where the playhead lands.
+async function seekToFrame(driver: Driver, frame: number): Promise<void> {
+  const timeline = await driver.rect('timeline')
+  const onTrack = await driver.timelinePoint((frame * TICKS_PER_SECOND) / 12, 0, CARD_TRACKS)
+  await driver.clickAt({ x: onTrack.x, y: timeline.y + RULER_HEIGHT / 2 })
+  await driver.until(`${selector('timecode')}.textContent === '${frame}'`, `the playhead at frame ${frame}`)
+}
+
+async function clipDiamondPoint(driver: Driver, time: number): Promise<Point> {
+  const onTrack = await driver.timelinePoint(time, 0, CARD_TRACKS)
+  return { x: onTrack.x, y: onTrack.y + CLIP_DIAMOND_BELOW_MIDDLE }
+}
+
+async function chooseMenuItem(driver: Driver, testId: string): Promise<void> {
+  await driver.until(`${selector(testId)} !== null`, `the ${testId} menu item`)
+  await driver.page.click(testId)
+}
+
+const ONION_OUTLINES = `[...document.querySelectorAll('.onion')].map((outline) => ({ testId: outline.dataset.testid, opacity: outline.getAttribute('opacity') }))`
+
+// The card's bottom track holds four drawings of half a second; the third one is at the playhead and chosen.
+async function testOnionSkin(driver: Driver): Promise<UiTestReport> {
+  await openCardAnimation(driver)
+  await seekToFrame(driver, 14)
+  await driver.clickAt(await driver.timelinePoint((5 * TICKS_PER_SECOND) / 4, 0, CARD_TRACKS))
+  await driver.page.click('onion-skin-button')
+  await driver.until(`document.querySelectorAll('.onion').length === 3`, 'the outlines of the drawings around the playhead')
+  const outlines = await driver.page.evaluate(ONION_OUTLINES)
+  await driver.picture('onion-skin')
+  await driver.page.click('onion-skin-button')
+  await driver.until(`document.querySelectorAll('.onion').length === 0`, 'the outlines to go')
+  return { outlines }
+}
+
+// Right's top right corner is keyed at frame 0 and moved at frame 12, where its keys are eased, copied and pasted at frame 18; the frame 18 keys are then dragged to frame 21 on Right's row.
+async function testNodeKeys(driver: Driver): Promise<UiTestReport> {
+  await chooseRightSquare(driver)
+  await clickTestId(driver, 'node-right-1')
+  await driver.until(`${CHOSEN_NODES} === '1'`, 'the corner to be chosen')
+  await driver.page.click('node-position-keyframe')
+  await driver.untilUndoLabel('Undo Add Node Keyframe')
+  await seekToFrame(driver, 12)
+  const corner = centerOf(await driver.rect('node-right-1'))
+  await driver.drag(corner, { x: corner.x + 20, y: corner.y })
+  await driver.untilUndoLabel('Undo Move Node')
+  const unkeyed = centerOf(await driver.rect('node-right-0'))
+  await driver.drag(unkeyed, { x: unkeyed.x, y: unkeyed.y - 10 })
+  await driver.untilUndoLabel('Undo Move Node')
+
+  await driver.rightClickAt(await clipDiamondPoint(driver, TICKS_PER_SECOND))
+  await chooseMenuItem(driver, 'menu-easing-easeIn')
+  await driver.untilUndoLabel('Undo Change Keys Easing')
+  await driver.rightClickAt(await clipDiamondPoint(driver, TICKS_PER_SECOND))
+  await chooseMenuItem(driver, 'menu-copy-keys')
+  await seekToFrame(driver, 18)
+  await driver.rightClickAt(await driver.timelinePoint((7 * TICKS_PER_SECOND) / 4, 0, CARD_TRACKS))
+  await chooseMenuItem(driver, 'menu-paste-keys')
+  await driver.untilUndoLabel('Undo Paste Keys')
+
+  await driver.clickAt(centerOf(await driver.rect('track-expand-0')))
+  await driver.until(`${selector('shape-row-right')} !== null`, 'the shape rows')
+  const row = await shapeRowPoint(driver, 'shape-row-right')
+  const from = { x: (await driver.timelinePoint((3 * TICKS_PER_SECOND) / 2, 0, CARD_TRACKS)).x, y: row.y }
+  const to = { x: (await driver.timelinePoint((7 * TICKS_PER_SECOND) / 4, 0, CARD_TRACKS)).x, y: row.y }
+  await driver.drag(from, to)
+  await driver.untilUndoLabel('Undo Move Keys')
+  await driver.picture('node-keys')
+  driver.menu('save')
+  await untilEdited(driver, false)
+  return {}
+}
+
+async function saveBoxedCorners(driver: Driver, from: Point, to: Point, shapeName: string): Promise<void> {
+  await driver.drag(from, to)
+  await driver.until(`${CHOSEN_NODES} === '4'`, `the corners of ${shapeName} to be boxed`)
+  await driver.page.click('node-set-save')
+  await driver.untilUndoLabel('Undo Save Node Set')
+}
+
+// Right's four corners become a set that is turned at frame 0, typed to 90° and moved at frame 12, and whose pivot is then dragged.
+async function testNodeSets(driver: Driver): Promise<UiTestReport> {
+  const pointAt = await chooseRightSquare(driver)
+  await saveBoxedCorners(driver, pointAt(90, 10), pointAt(150, 70), 'Right')
+  await driver.until(isPressed('node-set-Set 1'), 'the new set to be selected')
+  await driver.typeInto('node-set-name', 'Arm')
+  await driver.untilUndoLabel('Undo Rename Node Set')
+  await driver.until(isPressed('node-set-Arm'), 'the renamed set')
+
+  const turn = centerOf(await driver.rect('set-turn'))
+  const pivot = centerOf(await driver.rect('set-pivot'))
+  await driver.drag(turn, { x: turn.x - (turn.y - pivot.y), y: turn.y + (turn.x - pivot.x) })
+  await driver.untilUndoLabel('Undo Rotate Node Set')
+  const isGhostShownAtFirstKey = await driver.page.evaluate(`${selector('set-ghost')} !== null`)
+  await seekToFrame(driver, 12)
+  await driver.typeInto('node-set-rotation', '90')
+  await driver.untilUndoLabel('Undo Rotate Node Set')
+  await driver.until(`${selector('set-ghost')} !== null`, 'the outline at the previous key')
+  await driver.picture('node-set-ghost')
+
+  const corner = centerOf(await driver.rect('node-right-0'))
+  await driver.drag(corner, { x: corner.x + 20, y: corner.y })
+  await driver.untilUndoLabel('Undo Move Node Set')
+  const movedPivot = centerOf(await driver.rect('set-pivot'))
+  await driver.drag(movedPivot, { x: movedPivot.x - 50, y: movedPivot.y + 50 })
+  await driver.untilUndoLabel('Undo Move Pivot')
+  driver.menu('save')
+  await untilEdited(driver, false)
+  const preview = await driver.rect('preview')
+  return { isGhostShownAtFirstKey, previewWidth: preview.width }
+}
+
+// Set choices carry the set's random id, so the option is found by the set's name.
+async function pickSetNamed(driver: Driver, testId: string, name: string): Promise<void> {
+  await clickTestId(driver, testId)
+  const options = `[...document.querySelectorAll('[data-testid="${testId}-options"] [role="option"]')]`
+  await driver.until(`${options}.length > 0`, `the choices of ${testId}`)
+  const option = await driver.page.evaluate(`${options}.find((option) => option.textContent === '${name}')?.dataset.testid`)
+  if (typeof option !== 'string') throw new Error(`${testId} offers no "${name}"`)
+  await clickTestId(driver, option)
+  await driver.until(`${options}.length === 0`, `the choices of ${testId} to close`)
+}
+
+// Right's corners make Set 1, which Left follows; Left's corners make Set 2 under Set 1, which is then turned to -30° at frame 0.
+async function testFollowAndParent(driver: Driver): Promise<UiTestReport> {
+  const pointAt = await chooseRightSquare(driver)
+  await saveBoxedCorners(driver, pointAt(90, 10), pointAt(150, 70), 'Right')
+  await driver.clickAt(pointAt(40, 40))
+  await driver.until(`${nodesShown('left')} === 4`, 'the nodes of Left')
+  await pickSetNamed(driver, 'shape-follow', 'Set 1')
+  await driver.untilUndoLabel('Undo Follow Node Set')
+
+  await saveBoxedCorners(driver, pointAt(10, 10), pointAt(70, 70), 'Left')
+  await pickSetNamed(driver, 'node-set-parent', 'Set 1')
+  await driver.untilUndoLabel('Undo Change Parent Set')
+  const pivotBefore = centerOf(await driver.rect('set-pivot'))
+  const cornerBefore = centerOf(await driver.rect('node-left-0'))
+
+  await driver.page.click('node-set-Set 1')
+  await driver.until(isPressed('node-set-Set 1'), 'Set 1 to be selected')
+  await driver.typeInto('node-set-rotation', '-30')
+  await driver.untilUndoLabel('Undo Rotate Node Set')
+  await driver.page.click('node-set-Set 2')
+  await driver.until(isPressed('node-set-Set 2'), 'Set 2 to be selected')
+  const pivotAfter = centerOf(await driver.rect('set-pivot'))
+  const cornerAfter = centerOf(await driver.rect('node-left-0'))
+  driver.menu('save')
+  await untilEdited(driver, false)
+  const preview = await driver.rect('preview')
+  return { pivotBefore, pivotAfter, cornerBefore, cornerAfter, previewWidth: preview.width }
+}
+
+// Right gets a rotation key at frame 0 in the Transform group; at frame 12 the box turns it a quarter and its bottom right corner grows it.
+async function testShapeKeys(driver: Driver): Promise<UiTestReport> {
+  await openCardAnimation(driver)
+  const pointAt = await artboardPointer(driver)
+  await driver.press('V')
+  await driver.until(isPressed('tool-move'), 'the move tool to be chosen')
+  const middle = pointAt(120, 40)
+  await driver.clickAt(middle)
+  await driver.until(`${CHOSEN_SHAPES} === '1'`, 'Right to be selected')
+  await driver.page.click('shape-rotation-keyframe')
+  await driver.untilUndoLabel('Undo Add Rotation Keyframe')
+  const hasSideHandles = await driver.page.evaluate(`${selector('handle-e')} !== null`)
+
+  await seekToFrame(driver, 12)
+  const turn = centerOf(await driver.rect('handle-rotate'))
+  await driver.drag(turn, { x: middle.x + (middle.y - turn.y), y: middle.y })
+  await driver.untilUndoLabel('Undo Rotate Shape')
+  const corner = centerOf(await driver.rect('handle-se'))
+  await driver.drag(corner, { x: corner.x + (corner.x - middle.x) / 2, y: corner.y + (corner.y - middle.y) / 2 })
+  await driver.untilUndoLabel('Undo Resize Shape')
+  driver.menu('save')
+  await untilEdited(driver, false)
+  return { hasSideHandles }
+}
+
 async function testAnimationCrash(driver: Driver): Promise<UiTestReport> {
   await fadeCardInsideAnimation(driver)
   await untilRecoveryFiles(1, '.animations')
@@ -832,6 +1176,14 @@ const SCENARIOS: Record<string, Scenario> = {
   'shape-edits': testShapeEdits,
   'shape-paint': testShapePaint,
   'shape-strokes': testShapeStrokes,
+  'pen-tool': testPenTool,
+  'node-tool': testNodeTool,
+  'node-snapping': testNodeSnapping,
+  'onion-skin': testOnionSkin,
+  'node-keys': testNodeKeys,
+  'node-sets': testNodeSets,
+  'follow-and-parent': testFollowAndParent,
+  'shape-keys': testShapeKeys,
   'animation-crash': testAnimationCrash,
   'animation-restore': testAnimationRestore,
   budgets: testBudgets,

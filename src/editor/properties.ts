@@ -1,5 +1,6 @@
 import { scaledEffect, type MediaStates } from '../engine/resolve.js'
 import type { Size } from '../shared/exportPresets.js'
+import type { Documents } from '../shared/mediaProtocol.js'
 import { MAX_CANVAS, MIN_CANVAS, isVisual, valueAt, type AnimatableProperty, type Clip, type Crop, type Easing, type Keyframe, type Keyframes, type Project, type Transform } from '../shared/project.js'
 import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, TIMELINE_GRID, frameAt, frameDuration, type FrameRate } from '../shared/time.js'
 import { editClips, endOf, hasSource, hasVolume, isCroppable, isContainer, locateClip, withFadesWithin, withOnlyAtEnd } from './clips.js'
@@ -160,10 +161,16 @@ function isAnimated(clip: Clip, properties: readonly AnimatableProperty[]): bool
   return properties.some((property) => clip.keyframes?.[property] !== undefined)
 }
 
-function keyTimeAt(clip: Clip, properties: readonly AnimatableProperty[], time: number, frameTicks: number): number {
-  const local = localGridTime(clip, time)
-  for (const property of properties) {
-    for (const keyframe of clip.keyframes?.[property] ?? []) {
+export type KeyframeLists = readonly (readonly Keyframe[] | undefined)[]
+
+function listsOf(clip: Clip, properties: readonly AnimatableProperty[]): KeyframeLists {
+  return properties.map((property) => clip.keyframes?.[property])
+}
+
+// A key anywhere inside the playhead's frame is the key at the playhead, since seeks land on frame starts.
+export function keyTimeIn(lists: KeyframeLists, local: number, frameTicks: number): number {
+  for (const list of lists) {
+    for (const keyframe of list ?? []) {
       const isInFrame = keyframe.time >= local && keyframe.time < local + frameTicks
       if (isInFrame) return keyframe.time
     }
@@ -171,15 +178,23 @@ function keyTimeAt(clip: Clip, properties: readonly AnimatableProperty[], time: 
   return local
 }
 
-function easingAt(clip: Clip, properties: readonly AnimatableProperty[], local: number): Easing {
-  for (const property of properties) {
-    const partner = clip.keyframes?.[property]?.find((keyframe) => keyframe.time === local)
+function keyTimeAt(clip: Clip, properties: readonly AnimatableProperty[], time: number, frameTicks: number): number {
+  return keyTimeIn(listsOf(clip, properties), localGridTime(clip, time), frameTicks)
+}
+
+export function easingIn(lists: KeyframeLists, local: number): Easing {
+  for (const list of lists) {
+    const partner = list?.find((keyframe) => keyframe.time === local)
     if (partner !== undefined) return partner.easing
   }
   return 'linear'
 }
 
-function withKeyframeAt(keyframes: readonly Keyframe[], time: number, value: number, easing: Easing): Keyframe[] {
+function easingAt(clip: Clip, properties: readonly AnimatableProperty[], local: number): Easing {
+  return easingIn(listsOf(clip, properties), local)
+}
+
+export function withKeyframeAt(keyframes: readonly Keyframe[], time: number, value: number, easing: Easing): Keyframe[] {
   const existing = keyframes.find((keyframe) => keyframe.time === time)
   if (existing !== undefined) return keyframes.map((keyframe) => (keyframe === existing ? { ...keyframe, value } : keyframe))
   return [...keyframes, { time, value, easing }].sort((a, b) => a.time - b.time)
@@ -228,7 +243,7 @@ function changedSets(clip: Clip, values: PropertyValues, time: number): Animatab
   return changed
 }
 
-function localGridTime(clip: Clip, time: number): number {
+export function localGridTime(clip: Clip, time: number): number {
   const inside = Math.min(clip.duration, Math.max(0, time - clip.start))
   return Math.round(inside / TIMELINE_GRID) * TIMELINE_GRID
 }
@@ -307,21 +322,37 @@ export function keyframeFrame(clip: Clip, localTime: number, frameTicks: number)
   return Math.min(lastFrame, Math.max(firstFrame, frameAt(clip.start + localTime, frameTicks)))
 }
 
-export function nearestKeyframe(clips: readonly Clip[], set: KeyframeSet, time: number, direction: 1 | -1, frameTicks: number): number | undefined {
+export type ClipKeyTimes = {
+  clip: Clip
+  times: readonly number[]
+}
+
+export function nearestKeyTime(entries: readonly ClipKeyTimes[], time: number, direction: 1 | -1, frameTicks: number): number | undefined {
   const current = frameAt(time, frameTicks)
   let nearest: number | undefined
-  for (const clip of clips) {
-    for (const property of KEYFRAME_SETS[set]) {
-      for (const keyframe of clip.keyframes?.[property] ?? []) {
-        if (keyframe.time < 0 || keyframe.time > clip.duration) continue
-        const frame = keyframeFrame(clip, keyframe.time, frameTicks)
-        const isOnThatSide = direction === 1 ? frame > current : frame < current
-        const isCloser = nearest === undefined || Math.abs(frame - current) < Math.abs(nearest - current)
-        if (isOnThatSide && isCloser) nearest = frame
-      }
+  for (const { clip, times } of entries) {
+    for (const keyTime of times) {
+      if (keyTime < 0 || keyTime > clip.duration) continue
+      const frame = keyframeFrame(clip, keyTime, frameTicks)
+      const isOnThatSide = direction === 1 ? frame > current : frame < current
+      const isCloser = nearest === undefined || Math.abs(frame - current) < Math.abs(nearest - current)
+      if (isOnThatSide && isCloser) nearest = frame
     }
   }
   return nearest === undefined ? undefined : nearest * frameTicks
+}
+
+function keyTimesOf(clip: Clip, properties: readonly AnimatableProperty[]): number[] {
+  const times: number[] = []
+  for (const list of listsOf(clip, properties)) {
+    for (const keyframe of list ?? []) times.push(keyframe.time)
+  }
+  return times
+}
+
+export function nearestKeyframe(clips: readonly Clip[], set: KeyframeSet, time: number, direction: 1 | -1, frameTicks: number): number | undefined {
+  const entries = clips.map((clip) => ({ clip, times: keyTimesOf(clip, KEYFRAME_SETS[set]) }))
+  return nearestKeyTime(entries, time, direction, frameTicks)
 }
 
 export type MotionPath = {
@@ -408,22 +439,22 @@ export function setSoundSwitches(project: Project, clipIds: readonly string[], s
   })
 }
 
-export function setDuration(project: Project, clipIds: readonly string[], duration: number, frameTicks: number, mediaStates: MediaStates): Project {
+export function setDuration(project: Project, clipIds: readonly string[], duration: number, frameTicks: number, mediaStates: MediaStates, documents: Documents): Project {
   let edited = project
   for (const clipId of clipIds) {
     const located = locateClip(edited, clipId)
     if (located === undefined) continue
-    const trim = { clipId, edge: 'end' as const, time: located.clip.start + duration, isRipple: false, frameTicks, mediaStates }
+    const trim = { clipId, edge: 'end' as const, time: located.clip.start + duration, isRipple: false, frameTicks, mediaStates, documents }
     edited = trimClip(edited, trim)
   }
   return edited
 }
 
-export function setSourceStart(project: Project, clipIds: readonly string[], sourceStart: number, mediaStates: MediaStates): Project {
+export function setSourceStart(project: Project, clipIds: readonly string[], sourceStart: number, mediaStates: MediaStates, documents: Documents): Project {
   return editClips(project, new Set(clipIds), (clip) => {
     if (!hasSource(clip)) return clip
     const used = (clip.duration / TIMELINE_GRID) * clip.speedPercent
-    const available = sourceDuration(clip, mediaStates) ?? Infinity
+    const available = sourceDuration(clip, mediaStates, documents) ?? Infinity
     const latest = Math.max(0, available - used)
     const start = Math.round(Math.min(latest, Math.max(0, sourceStart)))
     return start === clip.sourceStart ? clip : { ...clip, sourceStart: start }
@@ -450,20 +481,26 @@ export function setSpeed(project: Project, clipIds: readonly string[], speedPerc
   return edited
 }
 
-export function setLoop(project: Project, clipIds: readonly string[], isLooping: boolean, mediaStates: MediaStates): Project {
+function isAnimatedImage(clip: Clip, mediaStates: MediaStates): boolean {
+  const state = clip.type === 'video' ? mediaStates[clip.mediaId] : undefined
+  if (state === undefined || 'error' in state) return false
+  return state.info.kind === 'video' && state.info.isAnimatedImage === true
+}
+
+// Played once, a clip ends where its source does.
+export function setLoop(project: Project, clipIds: readonly string[], isLooping: boolean, mediaStates: MediaStates, documents: Documents): Project {
   return editClips(project, new Set(clipIds), (clip) => {
     if (clip.type !== 'video' && clip.type !== 'animation') return clip
     const isAlreadySet = (clip.loop === true) === isLooping
     if (isAlreadySet) return clip
-    if (clip.type === 'animation') return isLooping ? { ...clip, loop: true } : { ...clip, loop: undefined }
-    const state = mediaStates[clip.mediaId]
-    if (state === undefined || 'error' in state) return clip
-    if (state.info.kind !== 'video' || state.info.isAnimatedImage !== true) return clip
+    if (clip.type === 'video' && !isAnimatedImage(clip, mediaStates)) return clip
     if (isLooping) return { ...clip, loop: true }
 
     const { loop: _loop, ...once } = clip
-    const sourceStart = clip.sourceStart % state.info.duration
-    const longest = Math.max(TIMELINE_GRID, timelineSpan(state.info.duration - sourceStart, clip.speedPercent))
+    const length = sourceDuration(once, mediaStates, documents)
+    if (length === undefined) return once
+    const sourceStart = clip.sourceStart % length
+    const longest = Math.max(TIMELINE_GRID, timelineSpan(length - sourceStart, clip.speedPercent))
     return withFadesWithin({ ...once, sourceStart, duration: Math.min(clip.duration, longest) })
   })
 }

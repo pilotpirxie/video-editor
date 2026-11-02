@@ -1,5 +1,5 @@
 import { emptyTrack, locateClip } from '../editor/clips.js'
-import { NEW_SHAPE_STYLE, pickableShape, styleWithColor, type ColorPart, type ShapeRef, type ShapeStyle } from '../editor/drawings.js'
+import { NEW_SHAPE_STYLE, nodeSetOf, pickableShape, shapeAt, styleWithColor, type ColorPart, type NodeRef, type SetRef, type ShapeRef, type ShapeStyle } from '../editor/drawings.js'
 import { resolveScope, withScopedProject, type Scope } from '../editor/groups.js'
 import { EMPTY_HISTORY, changedDocuments, record, redo, undo, type History, type Step, type Travel } from '../editor/history.js'
 import type { MediaStates } from '../engine/resolve.js'
@@ -9,7 +9,7 @@ import { DEFAULT_SETTINGS, type AppSettings } from '../shared/settings.js'
 
 export type Edit = (project: Project) => Project
 
-export type DrawingTool = 'move' | 'fill' | 'rectangle' | 'ellipse' | 'picker'
+export type DrawingTool = 'move' | 'node' | 'pen' | 'fill' | 'rectangle' | 'ellipse' | 'picker'
 
 type ExportStatus =
   | { phase: 'running'; fileName: string; done: number; total: number; startedAt: number }
@@ -27,8 +27,11 @@ export type EditorState = {
   mediaStates: MediaStates
   selection: readonly string[]
   selectedShapes: readonly ShapeRef[]
+  selectedNodes: readonly NodeRef[]
+  selectedSet: SetRef | undefined
   tool: DrawingTool
   drawingStyle: ShapeStyle
+  isFillingOpenPaths: boolean
   colorPart: ColorPart
   expandedTracks: ReadonlySet<string>
   selectedZoom: number | undefined
@@ -73,9 +76,12 @@ export type EditorStore = {
   redo(): void
   select(clipIds: readonly string[]): void
   selectShapes(shapes: readonly ShapeRef[]): void
+  selectNodes(nodes: readonly NodeRef[]): void
+  selectSet(set: SetRef, shapes: readonly ShapeRef[], nodes: readonly NodeRef[]): void
   setTool(tool: DrawingTool): void
   setDrawingColor(part: ColorPart, color: string, swatchId?: string): void
   setDrawingStroke(stroke: ShapeStroke | undefined): void
+  setFillingOpenPaths(isFilling: boolean): void
   setColorPart(part: ColorPart): void
   expandTrack(trackId: string, isExpanded: boolean): void
   openGroup(groupId: string): void
@@ -115,6 +121,7 @@ type Gesture = {
 
 const NO_SELECTION: readonly string[] = []
 const NO_SHAPES: readonly ShapeRef[] = []
+const NO_NODES: readonly NodeRef[] = []
 const NO_DOCUMENTS: Documents = {}
 
 const STARTING_TRACKS = 6
@@ -148,6 +155,25 @@ function withoutUnpickableShapes(selected: readonly ShapeRef[], project: Project
   return kept.length === selected.length ? selected : kept
 }
 
+// Nodes stay chosen only with the Node tool, on chosen shapes, while they exist.
+function withoutStaleNodes(next: EditorState): readonly NodeRef[] {
+  const { selectedNodes, selectedShapes, tool, project } = next
+  if (selectedNodes.length === 0) return selectedNodes
+  if (tool !== 'node') return NO_NODES
+  const kept: NodeRef[] = []
+  for (const node of selectedNodes) {
+    const isShapeChosen = selectedShapes.some((shape) => shape.clipId === node.clipId && shape.shapeId === node.shapeId)
+    const nodeCount = shapeAt(project, node)?.nodes.length ?? 0
+    if (isShapeChosen && node.index < nodeCount) kept.push(node)
+  }
+  return kept.length === selectedNodes.length ? selectedNodes : kept
+}
+
+function hasSet(project: Project, set: SetRef): boolean {
+  const clip = locateClip(project, set.clipId)?.clip
+  return clip?.type === 'drawing' && nodeSetOf(clip, set.setId) !== undefined
+}
+
 export function createEditorStore(settings: AppSettings = DEFAULT_SETTINGS): EditorStore {
   const blank = blankProject()
   let state: EditorState = {
@@ -161,8 +187,11 @@ export function createEditorStore(settings: AppSettings = DEFAULT_SETTINGS): Edi
     mediaStates: {},
     selection: NO_SELECTION,
     selectedShapes: NO_SHAPES,
+    selectedNodes: NO_NODES,
+    selectedSet: undefined,
     tool: 'move',
     drawingStyle: NEW_SHAPE_STYLE,
+    isFillingOpenPaths: false,
     colorPart: 'fill',
     expandedTracks: new Set(),
     selectedZoom: undefined,
@@ -210,6 +239,12 @@ export function createEditorStore(settings: AppSettings = DEFAULT_SETTINGS): Edi
       const isZoomGone = next.selectedZoom !== undefined && next.project.camera?.[next.selectedZoom] === undefined
       if (isZoomGone) next.selectedZoom = undefined
     }
+    const mayHaveStaleNodes = next.project !== state.project || next.selectedShapes !== state.selectedShapes || next.tool !== state.tool
+    if (mayHaveStaleNodes) next.selectedNodes = withoutStaleNodes(next)
+    // A set stays selected while the nodes it chose stay chosen, with the Node tool, as long as it exists.
+    const isSetChoiceKept = next.selectedNodes === state.selectedNodes || 'selectedSet' in changes
+    const set = next.selectedSet
+    if (set !== undefined && (!isSetChoiceKept || next.tool !== 'node' || !hasSet(next.project, set))) next.selectedSet = undefined
     state = next
     for (const listener of listeners) listener()
   }
@@ -338,12 +373,15 @@ export function createEditorStore(settings: AppSettings = DEFAULT_SETTINGS): Edi
     redo: () => travel(redo),
     select: (clipIds) => setState({ selection: clipIds, selectedShapes: NO_SHAPES, selectedZoom: undefined }),
     selectShapes: (selectedShapes) => setState({ selectedShapes, selection: NO_SELECTION, selectedZoom: undefined }),
+    selectNodes: (selectedNodes) => setState({ selectedNodes }),
+    selectSet: (selectedSet, selectedShapes, selectedNodes) => setState({ selectedSet, selectedShapes, selectedNodes, selection: NO_SELECTION, selectedZoom: undefined }),
     setTool: (tool) => setState({ tool }),
     setDrawingColor: (part, color, swatchId) => setState({ drawingStyle: styleWithColor(state.drawingStyle, part, color, swatchId) }),
     setDrawingStroke(stroke) {
       const { stroke: _old, ...unstroked } = state.drawingStyle
       setState({ drawingStyle: stroke === undefined ? unstroked : { ...unstroked, stroke } })
     },
+    setFillingOpenPaths: (isFillingOpenPaths) => setState({ isFillingOpenPaths }),
     setColorPart: (colorPart) => setState({ colorPart }),
     expandTrack(trackId, isExpanded) {
       if (state.expandedTracks.has(trackId) === isExpanded) return

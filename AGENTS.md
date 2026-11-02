@@ -54,8 +54,8 @@ Episode › Animation › Track › Drawing › Shape › Node set. The word "la
 - **Colours:** each animation file has shared colours. A fill or stroke uses either a shared colour or its own hex. Changing a shared colour updates every shape that uses it.
 - **Moving nodes:**
   - Node offset keys and node-set keys (rotation, x, y) live on the drawing clip. They show as diamonds and use the existing easings.
-  - Node offsets apply first, then the node sets in list order.
-  - A shape can follow a node set; hands and feet do this.
+  - Node offsets apply first, then the node sets, each before its parent and otherwise in list order.
+  - A shape can follow a node set; hands and feet do this. Keying a shape's move, turn or scale gives it a node set of its own.
 - **Outlines only on the outside:** a body is one closed shape. Its inner colours are shapes clipped inside it, and its stroke draws above them.
 - **Target track:** tools act on the track of the selected clip, or on the top track when nothing is selected. There is no separate track selection.
 
@@ -86,7 +86,7 @@ Made in this plan (veto any of them before its ticket is built):
 - With the Node tool and nodes selected, the arrow keys nudge the nodes; otherwise they step frames as now.
 - Pasting a drawing clip into an episode is refused.
 - Save As saves the episode only; ⌘S also saves changed animations.
-- Animation clips trim freely and show nothing past the animation's end unless Loop is on. They always scale evenly, like groups.
+- A played animation clip can't be trimmed, typed or set by its source offset past the animation's end, at its speed, like a video clip (user, 2026-10-30); switching Loop off shortens it the same way. Looping clips, Hold frame (A-59) and empty animations stay free. A clip left past the end after the animation gets shorter shows nothing there. Animation clips always scale evenly, like groups.
 - Sound inside an animation is silent while the animation clip's speed isn't 100%.
 - Inside an animation, only the Timing group (start, duration, source offset) is in frames; fade and transition lengths stay in seconds.
 - Stepped playback steps pictures only; sound inside an animation plays unstepped.
@@ -101,7 +101,7 @@ Made in this plan (veto any of them before its ticket is built):
 - The shapes' selection box is upright in the artboard, fits the outlines without their strokes, and refits as they turn. Corners keep the aspect and Shift frees it, as for clips. A stroke set to Scale with object grows by the geometric mean of the box's two scales.
 - Clipped children are drawn from A-28, because the file format holds them; A-41 adds the way to make them. A double-click picks a direct child, and a press on a chosen child moves that child.
 - The fill and stroke wells show the first selected shape's colours, or the current colours with nothing selected. A click picks which one the Colour group edits.
-- The Rectangle and Ellipse tools stay on after a drag and select the new shape. A hidden or locked target track gets the new drawing on a track above it. Coordinates are not rounded until A-47.
+- The Rectangle and Ellipse tools stay on after a drag and select the new shape. A hidden or locked target track gets the new drawing on a track above it. Their corners snap as nodes do (A-47).
 - A clip after a drawing plays its transition in on its own, as after a gap; drawings take no part in transitions.
 - Shape rows are 30 px and list front to back. An expanded track is as tall as its drawing with the most shapes, so rows below never jump. Only tracks holding a drawing get ▸; expansion is per window, by track id, and isn't saved. With no drawing at the playhead, an expanded track shows "No drawing at the playhead".
 - Hiding or locking a shape also hides or locks its clipped children. Hidden or locked shapes can't be selected from the list or the canvas, and hiding or locking unselects them.
@@ -114,7 +114,7 @@ Made in this plan (veto any of them before its ticket is built):
 - The Colour group is open at start, shows the first selected shape's colour and sets every selected shape. Setting a stroke colour on a shape without a stroke gives it a 4 px stroke. Opacity is stored as `#RRGGBBAA`.
 - The colour field is a full-saturation spectrum, as in the mockup; a pick there sets hue and lightness and makes saturation 100%. Gradients appear only in the field and the slider tracks.
 - The slider tracks take no keyboard focus; their number fields are the keyboard path until A-76.
-- G picks Fill and I picks Colour picker, as in Affinity; both are rebindable. The tool strip follows mockup v3: Move | Fill | Rectangle, Ellipse | Colour picker.
+- G picks Fill and I picks Colour picker, as in Affinity; both are rebindable. The tool strip follows mockup v3 without the tools not built yet: Move, Node | Pen, Fill | Rectangle, Ellipse | Colour picker.
 - The Fill tool fills the deepest unlocked shape whose inside holds the pointer, filled or not; a clip on top blocks it, and the selection doesn't change. Hovering outlines that shape.
 - The Colour picker reads the frame as exported (without the 40% dimming around an open animation) at preview resolution. The picked colour is the shape's own and also becomes the current colour.
 - Shapes keep their hex beside a swatch link (`fillSwatch`, `stroke.swatch`), and changing a swatch rewrites the hex of every linked shape in its file, groups included, so the engine draws hex only. Swatch edits always apply to the whole open file.
@@ -122,6 +122,38 @@ Made in this plan (veto any of them before its ticket is built):
 - The current colour may carry a swatch link; new shapes and the Fill tool keep it only where the open file has that swatch.
 - Strokes: dashes and gaps are twice the width; the mitre limit is 4; inside and outside align apply to closed outlines only; Behind draws the stroke under the fill and the clipped children. Left out, a stroke is solid, round, centred and in front.
 - The Stroke group is open at start and shows after Colour. Width is a number field from 0.1 to 1000 px, with no slider. With nothing selected it sets the stroke of new shapes; the last stroke change on shapes also becomes it. Kept per window, not saved, not undoable.
+- P picks Pen and A picks Node, as in Affinity; both are rebindable.
+- Pen paths are named "Path" and take the current colour and stroke. A path closed on its first node always gets the fill; an open one only with Fill open paths on (user, 2026-10-28). That switch is in a Pen group in Properties while the Pen is on, off at start, kept per window, not saved and not undoable.
+- An unfinished Pen path is drawn by the overlay as an outline with its nodes, the last node's handles and the dashed next segment (user, 2026-10-28); the engine draws it once it ends. It ends on Enter, Esc, a press on its first node (closing it) or another tool, as one undo step. Leaving the open animation or group drops it, and so does ending with a single node.
+- A Pen drag sets symmetric handles on the node; with ⌥ only the outgoing handle follows. A drag after the closing press pulls the first node's handles.
+- A node is Smooth when both handles point away from each other within 1°; anything else shows as Sharp. Converting to Sharp removes the handles; converting to Smooth lines up the handles it has, keeping their lengths, or makes new ones along the line through its neighbours, a third of the way to each. Dragging a handle of a smooth node turns the other one to stay in line; ⌥ breaks it.
+- The Node tool shows nodes on selected shapes only, with handles on chosen nodes and no scale box. A press goes, in order, to a handle, a node (Shift toggles it), the outline of a selected shape (which adds a node there, and a drag moves it in the same step), any shape (which selects it), or else starts a box. It ignores clips. The box chooses the nodes inside it of every shape that can be picked and selects those shapes; Shift adds. A click on nothing lets go of everything.
+- Nodes stay chosen only with the Node tool, on selected shapes. An arrow key press nudges them 1 px of the artboard (Shift: 10 px) as one undo step.
+- Deleting nodes deletes a shape left with fewer than 2, with what is clipped inside it.
+- Close path and Break path are buttons in Properties › Node (user, 2026-10-28). Close keeps the fill as it was. Break opens a closed path at the first chosen node, which then ends it too, and splits an open path at every chosen node inside it (user, 2026-10-28); the later parts go right in front with the same name and style, and the first part keeps the clipped children.
+- The Node group shows Type, X and Y while nodes are chosen. X and Y are where the chosen nodes are at the playhead in drawing coordinates, blank when they differ; typing moves every chosen node there, through its keys when it has them (A-49).
+- Snapping (user, 2026-10-29): a node within the snap range of another node lands exactly on it, with guides through it. Otherwise each axis lines up with an artboard edge in range, or else lands on a whole pixel. Node drags (including a node just added on an outline), Pen clicks and their preview, and Rectangle and Ellipse corners snap; handles, arrow nudges and typed X/Y don't (user, 2026-10-29). ⌘ or the snapping switch turns it off, and the range is the snap range setting on screen.
+- Only the grabbed node snaps; the other chosen nodes move with it. The targets are the nodes of visible shapes in the drawings at the playhead on the open tracks, locked ones included, the moving ones left out. Inside a group opened within an animation, nodes snap to nodes and whole pixels only, without guides.
+- A node drag starts after 3 px, so a click that chooses a node, or adds one on an outline, never moves it. A Pen click that snaps onto the first node closes the path.
+- Node keys work like clip keys (user, 2026-10-29): the key button beside Node X/Y keys the chosen nodes at the playhead, a keyed node then records x/y offset keys wherever it is moved, and a node without keys moves its place on every frame. Handles aren't keyed. Removing a node's last key keeps its offset in its place.
+- Keys and set membership live on the nodes (`keyframes`, `sets`) and the sets on the drawing clip (`nodeSets`), so copies, duplicates, splits and node edits carry them. A node added on an outline joins the sets both its neighbours are in. Pasted shapes drop the sets their new drawing lacks. Splitting a drawing or trimming its start keeps every key at the same moment.
+- Moves on screen are turned back through the sets that hold a node, so a node inside a turned set follows the pointer.
+- Save selection needs chosen nodes of one shape. The set is named "Set N" and pivots on the middle of their bounds at the playhead. Right-click a pill to delete its set; its nodes go back to where they are without it.
+- A set's pivot isn't keyed: dragging the crosshair moves it, snapping as nodes do, and re-centres the turn on every frame. Rotation, x and y are 0 without keys, and removing a set's last key of a part returns it to 0. Rotation is keyed alone, x and y together.
+- With a set selected, Properties shows Name, Rotation (°) and X/Y with key buttons. Dragging one of its chosen nodes or pressing an arrow key moves the set, and the turn handle turns it (Shift: 15° steps).
+- The previous-key ghost is the set's shapes at its latest key before the playhead's frame, dashed in the onion's red.
+- Copy Keys and Paste Keys (user, 2026-10-29): a key diamond's right-click menu has the easings, Copy Keys and Delete Keys; a drawing's right-click menu adds Paste Keys, which keys the matching nodes and sets of that drawing at the playhead. The key clipboard is per window and apart from the clip clipboard. A diamond on a drawing clip acts on every key at that moment; one on a shape row acts on that shape's node keys and the keys of the sets that move it.
+- Shape row diamonds: a click selects the shape and moves the playhead to the key; a drag moves the keys in whole frames, snapping to the playhead, clip edges and the drawing's other keys, and stops short of the next key and the drawing's ends. Rows of hidden or locked shapes show keys that can't be pressed.
+- Inside an animation the Onion skin button replaces Zoom and pan (mockup v3). Its outlines are at 0.6 and 0.3 opacity, earlier drawings as they end and later ones as they start, without hidden shapes. They hide while playing and on a hidden target track. The switch is per window and isn't saved.
+- Follow and Parent move from rest (user, 2026-10-30): nothing is re-based when a shape starts to follow a set or a set gets a parent, so at a turned frame it jumps into place; letting go puts it back where it is without the set.
+- Follow is a picker under the Node sets pills (user, 2026-10-30), shown when the selected shapes are all in one drawing that has sets. A shape's follow carries the shapes clipped inside it. Shapes landing in another drawing, and the followers of a deleted set, stop following.
+- Parent is a picker under the selected set's Name, offering every set but itself and the sets below it. A parent carries the child's pivot and nodes, and its turn applies to the child's turn handle, arrow nudges and pivot drags, so they follow the pointer. A deleted set's children take its parent.
+- A node added on a keyed outline gets offset keys at its neighbours' key times, on the curve at each of them (user, 2026-10-30); handles still aren't keyed, so a curved segment may bend slightly between keys.
+- A shape row's keys include the sets the shape follows and every parent of its sets.
+- Shape keys (user, 2026-10-30): with the Move tool and shapes selected, a Transform group above Colour has X/Y, Scale (%) and Rotation (°) with key buttons, in the clip Transform order. The first key gives each shape its own node set: named after the shape, pivoting on the middle of its outline at the playhead, inside the set it followed closest; the shape then follows it (`ownsSet`). Typed values always key, as sets have no resting place.
+- A shape that owns a set is keyed: Move tool moves, turns and scales record keys on that set, and its box has corner handles only and scales evenly. Shapes clipped inside a keyed shape follow it rather than move on their own. Deleting the own set unkeys the shape; deleting the shape leaves the set as a plain set. Copies and broken-off parts follow the set without owning it.
+- For a keyed shape, Follow reads and sets its own set's parent, and offers neither that set nor the sets inside it.
+- Node sets have an even Scale key (a factor, above 0) around the pivot, applied before the turn, with a Scale (%) field and key buttons in the set's fields. A stroke set to Scale with object grows with the sets the shape follows; sets holding single nodes bend the outline without changing the stroke.
 
 ## 4. Code map
 

@@ -1,8 +1,8 @@
 import type { MediaStates } from '../engine/resolve.js'
-import { isTimed } from '../shared/mediaProtocol.js'
-import type { Clip, Project, Track } from '../shared/project.js'
+import { isTimed, type Documents } from '../shared/mediaProtocol.js'
+import { projectDuration, type Clip, type Project, type Track } from '../shared/project.js'
 import { TIMELINE_GRID, sourceTime } from '../shared/time.js'
-import { editClips, emptyTrack, endOf, hasSource, locateClip, placeOnTrack, shiftedKeyframes, withFadesWithin, type NewTrack } from './clips.js'
+import { editClips, emptyTrack, endOf, hasSource, locateClip, placeOnTrack, shiftedDrawingKeys, shiftedKeyframes, withFadesWithin, type NewTrack } from './clips.js'
 
 export type Move = {
   clipIds: readonly string[]
@@ -19,6 +19,7 @@ export type Trim = {
   isRipple: boolean
   frameTicks: number
   mediaStates: MediaStates
+  documents: Documents
 }
 
 function movable(project: Project, clipIds: readonly string[], isRipple: boolean): Set<string> {
@@ -137,11 +138,17 @@ function neighbours(track: Track, clip: Clip): { previousEnd: number; nextStart:
   return { previousEnd, nextStart }
 }
 
-export function sourceDuration(clip: Clip, mediaStates: MediaStates): number | undefined {
-  if (!hasSource(clip) || (clip.type === 'video' && clip.loop === true)) return undefined
+// A looping clip has no end, and neither has an empty animation, which is still being drawn.
+export function sourceDuration(clip: Clip, mediaStates: MediaStates, documents: Documents): number | undefined {
+  if (!hasSource(clip) || (clip.type !== 'audio' && clip.loop === true)) return undefined
   const state = mediaStates[clip.mediaId]
-  if (state === undefined || 'error' in state || !isTimed(state.info)) return undefined
-  return state.info.duration
+  if (state === undefined || 'error' in state) return undefined
+  if (state.info.kind === 'animation') {
+    const document = documents[state.info.path]
+    const length = document === undefined ? 0 : projectDuration(document)
+    return length > 0 ? length : undefined
+  }
+  return isTimed(state.info) ? state.info.duration : undefined
 }
 
 export function timelineSpan(sourceSpan: number, speedPercent: number): number {
@@ -156,6 +163,7 @@ function roomToStartEarlier(clip: Clip): number {
 function trimmedStart(clip: Clip, start: number): Clip {
   const delta = start - clip.start
   const timing = { start, duration: clip.duration - delta, keyframes: shiftedKeyframes(clip.keyframes, -delta) }
+  if (clip.type === 'drawing') return shiftedDrawingKeys({ ...clip, ...timing }, -delta)
   if (hasSource(clip)) return withFadesWithin({ ...clip, ...timing, sourceStart: sourceTime(clip, start) })
   if (clip.type !== 'group') return withFadesWithin({ ...clip, ...timing })
   const contentStart = (clip.contentStart ?? 0) + delta
@@ -176,7 +184,7 @@ export function trimClip(project: Project, trim: Trim): Project {
   const { clip, track } = located
   const only = new Set([clip.id])
   const { previousEnd, nextStart } = neighbours(track, clip)
-  const available = sourceDuration(clip, trim.mediaStates)
+  const available = sourceDuration(clip, trim.mediaStates, trim.documents)
 
   if (trim.edge === 'end') {
     const longest = hasSource(clip) && available !== undefined ? timelineSpan(available - clip.sourceStart, clip.speedPercent) : Infinity

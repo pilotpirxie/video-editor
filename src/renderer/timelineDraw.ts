@@ -1,5 +1,6 @@
 import { CALLOUT_NAMES } from '../editor/annotations.js'
 import { endOf, hasMedia, hasVolume, makesSound } from '../editor/clips.js'
+import { drawingAt } from '../editor/drawings.js'
 import { takesEffects } from '../editor/effects.js'
 import {
   CAMERA_LANE_HEIGHT,
@@ -11,6 +12,7 @@ import {
   clipBands,
   keyframeDiamonds,
   rulerStep,
+  shapeRowDiamonds,
   timeToX,
   trackTop,
   transitionBands,
@@ -22,6 +24,7 @@ import {
   type Band,
   type ClipIndex,
   type FadeHandle,
+  type KeyframeDiamond,
   type Marquee,
   type TimelineView,
   type TrackRows,
@@ -110,6 +113,7 @@ export type ContentScene = {
   inOrder: ClipIndex
   thumbnails: Thumbnails
   shown: { from: number; to: number } | undefined
+  playhead: number
 }
 
 export type DropTarget = {
@@ -438,11 +442,11 @@ function traceDiamond(context: CanvasRenderingContext2D, x: number, y: number, s
   context.closePath()
 }
 
-function drawKeyframeDiamonds(context: CanvasRenderingContext2D, shape: ClipShape, scene: ContentScene): void {
+function drawKeyframeDiamonds(context: CanvasRenderingContext2D, diamonds: readonly KeyframeDiamond[], scene: ContentScene): void {
   context.fillStyle = scene.colors.textPrimary
   context.strokeStyle = scene.colors.background
   context.lineWidth = 1
-  for (const diamond of keyframeDiamonds(shape.clip, shape.picture, scene.view)) {
+  for (const diamond of diamonds) {
     traceDiamond(context, diamond.x, diamond.y, KEYFRAME_DIAMOND)
     context.fill()
     context.stroke()
@@ -457,8 +461,7 @@ function drawSelection(context: CanvasRenderingContext2D, shape: ClipShape, scen
   context.stroke()
 }
 
-// The shape rows of an expanded track stay empty until node keys show there.
-function drawShapeLanes(context: CanvasRenderingContext2D, scene: ContentScene, top: number, bottom: number): void {
+function drawShapeLanes(context: CanvasRenderingContext2D, track: Track, scene: ContentScene, top: number, bottom: number): void {
   const { size, colors } = scene
   context.fillStyle = colors.panel
   context.fillRect(0, top, size.width, bottom - top)
@@ -466,12 +469,14 @@ function drawShapeLanes(context: CanvasRenderingContext2D, scene: ContentScene, 
   for (let rowBottom = top + SHAPE_ROW_HEIGHT; rowBottom <= bottom; rowBottom += SHAPE_ROW_HEIGHT) {
     context.fillRect(0, rowBottom - 1, size.width, 1)
   }
+  const drawing = drawingAt(track, scene.playhead)
+  if (drawing !== undefined) drawKeyframeDiamonds(context, shapeRowDiamonds(drawing, top, scene.view), scene)
 }
 
 function drawTrack(context: CanvasRenderingContext2D, track: Track, scene: ContentScene, rowTop: number, rowHeight: number): void {
   const { view, size, colors } = scene
   context.globalAlpha = track.hidden ? HIDDEN_TRACK_OPACITY : 1
-  if (rowHeight > TRACK_HEIGHT) drawShapeLanes(context, scene, rowTop + TRACK_HEIGHT, rowTop + rowHeight)
+  if (rowHeight > TRACK_HEIGHT) drawShapeLanes(context, track, scene, rowTop + TRACK_HEIGHT, rowTop + rowHeight)
   context.globalAlpha = 1
   context.fillStyle = colors.divider
   context.fillRect(0, rowTop + TRACK_HEIGHT - 1, size.width, 1)
@@ -508,7 +513,7 @@ function drawTrack(context: CanvasRenderingContext2D, track: Track, scene: Conte
     if (scene.selection.has(shape.clip.id)) drawSelection(context, shape, scene)
   }
   for (const band of bands) drawTransitionBand(context, band, rowTop, scene)
-  for (const shape of shapes) drawKeyframeDiamonds(context, shape, scene)
+  for (const shape of shapes) drawKeyframeDiamonds(context, keyframeDiamonds(shape.clip, shape.picture, scene.view), scene)
   context.globalAlpha = 1
 }
 

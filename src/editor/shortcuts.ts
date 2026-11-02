@@ -24,6 +24,8 @@ export type ShortcutAction =
   | 'group'
   | 'ungroup'
   | 'tool-move'
+  | 'tool-node'
+  | 'tool-pen'
   | 'tool-fill'
   | 'tool-shape'
   | 'tool-picker'
@@ -79,6 +81,8 @@ export const SHORTCUT_ACTIONS: readonly { action: ShortcutAction; name: string; 
   { action: 'group', name: 'Group', section: 'Editing' },
   { action: 'ungroup', name: 'Ungroup', section: 'Editing' },
   { action: 'tool-move', name: 'Move tool', section: 'Drawing' },
+  { action: 'tool-node', name: 'Node tool', section: 'Drawing' },
+  { action: 'tool-pen', name: 'Pen tool', section: 'Drawing' },
   { action: 'tool-fill', name: 'Fill tool', section: 'Drawing' },
   { action: 'tool-shape', name: 'Rectangle or ellipse tool', section: 'Drawing' },
   { action: 'tool-picker', name: 'Colour picker tool', section: 'Drawing' },
@@ -122,6 +126,8 @@ export const DEFAULT_BINDINGS: Bindings = {
   group: [key('KeyG', 'meta')],
   ungroup: [key('KeyU', 'meta')],
   'tool-move': [key('KeyV')],
+  'tool-node': [key('KeyA')],
+  'tool-pen': [key('KeyP')],
   'tool-fill': [key('KeyG')],
   'tool-shape': [key('KeyM')],
   'tool-picker': [key('KeyI')],

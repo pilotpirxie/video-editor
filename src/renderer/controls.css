@@ -184,12 +184,19 @@ body {
   border-radius: 0 var(--radius) var(--radius) 0;
 }
 
-.segmented .button[aria-pressed='true'] {
+.segmented .button[aria-pressed='true'],
+.pill-row .button[aria-pressed='true'] {
   position: relative;
   border-color: var(--primary);
   background: var(--window-background);
   box-shadow: var(--pressed-edge);
   color: var(--primary);
+}
+
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
 }
 
 .tabs {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { SECOND, projectOf, track, videoClip } from '../../test/fixtures.js'
-import { nearestWithin, positionTargets, snapDelta, snapPosition, timelineTargets } from './snapping.js'
+import { nearestWithin, positionTargets, snapDelta, snapPoint, snapPosition, timelineTargets } from './snapping.js'
 
 describe('nearestWithin', () => {
   it('finds the closest target in range, or nothing', () => {
@@ -83,5 +83,25 @@ describe('snapPosition', () => {
   it('leaves an axis alone when nothing is within range', () => {
     const moving = { left: 600, top: 400, right: 700, bottom: 500 }
     expect(snapPosition(moving, 30, 0, targets, 8).x).toEqual({ delta: 30, guide: undefined })
+  })
+})
+
+describe('snapPoint', () => {
+  const targets = { points: [{ x: 60, y: 20 }, { x: 66, y: 20 }], x: [0, 320], y: [0, 180] }
+
+  it('lands on a node in range before an edge, with guides through the node', () => {
+    expect(snapPoint({ x: 63.4, y: 4 }, { ...targets, points: [{ x: 60, y: 8 }] }, 6)).toEqual({ point: { x: 60, y: 8 }, guideX: 60, guideY: 8 })
+  })
+
+  it('takes the nearer of two nodes in range', () => {
+    expect(snapPoint({ x: 64, y: 21 }, targets, 6).point).toEqual({ x: 66, y: 20 })
+  })
+
+  it('lines one axis up with an edge in range and puts the other on a whole pixel', () => {
+    expect(snapPoint({ x: 150.6, y: 3.2 }, targets, 6)).toEqual({ point: { x: 151, y: 0 }, guideX: undefined, guideY: 0 })
+  })
+
+  it('puts both axes on whole pixels without guides when nothing is in range', () => {
+    expect(snapPoint({ x: 150.4, y: 90.5 }, targets, 6)).toEqual({ point: { x: 150, y: 91 }, guideX: undefined, guideY: undefined })
   })
 })

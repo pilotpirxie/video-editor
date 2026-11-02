@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ALL_MEDIA, FRAME, MEDIA_STATES, SECOND, audioClip, clipOf, groupClip, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
+import { ALL_MEDIA, FRAME, MEDIA_STATES, NO_DOCUMENTS, SECOND, WAVE_STATES, animationClip, audioClip, clipOf, groupClip, projectOf, reopened, track, videoClip, waveDocuments } from '../../test/fixtures.js'
 import type { Clip, Project } from '../shared/project.js'
 import { setAnimation } from './presets.js'
 import { setTransition } from './transitions.js'
@@ -181,15 +181,27 @@ describe('setProperties', () => {
 
 describe('timing', () => {
   it('sets the duration, limited by the next clip and the source', () => {
-    expect(clipOf(setDuration(sample(), ['a'], SECOND, FRAME, MEDIA_STATES), 'a').duration).toBe(SECOND)
-    expect(clipOf(setDuration(sample(), ['a'], 60 * SECOND, FRAME, MEDIA_STATES), 'a').duration).toBe(6 * SECOND)
-    expect(clipOf(setDuration(sample(), ['b'], 60 * SECOND, FRAME, MEDIA_STATES), 'b').duration).toBe(10 * SECOND)
+    expect(clipOf(setDuration(sample(), ['a'], SECOND, FRAME, MEDIA_STATES, NO_DOCUMENTS), 'a').duration).toBe(SECOND)
+    expect(clipOf(setDuration(sample(), ['a'], 60 * SECOND, FRAME, MEDIA_STATES, NO_DOCUMENTS), 'a').duration).toBe(6 * SECOND)
+    expect(clipOf(setDuration(sample(), ['b'], 60 * SECOND, FRAME, MEDIA_STATES, NO_DOCUMENTS), 'b').duration).toBe(10 * SECOND)
+  })
+
+  it('keeps a played animation within its end, but not a looping one', () => {
+    const waving = projectOf([track('t1', [animationClip('wave', 0, SECOND, { sourceStart: SECOND / 2 })])])
+    const documents = waveDocuments(2 * SECOND)
+    expect(clipOf(setDuration(waving, ['wave'], 60 * SECOND, FRAME, WAVE_STATES, documents), 'wave').duration).toBe(1.5 * SECOND)
+    expect(clipOf(setSourceStart(waving, ['wave'], 2 * SECOND, WAVE_STATES, documents), 'wave')).toMatchObject({ sourceStart: SECOND })
+
+    const looping = projectOf([track('t1', [animationClip('wave', 0, 5 * SECOND, { loop: true, sourceStart: 2.5 * SECOND })])])
+    const once = clipOf(setLoop(looping, ['wave'], false, WAVE_STATES, documents), 'wave')
+    expect(once).toMatchObject({ sourceStart: SECOND / 2, duration: 1.5 * SECOND })
+    expect(once).not.toHaveProperty('loop')
   })
 
   it('sets the source offset, keeping the clip inside its source', () => {
-    expect(clipOf(setSourceStart(sample(), ['a'], 2 * SECOND, MEDIA_STATES), 'a')).toMatchObject({ sourceStart: 2 * SECOND, duration: 4 * SECOND })
-    expect(clipOf(setSourceStart(sample(), ['a'], 60 * SECOND, MEDIA_STATES), 'a')).toMatchObject({ sourceStart: 6 * SECOND })
-    expect(clipOf(setSourceStart(sample(), ['a'], -5, MEDIA_STATES), 'a')).toMatchObject({ sourceStart: 0 })
+    expect(clipOf(setSourceStart(sample(), ['a'], 2 * SECOND, MEDIA_STATES, NO_DOCUMENTS), 'a')).toMatchObject({ sourceStart: 2 * SECOND, duration: 4 * SECOND })
+    expect(clipOf(setSourceStart(sample(), ['a'], 60 * SECOND, MEDIA_STATES, NO_DOCUMENTS), 'a')).toMatchObject({ sourceStart: 6 * SECOND })
+    expect(clipOf(setSourceStart(sample(), ['a'], -5, MEDIA_STATES, NO_DOCUMENTS), 'a')).toMatchObject({ sourceStart: 0 })
   })
 
   it('changes the speed and the duration together, so the same source is shown', () => {
@@ -237,7 +249,7 @@ describe('setLoop', () => {
   const stretched = projectOf([track('t1', [videoClip('gif', 0, 8 * SECOND, { mediaId: 'sticker', loop: true, sourceStart: 1.5 * SECOND, fadeOut: 2 * SECOND }), videoClip('a', 10 * SECOND, SECOND)])], ALL_MEDIA)
 
   it('ends a clip after one play of its source when the loop is switched off', () => {
-    const once = setLoop(stretched, ['gif'], false, MEDIA_STATES)
+    const once = setLoop(stretched, ['gif'], false, MEDIA_STATES, NO_DOCUMENTS)
     const clip = clipOf(once, 'gif')
     expect(clip).toMatchObject({ sourceStart: 0.3 * SECOND, duration: 0.9 * SECOND, fadeOut: 0.9 * SECOND })
     expect(clip).not.toHaveProperty('loop')
@@ -245,13 +257,13 @@ describe('setLoop', () => {
   })
 
   it('switches the loop on again without changing the length', () => {
-    const once = setLoop(stretched, ['gif'], false, MEDIA_STATES)
-    expect(clipOf(setLoop(once, ['gif'], true, MEDIA_STATES), 'gif')).toMatchObject({ loop: true, duration: 0.9 * SECOND })
+    const once = setLoop(stretched, ['gif'], false, MEDIA_STATES, NO_DOCUMENTS)
+    expect(clipOf(setLoop(once, ['gif'], true, MEDIA_STATES, NO_DOCUMENTS), 'gif')).toMatchObject({ loop: true, duration: 0.9 * SECOND })
   })
 
   it('only loops animated images', () => {
-    expect(setLoop(stretched, ['a'], true, MEDIA_STATES)).toBe(stretched)
-    expect(setLoop(stretched, ['gif'], true, MEDIA_STATES)).toBe(stretched)
+    expect(setLoop(stretched, ['a'], true, MEDIA_STATES, NO_DOCUMENTS)).toBe(stretched)
+    expect(setLoop(stretched, ['gif'], true, MEDIA_STATES, NO_DOCUMENTS)).toBe(stretched)
   })
 })
 

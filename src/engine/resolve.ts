@@ -31,7 +31,7 @@ import {
 } from '../shared/project.js'
 import { NORMAL_SPEED_PERCENT, TIMELINE_GRID, frameDuration, frameIndexAt, loopedTime, sourceTime } from '../shared/time.js'
 import { largestScaleBetween } from './camera.js'
-import { shapesBounds, type DrawingBounds } from './curves.js'
+import { posedShapes, shapesBounds, type DrawingBounds } from './curves.js'
 import { animationChangeAt, largestAnimationScale } from './presets.js'
 
 const MAX_HALVINGS = 6
@@ -585,7 +585,7 @@ function layerBase(clipId: string, frame: Frame, placement: Placement): LayerBas
 }
 
 // A hidden shape hides what is clipped inside it; with nothing hidden the list stays the same, and so does the raster's key.
-function shownShapes(shapes: DrawingShape[]): DrawingShape[] {
+export function shownShapes(shapes: DrawingShape[]): DrawingShape[] {
   let isAnyHidden = false
   const shown: DrawingShape[] = []
   for (const shape of shapes) {
@@ -606,8 +606,8 @@ function shownShapes(shapes: DrawingShape[]): DrawingShape[] {
 }
 
 // Shapes are in the artboard's pixels, so the layer sits where their bounds are.
-function drawingLayers(clip: DrawingClip, frame: Frame): Layer[] {
-  const shapes = shownShapes(clip.shapes)
+function drawingLayers(clip: DrawingClip, frame: Frame, time: number): Layer[] {
+  const shapes = shownShapes(posedShapes(clip, time - clip.start))
   const bounds = shapesBounds(shapes, true)
   if (bounds === undefined || bounds.right <= bounds.left || bounds.bottom <= bounds.top) return []
   const middle = { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2, scaleX: 1, scaleY: 1, rotation: 0 }
@@ -729,7 +729,7 @@ function cutLayers(leaving: VisualClip, arriving: VisualClip, transition: Transi
 function trackLayers(track: Track, drawing: Drawing, frame: Frame, time: number): Layer[] {
   const shown = track.clips.find((clip) => time >= clip.start && time < clip.start + clip.duration)
   if (shown === undefined || shown.type === 'audio') return []
-  if (shown.type === 'drawing') return drawingLayers(shown, frame)
+  if (shown.type === 'drawing') return drawingLayers(shown, frame, time)
 
   const end = shown.start + shown.duration
   const previous = track.clips.find((clip) => clip.start + clip.duration === shown.start)

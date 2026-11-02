@@ -40,7 +40,21 @@ const PREVIEW_ACTIONS = new Set<ShortcutAction | undefined>([
   'preview-mode',
 ])
 
-const TOOL_OF: Record<'tool-move' | 'tool-fill' | 'tool-picker', DrawingTool> = { 'tool-move': 'move', 'tool-fill': 'fill', 'tool-picker': 'picker' }
+const NUDGE_PIXELS = 1
+const LARGE_NUDGE_PIXELS = 10
+const NUDGE_DIRECTIONS: Readonly<Record<string, { across: number; down: number }>> = {
+  ArrowLeft: { across: -1, down: 0 },
+  ArrowRight: { across: 1, down: 0 },
+  ArrowUp: { across: 0, down: -1 },
+  ArrowDown: { across: 0, down: 1 },
+}
+const TOOL_OF: Record<'tool-move' | 'tool-node' | 'tool-pen' | 'tool-fill' | 'tool-picker', DrawingTool> = {
+  'tool-move': 'move',
+  'tool-node': 'node',
+  'tool-pen': 'pen',
+  'tool-fill': 'fill',
+  'tool-picker': 'picker',
+}
 const PANEL_FLAGS: Record<Panel, 'isLeftCollapsed' | 'isRightCollapsed' | 'isTimelineCollapsed'> = {
   library: 'isLeftCollapsed',
   properties: 'isRightCollapsed',
@@ -265,6 +279,8 @@ function runShortcut({ actions, transport, store, runMenuAction }: Session, acti
     case 'timeline-zoom-fit':
       return false
     case 'tool-move':
+    case 'tool-node':
+    case 'tool-pen':
     case 'tool-fill':
     case 'tool-picker':
       if (store.getState().openChain.length === 0) return false
@@ -303,7 +319,20 @@ function isShortcutFor(event: globalThis.KeyboardEvent): boolean {
 function listenForEditingKeys(session: Session): () => void {
   const { actions, store, shortcuts } = session
 
+  // With nodes chosen, the arrows move them instead of stepping frames.
+  function nudgedNodes(event: globalThis.KeyboardEvent): boolean {
+    const direction = NUDGE_DIRECTIONS[event.key]
+    const hasModifier = event.metaKey || event.ctrlKey || event.altKey
+    if (direction === undefined || hasModifier || store.getState().isPreviewing || !isKeyForTheEditor(event)) return false
+    const step = event.shiftKey ? LARGE_NUDGE_PIXELS : NUDGE_PIXELS
+    return actions.nudgeNodes(direction.across * step, direction.down * step)
+  }
+
   function onKeyDown(event: globalThis.KeyboardEvent): void {
+    if (nudgedNodes(event)) {
+      event.preventDefault()
+      return
+    }
     const action = actionFor(shortcuts.get(), event)
     const isAllowed = !store.getState().isPreviewing || PREVIEW_ACTIONS.has(action)
     const isShortcut = action !== undefined && isAllowed && isShortcutFor(event)

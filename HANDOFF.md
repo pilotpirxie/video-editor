@@ -1,387 +1,454 @@
-# Handoff: animation workspace, shape rows and Colour panel A-32–A-36 (2026-10-27)
+# Handoff: animation workspace, A-56–A-58 plus clip length cap and shape keys (2026-10-30)
 
 ## Status
 
-The task is the animation workspace specified in `AGENTS.md`. Earlier batches:
-- A-01–A-26 were built on 2026-10-26.
-- A-27–A-31 were built earlier on 2026-10-27.
+The task is the animation workspace specified in `AGENTS.md`, built ticket by ticket on branch `feature/animations`. Group 5 (`AGENTS.md` §5, A-48–A-58) is now complete. On 2026-10-30 this session:
+- built A-56 Follow, A-57 keys surviving node edits and A-58 parent node sets;
+- built two changes the user asked for afterwards: a length cap on animation clips, and Move-tool transform keys for shapes (through each shape's own node set, with a new Scale key on sets).
 
-This session built **A-32–A-36**:
-- variable-height track rows
-- the expandable track with the shapes list
-- delete/copy/paste/duplicate for shapes
-- Arrange
-- the Colour panel with a "current colour"
+Nothing is committed: A-43 to A-58 and both extras are all in the working tree, with the user's own readability edits. The last full `npm test` (2026-10-30, 14:24–14:39 CET) ran after the last code edit. It exited 0: unit 1148/1148, engine and editor 379/379, typecheck clean, lint 0 clones, build OK.
 
-Everything is on branch `feature/animations` and **nothing is committed**; the user commits.
-
-The last full `npm test` started 2026-10-27 at 14:26 local time, after the last code edit, and **passed everything**:
-- typecheck: clean
-- lint: clean, 0 clones
-- unit: 54 files, 1075 tests
-- build: OK
-- engine/editor: 19 files, 365 tests, 816 s
-
-The user has been told the result, but has not yet reviewed the veto list or the one change made after screenshots (the colour field, see Decisions). Next action: wait for the user's review and commit. Don't start A-37 or later until the user asks.
+The user has been given the final report for everything above. The next action is to wait for the user. Don't commit unless asked. The next ticket is A-59 Hold frame (`AGENTS.md:352`), the first of group 6.
 
 ## Original prompt
 
-The user's messages in this session (2026-10-27), word for word:
+The user's messages in this session, word for word:
 
-1. > '/Users/localuser/video-editor/HANDOFF.md''/Users/localuser/video-editor/AGENTS.md' take next
+1. > '/Users/localuser/video-editor/HANDOFF.md''/Users/localuser/video-editor/AGENTS.md' take next group of tasks and continue
 
-   Questions asked in plan mode, with the options offered and the answers:
-   - "Which tickets should this batch cover?"
-     - Options:
-       - "A-32–A-35 (Recommended)"
-       - "A-32–A-33"
-       - "A-32–A-36": as the recommended batch plus the Colour panel (fill/stroke wells become clickable, HSL picker, sliders, hex).
-     - Answer: **"A-32–A-36"**
-   - "A-36 Colour panel: should it also set the colour that new shapes get (Affinity's "current colour", which A-37's Fill tool uses)?"
-     - Options:
-       - "Selection only (Recommended)": edits only the selected shapes; new shapes stay white/black until A-37.
-       - "Also current colour": Affinity behaviour now. The last colour you set becomes the colour for new shapes, kept per window and not in the file. With nothing selected, the wells and the Colour panel edit that current colour.
-     - Answer: **"Also current colour"**
-   - "A-33 expanded track: the list shows the drawing under the playhead. How tall should an expanded track be?"
-     - Options:
-       - "Tallest drawing (Recommended)": rows sized for the drawing with the most shapes on that track, so tracks below never jump; spare rows stay blank.
-       - "Current drawing": exactly as many rows as the drawing under the playhead; tracks below move as the playhead crosses drawings.
-     - Answer: **"Tallest drawing (Recommended)"**
+   Read as: build the rest of group 5, A-56–A-58. The old `HANDOFF.md` described A-47, and A-48–A-55 had been built in a session after it. Plan mode was entered and three questions were asked:
+   - "When a shape starts to Follow a set, or a set gets a Parent, while that set is turned or moved at the playhead, what should happen?"
+     - Options: "Moves from rest (Recommended)" / "Stays where it is".
+     - Answer: **"Moves from rest (Recommended)"**.
+   - "Where should the Follow picker for selected shapes go?"
+     - Options: "Node group (Recommended)" / "Own group, any tool".
+     - Answer: **"Node group (Recommended)"**.
+   - "A-57: when a node is added on the outline of a keyed shape, what keys should the new node get?"
+     - Options: "Keys along (Recommended)" / "No keys".
+     - Answer: **"Keys along (Recommended)"**.
    - The plan was approved through ExitPlanMode.
 
-2. `/handoff` (this file).
+2. > by the way animation duration vs clip duration. clip can be longer than animation and this is wrong. max length of clip i guess should be as long as animation.
+   >
+   > also i can add keyframes to nodes but i guess would be nice to be able to transform objects too. for example when i want to add arm movement.
+   >
+   > is there in plan step for this?
 
-Earlier sessions (summarised in earlier handoffs):
-- 2026-10-26: built the workspace plan and A-01–A-26. Standing answers then:
-  - "No commits".
-  - The shapes list is an expanded track.
-  - Each animation is its own file.
-  - Mouth swaps use Hold frame.
-- 2026-10-27 morning: built A-27–A-31. Answers then:
-  - A drawing clip holds timing and shapes only.
-  - V = Move; M = Rectangle, and M again = Ellipse.
+   Answered: neither is in the plan. §3 recorded "Animation clips trim freely", and shapes move only by nodes and node sets. Then asked:
+   - "How should an animation clip's length be limited?"
+     - Options: "Cap Play clips (Recommended)" / "Cap and shorten" / "Keep it free".
+     - Answer: **"Cap Play clips (Recommended)"**.
+   - "Should shapes get transform keys of their own, beyond node sets?"
+     - Options: "Move tool records keys" / "Add Scale to node sets" / "Node sets as they are".
+     - Answer: **"Move tool records keys"**.
+
+   Plan mode was entered again, and three more questions were asked:
+   - "Where should a shape's move, turn and scale keys live?"
+     - Options: "Its own node set (Recommended)" / "Keys on the shape".
+     - Answer: **"Its own node set (Recommended)"**.
+   - "Where does the key button for selected shapes go?"
+     - Options: "Transform group (Recommended)" / "Auto-key keyed shapes only".
+     - Answer: **"Transform group (Recommended)"**.
+   - "How should keyed shapes scale?"
+     - Options: "Evenly (Recommended)" / "Width and height apart".
+     - Answer: **"Evenly (Recommended)"**.
+   - The plan was approved through ExitPlanMode.
+
+3. `/anthropic-skills:handoff` (this file).
+
+Earlier sessions, summarised in earlier handoffs and memory:
+- **2026-10-26:** the workspace plan and A-01–A-26. Standing answers:
+  - no commits unless asked;
+  - the shapes list is an expanded track;
+  - each animation is its own `.pbanim` file;
+  - mouth swaps use Hold frame.
+- **2026-10-27:** A-27–A-42.
+- **2026-10-27/28:** A-43–A-46. The user chose:
+  - a "Fill open paths" switch;
+  - Close and Break buttons in Properties › Node;
+  - Break splitting an open path in two;
+  - an unfinished Pen path drawn by the overlay.
+- **2026-10-29:** A-47 node snapping. The user chose nodes snapping onto nodes in reach; Node, Pen, Rectangle and Ellipse snap.
+- **2026-10-29** (transcript `a1348b75-…`): A-48–A-55. The user chose:
+  - node keys that work like clip keys, via the key button beside Node X/Y;
+  - Copy Keys and Paste Keys menus.
+
+  That session left `HANDOFF.md` unchanged, so it described A-47 until now.
 
 ## Paraphrased task
 
-Build the next tickets of `AGENTS.md` after A-31. The user scoped this batch to **A-32–A-36**. Each ticket ships with its tests, `npm test` stays green, nothing is committed, and every build-time decision goes into `AGENTS.md` §3 "Made in this plan" for veto.
+Build the `AGENTS.md` §5 tickets in order, each with its tests and with `npm test` green. Record build-time decisions in `AGENTS.md` §3 for veto, and commit nothing.
 
-- **A-32:** one row layout for the timeline that allows different track heights. Every `TRACK_HEIGHT` caller and the UI test driver use it. Nothing changes visibly.
-- **A-33:** ▸ on a track header lists the shapes of the drawing under the playhead, with clipped children indented.
-  - Each row has a name, hide and lock.
-  - Hidden shapes don't render; locked ones can't be picked.
-  - Click selects, drag reorders, double-click renames.
-- **A-34:** delete, copy, paste and duplicate the selected shapes, within and across drawings. ⌘D duplicates shapes when shapes are selected, and clips when clips are.
-- **A-35:** ⌘[ / ⌘] move shapes back and forward; ⌘⇧[ / ⌘⇧] send them to the back and front. All four are also in the menu.
-- **A-36:** Properties › Colour has:
-  - fill and stroke wells
-  - an HSL picker
-  - H/S/L and opacity sliders
-  - a hex field
-  - live changes, with one undo step per drag
+This session covered:
+- **A-56 Follow:** a shape, and the shapes clipped inside it, moves and turns with a node set of the same drawing. A Follow picker sits in Properties › Node.
+- **A-57 Keys survive node edits:**
+  - adding or deleting nodes keeps keys and sets on the right nodes;
+  - deleting a node removes its keys;
+  - a node added on a keyed outline gets "keys along";
+  - unit tests cover the edits.
+- **A-58 Parent node sets:** a set can have a parent that carries its pivot and nodes. This is forward kinematics only, with a Parent picker in the set's fields.
+- **Extra 1, clip length cap:** an animation clip in Play without Loop can't extend past its animation's end. Loop and Hold frame stay free, and so does an empty animation.
+- **Extra 2, shape transform keys:**
+  - With the Move tool, a Transform group (X/Y, Scale (%), Rotation (°) with key buttons) keys the selected shapes.
+  - The first key gives a shape its own node set, which it follows (`ownsSet`). After that, Move-tool box moves, turns and scales record keys on that set.
+  - Sets gained an even Scale key.
 
-  Per the user's answer, the last colour set also becomes the colour for new shapes.
-
-Out of scope: A-37+ (Fill tool, colour picker tool, swatches, Stroke panel, clip inside, Pen, nodes), commits, and anything not asked.
+Out of scope: A-59 and later, the camera double count (carried finding), and any commit.
 
 ## Plan
 
-The plan file is `/Users/localuser/.claude/plans/compiled-dazzling-lecun.md`, approved by the user through ExitPlanMode on 2026-10-27. Short form:
+The plan file is `/Users/localuser/.claude/plans/mutable-cuddling-puzzle.md`. It now holds the second plan, "Animation clip length cap, and Move tool keys for shapes", which the user approved through ExitPlanMode. The first plan in the same file (A-56–A-58), also approved, was overwritten by it. Short form of both:
 
-1. A-32: the `TrackRows` layout in `src/editor/timelineView.ts` replaces the `trackCount × TRACK_HEIGHT` maths in the controller, the drawing code, the headers and the driver.
-2. A-33 format, engine and picking:
-   - `name`, `hidden` and `locked` on `DrawingShape`.
-   - The resolver skips hidden shapes.
-   - Picking skips hidden and locked shapes.
-   - Pure row and flag edits.
-3. A-33 UI: the store's `expandedTracks`, `ShapeRows` under `TrackHeader`, and empty lanes drawn on the timeline canvas.
-4. A-34/A-35: pure edits in `src/editor/drawings.ts`, shape branches in `src/renderer/actions.ts`, four shortcuts and the Edit › Arrange submenu.
-5. A-36:
-   - `src/editor/colors.ts`.
-   - The store's `drawingStyle` and `colorPart`.
-   - The Colour panel component.
-   - Properties wiring.
-   - Clickable tool-strip wells.
-6. The UI scenarios `shape-rows` and `shape-edits`, and their feature tests.
-7. `AGENTS.md` §3 decisions and a memory note.
+**A-56–A-58** (done):
+1. Format: `DrawingShape.follows`, `NodeSet.parent`, parser checks (unknown set, self-parent, loops).
+2. Posing in `src/engine/curves.ts`:
+   - poses sorted children-first by depth (stable, so sets without parents keep list order);
+   - `SetPose.carried` is the set plus every set below it;
+   - `followed` lists are passed down through clipped children.
+3. Editor plumbing in `src/editor/drawings.ts`:
+   - `followedSetIds`, `Moment.followedByShape`;
+   - `shownPivot` through the parent;
+   - parents' turn for the turn handle, nudges and pivot drags;
+   - `shapeIdsMovedBy` for the ghost;
+   - row keys including followed sets and parents.
+4. Follow picker (`shape-follow`) under the Node sets pills; `setShapesFollow`.
+5. Parent picker (`node-set-parent`) under Name; `setNodeSetParent` and `parentChoices`. A deleted set's children take its parent.
+6. `insertNode` "keys along" (`withKeysAlong`).
+7. Parity fixture: a head that follows `tilt`, and a `jaw` set parented to `tilt`.
+8. UI scenario `follow-and-parent`.
+9. Docs.
 
-Where the work left the plan, and why:
+**Extras** (done):
+- A1–A3: `sourceDuration(clip, mediaStates, documents)` caps animation clips, with `documents` threaded through `Trim`, `setDuration`, `setSourceStart` and `setLoop`, and tests.
+- B1–B8:
+  - format: `scale` set key (> 0), `ownsSet`;
+  - posing: scale, `turnAndScaleOf`, stroke scale for followed sets;
+  - own sets: `withOwnSets` and the shape pose and key functions;
+  - keyed `transformShapes` with `time`;
+  - UI:
+    - the Transform group;
+    - Scale (%) in the set fields;
+    - corner-only box for keyed shapes;
+  - tests and docs.
+
+Where the work left the plans:
 
 | Plan said | What was done | Why |
 | --- | --- | --- |
-| `trackRowHeights(tracks, expanded)` | Exported `trackRowsOf(tracks, expandedTrackIds)` returning `TrackRows` | Both callers want rows, not heights |
-| `uiScenarios.ts`/`uiTest.ts` import the constants from `timelineView.ts` | `src/main/uiDriver.ts` imports them and **re-exports** `RULER_HEIGHT`, `CAMERA_LANE_HEIGHT`, `TRACK_HEIGHT`; `uiTest.ts` also imports `SHAPE_ROW_HEIGHT` directly | Fewer import changes |
-| `ShapeRow` has `ancestorIds` | `ShapeRow { shape, depth, isPickable }` | `reorderShape` resolves the sibling itself |
-| Store prune `withoutMissingShapes` extended | Renamed `withoutUnpickableShapes` (`src/renderer/store.ts:140`) | It now drops hidden and locked shapes too |
-| Row `aria-selected` | `data-selected` on `shape-row-${id}` | Rows are not a listbox role |
-| Row drag with pointer capture | List-level `pointerup` without capture, plus `user-select: none` | Capture retargeted the double-click away from the name |
-| A shared `refsByDrawing` helper | `shapeIdsByDrawing`, and `editDrawings` passes the `clipId` to its callback | Same purpose |
-| New-drawing 1 s helper | `drawingPlace(...)` in `src/editor/drawings.ts:117`, used by `CanvasOverlay.startDrawing` and paste | Shared rule |
-| **New** `src/renderer/ColorPanel.tsx` exporting `ColorPanel` in a Group | **New** `src/renderer/ColorFields.tsx` exporting `ColorFields` and `useWellColors`; `Properties.tsx` wraps it in its `Group` | Importing `Group` from Properties into the panel would have been circular |
-| A ref keeps the last HSL | `useState` (`remembered`) | Reading a ref during render |
-| Colour field: hue across, lightness down **at the current saturation** | Field is a **full-saturation spectrum**; a pick sets hue and lightness and **saturation 100%**; the hue track is a fixed rainbow | Found in screenshots: from the default white, or any grey, the field and the hue track were all white or grey, so no hue could be picked |
-| `rowInView` unchanged | Its scroll loop is now `timelinePointInView(driver, pointNow, rowHeight, what)` (`src/main/uiScenarios.ts:2047`); `rowInView` calls it | The shape-row scenarios needed the same scrolling with a 30 px margin |
-| — | `testShapeRows` saves a `shape-rows.png` screenshot | For eye checks |
+| A `restPoint` function in `curves.ts` | `restPlace` in `drawings.ts` (one step back through a similarity), and pivot drag and nudge via `unturnedAndUnscaled` on deltas | Smaller; the parents' transform is a similarity, so deltas suffice |
+| Transform group order Rotation, Scale, X/Y | X/Y, Scale (%), Rotation (°) | Matches the clip Transform group |
+| Box keeps the aspect for keyed shapes | Also hides the side handles (`scalesEvenly` in `CanvasOverlay.tsx`) | `scaleFromHandle` stretches one side on a side handle even with the aspect kept |
+| — | `saveBoxedCorners` extracted in `uiTest.ts` | jscpd flagged the shared opening of `node-sets` and `follow-and-parent` |
+| — | `NO_DOCUMENTS`, `WAVE_STATES`, `waveDocuments` added to `test/fixtures.ts` | Shared by the trim and properties tests |
 
 ## Decisions
 
+All of these are in `AGENTS.md` §3 (lines about 89 and 148–156) unless marked otherwise.
+
 | Decision | Who | Why |
 | --- | --- | --- |
-| Batch scope A-32–A-36 | User | Answer (the recommendation was A-32–A-35) |
-| The Colour panel also sets the current colour for new shapes: per window, not in the file, not undoable. With nothing selected the wells and panel edit it | User chose "Also current colour"; "not undoable" is mine, for veto | Answer (the recommendation was "Selection only") |
-| An expanded track is as tall as the drawing with the most shapes on it | User | Answer: rows below never jump |
-| No commits | User (2026-10-26, standing) | Earlier answer |
-| Shape rows are 30 px and list front to back | Me, for veto | Mockup v3 layer rows |
-| Only tracks holding a drawing get ▸. Expansion is per window, by track id, and isn't saved. With no drawing at the playhead, a row "No drawing at the playhead" shows | Me, for veto | Minimal state |
-| Hiding or locking a shape also hides or locks its clipped children. Hidden and locked shapes can't be selected from the list or the canvas, and hiding or locking deselects them | Me, for veto | Clipped children draw inside their parent |
-| Dragging a row only reorders among siblings, with no drop indicator (as for tracks); clipping inside is A-41 | Me, for veto | Keeps A-33 small |
-| Unnamed shapes show "Shape"; the tools name new shapes "Rectangle"/"Ellipse" | Me, for veto | — |
-| Paste and ⌘D keep coordinates and put copies in front: paste into the drawing at the playhead (or a new one, as for the tools), ⌘D right above each original | Me, for veto | Affinity behaviour |
-| Cut works on shapes; ripple delete deletes shapes; deleting every shape leaves an empty drawing clip | Me, for veto | — |
-| Shapes paste into other animations now; A-63 brings shared colours | Me, for veto | Shared colours don't exist yet (A-39) |
-| Edit › Arrange is a submenu: Bring to Front, Bring Forward, Send Backward, Send to Back (undo labels match) | Me, for veto | Affinity names |
-| The Colour group is open at start, shows the first selected shape's colour and sets every selected shape | Me, for veto | — |
-| Setting a stroke colour on a shape without a stroke gives it a 4 px stroke | Me, for veto | Same width as new shapes |
-| Opacity is stored as `#RRGGBBAA` (6 digits when opaque) | Me, for veto | No format change |
-| **The colour field is a full-saturation spectrum; a pick sets hue and lightness and makes saturation 100%.** The hue track is a fixed rainbow | Me, after the plan; **the user has been told but has not answered** | From white the old field was useless. It matches mockup v3. Rejected alternative: a saturation × lightness square for the current hue (classic Photoshop picker), which does not match the mockup |
-| Gradients only in the colour field and the slider tracks | Me, for veto | UI rule: no gradients on controls except colour content |
-| The slider tracks take no keyboard focus; the number fields are the keyboard path until A-76 | Me, for veto | A-76 does keyboard and labels |
-| A-31 lines amended: with shapes selected Properties shows only the Colour group, and the wells are clickable | Me | They said "until A-34 and A-36" |
-
-All of these are in `AGENTS.md` §3 "Made in this plan":
-- lines 97 and 100 are the amended A-31 lines;
-- lines 103–113 are this batch's decisions.
-
-The decisions from A-01–A-31 are in §3 lines 73–102. The user has not reviewed any of the "Made in this plan" lines yet.
+| Follow and Parent move from rest. Nothing is re-based on attach, so a shape jumps into place at a turned frame; detaching puts it back where it is without the set | User | Same as Save selection and deleting a set; re-basing would change the rest pose |
+| The Follow picker sits under the Node sets pills (Node tool), shown only when every selected shape is in one drawing that has sets | User (place), me (one-drawing rule) | All rigging in one group; sets belong to one drawing |
+| A shape's follow carries its clipped children. Shapes pasted into another drawing, and followers of a deleted set, stop following | Me, for veto | Children stay inside the parent's fill; a set id is per drawing |
+| Parent picker under the set's Name, offering every set but itself and the sets below it (no loops) | Me, for veto | — |
+| A deleted set's children take its parent | Me, for veto | Keeps the rest of the chain carrying them |
+| Order: node offsets first, then sets, each before its parent and otherwise in list order (`AGENTS.md` §2 amended) | Me, for veto (forced) | Forward kinematics needs the child turned around its rest pivot before the parent carries it |
+| Parents' turn (and scale) apply to the child's turn handle, arrow nudges and pivot drags | Me, for veto | So they follow the pointer |
+| A shape row's keys include its followed sets and every parent of its sets | Me, for veto | The row shows what moves the shape |
+| Keys along: a node added on a keyed outline gets offset keys at the union of its neighbours' key times, on the curve at each; the easing comes from the neighbours | User | Handles aren't keyed, so a curved segment can bend slightly between keys; exact for straight segments or neighbours keyed together |
+| Clip cap: Play without Loop can't pass the animation's end at the clip's speed (trim, Duration, Source offset). Loop off shortens. Loop, Hold frame and empty animations are free. A clip left past the end after the animation shrinks shows nothing there | User (cap, keep long clips), me (Loop off shortens) | Like video clips; Hold frame covers lines longer than the Mouths animation |
+| Shape keys live on the shape's own node set: named after the shape (or "Shape"), pivoting on the middle of its posed outline at the playhead, parented to the innermost set it followed; the shape then follows it with `ownsSet: true` | User (own set), me (name, pivot, parent) | One concept; Follow and Parent work with it |
+| Transform group (Move tool, shapes selected) above Colour, in clip order X/Y, Scale (%), Rotation (°), with key buttons | User (group), me (order) | — |
+| Keyed = owns a set. Typed values always key. Move-tool box changes of keyed shapes record keys; unkeyed shapes change their place, as before | Me, for veto | Sets have no resting place |
+| Keyed shapes scale evenly; their box has corner handles only | User (even), me (handles) | Side handles stretch one axis |
+| Shapes clipped inside a keyed shape follow it and are not moved on their own when both are selected | Me, for veto | Prevents double moves |
+| Deleting a shape leaves its own set as a plain set; deleting the own set unkeys the shape; copies and broken-off parts follow without owning | Me, for veto | One owner per set (the parser rejects two) |
+| Follow on a keyed shape reads and sets its own set's parent, and leaves the own set and the sets inside it out of the choices | Me, for veto | Keeps its keys |
+| Sets have an even Scale key (factor, > 0) around the pivot, applied before the turn, with a Scale (%) field and key buttons in the set's fields | User (scale), me (set field) | Mockup v3 shows Scale beside Rotation |
+| A Scale-with-object stroke grows with the sets the shape follows, not with sets holding single nodes | Me, for veto | Node-level scales bend the outline, and a per-node stroke can't vary |
+| Rejected options | — | Re-basing on attach; Follow in its own group; no keys for added nodes; "Cap and shorten"; keys on the shape itself; auto-key without fields; width and height scale apart |
 
 ## Steps done
 
 | Step | Where | Checked by |
 | --- | --- | --- |
-| A-32 row layout | `src/editor/timelineView.ts`: `SHAPE_ROW_HEIGHT = 30` (`:11`), `TrackRows` (`:59`), `trackRows` (`:65`), `trackRowsOf` (`:90`), `trackTop` (`:104`), `trackIndexAtOffset` (`:108`), `trackIndexAt` (`:118`). `hitClip` (`:198`) ignores shape rows; `clipsInMarquee` (`:225`) | `src/editor/timelineView.test.ts` (41 tests, incl. `describe('track rows of different heights')` and "finds no clip in the shape rows of an expanded track") |
-| A-32 callers | `src/renderer/timelineController.ts`: `rowsNow()` (`:194`) is cached on `(project.tracks, expandedTracks)`; `host.dataset.rows` (`:267`) holds heights JSON; the move gesture carries `rows`; `withScrollInRange` uses `rows.total`. `src/renderer/timelineDraw.ts`: `ContentScene.rows`, `drawTrack(…, rowTop, rowHeight)`, `drawShapeLanes` (`:461`). `src/renderer/Timeline.tsx`: the grip drop uses `trackIndexAtOffset`. `src/main/uiDriver.ts` `timelinePoint` (`:252`) builds rows from `dataset.rows` | The existing `drawing-tools` feature test and the full engine/editor run, including all track and timeline scenarios |
-| A-33 format | `src/shared/project.ts`: `DrawingShape.name?`, `hidden?: true`, `locked?: true`; the parser takes `name` as a string and the flags via `parseSwitch` | `src/shared/project.test.ts` (eye fixture with name/hidden/locked; rejects `hidden: false` and `name: 3`) |
-| A-33 engine | `src/engine/resolve.ts:588` `shownShapes` drops hidden shapes and their subtrees, returning the same array when none are hidden; `drawingLayers` uses it | `src/engine/resolve.test.ts` "leaves out hidden shapes…" (incl. the identity check) |
-| A-33 pure edits | `src/editor/drawings.ts`: `pickableShape` (`:65`), `ShapeRow`/`shapeRows` (`:75`, `:92`), `drawingAt` (`:98`), `setShapeFlag` (`:230`), `renameShape` (`:242`), `reorderShape` (`:256`) | `src/editor/drawings.test.ts` (21 tests in total) |
-| A-33 picking | `src/renderer/CanvasOverlay.tsx`: `topmostAt` skips locked shapes, the double-click child pick skips locked children, `shapeUnder` uses `pickableShape`; store prune `withoutUnpickableShapes` | `src/renderer/store.test.ts` "hide/lock lets go of the selection"; scenario `shape-rows` (`pickedWhereHidden`/`pickedWhereLocked` = `'0'`) |
-| A-33 UI | `src/renderer/Timeline.tsx`: `ShapeRows` (`:58`), `TrackHeader` (`:172`; expand button `track-expand-${index}`), `rows` memo (`:432`). Test ids: `shape-row-${id}` (`data-selected`), `shape-name-${id}`, `shape-name-input`, `shape-hidden-${id}`, `shape-locked-${id}`. CSS: `src/renderer/editor.css` `.shape-rows`, `.shape-row` (30 px, "Must match SHAPE_ROW_HEIGHT"), `.selected`, `.muted`, `.empty`. Store: `expandedTracks` and `expandTrack` (`src/renderer/store.ts:33`, `:341`) | Scenario `shape-rows` and its feature test (rows `['Right','Coat','Shape','Left']`; rename, Shift-add, hide, lock, drag-reorder; saved file has the order `right, left, coat` with `hidden`/`locked`/`name`). Screenshot `shape-rows.png` checked by eye |
-| A-34 pure edits | `src/editor/drawings.ts`: `drawingPlace` (`:117`), `addDrawingShapes` (`:127`, was `addDrawingShape`), `shapeRefsOf` (`:140`), `deleteShapes` (`:296`), `CopiedShape`/`copyShapes` (`:300`, `:313`), `withNewShapeIds` (`:322`), `addShapesAbove` (`:329`) | `src/editor/drawings.test.ts` |
-| A-34 commands | `src/renderer/actions.ts`: `Copied` union (`:58`); shape branches in `copy`, `cut`, `pasteShapes` (`:132`; outside an animation `notify('Shapes can only be pasted inside an animation.')`), `deleteSelection`, ripple delete, `duplicate` | Scenario `shape-edits`: delete + undo, copy + paste, ⌘D (rows `['Left','Left','Right','Coat','Shape','Left']`), the refusal notice in the episode. **Cut, ripple delete on shapes and paste into another animation have no automated test** |
-| A-35 Arrange | `src/editor/drawings.ts` `ArrangePlace`/`arrangeShapes` (`:270`, `:292`); `src/editor/shortcuts.ts` (`:28`, `:81`, `:122`, `:311`); `src/shared/mediaProtocol.ts:266`; `src/renderer/Editor.tsx:280`; `src/renderer/document.ts:579`; `src/main/main.ts:924` Edit › Arrange submenu; `src/renderer/actions.ts:60` `ARRANGE_LABELS`, `arrange` (`:366`) | Unit tests for all four places; `src/editor/shortcuts.test.ts`; scenario `shape-edits` (⌘⇧] then ⌘[, checked in the saved order) |
-| A-36 colour maths | **New** `src/editor/colors.ts`: `ColorParts`, `partsOf`, `hexOf`, `hexInput` | **New** `src/editor/colors.test.ts` (4 tests) |
-| A-36 store and style | `src/editor/drawings.ts`: `ShapeStyle`, `ColorPart`, `NEW_SHAPE_STYLE` (`:17`), `setShapeColor` (`:248`); `rectangleShape`/`ellipseShape` take a style. Store: `drawingStyle`, `colorPart`, `setDrawingColor` (`:335`), `setColorPart` | `src/renderer/store.test.ts` "keeps the colours for new shapes…" |
-| A-36 panel | **New** `src/renderer/ColorFields.tsx`: `useWellColors` (`:31`), `useAreaDrag`, `SliderTrack`, `HslField`, `ColorFields` (`:145`). Test ids: `colour-fill`, `colour-stroke`, `colour-field`, `colour-${hue,saturation,lightness,opacity}`, `colour-…-track`, `colour-hex`. `src/renderer/NumberField.tsx` optional `track`; `src/renderer/controls.css` `.field-row.with-track`, `.slider-track`, `.slider-knob`, `.hsl-field`, `.colour-wells`, `.colour-chip`; `src/renderer/Properties.tsx` Colour group; `src/renderer/CanvasPanel.tsx` wells `tool-well-fill`/`tool-well-stroke` | Scenario `shape-edits`: hue-track drag on the coat's stroke (saved hue 100–140), hex `#336699` on its fill, Esc, then hex `ff8800` with nothing selected and a new rectangle with fill `#FF8800`. Screenshots `shape-colours.png`, `shape-rows.png` and a crop of the panel checked by eye after the spectrum change |
-| UI scenarios | `src/main/uiTest.ts`: `CHOSEN_SHAPES`, `artboardPointer`, `openShapeRows`, `shownRows`, `shapeRowPoint` (`:533`), `chooseRow`, `shapesPickedAt`, `testShapeRows` (`:549`), `testShapeEdits` (`:580`), registered at `:732-733`. The `drawing-tools` tool query is now `:scope > button` | `npx vitest run test/editor/features.test.ts -t "shape\|clipped child" --no-file-parallelism`: 3 passed |
-| Feature tests | `test/editor/features.test.ts`: `shapesDrawing()` (`:398`), `drawingsIn` (`:416`), tests at `:426` and `:441` | As above, and in the full run |
-| Token rule fix | `ColorFields.tsx` lightness gradient uses `hsl(0 0% 0%)`/`hsl(0 0% 100%)`; `src/renderer/store.test.ts` builds its colours with `hexOf` | `test/editor/tokens.test.ts` "are the only place a colour is written down" (failed in the first full run, passed in the second) |
-| Docs | `AGENTS.md` §3 lines 97, 100, 103–113 | Read back |
-| Memory | **New** `memory/shape-rows-colour-a32-a36-2026-10-27.md` and its line in `memory/MEMORY.md` | Written |
-| Full `npm test` | — | **Passed**, started 2026-10-27 14:26 local, after the last code edit. Log: `/private/tmp/claude-501/-Users-localuser-video-editor/7e79620e-6c7a-4d17-9353-0b7dc77f9e65/scratchpad/npm-test-2.log` |
+| `follows`, `parent`, parser | `src/shared/project.ts`: `rejectBrokenParents`, `parseNodeSets`, `parseDrawingShape` | `src/shared/project.test.ts`: "load and save shapes that follow a set, and sets with a parent" and "reject following or parenting a set…" |
+| Poses children-first, follows | `src/engine/curves.ts`: `carriedSetIds` (`:226`), `setPosesAt` (`:249`), `posedNode` (`:309`), `followedBy`, `posedList` | `src/engine/curves.test.ts`: "moves a shape that follows a set…", "turns a child set first…" |
+| Follow and parent editing | `src/editor/drawings.ts`:<br>- `followedSetIds` (`:645`)<br>- `shownPivot` (`:1203`), `turnAndScaleAboveSet` (`:1214`)<br>- `shapeIdsMovedBy` (`:1230`), `deleteNodeSet` (`:1270`)<br>- `parentChoices`/`setNodeSetParent` (`:1290`/`:1295`)<br>- `followChoices`/`setShapesFollow` (`:1314`/`:1325`)<br>- `withKnownSets` | `src/editor/drawings.test.ts`: "moves a shape that follows a set…", "parents a set without loops…", "gives the children of a deleted set its parent", "makes a keyed shape follow through its own set" |
+| A-57 keys along and node edits | `drawings.ts`: `withKeysAlong` (`:799`), `insertNode` (`:823`) | `drawings.test.ts`: "gives a node added between keyed nodes keys…", "keeps keys and sets on their own nodes when nodes go…" |
+| Pickers | `src/renderer/Properties.tsx`: `SET_CHOICE_PREFIX` (`:1279`), `setChoices`/`setChoiceOf`/`chosenSetId`, `NodeSetFields` (`:1303`) | UI scenario `follow-and-parent` (`src/main/uiTest.ts:1024`), feature test `test/editor/features.test.ts:671` |
+| Overlay | `src/renderer/CanvasOverlay.tsx`:<br>- ghost via `shapeIdsMovedBy` (`ghostOf` `:262`)<br>- turn handle direction<br>- pivot gesture `above`, set-move `after`<br>- `scalesEvenly` (`:596`) | Feature tests; hand-run pictures |
+| Parity fixture | `test/projects/animations/scene.pbanim` `face-2`:<br>- `head.follows: "tilt"`<br>- set `jaw` with `parent: "tilt"`, rotation keys and scale keys (1 → 1.25)<br>- the mouth's nodes in `jaw` | `test/engine/parity.test.ts` `26-animation` passes. A rendered frame 36 looked right by eye (`…/scratchpad/face-1/frame-36.png`) |
+| Clip cap | `src/editor/moveTrim.ts:142` `sourceDuration(…, documents)`, `Trim.documents`; `src/editor/properties.ts` `setDuration`/`setSourceStart`/`setLoop` (`:491`, `isAnimatedImage`); callers in `src/renderer/timelineController.ts:831` and `Properties.tsx` (Timing, Loop) | `src/editor/moveTrim.test.ts` "cannot extend a played animation past its end…"; `src/editor/properties.test.ts` "keeps a played animation within its end, but not a looping one" |
+| Scale and own sets | `curves.ts`:<br>- `REST_SCALE`, `keyedValueAt(…, restValue)`<br>- `TurnAndScale`, `NO_TURN_OR_SCALE`<br>- `turnAndScaleOf` (`:289`), `unturnedAndUnscaled`<br>- `posedStroke` (`:341`)<br>`drawings.ts`:<br>- `boxPose` (`:408`), `transformShapes(…, time)` (`:427`), `withPoseKeyed` (`:1355`)<br>- `restPlace` (`:1423`), `withOwnSets` (`:1442`)<br>- `shapePoseAt`, `setShapesPose` (`:1488`), `setShapesKeys` (`:1495`), `hasShapeKeysAt`, `shapeKeyTimes` (`:1508`)<br>- `setKeyTimes`/`hasSetKeysAt` now take lists of sets<br>- `withNewShapeIds` and `breakPaths` drop `ownsSet` | `curves.test.ts` "scales nodes and handles around the pivot…"; `drawings.test.ts` "keys a shape on a set of its own…", "records the box turning, scaling and moving a keyed shape…", "leaves the shapes clipped inside a keyed shape…" |
+| Transform group and set Scale | `Properties.tsx`: `ShapeKeyButtons` (`:1678`), `ShapeTransformFields` (`:1693`), `PART_NAMES`, `MIN_SET_SCALE_PERCENT`, Scale (%) in `NodeSetFields`, `toolGroup` for `tool === 'move'` | UI scenario `shape-keys` (`uiTest.ts:1053`), feature test `features.test.ts:703`. A hand-run picture (`…/scratchpad/keys-1/shape-keys.png`) shows the Transform group with keyed X/Y 5.2, Scale 125.8, Rotation 89.9 and corner-only handles |
+| Nudge through parents | `src/renderer/actions.ts` `nudgeNodes` (`unturnedAndUnscaled` with `turnAndScaleAboveSet`) | Typecheck only; no test drives a nudge on a child set |
+| Docs | `AGENTS.md` §2 (order line, own sets), §3 (line 89 replaced; new lines 148–156) | Read back |
+| Memory | `/Users/localuser/.claude/projects/-Users-localuser-video-editor/memory/follow-parent-a56-a58-2026-10-30.md` and its `MEMORY.md` line | Written |
+| Full suite | `npm test`, 2026-10-30 14:24–14:39 CET, after the last code edit | Exit 0: unit 54 files/1148; engine+editor 19 files/379, 886 s; 0 clones |
 
 ## Remaining
 
-1. **The user reviews and commits.** No code is pending.
-   - Point the user to `AGENTS.md` §3 lines 103–113, and the colour-field spectrum decision in particular, which was made after the plan.
-   - The earlier "Made in this plan" lines 73–102 are also unreviewed.
-   - Do not commit; the user commits. `HANDOFF.md` and `AGENTS.md` are untracked. The `mockups/animation-*` files are staged (`A`), and the user said earlier they would revert them.
-2. **Ask the user before fixing the camera double count** (Findings). It is a pre-existing A-07 issue; output is correct.
-3. **Optional, ask the user:** stop the shapes box refitting during a rotate drag (`src/renderer/CanvasOverlay.tsx` `shapesBoxOf` is recomputed from the live shapes). Cosmetic.
-4. **Optional test gaps, ask the user whether wanted:**
-   - Cut on shapes, ripple delete on shapes, Bring Forward / Send to Back through the UI, and paste of shapes into a second animation: these have no automated UI test.
-   - The paste refusal for drawing clips (A-27) in `actions.ts`.
-   - A-18 "undo ≤ 50 ms" inside an animation.
-   - The engine `still` command (A-11).
-5. **Next tickets, only when the user asks:** A-37 Fill tool (`AGENTS.md:245`), then A-38 colour picker, A-39 shared colours, A-40 Stroke panel, A-41 clip inside, A-42 duplicate drawing. Follow `/Users/localuser/.claude/rules/planning.md`: plan mode, questions only for decisions that are the user's, and the plan structure given there.
-   - A-37 uses the current colour (`drawingStyle.fill` in the store).
-   - A-41 extends `reorderShape`/row drag to clip inside.
-   - A-54 puts keys into the lanes drawn by `drawShapeLanes`.
-6. **If a latency budget fails in a full run**, rerun that test alone before treating it as a regression:
+1. **Wait for the user.** They have the final report for A-56–A-58 and both extras. Don't start A-59 or commit until asked.
+2. **Commit only if asked.** The tree mixes:
+   - A-43–A-47, A-48–A-55, A-56–A-58 and the two extras;
+   - the user's earlier readability edits (Files changed);
+   - this file.
 
-   ```sh
-   npx vitest run test/editor/editor.test.ts -t "responsiveness on a profile without a cache" --no-file-parallelism
-   ```
-
-   The two 2026-10-27 runs of this session had no latency failures.
+   Ask whether to make one commit or several, and whether the readability edits go in. Use the style of `3961d14`, and end with the attribution lines from the session's system reminder. Per `/Users/localuser/.claude/rules/global-standards.md`, don't override the author.
+3. **Next ticket, when asked: A-59 Hold frame** (`AGENTS.md:352`): Play / Hold frame on animation clips, a picker of frame thumbnails from A-11, and Split plus a new pick swaps a mouth.
+   - Follow `/Users/localuser/.claude/rules/planning.md`: plan mode, questions only for the user's decisions.
+   - **Hold frame must stay free of the cap:** make `sourceDuration` (`src/editor/moveTrim.ts:142`) return `undefined` for a held clip, and add a test next to "cannot extend a played animation past its end…".
+4. **Optional test gaps; ask the user whether they want them:**
+   - New in this session:
+     - nudging a child set with the arrow keys (parents' turn and scale);
+     - typing in the Transform group through the UI;
+     - Follow on a keyed shape through the UI;
+     - Loop off shortening an animation clip through the UI;
+     - a keyed clipped child whose parent shape follows an unrelated set (see Findings).
+   - Carried from before:
+     - the `isArtboardOpen === false` snapping path;
+     - the snapping switch with nodes;
+     - Shift with a snapped rectangle corner;
+     - ripple delete of chosen nodes;
+     - Break at two nodes;
+     - the Pen ending on a tool change;
+     - ⌘D drawing ripple;
+     - Unlink Swatch;
+     - Cut/Arrange on shapes;
+     - pasting shapes into a second animation;
+     - the A-27 paste refusal;
+     - A-18 undo ≤ 50 ms inside an animation;
+     - the engine `still` command.
+5. **Ask the user before fixing the camera double count** (Findings, carried).
 
 ## Findings
 
-- **The bottom track's shape rows sit below the UI-test timeline.**
-  - The test window's inner size is 1440x868, and the `timeline` canvas is 250 px tall (y 606–856).
-  - The card's drawing is on track 0, the bottom track, so its expanded rows start below the visible area. The 4th row's centre was at y 869.
-  - `driver.rect` + `clickAt` then clicks outside the window, and the scenario times out with "the left row to be chosen".
-  - Fix used: `shapeRowPoint` scrolls with `timelinePointInView`.
-  - The scroll range is exact: `maxScrollY = TRACKS_TOP + rows.total - height` (`timelineController.ts:217`), with no slack. So the old `TRACK_HEIGHT / 2` margin in `rowInView` could never be met by a 30 px row at the bottom ("could not be scrolled into view"). That is why the helper takes a `rowHeight`.
-  - Expanding a track does not scroll it into view. That was not asked; a user scrolls.
-- **`test/editor/tokens.test.ts` forbids hex colour literals** (`/#[0-9a-fA-F]{3,8}\b/`) in every `.ts`, `.tsx` and `.css` file directly in `src/renderer/` except `tokens.css`, **tests included**. Use `hsl(...)` strings in renderer code, and build test colours with `hexOf` from `src/editor/colors.ts`. `src/editor/` is not checked.
-- **An HSL field drawn at the current saturation is useless from white or grey**; it showed only white or grey. Same for a hue track drawn at the current lightness. Both now use the fixed `SPECTRUM` in `ColorFields.tsx`.
-- **The CSS layers are exact HSL.**
-  - Hue stops every 60° at S100 L50, under a white→transparent→black vertical layer, give exactly `hsl(h, 100%, l)`, because HSL above and below L50 is a linear mix with white or black.
-  - Keep this when changing the field.
-- **Pointer capture on a row retargets the double-click** to the row, so the name never got `dblclick`. Rows record the press on `pointerdown` and the list handles `pointerup` without capture.
-- **jscpd threshold 0** forced the shared `useAreaDrag` (slider and field) and `timelinePointInView`.
-- **knip flags every unused export.** Keep helper types unexported unless used elsewhere.
-- **Electron `sendInputEvent` mouseWheel:** in `timelinePointInView` a negative `deltaY` (`-ROW_SCROLL_PIXELS`) brings lower rows up into view. Observed: the scenarios pass with it.
-- **macOS has no `timeout` command** in this shell; run hand scenarios without it.
-- **There is no TS runner** (no tsx or vite-node). The scratch script `write-episode.mjs` (Other information) rebuilds the shape-rows fixture in plain JS.
-- **The header shows "Camera" inside an animation.** The lane is empty there, and mockup v3 shows the same label. It is not a regression from this batch.
-- **Carried over and still true:**
-  - **Camera zoom counted twice for drawn layers inside animations** (since A-07; not fixed):
-    - `src/engine/resolve.ts` folds `largestZoom(...)` into `frame.largestScale` for an animation's inner frame.
-    - `drawingLayers` and the text/callout/arrow layers use that as `sharpScaleX/Y`.
-    - The provider multiplies by `view.largestScale` again (`src/engine/engine.ts`, `src/engine/exporter.ts`).
-    - Rasters inside animations are up to zoom× larger per side than needed. Pixels on screen are correct.
-    - This is why `test/engine/drawings.test.ts` "stay sharp under a camera zoom" checks `steepestEdge`, not bytes.
-  - **`tsconfig.node.json` includes `src/editor`, `src/main` and `test`** and has no DOM lib. Anything the resolver, editor or driver imports must not use `Path2D` or `OffscreenCanvas`. That is why `src/engine/curves.ts` exists, and why the driver can import `src/editor/timelineView.ts`.
-  - **Electron `sendInputEvent` takes accelerator key names** (`'M'`, `']'`, `'['`, `'D'`), not `'KeyM'`.
-  - `driver.savedProject()` (Save As) hangs when an animation is unsaved. Scenarios inside animations use `driver.menu('save')` and then `untilEdited(driver, false)`.
-  - Relative media paths are computed from the folder as given (`/var/folders/...`). Don't `realpathSync` in tests.
-  - `MIN_CANVAS` is 160x120.
-  - Recovery write order: episode, then animation copies, then the manifest.
-  - The `ARTBOARD` in `src/engine/resolve.test.ts` `describe('animation clips')` is 12 fps.
-  - Known small gaps, not fixed:
-    - A closed group inside an open animation uses unstepped time for its own transform.
-    - Keyframes set while paused between animation frames land at unstepped times.
-    - The readout keeps `aria-label="Timecode"` when it shows frames.
-    - A new empty animation has duration 0.
-  - Suspicion only: at speed ≠ 100%, `floor` in `animationTime` could pick the previous frame at an exact boundary because of `TIMELINE_GRID` rounding. Not observed.
-  - Known behaviours by decision:
-    - The shapes box refits during rotation.
-    - A double-click picks only a direct child.
-    - Shape-box snapping targets clips and the canvas, not other shapes (A-47).
+**Posing model (this session)**
+- **One posing path:** `posedShapes` (`src/engine/curves.ts:359`) is used by the resolver (`src/engine/resolve.ts:610`), the overlay and Properties.
+  - A node is moved by a pose when any of its own `sets`, or any set its shape follows (inherited through clipped parents), is in `pose.carried`.
+  - Poses are sorted deepest first, so a child applies before its parent; parentless drawings keep list order.
+- **Inverting moves:** screen deltas go back through `unturnedAndUnscaled(delta, turnAndScaleOf(node, poses, followed))`.
+  - The parents' transform of a set is a similarity (turn plus even scale plus move), so a pivot or offset change is just the delta turned and scaled back.
+  - `restPlace` (`drawings.ts:1423`) uses this to put a new own set's pivot in rest space.
+- **Box keys:** `boxPose` (`drawings.ts:408`) keys a keyed shape's box change as:
+  - rotation `+= to.rotation − from.rotation`;
+  - scale `×= to.scaleX / from.scaleX`;
+  - offset `+=` the shown pivot's shift, turned and scaled back through the parents.
+
+  A turn around the box centre adds no position key, because a new own set's pivot is the outline's middle, which is the box centre.
+- **The scale key rests at 1, not 0.** `keyedValueAt(list, local, restValue)` and `restValueOf` in `drawings.ts` handle it. `withNodeLists` adds removed offsets for `x`/`y` only.
+- **Edge case not tested:** a keyed shape clipped inside a shape that follows an unrelated set.
+  - Its own set's parent is the innermost followed set (`followed.at(-1)`), and the crosshair is posed through that chain only, so the crosshair may not sit where the shape turns.
+  - Believed rare. Confirm with a unit test on `shownPivot` before relying on it.
+- **Time bases differ slightly:**
+  - `shapePoseAt` and the Properties set fields read at `time − clip.start`.
+  - Key writes (`setNodeSetPose`, `transformShapes`) use `localGridTime`.
+
+  Inside a 12 fps animation at odd episode frames these can differ by one picture (the known gap "keys set while paused between animation frames").
+
+**Clip cap (this session)**
+- An animation's length is `projectDuration(document)`, the end of its last clip. Media info for animations has no duration (`isTimed` is false), which is why clips used to trim freely.
+- **Where the cap lives:** `sourceDuration` reads `documents[info.path]`, from the store's `state.documents`, which `ClipProperties` already reads.
+
+**UI scenarios (this session)**
+- **Set picker options:** their values are `set:<random id>`, so scenarios pick by name with `pickSetNamed` (`uiTest.ts:1013`). The option test id is `${testId}-option-${value}`.
+- **Mid-run pictures can lag:** `driver.picture` taken right after a DOM wait captured the previous frame (`follow-and-parent-turned.png` showed Set 1 selected after Set 2 was pressed). The end-of-run picture is reliable; mid-run pictures were removed.
+- **Ids in the shape box:**
+  - the box rotate handle is `handle-rotate`, the corners `handle-nw|ne|se|sw`;
+  - the gesture undo labels are `Rotate Shape` and `Resize Shape`;
+  - key buttons are `${testId}-keyframe`, for example `shape-rotation-keyframe`, with the label `Add Rotation Keyframe`.
+- `follow-and-parent` and `shape-keys` each run in about 2–3 s.
+
+**Test runs (this session)**
+- **A transient failure:** the full run at 13:10 failed one playback output test, `test/editor/outputs.test.ts` "25-no-video: from the first frame to the last". The error was "playing-9.rgba at 00:00:02:09–00:00:02:10 equals the render of one of its frames: expected false to be true", with the load rising to about 9. It passed alone (5/5) and in the 14:24 full run.
+- **A transient failure:** a parallel `npx vitest run src` once failed `src/media/probe.test.ts` "reads every usable test file in under a second" (1766 ms) under load. It passed in both later full runs.
+
+**Carried over and still true**
+- **Pen and Node tools:**
+  - Pen state lives in the overlay (`penRef`, `penPath`), not the store.
+  - Esc and Enter reach the Pen first through a capture-phase listener.
+  - `store.selectedNodes` is pruned in `setState`.
+  - `nearestOnOutline` resolves to about 3e-4 of a segment.
+- **Snap targets:**
+  - Take snap targets at press time; `pickables` is rebuilt every render.
+  - Snap range in artboard units = `settings.snapRangePixels * canvasPerPixel / openFrame.scale`.
+- **Electron and driver quirks:**
+  - Electron `sendInputEvent` arrow keys are `'Up'`/`'Down'`/`'Left'`/`'Right'`.
+  - Repeated undo labels are ambiguous in waits: undo → wait for `Undo` → redo.
+  - `driver.savedProject()` hangs when an animation is unsaved; use `driver.menu('save')` then `untilEdited(driver, false)`.
+- **Seeking in the 12 fps card:** inside it, seek only to even frames (`seekToFrame` in `uiTest.ts`); odd ones fall between frames of the 30 fps episode.
+- **The timeline shows a "Camera" header inside an open animation** (`src/renderer/Timeline.tsx` always renders it; visible in the hand-run pictures). Whether it is inert there was not checked.
+- **Store and parser rules:**
+  - `store.update` drops root keys inside a group; whole-file edits (swatches) use `store.updateFile`.
+  - Parser switches are `?: true`; `false` is rejected.
+- **The camera zoom is counted twice for drawn layers inside animations** (since A-07; not fixed). `resolve.ts` folds `largestZoom(...)` into the inner frame's `largestScale`, and the provider multiplies again. Rasters are up to zoom× larger than needed; the pixels are correct.
+- **Repo rules:**
+  - `tsconfig.node.json` has no DOM lib; keep `Path2D`/`OffscreenCanvas` out of `src/editor`, `src/main`, `test`.
+  - `test/editor/tokens.test.ts` forbids hex literals in renderer files except `tokens.css`.
+  - jscpd runs at threshold 0 over `src`, `test` and `scripts` (tests included), and knip flags unused exports.
+- **Running the app by hand:**
+  - `--frames` needs absolute media paths.
+  - A synthetic ⌘S over DevTools doesn't reach the macOS menu.
+  - A first launch after a build can time out opening the project; rerun in a new folder.
+- **Known small gaps:**
+  - A closed group inside an open animation uses unstepped time.
+  - The readout keeps `aria-label="Timecode"` when showing frames.
+  - A new empty animation has duration 0 (the cap treats it as uncapped).
+  - The shapes box refits during rotation.
 
 ## Files changed and to change
 
-Changed in this batch (A-32–A-36), all uncommitted:
-
-- **Shared:** `src/shared/project.ts`, `src/shared/project.test.ts`, `src/shared/mediaProtocol.ts`.
+Changed in this session (uncommitted):
+- **Format:**
+  - `src/shared/project.ts`:
+    - `DrawingShape.follows`/`ownsSet`
+    - `NodeSet.parent`
+    - `NodeSetKeyframes.scale`, `'scale'` in `AnimatableProperty` and `NODE_SET_KEY_PROPERTIES`, `valueRule` scale > 0
+    - `rejectBrokenParents`, `ShapeContext.ownedSetIds`
+  - `src/shared/project.test.ts`
+- **Engine:**
+  - `src/engine/curves.ts`:
+    - children-first poses, `carriedSetIds`, follows
+    - scale, `TurnAndScale`/`turnAndScaleOf`/`unturnedAndUnscaled`
+    - `posedStroke`, `keyedValueAt` rest value
+  - `src/engine/curves.test.ts`
 - **Editor:**
-  - `src/editor/timelineView.ts` and its test
-  - `src/editor/drawings.ts` and its test (both untracked from A-30; largely rewritten here)
-  - **new** `src/editor/colors.ts` and `src/editor/colors.test.ts`
-  - `src/editor/shortcuts.ts` and its test
-- **Engine:** `src/engine/resolve.ts` (`shownShapes`), `src/engine/resolve.test.ts`.
+  - `src/editor/drawings.ts`: follow, parent, keys along, own sets, shape pose/keys, keyed `transformShapes(…, time)`; `setKeyTimes`/`hasSetKeysAt` take lists.
+  - `src/editor/drawings.test.ts`
+  - `src/editor/moveTrim.ts` (cap), `src/editor/moveTrim.test.ts`
+  - `src/editor/properties.ts` (`setDuration`/`setSourceStart`/`setLoop` with `documents`), `src/editor/properties.test.ts`
 - **Renderer:**
-  - `store.ts` and `store.test.ts`
-  - `timelineController.ts`, `timelineDraw.ts`, `Timeline.tsx`
-  - `actions.ts`, `document.ts`, `Editor.tsx`
-  - `CanvasOverlay.tsx`, `CanvasPanel.tsx`, `Properties.tsx`, `NumberField.tsx`
-  - **new** `ColorFields.tsx`
-  - `editor.css`, `controls.css`
-- **Main:**
-  - `src/main/main.ts` (Arrange submenu)
-  - `src/main/uiDriver.ts` (rows-aware `timelinePoint`, re-exported constants)
-  - `src/main/uiScenarios.ts` (`timelinePointInView`)
-  - `src/main/uiTest.ts` (helpers and two scenarios)
-- **Tests:** `test/editor/features.test.ts` (two tests and fixtures); `test/engine/drawings.test.ts` (builders take `NEW_SHAPE_STYLE`).
-- **Docs:** `AGENTS.md` §3; `HANDOFF.md` (this file).
+  - `src/renderer/Properties.tsx`: Follow and Parent pickers, set Scale field, `ShapeKeyButtons`, `ShapeTransformFields`, Transform group for the Move tool.
+  - `src/renderer/CanvasOverlay.tsx`: ghost, turn handle, pivot and set-move gestures, `scalesEvenly`, `transformShapes` gets `time`.
+  - `src/renderer/actions.ts` (nudge through parents)
+  - `src/renderer/timelineController.ts` (trim passes `documents`)
+  - `src/renderer/store.test.ts` (trim passes `documents`)
+- **UI tests:**
+  - `src/main/uiTest.ts`: `saveBoxedCorners`, `pickSetNamed`, `testFollowAndParent`, `testShapeKeys`, registry entries `follow-and-parent` and `shape-keys`.
+  - `test/editor/features.test.ts`: `Point`, `isPoint`, two tests.
+- **Fixtures:**
+  - `test/fixtures.ts`: `NO_DOCUMENTS`, `WAVE_STATES`, `waveDocuments`.
+  - `test/projects/animations/scene.pbanim`: head follows `tilt`, `jaw` set with keys.
+- **Docs:**
+  - `AGENTS.md`: §2 two lines, §3 line 89 and lines 148–156.
+  - `HANDOFF.md`: this file.
 
-Changed in earlier batches (A-01–A-31, also uncommitted): about 80 more files. `git status --short` lists them. They are described in `AGENTS.md` tickets A-01–A-31 and in the memory notes `animation-files-a01-a26-2026-10-26.md` and `drawing-shapes-a27-a31-2026-10-27.md`. The `mockups/animation-*` files are staged and are not code.
+Changed by earlier sessions and still uncommitted: A-43–A-55 across `src/engine/curves.ts`, `src/editor/{drawings,clips,geometry,shortcuts,snapping,split,timelineView}.ts`, the renderer files listed in `git status`, `test/engine/{drawings,parity}.test.ts`, and the untracked goldens `test/golden/node-keys-half-way.png` and `node-set-turn-half-way.png`.
 
-To change: nothing pending. Items 2–4 in Remaining need the user's go.
+The user's own readability edits (present since before 2026-10-27 23:21):
+- `src/editor/clips.ts` `mapClipsDeep`;
+- `src/renderer/ColorFields.tsx` `chooseSwatch`;
+- `src/renderer/Timeline.tsx` `dropAt`;
+- parts of `drawings.ts`, `CanvasOverlay.tsx` and `Properties.tsx`.
+
+To change: nothing pending. A-59 will touch `sourceDuration` (Remaining 3).
 
 ## Files with useful context
 
 - `AGENTS.md`:
-  - §1–2: spec and model.
-  - §3: decisions (lines 62–113).
-  - §4: code map (line 115).
-  - §5: tickets (line 134); group 3 Shapes starts at line 213, and A-37 is at line 245.
-- Plans:
-  - `/Users/localuser/.claude/plans/compiled-dazzling-lecun.md`: the approved A-32–A-36 plan.
-  - `/Users/localuser/.claude/plans/glittery-sparking-sundae.md`: the approved A-27–A-31 plan.
-  - `/Users/localuser/.claude/plans/splendid-finding-valley.md`: the approved A-01–A-26 plan.
+  - §2 model and rules
+  - §3 decisions (the A-56+ ones at lines 148–156, the cap at line 89)
+  - §4 code map
+  - §5 tickets (group 6 from line 350)
+- Plans in `/Users/localuser/.claude/plans/`:
+  - `mutable-cuddling-puzzle.md` (this session, second plan)
+  - `cosmic-questing-engelbart.md` (A-48–A-55)
+  - `parsed-forging-eclipse.md` (A-47)
+  - earlier: `ok-then-proceed-with-cuddly-robin.md`, `sunny-discovering-octopus.md`, `compiled-dazzling-lecun.md`, `glittery-sparking-sundae.md`, `splendid-finding-valley.md`
 - Transcripts in `/Users/localuser/.claude/projects/-Users-localuser-video-editor/`:
-  - `7e79620e-6c7a-4d17-9353-0b7dc77f9e65.jsonl`: this session.
-  - `f7d9b122-76a5-426b-87ac-076ec42147ae.jsonl`: A-27–A-31.
-  - `f52dad3e-10c2-47dd-b1cf-cd0b7f3b5e1b.jsonl`: 2026-10-26.
-- Memory, in `/Users/localuser/.claude/projects/-Users-localuser-video-editor/memory/`:
-  - `MEMORY.md` (the index)
-  - `shape-rows-colour-a32-a36-2026-10-27.md`
-  - `drawing-shapes-a27-a31-2026-10-27.md`
-  - `animation-files-a01-a26-2026-10-26.md`
-  - `animation-workspace-decisions-2026-10-26.md`
-  - `isolate-electron-test-profile.md`
-  - `orphaned-test-apps.md`
-  - `latency-budgets-under-load.md`
-  - `no-assumed-features.md`
-  - `minimal-comments.md`
-  - `ui-controls-style-decisions.md`
+  - `e8a236f1-3eeb-4c85-a265-2dfa481ffa7b.jsonl` (this session)
+  - `a1348b75-bb1d-44dd-a8cf-f21799ab1666.jsonl` (A-48–A-55)
+  - `b2b20783-…jsonl` (A-47)
+- Memory in `/Users/localuser/.claude/projects/-Users-localuser-video-editor/memory/`:
+  - `MEMORY.md`, `follow-parent-a56-a58-2026-10-30.md`, `node-keys-sets-a48-a55-2026-10-29.md`, `node-snapping-a47-2026-10-29.md`
+  - test rules: `isolate-electron-test-profile.md`, `orphaned-test-apps.md`, `latency-budgets-under-load.md`
+  - working style: `no-assumed-features.md`, `minimal-comments.md`, `cheaper-subagents.md`
 - User rules: `/Users/localuser/.claude/rules/global-standards.md`, `planning.md`, `typescript-standards.md`.
 - Patterns to copy:
-  - `src/editor/drawings.ts` `editDrawings`/`editSiblings`/`editEachShape`: the way to edit shapes by ref. `src/editor/drawings.ts:117` `drawingPlace`: where new shapes go.
-  - `src/renderer/ColorFields.tsx` `useAreaDrag` and the begin/update/commit gesture, for A-40's sliders. `NumberField` `track` prop.
-  - `src/renderer/Timeline.tsx:58` `ShapeRows`: row press/drag/rename, for A-41 and A-54.
-  - `src/renderer/timelineDraw.ts:461` `drawShapeLanes`: where A-54 keys go.
-  - `src/main/uiTest.ts:513-640`: shape scenarios and helpers. `test/editor/features.test.ts:321` `writeEpisode(directory, tracksBelow)`, and `:398` `shapesDrawing()`.
-- Visual reference: `mockups/animation-v3/` (`views.js` `colourPanel` at line 71, layer rows at line 120, `screens/01-shapes.png`).
+  - `src/editor/drawings.ts` `withOwnSets`/`setShapesKeys` for "create on first key"
+  - `editChosenDrawings`/`editSiblings` for shape edits
+  - `src/renderer/Properties.tsx` `ShapeKeyButtons` over `DrawingKeyButtons` for key buttons
+  - `src/main/uiTest.ts` `pickSetNamed` for pickers with random-id values
+  - `test/editor/features.test.ts`:
+    - `writeEpisode`: a 320×180, 12 fps card animation at (320,180) in a 640×360, 30 fps episode
+    - `shapesDrawing`: Left at 20,20 and Right at 100,20, both 40 px; Coat at 250,140 with a pocket
+- Visual reference: `mockups/animation-v3/` (set fields show Rotation and Scale (%)).
 
 ## How to run and check
 
 From `/Users/localuser/video-editor`:
 
-| Command | What it does | Last result (2026-10-27, after the last edit) |
+| Command | What it does | Last result |
 | --- | --- | --- |
-| `npm run typecheck` | tsc with `tsconfig.json` and `tsconfig.node.json` | Clean |
-| `npm run lint` | `knip && jscpd`, threshold 0 | Clean, 0 clones |
-| `npm run test:unit` | `vitest run src`, about 14 s | 54 files, 1075 passed |
-| `npm run build` | FFmpeg check, tsc, vite | OK. Needed before any `test/engine` or `test/editor` run, because those drive the built app |
-| `npm test` | All of the above, then `vitest run test/engine test/editor --no-file-parallelism` | All passed: 19 files, 365 tests, 816 s for the last part (about 14 min in total) |
+| `npm run typecheck` | tsc, both configs | Clean, 2026-10-30 after the last edit |
+| `npm run lint` | `knip && jscpd`, threshold 0 | 0 clones, knip clean |
+| `npm run test:unit` | `vitest run src`, about 16 s | 54 files, 1148 passed |
+| `npm run build` | FFmpeg check, tsc, vite; needed before `test/engine` or `test/editor` runs | OK |
+| `npm test` | All of the above, then `vitest run test/engine test/editor --no-file-parallelism` | Exit 0, 2026-10-30 14:24–14:39 CET, 379/379, 886 s |
 
 Targeted runs, after `npm run build`:
 
 ```sh
-npx vitest run test/editor/features.test.ts -t "shape|clipped child" --no-file-parallelism   # shape-rows, shape-edits, drawing-tools: 3 passed
-npx vitest run test/editor/tokens.test.ts src/renderer/store.test.ts                          # passed
-npx vitest run test/engine/drawings.test.ts --no-file-parallelism
-npx vitest run test/engine/parity.test.ts -t "26-animation" --no-file-parallelism
+npx vitest run test/editor/features.test.ts -t "shape in the Transform|follow a set|node set|node keys|node tool|snaps nodes|pen|rectangle and a circle" --no-file-parallelism
+npx vitest run test/engine/parity.test.ts test/engine/drawings.test.ts test/engine/animations.test.ts --no-file-parallelism
 ```
 
-To hand-run a scenario and get its screenshots, use **a scratch profile only**; the default profile holds the user's real work:
+If a latency or playback output test fails in a full run, rerun it alone first, for example:
 
 ```sh
-S=/private/tmp/claude-501/-Users-localuser-video-editor/7e79620e-6c7a-4d17-9353-0b7dc77f9e65/scratchpad
-rm -rf $S/ui && node $S/write-episode.mjs $S/ui && mkdir -p $S/ui/profile
-"$(node -e "console.log(require('electron'))")" . --user-data-dir=$S/ui/profile --uitest shape-edits --project $S/ui/episode.json --out $S/ui
+npx vitest run test/editor/outputs.test.ts -t "25-no-video" --no-file-parallelism
 ```
 
-- `shape-rows` writes `shape-rows.png`.
-- `shape-edits` writes `shape-colours.png` and `shape-edits.png`.
-- The last stdout line is the JSON report.
-- If the scratchpad is gone, rebuild the fixture as `writeEpisode(directory, [[shapesDrawing()]])` does in `test/editor/features.test.ts`. Ticks are `TICKS_PER_SECOND = 24_000_000`.
+To hand-run a scenario, use **a scratch profile only**; the default profile holds the user's real work. `write-episode.mjs` writes the `shapesDrawing` fixture:
 
-Goldens: run the test with `UPDATE_GOLDEN=1`, then check the PNG by eye.
+```sh
+S=/private/tmp/claude-501/-Users-localuser-video-editor/e8a236f1-3eeb-4c85-a265-2dfa481ffa7b/scratchpad
+node $S/write-episode.mjs $S/run-1 && mkdir -p $S/run-1/profile
+"$(node -e "console.log(require('electron'))")" . --user-data-dir=$S/run-1/profile --uitest shape-keys --project $S/run-1/episode.json --out $S/run-1
+```
+
+- The last stdout line is the JSON report.
+- `<scenario>.png` is written at the end.
+- Use a new folder per run.
+
+To see an export frame:
+
+```sh
+"$(node -e "console.log(require('electron'))")" . --user-data-dir=$S/f/profile --frames test/projects/26-animation.json --via export --at 36 --out $S/f
+node $S/rgba-to-png.mjs $S/f/frame-000036.rgba 1280 720 $S/f/frame-36.png
+```
 
 ## Other information
 
-- **The user's standing rules** (instructions and memory):
-  - Never commit unless asked; the user commits.
-  - Build only what was asked, and name every forced side change so the user can veto it. Record build-time decisions in `AGENTS.md` §3 "Made in this plan".
-  - No new dependencies, abstractions or files unless needed.
-  - Minimal comments (non-obvious why only).
-  - Early returns.
-  - TypeScript rules in `typescript-standards.md`: no casts, no `!`, `unknown` over `any`, loops over long chains, named functions.
-  - UI rules: one field per row with the label above, units in brackets, tokens only, no hex in renderer files, in-house pickers, terse copy.
-  - Never do database changes.
-  - Plans use the `planning.md` structure.
-  - Concise chat replies.
-  - Subagents run on Haiku; no forks.
-  - Hand-run Electron only with a scratch `--user-data-dir`.
-  - After a vitest timeout, kill orphaned test apps whose parent PID is 1.
-  - Rerun a latency failure alone before treating it as a regression.
-  - Don't send the user's email anywhere.
-- **Processes:** none from this session are running. `ps` at the end showed no electron or vitest test processes, only unrelated Slack and Cursor helpers.
-- **Scratch files** (not in the repo; can be deleted), in `/private/tmp/claude-501/-Users-localuser-video-editor/7e79620e-6c7a-4d17-9353-0b7dc77f9e65/scratchpad/`:
-  - `npm-test.log`: the first full run, with 1 tokens failure.
-  - `npm-test-2.log`: the second full run, all passed.
-  - `write-episode.mjs`: the fixture generator.
-  - `ui/`: card, episode, profile, `shape-rows.png`, `panel.png`.
-- **Already reported to the user** at the end of the build:
-  - what was built
-  - the colour-field change
-  - the veto list
-  - the forced side changes: driver re-exports, `timelinePointInView`, the `drawing-tools` query, the `addDrawingShapes` and `withoutUnpickableShapes` renames, the new screenshot
-  - the passing full test result
-  - that nothing is committed
-- **Dates:**
-  - A-01–A-26 were built 2026-10-26.
-  - A-27–A-31 were built 2026-10-27 in the morning.
-  - A-32–A-36 were built 2026-10-27, with the final test run at 14:26–14:40 local.
+- **The user's standing rules:**
+  - Workflow:
+    - commit only when asked
+    - build only what was asked, and name forced side changes so they can be vetoed
+    - record build-time decisions in `AGENTS.md` §3
+    - plans in the `planning.md` structure, through plan mode, with questions only for the user's decisions
+    - no database changes
+    - concise replies that lead with the outcome
+  - Code:
+    - no new dependencies or abstractions unless needed
+    - minimal comments (only the why)
+    - early returns
+    - `typescript-standards.md`: no casts, no `!`, `for…of` over chained array calls, function declarations for reused functions, named parameters
+  - UI: label above, units in brackets, tokens only, no hex in renderer files, in-house pickers, terse copy.
+  - Git (`global-standards.md`, changed during this session): no worktrees; keep the configured author; no Claude mentions or session links in PR descriptions.
+  - Agents and test runs:
+    - Subagents run on Haiku with no forks; this session used none.
+    - Hand-run Electron only with a scratch `--user-data-dir`.
+    - After a vitest timeout, kill orphaned test apps whose parent PID is 1.
+    - Rerun latency or playback failures alone.
+- **Processes:** none left running. `ps` at 14:54 CET showed no Electron or vitest processes from this repo.
+- **Scratch files** (not in the repo; can be deleted) in `/private/tmp/claude-501/-Users-localuser-video-editor/e8a236f1-3eeb-4c85-a265-2dfa481ffa7b/scratchpad/`:
+  - scripts: `write-episode.mjs`, `rgba-to-png.mjs`
+  - `follow-1/` (`follow-and-parent.png`), `keys-1/` (`shape-keys.png`), `face-1/` (`frame-36.png`)
+  - logs: `npm-test.log` (lint failure, fixed), `npm-test-2.log` (one transient output failure), `npm-test-3.log` (green), `build.log`
+- **Already told the user:**
+  - the A-56–A-58 report with its veto list and forced changes;
+  - the answer to their clip length and transform question;
+  - the final report for the cap and shape keys with its veto list (set Scale field and parity scale key as unrequested changes).
+
+  Nothing is promised beyond waiting for the next instruction.

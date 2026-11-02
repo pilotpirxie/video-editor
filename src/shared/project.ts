@@ -68,6 +68,7 @@ export type AnimatableProperty =
   | 'y'
   | 'scaleX'
   | 'scaleY'
+  | 'scale'
   | 'rotation'
   | 'opacity'
   | 'cropLeft'
@@ -328,12 +329,19 @@ type ShapeHandle = {
   y: number
 }
 
-// A side without a handle is sharp there.
+type NodeKeyframes = {
+  x?: Keyframe[]
+  y?: Keyframe[]
+}
+
+// A side without a handle is sharp there. Keys offset the node from its place, and `sets` names the node sets that move it.
 export type ShapeNode = {
   x: number
   y: number
   in?: ShapeHandle
   out?: ShapeHandle
+  keyframes?: NodeKeyframes
+  sets?: string[]
 }
 
 export type StrokeCap = 'butt' | 'round' | 'square'
@@ -353,7 +361,7 @@ export type ShapeStroke = {
   scalesWithObject?: true
 }
 
-// A colour linked to a swatch keeps the swatch's hex next to the link.
+// A colour linked to a swatch keeps the swatch's hex next to the link. A shape that follows a node set moves with it, and so do the shapes clipped inside it; a keyed shape owns the set it follows.
 export type DrawingShape = {
   id: string
   name?: string
@@ -364,6 +372,8 @@ export type DrawingShape = {
   fill?: string
   fillSwatch?: string
   stroke?: ShapeStroke
+  follows?: string
+  ownsSet?: true
   children?: DrawingShape[]
 }
 
@@ -373,10 +383,28 @@ export type Swatch = {
   color: string
 }
 
-// Shapes are listed back to front, in the artboard's pixels.
+// Scale is a factor around the pivot, even on both sides.
+export type NodeSetKeyframes = {
+  rotation?: Keyframe[]
+  scale?: Keyframe[]
+  x?: Keyframe[]
+  y?: Keyframe[]
+}
+
+// A parent set carries the set, its pivot and its nodes.
+export type NodeSet = {
+  id: string
+  name: string
+  pivot: { x: number; y: number }
+  parent?: string
+  keyframes?: NodeSetKeyframes
+}
+
+// Shapes are listed back to front, in the artboard's pixels. Node offsets apply first, then the node sets in list order.
 export type DrawingClip = ClipTiming & {
   type: 'drawing'
   shapes: DrawingShape[]
+  nodeSets?: NodeSet[]
 }
 
 export type Clip = VideoClip | AudioClip | ImageClip | TextClip | BlurClip | HighlightClip | CalloutClip | ArrowClip | GroupClip | AnimationClip | DrawingClip
@@ -435,7 +463,7 @@ export const MAX_CAMERA_SCALE = 10
 const MAX_VOLUME = 2
 const MAX_GROUP_DEPTH = 8
 export const MAX_SHAPE_DEPTH = 8
-const MIN_SHAPE_NODES = 2
+export const MIN_SHAPE_NODES = 2
 const FONT_WEIGHT_STEP = 100
 const FONT_WEIGHT = { min: 100, max: 900 }
 const LINE_SPACING: NumberRule = { min: 0.5, max: 3 }
@@ -443,6 +471,8 @@ const LINE_SPACING: NumberRule = { min: 0.5, max: 3 }
 const EASINGS: readonly Easing[] = ['linear', 'easeIn', 'easeOut', 'easeInOut', 'hold']
 const TRANSFORM_PROPERTIES: readonly AnimatableProperty[] = ['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity']
 const CROP_PROPERTIES: readonly AnimatableProperty[] = ['cropLeft', 'cropTop', 'cropRight', 'cropBottom']
+const NODE_KEY_PROPERTIES: readonly AnimatableProperty[] = ['x', 'y']
+const NODE_SET_KEY_PROPERTIES: readonly AnimatableProperty[] = ['rotation', 'scale', 'x', 'y']
 const TEXT_ALIGNMENTS: readonly TextAlign[] = ['left', 'center', 'right']
 const CLIP_TYPES = ['video', 'audio', 'image', 'text', 'blur', 'highlight', 'callout', 'arrow', 'group', 'animation', 'drawing']
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/
@@ -679,6 +709,7 @@ function valueRule(property: AnimatableProperty): NumberRule {
   if (property === 'opacity') return { min: 0, max: 1 }
   if (property === 'volume') return { min: 0, max: MAX_VOLUME }
   if (property === 'x' || property === 'y' || property === 'rotation') return {}
+  if (property === 'scale') return { above: 0 }
   return { min: 0 }
 }
 
@@ -1153,17 +1184,64 @@ function parseShapeHandle(fields: Fields, key: string): ShapeHandle {
   return { x: handle.number('x'), y: handle.number('y') }
 }
 
-function parseShapeNode(value: unknown, path: string): ShapeNode {
-  const fields = readFields(value, path, ['x', 'y'], ['in', 'out'])
+function parseNodeSetIds(fields: Fields, setIds: ReadonlySet<string>): string[] {
+  const listed = fields.array('sets')
+  if (listed.length === 0) fail(fields.at('sets'), 'is empty; leave it out instead')
+  const ids: string[] = []
+  for (const [index, entry] of listed.entries()) {
+    const path = `${fields.at('sets')}[${index}]`
+    if (typeof entry !== 'string' || !setIds.has(entry)) fail(path, 'must name a node set of this drawing')
+    if (ids.includes(entry)) fail(path, `lists "${entry}" twice`)
+    ids.push(entry)
+  }
+  return ids
+}
+
+function parseShapeNode(value: unknown, path: string, setIds: ReadonlySet<string>): ShapeNode {
+  const fields = readFields(value, path, ['x', 'y'], ['in', 'out', 'keyframes', 'sets'])
   const node: ShapeNode = { x: fields.number('x'), y: fields.number('y') }
   if (fields.has('in')) node.in = parseShapeHandle(fields, 'in')
   if (fields.has('out')) node.out = parseShapeHandle(fields, 'out')
+  if (fields.has('keyframes')) node.keyframes = parseKeyframes(fields.raw('keyframes'), fields.at('keyframes'), NODE_KEY_PROPERTIES)
+  if (fields.has('sets')) node.sets = parseNodeSetIds(fields, setIds)
   return node
+}
+
+function rejectBrokenParents(sets: readonly NodeSet[], path: string): void {
+  const parents = new Map(sets.map((set) => [set.id, set.parent]))
+  for (const [index, set] of sets.entries()) {
+    if (set.parent === undefined) continue
+    const at = `${path}[${index}].parent`
+    if (set.parent === set.id || !parents.has(set.parent)) fail(at, 'must name another node set of this drawing')
+    let parent: string | undefined = set.parent
+    for (let step = 0; parent !== undefined; step++) {
+      if (parent === set.id || step > sets.length) fail(at, 'makes node sets parent each other')
+      parent = parents.get(parent)
+    }
+  }
+}
+
+function parseNodeSets(value: unknown, path: string): NodeSet[] {
+  if (!Array.isArray(value) || value.length === 0) fail(path, 'must be a list with at least one node set; leave it out instead')
+  const sets: NodeSet[] = []
+  for (const [index, entry] of value.entries()) {
+    const fields = readFields(entry, `${path}[${index}]`, ['id', 'name', 'pivot'], ['parent', 'keyframes'])
+    const pivot = readFields(fields.raw('pivot'), fields.at('pivot'), ['x', 'y'])
+    const set: NodeSet = { id: fields.nonEmptyString('id'), name: fields.nonEmptyString('name'), pivot: { x: pivot.number('x'), y: pivot.number('y') } }
+    if (fields.has('parent')) set.parent = fields.nonEmptyString('parent')
+    if (fields.has('keyframes')) set.keyframes = parseKeyframes(fields.raw('keyframes'), fields.at('keyframes'), NODE_SET_KEY_PROPERTIES)
+    sets.push(set)
+  }
+  rejectDuplicateIds(sets, path)
+  rejectBrokenParents(sets, path)
+  return sets
 }
 
 type ShapeContext = {
   shapeIds: Set<string>
+  ownedSetIds: Set<string>
   swatchIds: ReadonlySet<string>
+  setIds: ReadonlySet<string>
 }
 
 const STROKE_CAPS: readonly StrokeCap[] = ['butt', 'round', 'square']
@@ -1199,14 +1277,14 @@ function parseDrawingShapes(value: unknown, path: string, depth: number, context
 }
 
 function parseDrawingShape(value: unknown, path: string, depth: number, context: ShapeContext): DrawingShape {
-  const fields = readFields(value, path, ['id', 'nodes'], ['name', 'hidden', 'locked', 'isClosed', 'fill', 'fillSwatch', 'stroke', 'children'])
+  const fields = readFields(value, path, ['id', 'nodes'], ['name', 'hidden', 'locked', 'isClosed', 'fill', 'fillSwatch', 'stroke', 'follows', 'ownsSet', 'children'])
   const id = fields.nonEmptyString('id')
   if (context.shapeIds.has(id)) fail(fields.at('id'), `"${id}" is used by more than one shape in this drawing`)
   context.shapeIds.add(id)
 
   const nodes: ShapeNode[] = []
   for (const [index, entry] of fields.array('nodes').entries()) {
-    nodes.push(parseShapeNode(entry, `${fields.at('nodes')}[${index}]`))
+    nodes.push(parseShapeNode(entry, `${fields.at('nodes')}[${index}]`, context.setIds))
   }
   if (nodes.length < MIN_SHAPE_NODES) fail(fields.at('nodes'), `must have at least ${MIN_SHAPE_NODES} nodes`)
   const shape: DrawingShape = { id, nodes }
@@ -1220,6 +1298,17 @@ function parseDrawingShape(value: unknown, path: string, depth: number, context:
     shape.fillSwatch = parseSwatchLink(fields, 'fillSwatch', context.swatchIds)
   }
   if (fields.has('stroke')) shape.stroke = parseShapeStroke(fields.raw('stroke'), fields.at('stroke'), context.swatchIds)
+  if (fields.has('follows')) {
+    const setId = fields.nonEmptyString('follows')
+    if (!context.setIds.has(setId)) fail(fields.at('follows'), 'must name a node set of this drawing')
+    shape.follows = setId
+  }
+  if (fields.has('ownsSet')) {
+    if (shape.follows === undefined) fail(fields.at('ownsSet'), 'needs a set it follows next to it')
+    if (context.ownedSetIds.has(shape.follows)) fail(fields.at('ownsSet'), `"${shape.follows}" is owned by more than one shape`)
+    context.ownedSetIds.add(shape.follows)
+    shape.ownsSet = parseSwitch(fields, 'ownsSet')
+  }
   if (fields.has('children')) {
     if (depth >= MAX_SHAPE_DEPTH) fail(fields.at('children'), `go deeper than ${MAX_SHAPE_DEPTH} shapes clipped inside each other`)
     const children = parseDrawingShapes(fields.raw('children'), fields.at('children'), depth + 1, context)
@@ -1231,9 +1320,13 @@ function parseDrawingShape(value: unknown, path: string, depth: number, context:
 
 function parseDrawingClip(value: unknown, path: string, context: ParseContext): DrawingClip {
   if (context.kind !== 'animation') fail(path, 'is a drawing, which only an animation can hold')
-  const fields = readFields(value, path, [...TIMING_KEYS, 'shapes'])
-  const shapes = parseDrawingShapes(fields.raw('shapes'), fields.at('shapes'), 0, { shapeIds: new Set(), swatchIds: context.swatchIds })
-  return { type: 'drawing', ...parseTiming(fields, context, []), shapes }
+  const fields = readFields(value, path, [...TIMING_KEYS, 'shapes'], ['nodeSets'])
+  const nodeSets = fields.has('nodeSets') ? parseNodeSets(fields.raw('nodeSets'), fields.at('nodeSets')) : undefined
+  const setIds = new Set(nodeSets?.map((set) => set.id))
+  const shapes = parseDrawingShapes(fields.raw('shapes'), fields.at('shapes'), 0, { shapeIds: new Set(), ownedSetIds: new Set(), swatchIds: context.swatchIds, setIds })
+  const clip: DrawingClip = { type: 'drawing', ...parseTiming(fields, context, []), shapes }
+  if (nodeSets !== undefined) clip.nodeSets = nodeSets
+  return clip
 }
 
 function parseClip(value: unknown, path: string, context: ParseContext): Clip {

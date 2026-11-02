@@ -163,7 +163,7 @@ type DraftFieldProps = {
 }
 
 // Applies what was typed on Enter or on leaving the field; Escape puts the value back.
-function DraftField({ label, testId, value, onApply }: DraftFieldProps): ReactElement {
+export function DraftField({ label, testId, value, onApply }: DraftFieldProps): ReactElement {
   const [draft, setDraft] = useState<string | undefined>(undefined)
 
   function apply(): void {
@@ -253,7 +253,8 @@ export function ColorFields(): ReactElement {
   // The chosen swatch again unlinks, keeping its colour.
   function chooseSwatch(swatch: Swatch): void {
     const swatchId = swatch.id === linked?.id ? undefined : swatch.id
-    if (isEditingShapes) store.apply(swatchId === undefined ? 'Unlink Swatch' : 'Apply Swatch', (project) => setShapeColor(project, selectedShapes, part, swatch.color, swatchId))
+    const label = swatchId === undefined ? 'Unlink Swatch' : 'Apply Swatch'
+    if (isEditingShapes) store.apply(label, (project) => setShapeColor(project, selectedShapes, part, swatch.color, swatchId))
     store.setDrawingColor(part, swatch.color, swatchId)
   }
 

@@ -1,14 +1,57 @@
-import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement, type ReactNode } from 'react'
 import { ANIMATION_NAMES, DEFAULT_ANIMATION, setAnimation, takesAnimation } from '../editor/presets.js'
 import { CALLOUT_NAMES, setArrowStyle, setCalloutStyle } from '../editor/annotations.js'
 import { deleteZoom, setZoom, type ZoomChanges } from '../editor/camera.js'
-import { allClips, coversTime, freeTrackId, hasMedia, hasSource, isCroppable, isContainer, makesSound, nextTrackName } from '../editor/clips.js'
-import { MIN_STROKE_WIDTH, NEW_STROKE, setShapeStroke, shapeAt, strokeWith, type StrokeChange } from '../editor/drawings.js'
+import { allClips, coversTime, freeTrackId, hasMedia, hasSource, isCroppable, isContainer, locateClip, makesSound, nextTrackName } from '../editor/clips.js'
+import {
+  MIN_STROKE_WIDTH,
+  NEW_STROKE,
+  addNodeSet,
+  breakPaths,
+  closePaths,
+  deleteNodeSet,
+  followChoices,
+  followedSetOf,
+  hasNodeKeysAt,
+  hasSetKeysAt,
+  hasShapeKeysAt,
+  nodeKeyTimes,
+  nodeTypeOf,
+  nodesInSet,
+  parentChoices,
+  posedShapeAt,
+  renameNodeSet,
+  setKeyTimes,
+  setNodeKeys,
+  setNodePosition,
+  setNodeSetKeys,
+  setNodeSetParent,
+  setNodeSetPose,
+  setNodeType,
+  setPoseAt,
+  setShapeStroke,
+  setShapesFollow,
+  setShapesKeys,
+  setShapesPose,
+  shapeAt,
+  shapeKeyTimes,
+  shapePoseAt,
+  strokeWith,
+  type NodeRef,
+  type NodeType,
+  type SetPart,
+  type SetRef,
+  type SetValues,
+  type ShapePose,
+  type ShapeRef,
+  type StrokeChange,
+} from '../editor/drawings.js'
 import { cropFromValue } from '../editor/geometry.js'
 import { resolveScope } from '../editor/groups.js'
 import { moveClips } from '../editor/moveTrim.js'
 import {
   hasKeyframesAt,
+  nearestKeyTime,
   nearestKeyframe,
   propertyAt,
   setCanvasSize,
@@ -22,6 +65,7 @@ import {
   setSourceStart,
   setSpeed,
   sharedValue,
+  type ClipKeyTimes,
   type Fade,
   type KeyframeSet,
   type PropertyValues,
@@ -52,11 +96,15 @@ import {
   type CalloutClip,
   type Clip,
   type Crop,
+  type DrawingClip,
+  type DrawingShape,
   type Easing,
   type HighlightClip,
+  type NodeSet,
   type Project,
   type Shape,
   type ShapeClip,
+  type ShapeNode,
   type StrokeAlign,
   type StrokeCap,
   type StrokeJoin,
@@ -67,10 +115,11 @@ import {
   type VisualClip,
 } from '../shared/project.js'
 import { ANIMATION_FRAME_RATES, FAST_SOUND_ABOVE_PERCENT, MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, PROJECT_FRAME_RATES, TICKS_PER_SECOND, frameDuration, type FrameRate } from '../shared/time.js'
-import { ColorFields } from './ColorFields.js'
+import { ColorFields, DraftField } from './ColorFields.js'
 import { useEditorState, usePosition, useSession } from './context.js'
 import { installedFontFamilies } from './fonts.js'
 import { Icon, IconButton, type IconName } from './icons.js'
+import { PopupMenu } from './Menu.js'
 import { NumberField } from './NumberField.js'
 import { Picker, type Choice } from './Picker.js'
 import { updateStep, type Edit, type EditorState } from './store.js'
@@ -85,6 +134,7 @@ const MAX_POSITION = 100_000
 const MAX_SECONDS = 24 * 60 * 60
 const MAX_ROTATION = 36_000
 const MAX_SCALE_PERCENT = 10_000
+const MIN_SET_SCALE_PERCENT = 1
 const MAX_FONT_SIZE = 2000
 const OPAQUE_COLOR_LENGTH = 7
 const TEXT_SIZES = [24, 36, 48, 64, 72, 96, 120, 144, 200, 288]
@@ -152,6 +202,10 @@ const STROKE_ORDERS: readonly SegmentChoice<'behind' | 'front'>[] = [
   { value: 'front', label: 'Front' },
 ]
 const MAX_STROKE_WIDTH = 1000
+const NODE_TYPES: readonly SegmentChoice<NodeType>[] = [
+  { value: 'sharp', label: 'Sharp' },
+  { value: 'smooth', label: 'Smooth' },
+]
 const CROP_SIDES: readonly { side: keyof Crop; property: AnimatableProperty; label: string }[] = [
   { side: 'left', property: 'cropLeft', label: 'Left' },
   { side: 'top', property: 'cropTop', label: 'Top' },
@@ -1142,7 +1196,10 @@ function StrokeFields(): ReactElement {
   const { store } = useSession()
   const selectedShapes = useEditorState((state) => state.selectedShapes)
   const drawingStyle = useEditorState((state) => state.drawingStyle)
-  const firstShape = useEditorState((state) => (state.selectedShapes[0] === undefined ? undefined : shapeAt(state.project, state.selectedShapes[0])))
+  const firstShape = useEditorState((state) => {
+    const first = state.selectedShapes[0]
+    return first === undefined ? undefined : shapeAt(state.project, first)
+  })
   const pendingRef = useRef<StrokeChange | 'none' | undefined>(undefined)
   const isEditingShapes = selectedShapes.length > 0
   const stroke = isEditingShapes ? firstShape?.stroke : drawingStyle.stroke
@@ -1210,6 +1267,279 @@ function StrokeFields(): ReactElement {
   )
 }
 
+type SetMenu = {
+  at: { x: number; y: number }
+  set: SetRef
+}
+
+function isSameSet(first: SetRef | undefined, second: SetRef): boolean {
+  return first?.clipId === second.clipId && first.setId === second.setId
+}
+
+const SET_CHOICE_PREFIX = 'set:'
+
+function setChoices(sets: readonly NodeSet[]): Choice[] {
+  const choices: Choice[] = [{ value: NONE, label: 'None' }]
+  for (const set of sets) choices.push({ value: `${SET_CHOICE_PREFIX}${set.id}`, label: set.name })
+  return choices
+}
+
+function setChoiceOf(setId: string | undefined): string {
+  return setId === undefined ? NONE : `${SET_CHOICE_PREFIX}${setId}`
+}
+
+function chosenSetId(choice: string): string | undefined {
+  return choice.startsWith(SET_CHOICE_PREFIX) ? choice.slice(SET_CHOICE_PREFIX.length) : undefined
+}
+
+function useChosenNodes(): { project: Project; selectedShapes: readonly ShapeRef[]; selectedNodes: readonly NodeRef[] } {
+  const project = useEditorState((state) => state.project)
+  const selectedShapes = useEditorState((state) => state.selectedShapes)
+  const selectedNodes = useEditorState((state) => state.selectedNodes)
+  return { project, selectedShapes, selectedNodes }
+}
+
+// The sets of the chosen shapes' drawings as pills; a pill chooses the set's nodes, and Save makes a set of the chosen nodes of one shape.
+function NodeSetFields(): ReactElement {
+  const { store, transport } = useSession()
+  const { project, selectedShapes, selectedNodes } = useChosenNodes()
+  const selectedSet = useEditorState((state) => state.selectedSet)
+  const [menu, setMenu] = useState<SetMenu | undefined>(undefined)
+  const drawings: DrawingClip[] = []
+  for (const { clipId } of selectedShapes) {
+    const clip = locateClip(project, clipId)?.clip
+    if (clip?.type === 'drawing' && !drawings.includes(clip)) drawings.push(clip)
+  }
+  const chosenShapes = new Set(selectedNodes.map((node) => `${node.clipId}/${node.shapeId}`))
+  const canSave = chosenShapes.size === 1
+  const [onlyDrawing] = drawings
+  const chosen: DrawingShape[] = []
+  for (const ref of selectedShapes) {
+    const shape = shapeAt(project, ref)
+    if (shape !== undefined) chosen.push(shape)
+  }
+  const followed = drawings.length === 1 && onlyDrawing?.nodeSets !== undefined ? onlyDrawing : undefined
+  const shownDrawing = drawings.find((clip) => clip.id === selectedSet?.clipId)
+  const shownSet = selectedSet === undefined || shownDrawing === undefined ? undefined : shownDrawing.nodeSets?.find((set) => set.id === selectedSet.setId)
+  const rotation = usePosition((position) => (shownDrawing === undefined || shownSet === undefined ? undefined : setPoseAt(shownDrawing, shownSet.id, position.time - shownDrawing.start)?.rotation))
+  const moveX = usePosition((position) => (shownDrawing === undefined || shownSet === undefined ? undefined : setPoseAt(shownDrawing, shownSet.id, position.time - shownDrawing.start)?.x))
+  const moveY = usePosition((position) => (shownDrawing === undefined || shownSet === undefined ? undefined : setPoseAt(shownDrawing, shownSet.id, position.time - shownDrawing.start)?.y))
+  const scale = usePosition((position) => (shownDrawing === undefined || shownSet === undefined ? undefined : setPoseAt(shownDrawing, shownSet.id, position.time - shownDrawing.start)?.scale))
+  const scalePercent = scale === undefined ? undefined : scale * PERCENT
+
+  function choose(clip: DrawingClip, setId: string): void {
+    const nodes = nodesInSet(clip, setId)
+    const shapes: ShapeRef[] = []
+    for (const node of nodes) {
+      if (!shapes.some((shape) => shape.shapeId === node.shapeId)) shapes.push({ clipId: node.clipId, shapeId: node.shapeId })
+    }
+    store.selectSet({ clipId: clip.id, setId }, shapes, nodes)
+  }
+
+  function save(): void {
+    const nodes = selectedNodes
+    const first = nodes[0]
+    if (first === undefined) return
+    const setId = crypto.randomUUID()
+    const time = transport.position().time
+    store.apply('Save Node Set', (current) => addNodeSet(current, nodes, setId, time))
+    store.selectSet({ clipId: first.clipId, setId }, [{ clipId: first.clipId, shapeId: first.shapeId }], nodes)
+  }
+
+  function follow(choice: string): void {
+    const setId = chosenSetId(choice)
+    store.apply(setId === undefined ? 'Stop Following' : 'Follow Node Set', (current) => setShapesFollow(current, selectedShapes, setId))
+  }
+
+  function openMenu(event: MouseEvent<HTMLButtonElement>, set: SetRef): void {
+    event.preventDefault()
+    setMenu({ at: { x: event.clientX, y: event.clientY }, set })
+  }
+
+  const posed = (values: SetValues, set: SetRef): Edit => (current) => setNodeSetPose(current, set, values, transport.position().time)
+  return (
+    <>
+      <div className="labelled">
+        <span className="field-label">Node sets</span>
+        <div className="pill-row" role="group" aria-label="Node sets">
+          {drawings.map((clip) =>
+            (clip.nodeSets ?? []).map((set) => {
+              const ref = { clipId: clip.id, setId: set.id }
+              return (
+                <button
+                  key={`${clip.id}/${set.id}`}
+                  type="button"
+                  className="button"
+                  aria-pressed={isSameSet(selectedSet, ref)}
+                  data-testid={`node-set-${set.name}`}
+                  onClick={() => choose(clip, set.id)}
+                  onContextMenu={(event) => openMenu(event, ref)}
+                >
+                  {set.name}
+                </button>
+              )
+            }),
+          )}
+          <button type="button" className="button with-icon" data-testid="node-set-save" disabled={!canSave} onClick={save}>
+            <Icon name="plus" />
+            Save selection
+          </button>
+        </div>
+      </div>
+      {followed !== undefined && (
+        <div className="labelled">
+          <span className="field-label">Follow</span>
+          <Picker
+            label="Follow"
+            testId="shape-follow"
+            choices={setChoices(followChoices(followed, chosen))}
+            value={sharedValue(chosen.map((shape) => setChoiceOf(followedSetOf(followed, shape))))}
+            onChoose={follow}
+          />
+        </div>
+      )}
+      {selectedSet !== undefined && shownDrawing !== undefined && shownSet !== undefined && (
+        <>
+          <DraftField
+            key={shownSet.id}
+            label="Name"
+            testId="node-set-name"
+            value={shownSet.name}
+            onApply={(name) => store.apply('Rename Node Set', (current) => renameNodeSet(current, selectedSet, name))}
+          />
+          <div className="labelled">
+            <span className="field-label">Parent</span>
+            <Picker
+              label="Parent"
+              testId="node-set-parent"
+              choices={setChoices(parentChoices(shownDrawing, shownSet.id))}
+              value={setChoiceOf(shownSet.parent)}
+              onChoose={(choice) => store.apply('Change Parent Set', (current) => setNodeSetParent(current, selectedSet, chosenSetId(choice)))}
+            />
+          </div>
+          <EditField
+            label="Rotation (°)"
+            testId="node-set-rotation"
+            command="Rotate Node Set"
+            value={rotation}
+            min={-MAX_ROTATION}
+            max={MAX_ROTATION}
+            decimals={1}
+            keyframes={<SetKeyButtons set={selectedSet} part="rotation" testId="node-set-rotation" />}
+            edit={(value) => posed({ rotation: value }, selectedSet)}
+          />
+          <EditField
+            label="Scale (%)"
+            testId="node-set-scale"
+            command="Scale Node Set"
+            value={scalePercent}
+            min={MIN_SET_SCALE_PERCENT}
+            max={MAX_SCALE_PERCENT}
+            decimals={1}
+            keyframes={<SetKeyButtons set={selectedSet} part="scale" testId="node-set-scale" />}
+            edit={(value) => posed({ scale: value / PERCENT }, selectedSet)}
+          />
+          <div className="field-pair">
+            <EditField label="X" testId="node-set-x" command="Move Node Set" value={moveX} min={-MAX_POSITION} max={MAX_POSITION} decimals={1} edit={(value) => posed({ x: value }, selectedSet)} />
+            <EditField label="Y" testId="node-set-y" command="Move Node Set" value={moveY} min={-MAX_POSITION} max={MAX_POSITION} decimals={1} edit={(value) => posed({ y: value }, selectedSet)} />
+            <SetKeyButtons set={selectedSet} part="position" testId="node-set-position" />
+          </div>
+        </>
+      )}
+      {menu !== undefined && (
+        <PopupMenu
+          label="Node set"
+          items={[{ label: 'Delete Node Set', testId: 'menu-delete-node-set', onSelect: () => store.apply('Delete Node Set', (current) => deleteNodeSet(current, menu.set)) }]}
+          at={menu.at}
+          onClose={() => setMenu(undefined)}
+        />
+      )}
+    </>
+  )
+}
+
+// Type and place show what the chosen nodes share where they show at the playhead; Close and Break act on the chosen shapes and nodes.
+function NodeFields(): ReactElement {
+  const { store, transport } = useSession()
+  const { project, selectedShapes, selectedNodes } = useChosenNodes()
+  const shownAt = (axis: 'x' | 'y', time: number): number | undefined => {
+    const shown: number[] = []
+    for (const ref of selectedNodes) {
+      const node = posedShapeAt(project, ref, time)?.nodes[ref.index]
+      if (node !== undefined) shown.push(node[axis])
+    }
+    return sharedValue(shown)
+  }
+  const shownX = usePosition((position) => shownAt('x', position.time))
+  const shownY = usePosition((position) => shownAt('y', position.time))
+  const chosen: ShapeNode[] = []
+  for (const ref of selectedNodes) {
+    const node = shapeAt(project, ref)?.nodes[ref.index]
+    if (node !== undefined) chosen.push(node)
+  }
+  let hasOpenShape = false
+  for (const ref of selectedShapes) {
+    if (shapeAt(project, ref)?.isClosed !== true) hasOpenShape = true
+  }
+  const moveCommand = selectedNodes.length === 1 ? 'Move Node' : 'Move Nodes'
+
+  function chooseType(type: NodeType): void {
+    store.apply('Change Node Type', (current) => setNodeType(current, selectedNodes, type))
+  }
+
+  // The parts are new paths, so the chosen nodes no longer point at the same places.
+  function breakChosen(): void {
+    store.apply('Break Path', (current) => breakPaths(current, selectedNodes, () => crypto.randomUUID()))
+    store.selectNodes([])
+  }
+
+  return (
+    <>
+      <NodeSetFields />
+      {chosen.length > 0 && (
+        <>
+          <ChoiceField label="Type" testId="node-type" choices={NODE_TYPES} value={sharedValue(chosen.map(nodeTypeOf))} onChoose={chooseType} />
+          <div className="field-pair">
+            <EditField
+              label="X"
+              testId="node-x"
+              command={moveCommand}
+              value={shownX}
+              min={-MAX_POSITION}
+              max={MAX_POSITION}
+              decimals={1}
+              edit={(x) => (current) => setNodePosition(current, selectedNodes, 'x', x, transport.position().time)}
+            />
+            <EditField
+              label="Y"
+              testId="node-y"
+              command={moveCommand}
+              value={shownY}
+              min={-MAX_POSITION}
+              max={MAX_POSITION}
+              decimals={1}
+              edit={(y) => (current) => setNodePosition(current, selectedNodes, 'y', y, transport.position().time)}
+            />
+            <NodeKeyButtons nodes={selectedNodes} />
+          </div>
+        </>
+      )}
+      <button type="button" className="button" data-testid="node-close" disabled={!hasOpenShape} onClick={() => store.apply('Close Path', (current) => closePaths(current, selectedShapes))}>
+        Close path
+      </button>
+      <button type="button" className="button" data-testid="node-break" disabled={selectedNodes.length === 0} onClick={breakChosen}>
+        Break path
+      </button>
+    </>
+  )
+}
+
+function PenFields(): ReactElement {
+  const { store } = useSession()
+  const isFillingOpenPaths = useEditorState((state) => state.isFillingOpenPaths)
+  return <SwitchField label="Fill open paths" testId="pen-fill-open" isOn={isFillingOpenPaths} onSwitch={store.setFillingOpenPaths} />
+}
+
 function OpenGroupNote(): ReactElement {
   const { actions } = useSession()
   return (
@@ -1232,17 +1562,18 @@ function clipsUnder(clips: readonly Clip[], time: number): Clip[] {
   return clips.filter((clip) => coversTime(clip, time))
 }
 
-function KeyframeButtons({ clips, set, testId }: KeyframeButtonsProps): ReactElement {
-  const { store, transport } = useSession()
-  const frameTicks = useEditorState((state) => frameDuration(state.project.canvas.frameRate))
-  const isOverClip = usePosition((position) => clipsUnder(clips, position.time).length > 0)
-  const isKeyed = usePosition((position) => {
-    const underPlayhead = clipsUnder(clips, position.time)
-    return underPlayhead.length > 0 && underPlayhead.every((clip) => hasKeyframesAt(clip, set, position.time, frameTicks))
-  })
-  const previous = usePosition((position) => nearestKeyframe(clips, set, position.time, -1, frameTicks))
-  const next = usePosition((position) => nearestKeyframe(clips, set, position.time, 1, frameTicks))
-  const name = KEYFRAME_NAMES[set]
+type KeyNavigationProps = {
+  name: string
+  testId: string
+  isOverClip: boolean
+  isKeyed: boolean
+  previous: number | undefined
+  next: number | undefined
+  onToggle(time: number): void
+}
+
+function KeyNavigation({ name, testId, isOverClip, isKeyed, previous, next, onToggle }: KeyNavigationProps): ReactElement {
+  const { transport } = useSession()
   const lowerName = name.toLowerCase()
 
   let label = `Add a ${lowerName} keyframe at the playhead`
@@ -1255,13 +1586,6 @@ function KeyframeButtons({ clips, set, testId }: KeyframeButtonsProps): ReactEle
     transport.seek(target)
   }
 
-  function toggleKeyframe(): void {
-    const { time } = transport.position()
-    const ids = clipsUnder(clips, time).map((clip) => clip.id)
-    const command = isKeyed ? `Remove ${name} Keyframe` : `Add ${name} Keyframe`
-    store.apply(command, (project) => setKeyframesAt(project, ids, set, time, !isKeyed))
-  }
-
   return (
     <>
       <IconButton icon="chevronLeft" label={`Previous ${lowerName} keyframe`} testId={`${testId}-previous-keyframe`} isDisabled={previous === undefined} onClick={() => jumpTo(previous)} />
@@ -1271,9 +1595,141 @@ function KeyframeButtons({ clips, set, testId }: KeyframeButtonsProps): ReactEle
         testId={`${testId}-keyframe`}
         isPressed={isKeyed}
         isDisabled={!isOverClip}
-        onClick={toggleKeyframe}
+        onClick={() => onToggle(transport.position().time)}
       />
       <IconButton icon="chevronRight" label={`Next ${lowerName} keyframe`} testId={`${testId}-next-keyframe`} isDisabled={next === undefined} onClick={() => jumpTo(next)} />
+    </>
+  )
+}
+
+function KeyframeButtons({ clips, set, testId }: KeyframeButtonsProps): ReactElement {
+  const { store } = useSession()
+  const frameTicks = useEditorState((state) => frameDuration(state.project.canvas.frameRate))
+  const isOverClip = usePosition((position) => clipsUnder(clips, position.time).length > 0)
+  const isKeyed = usePosition((position) => {
+    const underPlayhead = clipsUnder(clips, position.time)
+    return underPlayhead.length > 0 && underPlayhead.every((clip) => hasKeyframesAt(clip, set, position.time, frameTicks))
+  })
+  const previous = usePosition((position) => nearestKeyframe(clips, set, position.time, -1, frameTicks))
+  const next = usePosition((position) => nearestKeyframe(clips, set, position.time, 1, frameTicks))
+  const name = KEYFRAME_NAMES[set]
+
+  function toggle(time: number): void {
+    const ids = clipsUnder(clips, time).map((clip) => clip.id)
+    const command = isKeyed ? `Remove ${name} Keyframe` : `Add ${name} Keyframe`
+    store.apply(command, (project) => setKeyframesAt(project, ids, set, time, !isKeyed))
+  }
+
+  return <KeyNavigation name={name} testId={testId} isOverClip={isOverClip} isKeyed={isKeyed} previous={previous} next={next} onToggle={toggle} />
+}
+
+type DrawingKeyButtonsProps = {
+  name: string
+  testId: string
+  entries: readonly ClipKeyTimes[]
+  isKeyedAt(time: number): boolean
+  edit(time: number, isKeyed: boolean): Edit
+}
+
+// Keys of nodes and node sets, which live on drawings rather than on clip properties.
+function DrawingKeyButtons({ name, testId, entries, isKeyedAt, edit }: DrawingKeyButtonsProps): ReactElement {
+  const { store } = useSession()
+  const frameTicks = useEditorState((state) => frameDuration(state.project.canvas.frameRate))
+  const clips = entries.map((entry) => entry.clip)
+  const isOverClip = usePosition((position) => clips.length > 0 && clipsUnder(clips, position.time).length === clips.length)
+  const isKeyed = usePosition((position) => isKeyedAt(position.time))
+  const previous = usePosition((position) => nearestKeyTime(entries, position.time, -1, frameTicks))
+  const next = usePosition((position) => nearestKeyTime(entries, position.time, 1, frameTicks))
+  const command = isKeyed ? `Remove ${name} Keyframe` : `Add ${name} Keyframe`
+  return <KeyNavigation name={name} testId={testId} isOverClip={isOverClip} isKeyed={isKeyed} previous={previous} next={next} onToggle={(time) => store.apply(command, edit(time, !isKeyed))} />
+}
+
+function NodeKeyButtons({ nodes }: { nodes: readonly NodeRef[] }): ReactElement {
+  const project = useEditorState((state) => state.project)
+  const entries = useMemo(() => nodeKeyTimes(project, nodes), [project, nodes])
+  return (
+    <DrawingKeyButtons
+      name="Node"
+      testId="node-position"
+      entries={entries}
+      isKeyedAt={(time) => hasNodeKeysAt(project, nodes, time)}
+      edit={(time, isKeyed) => (current) => setNodeKeys(current, nodes, time, isKeyed)}
+    />
+  )
+}
+
+const PART_NAMES: Record<SetPart, string> = { rotation: 'Rotation', scale: 'Scale', position: 'Position' }
+
+function SetKeyButtons({ set, part, testId }: { set: SetRef; part: SetPart; testId: string }): ReactElement {
+  const project = useEditorState((state) => state.project)
+  const entries = useMemo(() => setKeyTimes(project, [set], part), [project, set, part])
+  return (
+    <DrawingKeyButtons
+      name={PART_NAMES[part]}
+      testId={testId}
+      entries={entries}
+      isKeyedAt={(time) => hasSetKeysAt(project, [set], part, time)}
+      edit={(time, isKeyed) => (current) => setNodeSetKeys(current, set, part, time, isKeyed)}
+    />
+  )
+}
+
+// The first key gives each chosen shape its own set.
+function ShapeKeyButtons({ shapes, part, testId }: { shapes: readonly ShapeRef[]; part: SetPart; testId: string }): ReactElement {
+  const project = useEditorState((state) => state.project)
+  const entries = useMemo(() => shapeKeyTimes(project, shapes, part), [project, shapes, part])
+  return (
+    <DrawingKeyButtons
+      name={PART_NAMES[part]}
+      testId={testId}
+      entries={entries}
+      isKeyedAt={(time) => hasShapeKeysAt(project, shapes, part, time)}
+      edit={(time, isKeyed) => (current) => setShapesKeys(current, shapes, part, time, isKeyed, () => crypto.randomUUID())}
+    />
+  )
+}
+
+// What the chosen shapes' own sets add at the playhead; shapes without one show the rest.
+function ShapeTransformFields(): ReactElement {
+  const { transport } = useSession()
+  const project = useEditorState((state) => state.project)
+  const selectedShapes = useEditorState((state) => state.selectedShapes)
+  const shownAt = (part: keyof ShapePose, time: number): number | undefined => sharedValue(selectedShapes.map((ref) => shapePoseAt(project, ref, time)[part]))
+  const x = usePosition((position) => shownAt('x', position.time))
+  const y = usePosition((position) => shownAt('y', position.time))
+  const scale = usePosition((position) => shownAt('scale', position.time))
+  const rotation = usePosition((position) => shownAt('rotation', position.time))
+  const noun = selectedShapes.length === 1 ? 'Shape' : 'Shapes'
+  const posed = (values: SetValues): Edit => (current) => setShapesPose(current, selectedShapes, values, transport.position().time, () => crypto.randomUUID())
+  return (
+    <>
+      <div className="field-pair">
+        <EditField label="X" testId="shape-x" command={`Move ${noun}`} value={x} min={-MAX_POSITION} max={MAX_POSITION} decimals={1} edit={(value) => posed({ x: value })} />
+        <EditField label="Y" testId="shape-y" command={`Move ${noun}`} value={y} min={-MAX_POSITION} max={MAX_POSITION} decimals={1} edit={(value) => posed({ y: value })} />
+        <ShapeKeyButtons shapes={selectedShapes} part="position" testId="shape-position" />
+      </div>
+      <EditField
+        label="Scale (%)"
+        testId="shape-scale"
+        command={`Scale ${noun}`}
+        value={scale === undefined ? undefined : scale * PERCENT}
+        min={MIN_SET_SCALE_PERCENT}
+        max={MAX_SCALE_PERCENT}
+        decimals={1}
+        keyframes={<ShapeKeyButtons shapes={selectedShapes} part="scale" testId="shape-scale" />}
+        edit={(value) => posed({ scale: value / PERCENT })}
+      />
+      <EditField
+        label="Rotation (°)"
+        testId="shape-rotation"
+        command={`Rotate ${noun}`}
+        value={rotation}
+        min={-MAX_ROTATION}
+        max={MAX_ROTATION}
+        decimals={1}
+        keyframes={<ShapeKeyButtons shapes={selectedShapes} part="rotation" testId="shape-rotation" />}
+        edit={(value) => posed({ rotation: value })}
+      />
     </>
   )
 }
@@ -1424,7 +1880,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
 
   function switchLoop(isOn: boolean): void {
     const command = isOn ? 'Loop Clip' : 'Stop Looping'
-    store.apply(command, (project) => setLoop(project, ids, isOn, mediaStates))
+    store.apply(command, (project) => setLoop(project, ids, isOn, mediaStates, documents))
   }
 
   function pixelate(isOn: boolean): void {
@@ -1504,7 +1960,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
           max={maxInTimingUnits}
           step={frameInTimingUnits}
           decimals={timing.decimals}
-          edit={(next) => (project) => setDuration(project, ids, wholeFrames(next * timing.ticks), frameTicks, mediaStates)}
+          edit={(next) => (project) => setDuration(project, ids, wholeFrames(next * timing.ticks), frameTicks, mediaStates, documents)}
         />
         {sourced.length > 0 && (
           <>
@@ -1517,7 +1973,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
               max={maxInTimingUnits}
               step={frameInTimingUnits}
               decimals={timing.decimals}
-              edit={(next) => (project) => setSourceStart(project, ids, next * timing.ticks, mediaStates)}
+              edit={(next) => (project) => setSourceStart(project, ids, next * timing.ticks, mediaStates, documents)}
             />
             <EditField
               label="Speed (%)"
@@ -1688,11 +2144,33 @@ export function Properties(): ReactElement | undefined {
   const isAnimationOpen = useEditorState(isAnimationRootOpen)
   const isInAnimation = useEditorState((state) => state.openChain.length > 0)
   const hasShapes = useEditorState((state) => state.selectedShapes.length > 0)
+  const tool = useEditorState((state) => state.tool)
   const clips = useMemo(() => selectedClips(project, selection), [project, selection])
   if (selectedZoom !== undefined) return <ZoomProperties index={selectedZoom} />
   if (clips.length > 0) return <ClipProperties clips={clips} />
+  let toolGroup: ReactElement | undefined
+  if (isInAnimation && tool === 'node' && hasShapes) {
+    toolGroup = (
+      <Group title="Node" icon="node" isOpenAtStart>
+        <NodeFields />
+      </Group>
+    )
+  } else if (isInAnimation && tool === 'move' && hasShapes) {
+    toolGroup = (
+      <Group title="Transform" icon="move" isOpenAtStart>
+        <ShapeTransformFields />
+      </Group>
+    )
+  } else if (isInAnimation && tool === 'pen') {
+    toolGroup = (
+      <Group title="Pen" icon="pen" isOpenAtStart>
+        <PenFields />
+      </Group>
+    )
+  }
   const colour = (
     <>
+      {toolGroup}
       <Group title="Colour" icon="droplet" isOpenAtStart>
         <ColorFields />
       </Group>

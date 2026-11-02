@@ -20,6 +20,17 @@ function framesOf(timecode: unknown): number {
   return ((hours * 60 + minutes) * 60 + seconds) * FRAMES_PER_SECOND + frames
 }
 
+type Point = {
+  x: number
+  y: number
+}
+
+function isPoint(value: unknown): value is Point {
+  if (typeof value !== 'object' || value === null) return false
+  if (!('x' in value) || !('y' in value)) return false
+  return typeof value.x === 'number' && typeof value.y === 'number'
+}
+
 describe('transport', () => {
   it('steps, jumps and shuttles with the default keys', async () => {
     const report = await uiTest('transport', ['--project', projectPath('01-single-clip')])
@@ -361,7 +372,7 @@ describe('animation files', () => {
     const coat: Clip = { id: 'coat', type: 'drawing', start: 0, duration: 2 * SECOND, shapes: [parent] }
     const { episodePath, cardPath } = writeEpisode(directory, [[coat]])
     const report = await uiTest('drawing-tools', ['--project', episodePath, '--out', directory])
-    expect(report.tools).toEqual(['Move', 'Fill', 'Rectangle', 'Ellipse', 'Colour picker'])
+    expect(report.tools).toEqual(['Move', 'Node', 'Pen', 'Fill', 'Rectangle', 'Ellipse', 'Colour picker'])
 
     // The card's 320x180 artboard sits in the middle of the 640x360 episode at full size; a pointer lands on whole screen pixels.
     const { preview } = report
@@ -488,6 +499,226 @@ describe('animation files', () => {
     expect(sketch?.shapes.map((shape) => shape.id)).toEqual(['left', 'coat'])
     expect(copy).toMatchObject({ start: 2 * SECOND, duration: 2 * SECOND, shapes: sketch?.shapes })
     expect(drawn?.shapes).toEqual([expect.not.objectContaining({ stroke: expect.anything() })])
+  })
+
+  it('draws closed and open paths with the pen, each one undo step, filling open ones only when asked', async () => {
+    const directory = join(scratch, 'pen-tool')
+    const { episodePath, cardPath } = writeEpisode(directory, [[shapesDrawing()]])
+    const report = await uiTest('pen-tool', ['--project', episodePath, '--out', directory])
+    expect(report).toEqual({ nodesWhileDrawing: '4', isAnimationOpen: true })
+
+    const paths: DrawingShape[] = []
+    for (const drawing of drawingsIn(cardPath)) {
+      for (const shape of drawing.shapes) {
+        if (shape.name === 'Path') paths.push(shape)
+      }
+    }
+    expect(paths).toHaveLength(3)
+    const [closed, open, filled] = paths
+    expect(closed).toMatchObject({ isClosed: true, fill: '#FFFFFF', stroke: { color: '#000000', width: 4 } })
+    const [first, second, smooth, broken] = closed?.nodes ?? []
+    expect(first?.in ?? first?.out).toBeUndefined()
+    expect(second?.in ?? second?.out).toBeUndefined()
+    expect(smooth?.out?.x).toBeGreaterThan(0)
+    expect(smooth?.in?.x).toBeCloseTo(-(smooth?.out?.x ?? 0), 6)
+    expect(smooth?.in?.y).toBeCloseTo(-(smooth?.out?.y ?? 0), 6)
+    expect(broken?.in).toBeUndefined()
+    expect(broken?.out?.y).toBeGreaterThan(0)
+    expect(open?.nodes).toHaveLength(2)
+    expect(open?.isClosed).toBeUndefined()
+    expect(open?.fill).toBeUndefined()
+    expect(open?.stroke).toBeDefined()
+    expect(filled).toMatchObject({ fill: '#FFFFFF', stroke: { width: 4 } })
+    expect(filled?.isClosed).toBeUndefined()
+  })
+
+  it('moves, boxes, nudges, smooths, adds, deletes, breaks and closes nodes with the node tool', async () => {
+    const directory = join(scratch, 'node-tool')
+    const { episodePath, cardPath } = writeEpisode(directory, [[shapesDrawing()]])
+    const report = await uiTest('node-tool', ['--project', episodePath, '--out', directory])
+    expect(report.timeAfter).toBe(report.timeBefore)
+    expect(report.nodesAfterAdding).toBe(5)
+
+    const [sketch] = drawingsIn(cardPath)
+    const shapes = sketch?.shapes ?? []
+    expect(shapes.map((shape) => shape.name)).toEqual(['Left', 'Left', 'Coat', 'Right'])
+    const [left, leftPart, , right] = shapes
+    expect(left?.isClosed).toBe(true)
+    expect(left?.nodes.map((node) => ({ x: node.x, y: node.y }))).toEqual([
+      { x: 20, y: 20 },
+      { x: 60, y: 20 },
+      { x: 60, y: 60 },
+    ])
+    expect(leftPart?.isClosed).toBeUndefined()
+    expect(leftPart?.nodes.map((node) => ({ x: node.x, y: node.y }))).toEqual([
+      { x: 60, y: 60 },
+      { x: 20, y: 60 },
+      { x: 20, y: 20 },
+    ])
+
+    const [moved, untouched, smooth, other] = right?.nodes ?? []
+    expect(moved?.x).toBeLessThan(100)
+    expect(moved?.y).toBeLessThan(20)
+    expect(untouched).toEqual({ x: 140, y: 20 })
+    expect(smooth).toMatchObject({ x: 141, y: 55 })
+    expect(other).toMatchObject({ x: 101, y: 55 })
+    const before = smooth?.in ?? { x: 0, y: 0 }
+    const after = smooth?.out ?? { x: 0, y: 0 }
+    const turn = Math.atan2(before.x * after.y - before.y * after.x, before.x * after.x + before.y * after.y)
+    expect(Math.abs(turn)).toBeCloseTo(Math.PI, 6)
+  })
+
+  it('snaps nodes onto other nodes, the artboard edges and whole pixels, but not with ⌘', async () => {
+    const directory = join(scratch, 'node-snapping')
+    const { episodePath, cardPath } = writeEpisode(directory, [[shapesDrawing()]])
+    const report = await uiTest('node-snapping', ['--project', episodePath, '--out', directory])
+    const { previewWidth } = report
+    if (typeof previewWidth !== 'number') throw new Error('The report has no preview width')
+    const tolerance = (2 * 640) / previewWidth
+
+    const [sketch] = drawingsIn(cardPath)
+    const shapes = sketch?.shapes ?? []
+    const right = shapes.find((shape) => shape.name === 'Right')
+    const path = shapes.find((shape) => shape.name === 'Path')
+    const rectangle = shapes.find((shape) => shape.name === 'Rectangle')
+    const [onNode, onEdge, , unsnapped] = right?.nodes ?? []
+    expect(onNode).toEqual({ x: 60, y: 20 })
+    expect(onEdge?.y).toBe(0)
+    expect(Number.isInteger(onEdge?.x)).toBe(true)
+    expect(unsnapped).not.toEqual({ x: 60, y: 60 })
+    expect(Math.abs((unsnapped?.x ?? 0) - 63)).toBeLessThan(tolerance)
+    expect(Math.abs((unsnapped?.y ?? 0) - 62)).toBeLessThan(tolerance)
+
+    expect(path?.nodes[0]).toEqual({ x: 20, y: 60 })
+    expect(path?.nodes.map((node) => Number.isInteger(node.x) && Number.isInteger(node.y))).toEqual([true, true])
+    const corners = rectangle?.nodes ?? []
+    expect(corners.map((node) => Number.isInteger(node.x) && Number.isInteger(node.y))).toEqual([true, true, true, true])
+    expect(corners[0]?.x).toBe(0)
+    expect(corners[2]?.y).toBe(180)
+    expect(Math.abs((corners[0]?.y ?? 0) - 150)).toBeLessThan(tolerance)
+  })
+
+  it('outlines the drawings around the playhead on the chosen track, fading with distance', async () => {
+    const directory = join(scratch, 'onion-skin')
+    const square = (left: number): DrawingShape => ({ id: 'square', nodes: [{ x: left, y: 60 }, { x: left + 40, y: 60 }, { x: left + 40, y: 100 }, { x: left, y: 100 }], isClosed: true, fill: '#00FF00' })
+    const poses = [0, 1, 2, 3].map((index): Clip => ({ id: `pose-${index}`, type: 'drawing', start: (index * SECOND) / 2, duration: SECOND / 2, shapes: [square(20 + 70 * index)] }))
+    const { episodePath } = writeEpisode(directory, [poses])
+    const report = await uiTest('onion-skin', ['--project', episodePath, '--out', directory])
+    expect(report.outlines).toHaveLength(3)
+    expect(report.outlines).toEqual(
+      expect.arrayContaining([
+        { testId: 'onion-before-0', opacity: '0.6' },
+        { testId: 'onion-before-1', opacity: '0.3' },
+        { testId: 'onion-after-0', opacity: '0.6' },
+      ]),
+    )
+  })
+
+  it('keys a node, moves it between keys, eases, copies and pastes its keys, and drags them on its shape row', async () => {
+    const directory = join(scratch, 'node-keys')
+    const { episodePath, cardPath } = writeEpisode(directory, [[shapesDrawing()]])
+    await uiTest('node-keys', ['--project', episodePath, '--out', directory])
+
+    const [sketch] = drawingsIn(cardPath)
+    const right = sketch?.shapes.find((shape) => shape.name === 'Right')
+    const [unkeyed, keyed] = right?.nodes ?? []
+    expect(unkeyed?.keyframes).toBeUndefined()
+    expect(unkeyed?.x).toBe(100)
+    expect(unkeyed?.y).toBeLessThan(20)
+    expect(keyed).toMatchObject({ x: 140, y: 20 })
+    const across = keyed?.keyframes?.x ?? []
+    expect(across.map((key) => key.time)).toEqual([0, SECOND, (7 * SECOND) / 4])
+    const [rest, moved, pasted] = across
+    expect(rest).toMatchObject({ value: 0, easing: 'linear' })
+    expect(moved?.value).toBeGreaterThan(10)
+    expect(moved?.easing).toBe('easeIn')
+    expect(pasted).toEqual({ ...moved, time: (7 * SECOND) / 4 })
+    expect(keyed?.keyframes?.y?.map((key) => key.value)).toEqual([0, 0, 0])
+  })
+
+  it('saves a node set, turns it with keys, moves it and its pivot, and outlines it at the previous key', async () => {
+    const directory = join(scratch, 'node-sets')
+    const { episodePath, cardPath } = writeEpisode(directory, [[shapesDrawing()]])
+    const report = await uiTest('node-sets', ['--project', episodePath, '--out', directory])
+    expect(report.isGhostShownAtFirstKey).toBe(false)
+    const { previewWidth } = report
+    if (typeof previewWidth !== 'number') throw new Error('The report has no preview width')
+    const artboardPerPixel = 640 / previewWidth
+
+    const [sketch] = drawingsIn(cardPath)
+    const [arm] = sketch?.nodeSets ?? []
+    expect(arm?.name).toBe('Arm')
+    const right = sketch?.shapes.find((shape) => shape.name === 'Right')
+    expect(right?.nodes.map((node) => node.sets)).toEqual([[arm?.id], [arm?.id], [arm?.id], [arm?.id]])
+    expect(right?.nodes.map((node) => ({ x: node.x, y: node.y }))).toEqual([
+      { x: 100, y: 20 },
+      { x: 140, y: 20 },
+      { x: 140, y: 60 },
+      { x: 100, y: 60 },
+    ])
+    const [firstTurn, secondTurn] = arm?.keyframes?.rotation ?? []
+    expect(firstTurn?.time).toBe(0)
+    expect(Math.abs((firstTurn?.value ?? 0) - 45)).toBeLessThan(5)
+    expect(secondTurn).toMatchObject({ time: SECOND, value: 90 })
+    expect(arm?.keyframes?.x?.map((key) => key.time)).toEqual([SECOND])
+    expect(arm?.keyframes?.x?.[0]?.value).toBeGreaterThan(10)
+    expect(arm?.keyframes?.y?.map((key) => key.value)).toEqual([0])
+    const pivotShift = 50 * artboardPerPixel
+    expect(Math.abs((arm?.pivot.x ?? 0) - (120 - pivotShift))).toBeLessThan(2 * artboardPerPixel)
+    expect(Math.abs((arm?.pivot.y ?? 0) - (40 + pivotShift))).toBeLessThan(2 * artboardPerPixel)
+  })
+
+  it('makes a shape follow a set and gives a set a parent, so both turn with the parent', async () => {
+    const directory = join(scratch, 'follow-and-parent')
+    const { episodePath, cardPath } = writeEpisode(directory, [[shapesDrawing()]])
+    const report = await uiTest('follow-and-parent', ['--project', episodePath, '--out', directory])
+    const { previewWidth } = report
+    if (typeof previewWidth !== 'number') throw new Error('The report has no preview width')
+    const pixelsPerArtboard = previewWidth / 640
+
+    const [sketch] = drawingsIn(cardPath)
+    const [right, left] = sketch?.nodeSets ?? []
+    expect(right).toMatchObject({ name: 'Set 1', keyframes: { rotation: [{ time: 0, value: -30 }] } })
+    expect(left).toMatchObject({ name: 'Set 2', parent: right?.id })
+    expect(sketch?.shapes.find((shape) => shape.name === 'Left')?.follows).toBe(right?.id)
+
+    // Set 1 turns around the middle of Right, at 120,40.
+    function shiftOnTurn(point: Point): Point {
+      const angle = -30 * (Math.PI / 180)
+      const offsetX = point.x - 120
+      const offsetY = point.y - 40
+      return { x: 120 + offsetX * Math.cos(angle) - offsetY * Math.sin(angle) - point.x, y: 40 + offsetX * Math.sin(angle) + offsetY * Math.cos(angle) - point.y }
+    }
+
+    function expectMoved(before: unknown, after: unknown, shift: Point): void {
+      if (!isPoint(before) || !isPoint(after)) throw new Error('The report has no points')
+      expect(Math.abs(after.x - before.x - shift.x * pixelsPerArtboard)).toBeLessThan(2)
+      expect(Math.abs(after.y - before.y - shift.y * pixelsPerArtboard)).toBeLessThan(2)
+    }
+
+    expectMoved(report.pivotBefore, report.pivotAfter, shiftOnTurn({ x: 40, y: 40 }))
+    expectMoved(report.cornerBefore, report.cornerAfter, shiftOnTurn({ x: 20, y: 20 }))
+  })
+
+  it('keys a shape in the Transform group and records the box turning and growing it as keys on its own set', async () => {
+    const directory = join(scratch, 'shape-keys')
+    const { episodePath, cardPath } = writeEpisode(directory, [[shapesDrawing()]])
+    const report = await uiTest('shape-keys', ['--project', episodePath, '--out', directory])
+    expect(report.hasSideHandles).toBe(false)
+
+    const [sketch] = drawingsIn(cardPath)
+    const right = sketch?.shapes.find((shape) => shape.name === 'Right')
+    expect(right?.ownsSet).toBe(true)
+    expect(right?.nodes.map((node) => node.x)).toEqual([100, 140, 140, 100])
+    const own = sketch?.nodeSets?.find((set) => set.id === right?.follows)
+    expect(own).toMatchObject({ name: 'Right', pivot: { x: 120, y: 40 } })
+    const [rest, turned] = own?.keyframes?.rotation ?? []
+    expect(rest).toMatchObject({ time: 0, value: 0 })
+    expect(turned?.time).toBe(SECOND)
+    expect(Math.abs((turned?.value ?? 0) - 90)).toBeLessThan(2)
+    const [grown] = own?.keyframes?.scale ?? []
+    expect(grown?.time).toBe(SECOND)
+    expect(grown?.value).toBeGreaterThan(1.2)
   })
 
   it('restores an unsaved animation after the editor was killed', async () => {

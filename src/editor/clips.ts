@@ -1,6 +1,6 @@
 import { openedAnimation, type MediaStates } from '../engine/resolve.js'
 import type { Documents } from '../shared/mediaProtocol.js'
-import type { AnimationClip, AudioClip, Clip, GroupClip, Keyframe, Keyframes, Project, Track, VideoClip, VisualClip } from '../shared/project.js'
+import type { AnimationClip, AudioClip, Clip, DrawingClip, DrawingShape, GroupClip, Keyframe, Keyframes, Project, Track, VideoClip, VisualClip } from '../shared/project.js'
 
 export type NewTrack = {
   id: string
@@ -147,6 +147,23 @@ export function shiftedKeyframes(keyframes: Keyframes | undefined, delta: number
   return shifted
 }
 
+function shiftedShapes(shapes: readonly DrawingShape[], delta: number): DrawingShape[] {
+  return shapes.map((shape) => {
+    const nodes = shape.nodes.map((node) => (node.keyframes === undefined ? node : { ...node, keyframes: shiftedKeyframes(node.keyframes, delta) }))
+    const shifted: DrawingShape = { ...shape, nodes }
+    if (shape.children !== undefined) shifted.children = shiftedShapes(shape.children, delta)
+    return shifted
+  })
+}
+
+// Node and set keys are timed from the drawing's start, so they move against a later start to stay at the same moment.
+export function shiftedDrawingKeys(clip: DrawingClip, delta: number): DrawingClip {
+  if (delta === 0) return clip
+  const shifted: DrawingClip = { ...clip, shapes: shiftedShapes(clip.shapes, delta) }
+  if (clip.nodeSets !== undefined) shifted.nodeSets = clip.nodeSets.map((set) => (set.keyframes === undefined ? set : { ...set, keyframes: shiftedKeyframes(set.keyframes, delta) }))
+  return shifted
+}
+
 function fadeWithin(fade: number | undefined, duration: number): number | undefined {
   return fade === undefined ? undefined : Math.min(fade, duration)
 }
@@ -179,7 +196,10 @@ export function withOnlyAtEnd(clip: VisualClip, edge: 'in' | 'out', kept: 'fade'
 // Members of a group are mapped before the group itself.
 export function mapClipsDeep(tracks: readonly Track[], map: (clip: Clip) => Clip): Track[] {
   return tracks.map((track) => {
-    const clips = track.clips.map((clip) => (clip.type === 'group' ? map({ ...clip, tracks: mapClipsDeep(clip.tracks, map) }) : map(clip)))
+    const clips = track.clips.map((clip) => {
+      if (clip.type !== 'group') return map(clip)
+      return map({ ...clip, tracks: mapClipsDeep(clip.tracks, map) })
+    })
     return { ...track, clips }
   })
 }

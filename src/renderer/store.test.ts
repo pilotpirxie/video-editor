@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { MEDIA_STATES, SECOND, animationClip, drawingClip, groupClip, projectOf, track, videoClip } from '../../test/fixtures.js'
 import { editClips } from '../editor/clips.js'
 import { hexOf } from '../editor/colors.js'
-import { setShapeFlag, setSwatchColor } from '../editor/drawings.js'
+import { addNodeSet, deleteNodeSet, deleteNodes, setShapeFlag, setSwatchColor } from '../editor/drawings.js'
 import { trimClip } from '../editor/moveTrim.js'
 import { setProperties } from '../editor/properties.js'
 import type { Documents, LoadedProject } from '../shared/mediaProtocol.js'
@@ -79,8 +79,8 @@ describe('editing inside an animation', () => {
     expect(frameTicks).toBe(SECOND / 12)
     const pointerTime = 1.3 * SECOND
     const time = Math.round(pointerTime / frameTicks) * frameTicks
-    const mediaStates = store.getState().mediaStates
-    store.apply('Trim Clip', (project) => trimClip(project, { clipId: 'hand', edge: 'end', time, isRipple: false, frameTicks, mediaStates }))
+    const { mediaStates, documents } = store.getState()
+    store.apply('Trim Clip', (project) => trimClip(project, { clipId: 'hand', edge: 'end', time, isRipple: false, frameTicks, mediaStates, documents }))
     expect(store.getState().documents[WAVE]?.tracks[0]?.clips[0]?.duration).toBe(16 * frameTicks)
   })
 
@@ -152,6 +152,54 @@ describe('selecting shapes', () => {
   })
 })
 
+describe('choosing nodes', () => {
+  const box = { id: 'box', nodes: [{ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }] }
+  const lid = { clipId: 'sketch', shapeId: 'lid' }
+
+  it('keeps nodes chosen only with the Node tool, on chosen shapes, while they exist', () => {
+    const store = openedStore({ [WAVE]: projectOf([track('a1', [drawingClip('sketch', 0, SECOND, [box, { ...box, id: 'lid' }])])]) })
+    store.setTool('node')
+    store.selectShapes([{ clipId: 'sketch', shapeId: 'box' }, lid])
+    store.selectNodes([
+      { clipId: 'sketch', shapeId: 'box', index: 2 },
+      { ...lid, index: 0 },
+    ])
+    store.selectShapes([lid])
+    expect(store.getState().selectedNodes).toEqual([{ ...lid, index: 0 }])
+    store.selectNodes([{ ...lid, index: 2 }])
+    store.apply('Delete Node', (project) => deleteNodes(project, [{ ...lid, index: 1 }]))
+    expect(store.getState().selectedNodes).toEqual([])
+    store.selectNodes([{ ...lid, index: 0 }])
+    store.setTool('pen')
+    expect(store.getState().selectedNodes).toEqual([])
+  })
+
+  it('keeps a node set selected while its nodes stay chosen, with the Node tool, while it exists', () => {
+    const store = openedStore({ [WAVE]: projectOf([track('a1', [drawingClip('sketch', 0, SECOND, [box, { ...box, id: 'lid' }])])]) })
+    const nodes = [
+      { ...lid, index: 0 },
+      { ...lid, index: 1 },
+    ]
+    const set = { clipId: 'sketch', setId: 'hinge' }
+    store.setTool('node')
+    store.apply('Save Node Set', (project) => addNodeSet(project, nodes, 'hinge', 0))
+    store.selectSet(set, [lid], nodes)
+    expect(store.getState()).toMatchObject({ selectedSet: set, selectedShapes: [lid], selectedNodes: nodes })
+    store.apply('Move Node', (project) => project)
+    expect(store.getState().selectedSet).toEqual(set)
+    store.selectNodes([{ ...lid, index: 2 }])
+    expect(store.getState().selectedSet).toBeUndefined()
+
+    store.selectSet(set, [lid], nodes)
+    store.apply('Delete Node Set', (project) => deleteNodeSet(project, set))
+    expect(store.getState().selectedSet).toBeUndefined()
+    store.undo()
+    store.selectSet(set, [lid], nodes)
+    store.setTool('move')
+    expect(store.getState().selectedSet).toBeUndefined()
+  })
+})
+
 describe('drawing settings of the window', () => {
   it('keeps the colours for new shapes and the part the colour panel edits, outside the undo history', () => {
     const store = createEditorStore()
@@ -166,6 +214,9 @@ describe('drawing settings of the window', () => {
     expect(store.getState().drawingStyle).toEqual({ fill: navy, fillSwatch: 'ink', stroke: { color: olive, width: 2, isDashed: true } })
     store.setDrawingStroke(undefined)
     expect(store.getState().drawingStyle).toEqual({ fill: navy, fillSwatch: 'ink' })
+    expect(store.getState().isFillingOpenPaths).toBe(false)
+    store.setFillingOpenPaths(true)
+    expect(store.getState().isFillingOpenPaths).toBe(true)
     expect(store.getState().history.done).toEqual([])
   })
 

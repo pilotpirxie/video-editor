@@ -1,5 +1,6 @@
 import type { Size } from '../shared/exportPresets.js'
 import type { Project } from '../shared/project.js'
+import type { Point } from './geometry.js'
 import { endOf } from './clips.js'
 
 export type Snap = {
@@ -97,4 +98,37 @@ export function snapPosition(moving: Bounds, dx: number, dy: number, targets: Po
     x: snapDelta(edgesAndCentre(moving.left, moving.right), dx, targets.x, range),
     y: snapDelta(edgesAndCentre(moving.top, moving.bottom), dy, targets.y, range),
   }
+}
+
+export type PointTargets = {
+  points: readonly Point[]
+  x: readonly number[]
+  y: readonly number[]
+}
+
+export type PointSnap = {
+  point: Point
+  guideX: number | undefined
+  guideY: number | undefined
+}
+
+function nearestPoint(point: Point, points: readonly Point[], range: number): Point | undefined {
+  let nearest: Point | undefined
+  let nearestDistance = Infinity
+  for (const target of points) {
+    const distance = Math.hypot(target.x - point.x, target.y - point.y)
+    if (distance > range || distance >= nearestDistance) continue
+    nearest = target
+    nearestDistance = distance
+  }
+  return nearest
+}
+
+// Another point in range wins; then each axis takes an edge in range, or else the nearest whole pixel.
+export function snapPoint(point: Point, targets: PointTargets, range: number): PointSnap {
+  const near = nearestPoint(point, targets.points, range)
+  if (near !== undefined) return { point: near, guideX: near.x, guideY: near.y }
+  const x = nearestWithin(point.x, targets.x, range)
+  const y = nearestWithin(point.y, targets.y, range)
+  return { point: { x: x ?? Math.round(point.x), y: y ?? Math.round(point.y) }, guideX: x, guideY: y }
 }

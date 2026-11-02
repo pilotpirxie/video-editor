@@ -818,6 +818,18 @@
   vector-effect: non-scaling-stroke;
 }
 
+.selection-box.preview {
+  stroke-dasharray: 4 4;
+  pointer-events: none;
+}
+
+.node-handle-line {
+  stroke: var(--primary);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
 .outside-box {
   fill: none;
   stroke: var(--text-secondary);
@@ -840,12 +852,45 @@
   vector-effect: non-scaling-stroke;
 }
 
+.canvas-handle.chosen {
+  fill: var(--primary);
+}
+
 .canvas-handle.rotate {
   cursor: grab;
 }
 
 .canvas-handle.end {
   cursor: move;
+}
+
+.canvas-handle.pivot {
+  fill: transparent;
+  cursor: move;
+}
+
+.onion {
+  fill: none;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.onion.before {
+  stroke: var(--onion-before);
+}
+
+.onion.after {
+  stroke: var(--onion-after);
+}
+
+.set-ghost {
+  fill: none;
+  stroke: var(--onion-before);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 
 .motion-path {

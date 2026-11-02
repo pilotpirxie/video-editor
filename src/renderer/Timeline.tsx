@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
 import { deleteZoom, setZoom } from '../editor/camera.js'
-import { hasSource, locateClip } from '../editor/clips.js'
-import { canDropShape, drawingAt, moveShape, renameShape, setShapeFlag, shapeRows, type ShapeDrop, type ShapeRef, type ShapeRow } from '../editor/drawings.js'
+import { coversTime, hasSource, locateClip } from '../editor/clips.js'
+import { canDropShape, deleteKeysAt, drawingAt, moveShape, renameShape, setKeysEasing, setShapeFlag, shapeRows, type ShapeDrop, type ShapeRef, type ShapeRow } from '../editor/drawings.js'
 import { resolveScope } from '../editor/groups.js'
 import { changeKeyframe, removeKeyframe, setSpeed, sharedValue } from '../editor/properties.js'
 import { actionFor } from '../editor/shortcuts.js'
@@ -62,12 +62,6 @@ type RowDrop = {
   place: ShapeDrop
 }
 
-function dropPlaceAt(shareOfRow: number): ShapeDrop {
-  if (shareOfRow < DROP_EDGE_SHARE) return 'front'
-  if (shareOfRow > 1 - DROP_EDGE_SHARE) return 'behind'
-  return 'inside'
-}
-
 function ShapeRows({ track, height }: { track: Track; height: number }): ReactElement {
   const { store } = useSession()
   const drawingId = usePosition((position) => drawingAt(track, position.time)?.id)
@@ -111,10 +105,15 @@ function ShapeRows({ track, height }: { track: Track; height: number }): ReactEl
 
   function dropAt(press: ShapePress, clientY: number): RowDrop | undefined {
     const offset = (clientY - press.listTop) / SHAPE_ROW_HEIGHT
-    const target = rows[Math.floor(offset)]
+    const rowIndex = Math.floor(offset)
+    const target = rows[rowIndex]
     if (target === undefined || drawing?.type !== 'drawing') return undefined
-    const place = dropPlaceAt(offset - Math.floor(offset))
-    return canDropShape(drawing.shapes, press.row.shape.id, target.shape.id, place) ? { shapeId: target.shape.id, place } : undefined
+    const shareOfRow = offset - rowIndex
+    let place: ShapeDrop = 'inside'
+    if (shareOfRow < DROP_EDGE_SHARE) place = 'front'
+    else if (shareOfRow > 1 - DROP_EDGE_SHARE) place = 'behind'
+    if (!canDropShape(drawing.shapes, press.row.shape.id, target.shape.id, place)) return undefined
+    return { shapeId: target.shape.id, place }
   }
 
   function onListMove(event: PointerEvent<HTMLDivElement>): void {
@@ -140,7 +139,8 @@ function ShapeRows({ track, height }: { track: Track; height: number }): ReactEl
     }
     const target = dropAt(press, event.clientY)
     if (target === undefined) return
-    store.apply(target.place === 'inside' ? 'Clip Inside' : 'Reorder Shapes', (project) => moveShape(project, refOf(press.row), target.shapeId, target.place))
+    const label = target.place === 'inside' ? 'Clip Inside' : 'Reorder Shapes'
+    store.apply(label, (project) => moveShape(project, refOf(press.row), target.shapeId, target.place))
   }
 
   function switchFlag(row: ShapeRow, flag: 'hidden' | 'locked', label: string): void {
@@ -552,6 +552,23 @@ export function Timeline(): ReactElement {
       }),
       { label: 'Delete Zoom', testId: 'menu-zoom-delete', onSelect: () => store.apply('Delete Zoom', (project) => deleteZoom(project, index)) },
     ]
+  } else if (target?.kind === 'drawing-keys') {
+    const { time } = target
+    const scope = { clipId: target.clipId, shapeId: target.shapeId }
+    menuLabel = 'Keys'
+    menuItems = [
+      ...easingItems((easing) => {
+        store.apply('Change Keys Easing', (project) => setKeysEasing(project, scope, time, easing))
+      }),
+      { label: 'Copy Keys', testId: 'menu-copy-keys', onSelect: () => actions.copyKeys(scope, time) },
+      { label: 'Delete Keys', testId: 'menu-delete-keys', onSelect: () => store.apply('Delete Keys', (project) => deleteKeysAt(project, scope, time)) },
+    ]
+  } else if (target?.kind === 'drawing') {
+    const { clipId } = target
+    const drawing = locateClip(store.getState().project, clipId)?.clip
+    const isPlayheadInside = drawing !== undefined && coversTime(drawing, session.transport.position().time)
+    const canPasteKeys = isPlayheadInside && actions.hasCopiedKeys()
+    menuItems = [...clipMenu, { label: 'Paste Keys', testId: 'menu-paste-keys', isDisabled: !canPasteKeys, onSelect: () => actions.pasteKeys(clipId) }]
   }
 
   return (

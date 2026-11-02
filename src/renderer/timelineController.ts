@@ -1,6 +1,7 @@
 import { ANNOTATION_NAMES, addAnnotation, type AnnotationKind } from '../editor/annotations.js'
 import { moveZoom, setZoom } from '../editor/camera.js'
 import { endOf, hasVolume, isContainer, locateClip, makesSound, nextTrackName, type NewTrack } from '../editor/clips.js'
+import { drawingAt, drawingKeyTimes, moveKeysAt } from '../editor/drawings.js'
 import { addEffect, takesEffect } from '../editor/effects.js'
 import { moveClips, trimClip } from '../editor/moveTrim.js'
 import { SELF_CONTAINING_NOTICE, containsAnimation, dropMedia, mediaFileName, placeableMedia } from '../editor/place.js'
@@ -20,6 +21,8 @@ import {
   hitZoom,
   keyframeDiamondAt,
   keyframeDiamonds,
+  rowDiamondAt,
+  shapeRowDiamonds,
   timeToX,
   trackIndexAt,
   trackRowsOf,
@@ -49,7 +52,7 @@ import {
 } from '../editor/timelineView.js'
 import { DEFAULT_TRANSITION, setTransition, transitionTargetAt, type TransitionTarget } from '../editor/transitions.js'
 import type { Size } from '../shared/exportPresets.js'
-import { isVisual, projectDuration, type Clip, type EffectType, type MediaRef, type Project, type Track, type TransitionType } from '../shared/project.js'
+import { isVisual, projectDuration, type Clip, type DrawingClip, type EffectType, type MediaRef, type Project, type Track, type TransitionType } from '../shared/project.js'
 import { stillDurationTicks } from '../shared/settings.js'
 import { TICKS_PER_SECOND, frameDuration } from '../shared/time.js'
 import type { Session } from './document.js'
@@ -94,7 +97,17 @@ type Point = {
   y: number
 }
 
-export type MenuTarget = { kind: 'volume'; clipId: string; index: number } | { kind: 'zoom'; index: number }
+export type MenuTarget =
+  | { kind: 'volume'; clipId: string; index: number }
+  | { kind: 'zoom'; index: number }
+  | { kind: 'drawing-keys'; clipId: string; time: number; shapeId: string | undefined }
+  | { kind: 'drawing'; clipId: string }
+
+type RowKey = {
+  clip: DrawingClip
+  shapeId: string
+  time: number
+}
 
 type HeldDrop =
   | { kind: 'transition'; target: TransitionTarget; type: TransitionType; shown: DropTarget }
@@ -113,8 +126,10 @@ type Gesture =
   | { kind: 'volume-line'; clipId: string; indices: number[]; band: Band; from: Point }
   | { kind: 'marquee'; from: Point; kept: readonly string[] }
   | { kind: 'pan'; from: Point; scrollX: number; scrollY: number }
+  | { kind: 'key-press'; key: RowKey; at: Point }
+  | { kind: 'shape-keys'; key: RowKey; grabOffset: number; targets: number[] }
 
-const EDITING_GESTURES: ReadonlySet<Gesture['kind']> = new Set(['move', 'trim', 'fade', 'zoom', 'transition', 'volume-point', 'volume-line'])
+const EDITING_GESTURES: ReadonlySet<Gesture['kind']> = new Set(['move', 'trim', 'fade', 'zoom', 'transition', 'volume-point', 'volume-line', 'shape-keys'])
 
 type ShownHandles = {
   handles: FadeHandle[]
@@ -190,6 +205,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
   let selectedList: readonly string[] | undefined
   let selected = new Set<string>()
   let hoveredClipId: string | undefined
+  let shownDrawingIds = ''
 
   function rowsNow(): TrackRows {
     const { project, expandedTracks } = store.getState()
@@ -197,6 +213,16 @@ export function createTimelineController(elements: TimelineElements, session: Se
       rowsSource = { tracks: project.tracks, expandedTracks, rows: trackRowsOf(project.tracks, expandedTracks) }
     }
     return rowsSource.rows
+  }
+
+  // Keyed by the drawings at the playhead on the expanded tracks, whose keys their shape rows show.
+  function drawingIdsAt(time: number): string {
+    const { project, expandedTracks } = store.getState()
+    const ids: string[] = []
+    for (const track of project.tracks) {
+      if (expandedTracks.has(track.id)) ids.push(drawingAt(track, time)?.id ?? '')
+    }
+    return ids.join(' ')
   }
 
   function frameTicks(): number {
@@ -229,6 +255,8 @@ export function createTimelineController(elements: TimelineElements, session: Se
 
     if (isContentStale) {
       isContentStale = false
+      const playhead = transport.position().time
+      shownDrawingIds = drawingIdsAt(playhead)
       const trackCount = state.project.tracks.length
       const addedRows = drawnTrackCount === undefined || view.scrollY === 0 ? 0 : trackCount - drawnTrackCount
       drawnTrackCount = trackCount
@@ -258,6 +286,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
         fonts,
         inOrder,
         thumbnails,
+        playhead,
       })
       headers.style.transform = `translateY(${-view.scrollY}px)`
       showScroll(state.project)
@@ -528,6 +557,20 @@ export function createTimelineController(elements: TimelineElements, session: Se
     return transitionBandAt(bandsOf(hit.track, hit.clip, rowTop), point.x, point.y)
   }
 
+  function rowKeyAt(point: Point): RowKey | undefined {
+    const { project, expandedTracks } = store.getState()
+    const rows = rowsNow()
+    const trackIndex = trackIndexAt(point.y, rows, view)
+    const track = project.tracks[trackIndex]
+    if (track === undefined || track.locked || !expandedTracks.has(track.id)) return undefined
+    const rowsTop = trackTop(trackIndex, rows, view) + TRACK_HEIGHT
+    const drawing = drawingAt(track, transport.position().time)
+    if (point.y < rowsTop || drawing === undefined) return undefined
+    const diamond = rowDiamondAt(shapeRowDiamonds(drawing, rowsTop, view), point.x, point.y)
+    if (diamond === undefined) return undefined
+    return { clip: drawing, shapeId: diamond.shapeId, time: diamond.time }
+  }
+
   function keyframeDiamondOn(hit: ClipHit, point: Point): number | undefined {
     const { mediaStates, documents } = store.getState()
     const rowTop = trackTop(hit.trackIndex, rowsNow(), view)
@@ -734,6 +777,22 @@ export function createTimelineController(elements: TimelineElements, session: Se
     else store.update((project) => moveZoom(project, hit.index, time, ticks))
   }
 
+  function startKeyMove(press: Extract<Gesture, { kind: 'key-press' }>): Gesture {
+    const { key } = press
+    const targets = timelineTargets(store.getState().project, new Set(), transport.position().time)
+    for (const time of drawingKeyTimes(key.clip)) {
+      if (time !== key.time) targets.push(key.clip.start + time)
+    }
+    store.begin('Move Keys')
+    return { kind: 'shape-keys', key, grabOffset: press.at.x - timeToX(key.clip.start + key.time, view), targets }
+  }
+
+  function updateKeyMove(moving: Extract<Gesture, { kind: 'shape-keys' }>, event: PointerEvent, point: Point): void {
+    const { clip, shapeId, time } = moving.key
+    const to = snappedTime(point.x - moving.grabOffset, clip.start + time, moving.targets, event) - clip.start
+    store.update((project) => moveKeysAt(project, { clipId: clip.id, shapeId }, time, to))
+  }
+
   function snappedTime(x: number, edgeTime: number, targets: readonly number[], event: PointerEvent): number {
     const time = wholeFrames(xToTime(x, view))
     guide = undefined
@@ -767,9 +826,9 @@ export function createTimelineController(elements: TimelineElements, session: Se
   function updateTrim(trim: Extract<Gesture, { kind: 'trim' }>, event: PointerEvent, point: Point): void {
     const time = snappedTime(point.x, trim.edgeTime, trim.targets, event)
     const { clipId, edge } = trim
-    const { mediaStates } = store.getState()
+    const { mediaStates, documents } = store.getState()
     const ticks = frameTicks()
-    store.update((project) => trimClip(project, { clipId, edge, time, isRipple: event.shiftKey, frameTicks: ticks, mediaStates }))
+    store.update((project) => trimClip(project, { clipId, edge, time, isRipple: event.shiftKey, frameTicks: ticks, mediaStates, documents }))
   }
 
   function updateMarquee(drag: Extract<Gesture, { kind: 'marquee' }>, point: Point): void {
@@ -824,6 +883,12 @@ export function createTimelineController(elements: TimelineElements, session: Se
       if (zoom !== undefined) gesture = { kind: 'zoom-press', hit: zoomHit, at, time: zoom.time }
       return
     }
+    const rowKey = rowKeyAt(at)
+    if (rowKey !== undefined) {
+      store.selectShapes([{ clipId: rowKey.clip.id, shapeId: rowKey.shapeId }])
+      gesture = { kind: 'key-press', key: rowKey, at }
+      return
+    }
     const hasModifier = event.shiftKey || event.metaKey
     const { selection } = store.getState()
     const hit = unlockedClipAt(at)
@@ -872,7 +937,9 @@ export function createTimelineController(elements: TimelineElements, session: Se
     const isOnLane = point !== undefined && point.y >= RULER_HEIGHT && point.y < TRACKS_TOP
     const zoomHit = isOnLane ? hitZoom(store.getState().project.camera ?? [], view, point.x) : undefined
     let cursor = 'default'
-    if (zoomHit !== undefined) {
+    if (isOverTracks && rowKeyAt(point) !== undefined) {
+      cursor = 'pointer'
+    } else if (zoomHit !== undefined) {
       cursor = zoomHit.part === 'start' ? 'ew-resize' : 'grab'
     } else if (hit !== undefined && point !== undefined) {
       if (transitionGripOn(hit, point) !== undefined) cursor = 'ew-resize'
@@ -912,6 +979,10 @@ export function createTimelineController(elements: TimelineElements, session: Se
       gesture = startZoom(gesture)
       if (gesture === undefined) return
     }
+    if (gesture.kind === 'key-press') {
+      if (Math.abs(point.x - gesture.at.x) < DRAG_THRESHOLD) return
+      gesture = startKeyMove(gesture)
+    }
     if (gesture.kind === 'scrub') {
       seekTo(point, event, gesture.targets)
     } else if (gesture.kind === 'zoom') {
@@ -930,8 +1001,16 @@ export function createTimelineController(elements: TimelineElements, session: Se
       updateVolumeLine(gesture, point)
     } else if (gesture.kind === 'marquee') {
       updateMarquee(gesture, point)
+    } else if (gesture.kind === 'shape-keys') {
+      updateKeyMove(gesture, event, point)
     }
     invalidate('overlay')
+  }
+
+  function seekToKey(clip: Clip, keyTime: number): void {
+    const ticks = frameTicks()
+    transport.pause()
+    transport.seek(keyframeFrame(clip, keyTime, ticks) * ticks)
   }
 
   function endGesture(finish: 'commit' | 'cancel'): void {
@@ -950,11 +1029,8 @@ export function createTimelineController(elements: TimelineElements, session: Se
     }
     const isPlainClick = ended.kind === 'press' && ended.wasSelected && !ended.hasModifier && finish === 'commit'
     if (isPlainClick) store.select([ended.hit.clip.id])
-    if (ended.kind === 'press' && ended.keyframeTime !== undefined && finish === 'commit') {
-      const ticks = frameTicks()
-      transport.pause()
-      transport.seek(keyframeFrame(ended.hit.clip, ended.keyframeTime, ticks) * ticks)
-    }
+    if (ended.kind === 'press' && ended.keyframeTime !== undefined && finish === 'commit') seekToKey(ended.hit.clip, ended.keyframeTime)
+    if (ended.kind === 'key-press' && finish === 'commit') seekToKey(ended.key.clip, ended.key.time)
     invalidate('overlay')
   }
 
@@ -980,12 +1056,25 @@ export function createTimelineController(elements: TimelineElements, session: Se
       openMenu(at, { kind: 'zoom', index: zoomHit.index })
       return
     }
+    const rowKey = rowKeyAt(point)
+    if (rowKey !== undefined) {
+      const { clip, shapeId, time } = rowKey
+      store.selectShapes([{ clipId: clip.id, shapeId }])
+      openMenu(at, { kind: 'drawing-keys', clipId: clip.id, time, shapeId })
+      return
+    }
     const hit = unlockedClipAt(point)
     if (hit === undefined) {
       openMenu(at, undefined)
       return
     }
     if (!selection.includes(hit.clip.id)) store.select([hit.clip.id])
+    if (hit.clip.type === 'drawing') {
+      const keyTime = keyframeDiamondOn(hit, point)
+      const clipId = hit.clip.id
+      openMenu(at, keyTime === undefined ? { kind: 'drawing', clipId } : { kind: 'drawing-keys', clipId, time: keyTime, shapeId: undefined })
+      return
+    }
     const volumePoint = volumePointOn(hit, point)
     if (volumePoint === undefined) {
       openMenu(at, undefined)
@@ -1048,6 +1137,7 @@ export function createTimelineController(elements: TimelineElements, session: Se
       wasPlaying = isPlaying
       invalidate('content')
     }
+    if (drawingIdsAt(time) !== shownDrawingIds) invalidate('content')
     const x = timeToX(time, view)
     const isOutOfView = x < 0 || x > size.width
     if (isPlaying && isOutOfView) {

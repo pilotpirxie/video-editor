@@ -6,14 +6,23 @@ import {
   addDrawingShapes,
   addShapesAbove,
   arrangeShapes,
+  copyKeysAt,
   copyShapes,
+  deleteNodes,
   deleteShapes,
   drawingPlace,
   duplicateDrawing,
+  moveNodes,
+  pasteKeys,
+  setNodeSetPose,
+  setPoseAt,
+  turnAndScaleAboveSet,
   shapeRefsOf,
   withKnownSwatches,
   withNewShapeIds,
   type ArrangePlace,
+  type CopiedKeys,
+  type KeyScope,
 } from '../editor/drawings.js'
 import { addEffect, takesEffect } from '../editor/effects.js'
 import { groupClips, ungroupClips } from '../editor/groups.js'
@@ -22,6 +31,7 @@ import { clipsToSeparate, separateAudio } from '../editor/separate.js'
 import { clipsToSplit, splitClips } from '../editor/split.js'
 import { addTrack } from '../editor/tracks.js'
 import { DEFAULT_TRANSITION, setTransition } from '../editor/transitions.js'
+import { unturnedAndUnscaled } from '../engine/curves.js'
 import { isVisual, projectDuration, type Clip, type DrawingShape, type EffectType, type Project, type TransitionType } from '../shared/project.js'
 import { stillDurationTicks } from '../shared/settings.js'
 import { frameAt, frameDuration } from '../shared/time.js'
@@ -54,6 +64,10 @@ export type Actions = {
   paste(): void
   duplicate(): void
   arrange(place: ArrangePlace): void
+  nudgeNodes(across: number, down: number): boolean
+  copyKeys(scope: KeyScope, local: number): void
+  pasteKeys(clipId: string): void
+  hasCopiedKeys(): boolean
   addTrack(): void
 }
 
@@ -75,6 +89,7 @@ function nextNumberedTracks(project: Project, count: number): NewTrack[] {
 
 export function createActions(store: EditorStore, transport: Transport): Actions {
   let copied: Copied | undefined
+  let copiedKeys: CopiedKeys | undefined
   let stepped: { time: number; sequence: number } | undefined
 
   function limits(): TimelineLimits {
@@ -161,9 +176,13 @@ export function createActions(store: EditorStore, transport: Transport): Actions
   }
 
   function deleteSelection(isRipple: boolean): void {
-    const { selection, selectedZoom, selectedShapes } = store.getState()
+    const { selection, selectedZoom, selectedShapes, selectedNodes } = store.getState()
     if (selectedZoom !== undefined) {
       store.apply('Delete Zoom', (project) => deleteZoom(project, selectedZoom))
+      return
+    }
+    if (selectedNodes.length > 0) {
+      store.apply(`Delete ${plural(selectedNodes.length, 'Node')}`, (project) => deleteNodes(project, selectedNodes))
       return
     }
     if (selectedShapes.length > 0) {
@@ -381,6 +400,32 @@ export function createActions(store: EditorStore, transport: Transport): Actions
       if (selectedShapes.length === 0) return
       store.apply(ARRANGE_LABELS[place], (project) => arrangeShapes(project, selectedShapes, place))
     },
+    // Nodes are chosen only with the Node tool; with a node set selected the arrows move the set, as a drag does.
+    nudgeNodes(across, down) {
+      const { project, selectedNodes, selectedSet } = store.getState()
+      if (selectedNodes.length === 0) return false
+      const { time } = transport.position()
+      const clip = selectedSet === undefined ? undefined : locateClip(project, selectedSet.clipId)?.clip
+      const pose = selectedSet !== undefined && clip?.type === 'drawing' ? setPoseAt(clip, selectedSet.setId, time - clip.start) : undefined
+      if (selectedSet !== undefined && pose !== undefined && clip?.type === 'drawing') {
+        const own = unturnedAndUnscaled({ x: across, y: down }, turnAndScaleAboveSet(clip, selectedSet.setId, time - clip.start))
+        store.apply('Nudge Node Set', (current) => setNodeSetPose(current, selectedSet, { x: pose.x + own.x, y: pose.y + own.y }, time))
+        return true
+      }
+      store.apply(`Nudge ${plural(selectedNodes.length, 'Node')}`, (current) => moveNodes(current, selectedNodes, { x: across, y: down }, time))
+      return true
+    },
+    copyKeys(scope, local) {
+      const clip = locateClip(store.getState().project, scope.clipId)?.clip
+      if (clip?.type === 'drawing') copiedKeys = copyKeysAt(clip, scope.shapeId, local)
+    },
+    pasteKeys(clipId) {
+      const keys = copiedKeys
+      if (keys === undefined) return
+      const { time } = transport.position()
+      store.apply('Paste Keys', (project) => pasteKeys(project, clipId, keys, time))
+    },
+    hasCopiedKeys: () => copiedKeys !== undefined,
     addTrack() {
       const track = { id: crypto.randomUUID(), name: nextTrackName(store.getState().project) }
       store.apply('Add Track', (project) => addTrack(project, track))

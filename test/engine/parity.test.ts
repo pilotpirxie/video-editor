@@ -31,7 +31,7 @@ const REFERENCE_PROJECTS: Case[] = [
   { project: '21-difficult-sources', frames: [0, 1, 2, 3, 5, 9, 30, 59, 300, 362, 363, 364, 377] },
   { project: '23-weird', frames: [0, 7, 15, 22, 30, 45, 59] },
   { project: '24-cache-pressure', frames: [0, 8, 15, 23, 30, 45, 59] },
-  { project: '26-animation', frames: [0, 1, 2, 3, 12, 13, 14, 23, 25, 36, 47, 48, 49, 59, 71] },
+  { project: '26-animation', frames: [0, 1, 2, 3, 12, 13, 14, 23, 25, 30, 36, 47, 48, 49, 59, 71] },
 ]
 
 const REDUCED_SIZE: Case[] = [

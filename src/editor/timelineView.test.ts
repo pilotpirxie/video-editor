@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { FRAME, SECOND, audioClip, drawingClip, track, videoClip } from '../../test/fixtures.js'
-import type { CameraKeyframe, Clip } from '../shared/project.js'
+import type { CameraKeyframe, Clip, DrawingClip, Keyframe } from '../shared/project.js'
 import {
   CAMERA_LANE_HEIGHT,
   CLIP_INSET,
@@ -18,7 +18,9 @@ import {
   hitZoom,
   keyframeDiamondAt,
   keyframeDiamonds,
+  rowDiamondAt,
   rulerStep,
+  shapeRowDiamonds,
   timeToX,
   trackIndexAt,
   trackIndexAtOffset,
@@ -315,6 +317,39 @@ describe('keyframe diamonds', () => {
     const y = rowTop + CLIP_INSET + TRACK_HEIGHT - 2 * CLIP_INSET - 6
     expect(keyframeDiamondAt(diamonds, 303, y + 2)?.time).toBe(2 * SECOND)
     expect(keyframeDiamondAt(diamonds, 300, rowTop + TRACK_HEIGHT / 2)).toBeUndefined()
+  })
+
+  const key = (time: number, value: number): Keyframe => ({ time, value, easing: 'linear' })
+  const hand = { id: 'hand', locked: true, nodes: [{ x: 0, y: 0, keyframes: { y: [key(2 * SECOND, 1)] } }, { x: 1, y: 1 }] }
+  const arm = { id: 'arm', nodes: [{ x: 0, y: 0, keyframes: { x: [key(0, 0), key(SECOND, 5)] } }, { x: 1, y: 1, sets: ['wave'] }], children: [hand] }
+  const still = { id: 'still', nodes: [{ x: 0, y: 0 }, { x: 1, y: 1 }] }
+  const drawing: DrawingClip = {
+    ...drawingClip('d', SECOND, 3 * SECOND, [arm, still]),
+    nodeSets: [{ id: 'wave', name: 'Wave', pivot: { x: 0, y: 0 }, keyframes: { rotation: [key(SECOND / 2, 90), key(4 * SECOND, 0)] } }],
+  }
+
+  it("mark every node and node set key of a drawing on the clip, within the drawing's length", () => {
+    const times = keyframeDiamonds(drawing, clipBands(drawing, false, rowTop).picture, flat).map((diamond) => diamond.time)
+    expect(times).toEqual([0, SECOND / 2, SECOND, 2 * SECOND])
+  })
+
+  it('mark each shape row with the keys of its nodes and of the node sets that move them', () => {
+    const rowsTop = rowTop + TRACK_HEIGHT
+    const middle = SHAPE_ROW_HEIGHT / 2
+    const shown = shapeRowDiamonds(drawing, rowsTop, flat).map(({ shapeId, time, x, y, isPickable }) => ({ shapeId, time, x, y, isPickable }))
+    expect(shown).toEqual([
+      { shapeId: 'arm', time: 0, x: 100, y: rowsTop + SHAPE_ROW_HEIGHT + middle, isPickable: true },
+      { shapeId: 'arm', time: SECOND / 2, x: 150, y: rowsTop + SHAPE_ROW_HEIGHT + middle, isPickable: true },
+      { shapeId: 'arm', time: SECOND, x: 200, y: rowsTop + SHAPE_ROW_HEIGHT + middle, isPickable: true },
+      { shapeId: 'hand', time: 2 * SECOND, x: 300, y: rowsTop + 2 * SHAPE_ROW_HEIGHT + middle, isPickable: false },
+    ])
+  })
+
+  it('find only the row keys of shapes that can be picked', () => {
+    const rowsTop = rowTop + TRACK_HEIGHT
+    const diamonds = shapeRowDiamonds(drawing, rowsTop, flat)
+    expect(rowDiamondAt(diamonds, 152, rowsTop + 1.5 * SHAPE_ROW_HEIGHT)).toMatchObject({ shapeId: 'arm', time: SECOND / 2 })
+    expect(rowDiamondAt(diamonds, 300, rowsTop + 2.5 * SHAPE_ROW_HEIGHT)).toBeUndefined()
   })
 })
 

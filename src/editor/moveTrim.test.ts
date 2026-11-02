@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FRAME, MEDIA_STATES, SECOND, audioClip, clipIds, clipOf, groupClip, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
+import { FRAME, MEDIA_STATES, NO_DOCUMENTS, SECOND, WAVE_STATES, animationClip, audioClip, clipIds, clipOf, groupClip, projectOf, reopened, track, videoClip, waveDocuments } from '../../test/fixtures.js'
 import type { Clip, Project } from '../shared/project.js'
 import { moveClips, trimClip, type Move, type Trim } from './moveTrim.js'
 
@@ -17,7 +17,7 @@ function move(overrides: Partial<Move>): Move {
 }
 
 function trim(overrides: Partial<Trim>): Trim {
-  return { clipId: 'b', edge: 'end', time: 0, isRipple: false, frameTicks: FRAME, mediaStates: MEDIA_STATES, ...overrides }
+  return { clipId: 'b', edge: 'end', time: 0, isRipple: false, frameTicks: FRAME, mediaStates: MEDIA_STATES, documents: NO_DOCUMENTS, ...overrides }
 }
 
 describe('moveClips', () => {
@@ -141,6 +141,18 @@ describe('trimClip', () => {
     expect(clipOf(trimClip(sample(), trim({ time: 20 * SECOND })), 'b').duration).toBe(4 * SECOND)
     const last = trimClip(sample(), trim({ clipId: 'c', time: 60 * SECOND }))
     expect(clipOf(last, 'c').duration).toBe(10 * SECOND)
+  })
+
+  it('cannot extend a played animation past its end, at its speed, unless it loops or is still empty', () => {
+    const lengthAfter = (clip: Clip, documentLength: number): number => {
+      const project = projectOf([track('t1', [clip])])
+      const trimmed = trimClip(project, trim({ clipId: clip.id, time: 60 * SECOND, mediaStates: WAVE_STATES, documents: waveDocuments(documentLength) }))
+      return clipOf(trimmed, clip.id).duration
+    }
+    expect(lengthAfter(animationClip('wave', 0, SECOND), 2 * SECOND)).toBe(2 * SECOND)
+    expect(lengthAfter(animationClip('wave', 0, SECOND, { speedPercent: 50, sourceStart: SECOND / 2 }), 2 * SECOND)).toBe(3 * SECOND)
+    expect(lengthAfter(animationClip('wave', 0, SECOND, { loop: true }), 2 * SECOND)).toBe(60 * SECOND)
+    expect(lengthAfter(animationClip('wave', 0, SECOND), 0)).toBe(60 * SECOND)
   })
 
   it('counts the source offset and speed when limiting the end', () => {

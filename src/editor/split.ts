@@ -1,6 +1,6 @@
 import type { Clip, Project } from '../shared/project.js'
 import { sourceTime } from '../shared/time.js'
-import { endOf, shiftedKeyframes, unlockedClipIds, withFadesWithin, withMemberIds } from './clips.js'
+import { endOf, shiftedDrawingKeys, shiftedKeyframes, unlockedClipIds, withFadesWithin, withMemberIds } from './clips.js'
 
 function isCutInside(clip: Clip, cut: number): boolean {
   return cut > clip.start && cut < endOf(clip)
@@ -23,7 +23,7 @@ export function earlierPart(clip: Clip, cut: number): Clip {
 export function laterPart(clip: Clip, cut: number): Clip {
   const local = cut - clip.start
   const timing = { start: cut, duration: clip.duration - local, keyframes: shiftedKeyframes(clip.keyframes, -local) }
-  if (clip.type === 'drawing') return { ...clip, ...timing }
+  if (clip.type === 'drawing') return shiftedDrawingKeys({ ...clip, ...timing }, -local)
   if (clip.type === 'audio') return withFadesWithin({ ...clip, ...timing, sourceStart: sourceTime(clip, cut), volumeFadeIn: undefined })
   const starting = { fadeIn: undefined, transitionIn: undefined, animationIn: undefined }
   if (clip.type === 'video' || clip.type === 'animation') return withFadesWithin({ ...clip, ...timing, ...starting, sourceStart: sourceTime(clip, cut), volumeFadeIn: undefined })

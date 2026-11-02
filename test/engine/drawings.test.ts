@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { NEW_SHAPE_STYLE, ellipseShape, rectangleShape } from '../../src/editor/drawings.js'
-import type { CameraKeyframe, DrawingShape, ShapeStroke } from '../../src/shared/project.js'
+import type { CameraKeyframe, DrawingClip, DrawingShape, Keyframe, NodeSet, ShapeNode, ShapeStroke } from '../../src/shared/project.js'
 import { FRAME, SECOND, drawingClip } from '../fixtures.js'
 import { at, FIRST_SECOND, RED, WHITE, WHITE_GROUND, animationOf, bundledFfmpeg, cropPicture, episodeOf, expectGolden, expectPixel, pictureAt, renderProject, scratchDirectory, steepestEdge, writeAnimation, type Picture } from '../helpers.js'
 
@@ -23,11 +23,50 @@ const SHAPES: DrawingShape[] = [
   },
 ]
 
+type FrameOptions = {
+  size?: { width: number; height: number }
+  camera?: CameraKeyframe[]
+  shapes?: DrawingShape[]
+  nodeSets?: NodeSet[]
+  frame?: number
+}
+
 // The clip doubles the artboard onto the whole 640x360 canvas, so canvas pixels are twice the shapes' coordinates.
-async function frameOf(name: string, size?: { width: number; height: number }, camera?: CameraKeyframe[], shapes = SHAPES): Promise<Picture> {
-  const path = writeAnimation(scratch, name, ARTBOARD, [[drawingClip('art', 0, SECOND, shapes)]])
-  const episode = episodeOf([[WHITE_GROUND], [animationOf(name, name, FIRST_SECOND, at(320, 180, 2))]], { [name]: path }, camera)
-  return pictureAt(await renderProject(scratch, name, episode, { via: 'paused', frames: [0], size }), 0)
+async function frameOf(name: string, options: FrameOptions = {}): Promise<Picture> {
+  const drawing: DrawingClip = drawingClip('art', 0, SECOND, options.shapes ?? SHAPES)
+  if (options.nodeSets !== undefined) drawing.nodeSets = options.nodeSets
+  const path = writeAnimation(scratch, name, ARTBOARD, [[drawing]])
+  const episode = episodeOf([[WHITE_GROUND], [animationOf(name, name, FIRST_SECOND, at(320, 180, 2))]], { [name]: path }, options.camera)
+  const frame = options.frame ?? 0
+  return pictureAt(await renderProject(scratch, name, episode, { via: 'paused', frames: [frame], size: options.size }), 0)
+}
+
+// 30 fps, so frame 15 is half-way through the keys at 0 and 1 s.
+const HALF_WAY = 15
+
+function linearKeys(from: number, to: number): Keyframe[] {
+  return [
+    { time: 0, value: from, easing: 'linear' },
+    { time: SECOND, value: to, easing: 'linear' },
+  ]
+}
+
+function redBox(id: string, bounds: { left: number; top: number; right: number; bottom: number }, everyNode: Partial<ShapeNode>): DrawingShape {
+  const shape = rectangleShape(id, bounds, NEW_SHAPE_STYLE)
+  const nodes = shape.nodes.map((node) => ({ ...node, ...everyNode }))
+  return { ...shape, nodes, fill: '#FF0000', stroke: undefined }
+}
+
+const SLIDING = [redBox('slide', { left: 20, top: 70, right: 60, bottom: 110 }, { keyframes: { x: linearKeys(0, 200) } })]
+
+// A 100 px arm from the pivot, turning a quarter clockwise over the second.
+const ARM_PIVOT = { x: 160, y: 90 }
+const ARM = [redBox('arm', { left: 160, top: 85, right: 260, bottom: 95 }, { sets: ['turn'] })]
+const TURN: NodeSet[] = [{ id: 'turn', name: 'Turn', pivot: ARM_PIVOT, keyframes: { rotation: linearKeys(0, 90) } }]
+
+function onArm(distance: number, degrees: number): { x: number; y: number } {
+  const angle = (degrees * Math.PI) / 180
+  return { x: Math.round(2 * (ARM_PIVOT.x + distance * Math.cos(angle))), y: Math.round(2 * (ARM_PIVOT.y + distance * Math.sin(angle))) }
 }
 
 function square(id: string, left: number, top: number, stroke: ShapeStroke): DrawingShape {
@@ -66,19 +105,19 @@ describe('drawings', () => {
 
   it('stay sharp under a camera zoom', async () => {
     const camera: CameraKeyframe[] = [{ time: 0, duration: FRAME, easing: 'hold', x: 100, y: 80, scale: 4 }]
-    const zoomed = await frameOf('zoomed', undefined, camera)
+    const zoomed = await frameOf('zoomed', { camera })
     expect(steepestEdge(cropPicture(zoomed, 40, 60, 100, 200))).toBeGreaterThan(150)
   })
 
   it('align strokes inside, on or outside the outline, and draw them behind or in front of the fill', async () => {
-    const aligned = await frameOf('stroke-align', undefined, undefined, STROKE_STYLES.align)
+    const aligned = await frameOf('stroke-align', { shapes: STROKE_STYLES.align })
     expectPixel(aligned, 2 * 43, 2 * 90, BLACK)
     expectPixel(aligned, 2 * 37, 2 * 90, WHITE)
     expectPixel(aligned, 2 * 143, 2 * 90, BLACK)
     expectPixel(aligned, 2 * 137, 2 * 90, BLACK)
     expectPixel(aligned, 2 * 243, 2 * 90, RED)
     expectPixel(aligned, 2 * 237, 2 * 90, BLACK)
-    const ordered = await frameOf('stroke-order', undefined, undefined, STROKE_STYLES.order)
+    const ordered = await frameOf('stroke-order', { shapes: STROKE_STYLES.order })
     expectPixel(ordered, 2 * 63, 2 * 90, BLACK)
     expectPixel(ordered, 2 * 223, 2 * 90, RED)
     expectPixel(ordered, 2 * 217, 2 * 90, BLACK)
@@ -86,14 +125,32 @@ describe('drawings', () => {
 
   it('match a golden image for each stroke setting', async () => {
     for (const [setting, shapes] of Object.entries(STROKE_STYLES)) {
-      await expectGolden(ffmpeg, `stroke-${setting}`, await frameOf(`stroke-${setting}-golden`, undefined, undefined, shapes))
+      await expectGolden(ffmpeg, `stroke-${setting}`, await frameOf(`stroke-${setting}-golden`, { shapes }))
     }
   })
 
   it('match the golden images, small and at 4K', async () => {
     await expectGolden(ffmpeg, 'drawing-360p', await frameOf('golden'))
-    const large = await frameOf('golden-4k', { width: 3840, height: 2160 })
+    const large = await frameOf('golden-4k', { size: { width: 3840, height: 2160 } })
     await expectGolden(ffmpeg, 'drawing-4K', large)
     expect(steepestEdge(cropPicture(large, 0, 0, 900, 600))).toBeGreaterThan(150)
+  })
+
+  it('move keyed nodes by their offset between keys', async () => {
+    const picture = await frameOf('node-keys', { shapes: SLIDING, frame: HALF_WAY })
+    expectPixel(picture, 2 * 140, 2 * 90, RED)
+    expectPixel(picture, 2 * 40, 2 * 90, WHITE)
+    await expectGolden(ffmpeg, 'node-keys-half-way', picture)
+  })
+
+  it('turn a node set around its pivot along the arc between rotation keys', async () => {
+    const picture = await frameOf('node-set-turn', { shapes: ARM, nodeSets: TURN, frame: HALF_WAY })
+    const tip = onArm(95, 45)
+    const pastTip = onArm(110, 45)
+    expectPixel(picture, tip.x, tip.y, RED)
+    expectPixel(picture, pastTip.x, pastTip.y, WHITE)
+    const start = onArm(80, 0)
+    expectPixel(picture, start.x, start.y, WHITE)
+    await expectGolden(ffmpeg, 'node-set-turn-half-way', picture)
   })
 })

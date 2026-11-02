@@ -1,26 +1,67 @@
 import { describe, expect, it } from 'vitest'
 import { FRAME, SECOND, clipOf, drawingClip, projectOf, track, videoClip } from '../../test/fixtures.js'
-import type { DrawingShape, Project } from '../shared/project.js'
+import type { DrawingClip, DrawingShape, Keyframe, NodeSet, Project, ShapeNode } from '../shared/project.js'
+import { TIMELINE_GRID } from '../shared/time.js'
+import { posedShapes } from '../engine/curves.js'
+import { laterPart } from './split.js'
 import {
   NEW_SHAPE_STYLE,
+  NEW_STROKE,
   addDrawingShapes,
+  addNodeSet,
+  copyKeysAt,
+  deleteKeysAt,
+  deleteNodeSet,
+  drawingKeyTimes,
+  hasNodeKeysAt,
+  hasSetKeysAt,
+  moveKeysAt,
+  pasteKeys,
+  renameNodeSet,
+  setKeysEasing,
+  setNodeKeys,
+  followChoices,
+  followedSetOf,
+  hasShapeKeysAt,
+  parentChoices,
+  setNodeSetKeys,
+  setNodeSetParent,
+  setNodeSetPivot,
+  setNodeSetPose,
+  setShapesFollow,
+  setShapesKeys,
+  setShapesPose,
+  shapePoseAt,
+  shownPivot,
+  turnAndScaleAboveSet,
   addShapesAbove,
   addSwatch,
   arrangeShapes,
+  breakPaths,
   canDropShape,
+  closePaths,
   copyShapes,
+  deleteNodes,
   deleteShapes,
   deleteSwatch,
   dragBox,
   drawingPlace,
   duplicateDrawing,
   ellipseShape,
+  insertNode,
+  moveHandle,
+  moveNodes,
   moveShape,
   nextSwatchName,
+  nodePointsOf,
+  nodeTypeOf,
+  pathShape,
   pickableShape,
   rectangleShape,
   renameShape,
   renameSwatch,
+  setNodePosition,
+  setNodeType,
   setShapeColor,
   setShapeFlag,
   setShapeStroke,
@@ -34,6 +75,7 @@ import {
   withNewShapeIds,
   type ArrangePlace,
   type DrawingPlace,
+  type NodeRef,
 } from './drawings.js'
 
 const STILL = { x: 50, y: 50, scaleX: 1, scaleY: 1, rotation: 0 }
@@ -85,6 +127,17 @@ describe('rectangleShape and ellipseShape', () => {
     expect(ellipse.nodes.map((node) => ({ x: node.x, y: node.y }))).toEqual([{ x: 60, y: 20 }, { x: 110, y: 50 }, { x: 60, y: 80 }, { x: 10, y: 50 }])
     expect(ellipse.nodes[0]?.out?.x).toBeCloseTo(27.615)
     expect(ellipse.nodes[1]?.out?.y).toBeCloseTo(16.569)
+  })
+})
+
+describe('pathShape', () => {
+  const nodes = [{ x: 0, y: 0 }, { x: 10, y: 0 }]
+  const style = { fill: '#112233', fillSwatch: 'skin', stroke: NEW_STROKE }
+
+  it('fills a closed path, and an open one only when open paths are filled', () => {
+    expect(pathShape('closed', nodes, true, style, false)).toEqual({ id: 'closed', name: 'Path', nodes, isClosed: true, fill: '#112233', fillSwatch: 'skin', stroke: NEW_STROKE })
+    expect(pathShape('open', nodes, false, style, false)).toEqual({ id: 'open', name: 'Path', nodes, stroke: NEW_STROKE })
+    expect(pathShape('filled', nodes, false, style, true)).toEqual({ id: 'filled', name: 'Path', nodes, fill: '#112233', fillSwatch: 'skin', stroke: NEW_STROKE })
   })
 })
 
@@ -140,7 +193,7 @@ describe('transformShapes', () => {
 
   function moved(refs: readonly string[], to: Partial<typeof STILL>): DrawingShape[] {
     const shapes = refs.map((shapeId) => ({ clipId: 'sketch', shapeId }))
-    return shapesOf(transformShapes(project, shapes, STILL, { ...STILL, ...to }), 'sketch')
+    return shapesOf(transformShapes(project, shapes, STILL, { ...STILL, ...to }, 0), 'sketch')
   }
 
   it('moves nodes and keeps handles as they were', () => {
@@ -161,7 +214,7 @@ describe('transformShapes', () => {
 
   it('scales a stroke with its shape only when asked, by the mean of the two scales', () => {
     const stroked = projectOf([track('art', [drawingClip('sketch', 0, SECOND, [{ ...curve, stroke: { color: '#000000', width: 4, scalesWithObject: true } }, { ...child, stroke: { color: '#000000', width: 4 } }])])])
-    const scaled = shapesOf(transformShapes(stroked, [{ clipId: 'sketch', shapeId: 'curve' }, { clipId: 'sketch', shapeId: 'child' }], STILL, { ...STILL, scaleX: 2, scaleY: 8 }), 'sketch')
+    const scaled = shapesOf(transformShapes(stroked, [{ clipId: 'sketch', shapeId: 'curve' }, { clipId: 'sketch', shapeId: 'child' }], STILL, { ...STILL, scaleX: 2, scaleY: 8 }, 0), 'sketch')
     expect(scaled.map((shape) => shape.stroke?.width)).toEqual([16, 4])
   })
 
@@ -369,5 +422,430 @@ describe('duplicateDrawing', () => {
     expect(duplicateDrawing(project, 'later', 'copy')).toBe(project)
     const locked = { ...project, tracks: project.tracks.map((each) => ({ ...each, locked: true })) }
     expect(duplicateDrawing(locked, 'one', 'copy')).toBe(locked)
+  })
+})
+
+describe('editing nodes', () => {
+  // A square with a smooth top right corner and a shape clipped inside it, and an open line.
+  const square: DrawingShape = {
+    id: 'square',
+    nodes: [{ x: 0, y: 0 }, { x: 30, y: 0, in: { x: -10, y: 0 }, out: { x: 10, y: 0 } }, { x: 30, y: 30 }, { x: 0, y: 30 }],
+    isClosed: true,
+    children: [shapeOf('inner')],
+  }
+  const line: DrawingShape = { id: 'line', nodes: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }, { x: 30, y: 0 }], fill: '#FF0000' }
+  const project = projectOf([track('art', [drawingClip('sketch', 0, SECOND, [square, line]), drawingClip('copy', SECOND, SECOND, [square])])])
+
+  function node(shapeId: string, index: number): NodeRef {
+    return { clipId: 'sketch', shapeId, index }
+  }
+
+  function nodesOf(edited: Project, shapeIndex: number, clipId = 'sketch'): ShapeNode[] {
+    return shapesOf(edited, clipId)[shapeIndex]?.nodes ?? []
+  }
+
+  function xsOf(shape: DrawingShape | undefined): number[] {
+    return shape?.nodes.map((each) => each.x) ?? []
+  }
+
+  it('tells smooth nodes, whose handles point away from each other, from sharp ones', () => {
+    expect(nodeTypeOf({ x: 0, y: 0, in: { x: -10, y: 0 }, out: { x: 10, y: 0.1 } })).toBe('smooth')
+    expect(nodeTypeOf({ x: 0, y: 0, in: { x: -10, y: 0 }, out: { x: 10, y: 1 } })).toBe('sharp')
+    expect(nodeTypeOf({ x: 0, y: 0, in: { x: 10, y: 0 }, out: { x: 10, y: 0 } })).toBe('sharp')
+    expect(nodeTypeOf({ x: 0, y: 0, out: { x: 10, y: 0 } })).toBe('sharp')
+  })
+
+  it('moves nodes with their handles and sets their place, only in their own drawing', () => {
+    const moved = moveNodes(project, [node('square', 1), node('line', 0)], { x: 5, y: -5 }, 0)
+    expect(nodesOf(moved, 0)[1]).toEqual({ x: 35, y: -5, in: { x: -10, y: 0 }, out: { x: 10, y: 0 } })
+    expect(nodesOf(moved, 1)[0]).toEqual({ x: 5, y: -5 })
+    expect(nodesOf(moved, 0, 'copy')).toEqual(square.nodes)
+    expect(xsOf(shapesOf(setNodePosition(project, [node('square', 0), node('square', 2)], 'x', 12, 0), 'sketch')[0])).toEqual([12, 30, 12, 0])
+  })
+
+  it('turns the other handle of a smooth node along with a dragged one, unless the drag breaks it', () => {
+    const turned = nodesOf(moveHandle(project, node('square', 1), 'out', { x: 0, y: 20 }, false, 0), 0)[1]
+    expect(turned?.out).toEqual({ x: 0, y: 20 })
+    expect(turned?.in?.x).toBeCloseTo(0)
+    expect(turned?.in?.y).toBeCloseTo(-10)
+    const broken = moveHandle(project, node('square', 1), 'out', { x: 0, y: 20 }, true, 0)
+    expect(nodesOf(broken, 0)[1]).toMatchObject({ in: { x: -10, y: 0 }, out: { x: 0, y: 20 } })
+    expect(nodesOf(moveHandle(broken, node('square', 1), 'in', { x: 0, y: 5 }, false, 0), 0)[1]).toMatchObject({ in: { x: 0, y: 5 }, out: { x: 0, y: 20 } })
+  })
+
+  it('makes a node sharp by dropping its handles, and smooth along its neighbours or its own handles', () => {
+    expect(nodesOf(setNodeType(project, [node('square', 1)], 'sharp'), 0)[1]).toEqual({ x: 30, y: 0 })
+
+    const corner = nodesOf(setNodeType(project, [node('square', 2)], 'smooth'), 0)[2]
+    expect(corner?.in?.x).toBeCloseTo(10 * Math.SQRT1_2)
+    expect(corner?.in?.y).toBeCloseTo(-10 * Math.SQRT1_2)
+    expect(corner?.out?.x).toBeCloseTo(-10 * Math.SQRT1_2)
+    expect(corner?.out?.y).toBeCloseTo(10 * Math.SQRT1_2)
+
+    const end = nodesOf(setNodeType(project, [node('line', 0)], 'smooth'), 1)[0]
+    expect(end?.in?.x).toBeCloseTo(-10 / 3)
+    expect(end?.out?.x).toBeCloseTo(10 / 3)
+
+    const broken = moveHandle(project, node('square', 1), 'out', { x: 0, y: 20 }, true, 0)
+    const lined = nodesOf(setNodeType(broken, [node('square', 1)], 'smooth'), 0)[1] ?? { x: 0, y: 0 }
+    expect(nodeTypeOf(lined)).toBe('smooth')
+    expect(Math.hypot(lined.in?.x ?? 0, lined.in?.y ?? 0)).toBeCloseTo(10)
+    expect(Math.hypot(lined.out?.x ?? 0, lined.out?.y ?? 0)).toBeCloseTo(20)
+  })
+
+  it('adds a node on a segment', () => {
+    expect(xsOf(shapesOf(insertNode(project, { clipId: 'sketch', shapeId: 'line' }, 1, 0.5), 'sketch')[1])).toEqual([0, 10, 15, 20, 30])
+  })
+
+  it('deletes nodes, and a shape left with fewer than two goes with what is clipped inside it', () => {
+    expect(nodesOf(deleteNodes(project, [node('line', 1), node('line', 2)]), 1)).toEqual([{ x: 0, y: 0 }, { x: 30, y: 0 }])
+    const gone = deleteNodes(project, [node('square', 0), node('square', 1), node('square', 2)])
+    expect(idsOf(shapesOf(gone, 'sketch'))).toEqual(['line'])
+    expect(idsOf(shapesOf(gone, 'copy'))).toEqual(['square'])
+  })
+
+  it('closes open paths and leaves closed ones as they are', () => {
+    const closed = shapesOf(closePaths(project, [{ clipId: 'sketch', shapeId: 'line' }, { clipId: 'sketch', shapeId: 'square' }]), 'sketch')
+    expect(closed[0]).toEqual(square)
+    expect(closed[1]).toEqual({ ...line, isClosed: true })
+  })
+
+  it('opens a closed path at a node, which then ends it too', () => {
+    const [opened] = shapesOf(breakPaths(project, [node('square', 2)], () => 'part'), 'sketch')
+    expect(opened?.isClosed).toBeUndefined()
+    expect(opened?.nodes.map((each) => ({ x: each.x, y: each.y }))).toEqual([
+      { x: 30, y: 30 },
+      { x: 0, y: 30 },
+      { x: 0, y: 0 },
+      { x: 30, y: 0 },
+      { x: 30, y: 30 },
+    ])
+    expect(opened?.children).toEqual(square.children)
+  })
+
+  it('splits paths at the chosen nodes inside them, putting the later parts right in front', () => {
+    let made = 0
+    function newId(): string {
+      made += 1
+      return `part-${made}`
+    }
+    const split = shapesOf(breakPaths(project, [node('line', 2), node('line', 1), node('line', 3)], newId), 'sketch')
+    expect(idsOf(split)).toEqual(['square', 'line', 'part-1', 'part-2'])
+    expect(split.map(xsOf)).toEqual([[0, 30, 30, 0], [0, 10], [10, 20], [20, 30]])
+    expect(split[2]).toMatchObject({ fill: '#FF0000' })
+
+    const closedSplit = shapesOf(breakPaths(project, [node('square', 1), node('square', 3)], () => 'part'), 'sketch')
+    expect(idsOf(closedSplit)).toEqual(['square', 'part', 'line'])
+    expect(closedSplit.slice(0, 2).map(xsOf)).toEqual([[30, 30, 0], [0, 0, 30]])
+    expect(closedSplit[1]?.children).toBeUndefined()
+  })
+
+  it('leaves an open path whole when broken at its ends', () => {
+    expect(shapesOf(breakPaths(project, [node('line', 0), node('line', 3)], () => 'part'), 'sketch')[1]).toEqual(line)
+  })
+
+  it('offers every node to snap to, clipped ones too, except the moving ones', () => {
+    const points = nodePointsOf('sketch', [square], [node('square', 1), node('square', 2), { ...node('inner', 0), clipId: 'copy' }])
+    expect(points).toEqual([{ x: 0, y: 0 }, { x: 0, y: 30 }, { x: 0, y: 0 }, { x: 10, y: 10 }])
+  })
+})
+
+describe('node keys and sets', () => {
+  const arm: DrawingShape = { id: 'arm', nodes: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0, out: { x: 4, y: 0 } }] }
+  const body: DrawingShape = { id: 'body', nodes: [{ x: 50, y: 50 }, { x: 60, y: 50 }] }
+  const project = projectOf([track('art', [drawingClip('sketch', 0, SECOND, [arm, body])])])
+  const elbow = { clipId: 'sketch', setId: 'elbow' }
+  const ramp = (from: number, to: number): Keyframe[] => [
+    { time: 0, value: from, easing: 'linear' },
+    { time: 10 * FRAME, value: to, easing: 'linear' },
+  ]
+
+  function node(shapeId: string, index: number): NodeRef {
+    return { clipId: 'sketch', shapeId, index }
+  }
+
+  function drawingOf(edited: Project): DrawingClip {
+    const clip = clipOf(edited, 'sketch')
+    if (clip.type !== 'drawing') throw new Error('sketch is not a drawing')
+    return clip
+  }
+
+  function armAt(edited: Project, index: number): ShapeNode | undefined {
+    return shapesOf(edited, 'sketch')[0]?.nodes[index]
+  }
+
+  function posedArmAt(edited: Project, index: number, local: number): ShapeNode | undefined {
+    return posedShapes(drawingOf(edited), local)[0]?.nodes[index]
+  }
+
+  function withDrawing(change: (clip: DrawingClip) => DrawingClip): Project {
+    return projectOf([track('art', [change(drawingOf(project))])])
+  }
+
+  // Elbow holds the arm's last two nodes and is turned a quarter clockwise around the arm's start.
+  const turnedArm = withDrawing((clip) => ({
+    ...clip,
+    shapes: [{ ...arm, nodes: [{ x: 0, y: 0 }, { x: 10, y: 0, sets: ['elbow'] }, { x: 20, y: 0, out: { x: 4, y: 0 }, sets: ['elbow'] }] }, body],
+    nodeSets: [{ id: 'elbow', name: 'Elbow', pivot: { x: 0, y: 0 }, keyframes: { rotation: [{ time: 0, value: 90, easing: 'linear' }] } }],
+  }))
+
+  it('moves an unkeyed node on every frame, and records offset keys at the playhead only for a keyed one', () => {
+    const keyed = setNodeKeys(project, [node('arm', 2)], 0, true)
+    expect(armAt(keyed, 2)?.keyframes).toEqual({ x: [{ time: 0, value: 0, easing: 'linear' }], y: [{ time: 0, value: 0, easing: 'linear' }] })
+    expect(hasNodeKeysAt(keyed, [node('arm', 2)], 0)).toBe(true)
+    expect(hasNodeKeysAt(keyed, [node('arm', 1), node('arm', 2)], 0)).toBe(false)
+
+    const moved = moveNodes(keyed, [node('arm', 1), node('arm', 2)], { x: 5, y: 0 }, 10 * FRAME)
+    expect(armAt(moved, 1)).toEqual({ x: 15, y: 0 })
+    expect(armAt(moved, 2)).toMatchObject({ x: 20, keyframes: { x: ramp(0, 5) } })
+    expect(posedArmAt(moved, 2, 5 * FRAME)?.x).toBeCloseTo(22.5, 10)
+    expect(moveNodes(keyed, [node('arm', 2)], { x: 0, y: 0 }, 10 * FRAME)).toEqual(keyed)
+  })
+
+  it('turns moves back through the sets turning a node, so it follows the pointer, and handles too', () => {
+    const moved = moveNodes(turnedArm, [node('arm', 2)], { x: 5, y: 0 }, 0)
+    expect(posedArmAt(moved, 2, 0)?.x).toBeCloseTo(5, 10)
+    expect(posedArmAt(moved, 2, 0)?.y).toBeCloseTo(20, 10)
+    expect(posedArmAt(setNodePosition(turnedArm, [node('arm', 2)], 'y', 25, 0), 2, 0)?.y).toBeCloseTo(25, 10)
+    const handle = armAt(moveHandle(turnedArm, node('arm', 2), 'out', { x: 0, y: 10 }, false, 0), 2)?.out
+    expect(handle?.x).toBeCloseTo(10, 10)
+    expect(handle?.y).toBeCloseTo(0, 10)
+  })
+
+  it('removes the keys at the playhead, and the last key leaves its offset on the place', () => {
+    const keyed = withDrawing((clip) => ({ ...clip, shapes: [{ ...arm, nodes: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0, keyframes: { x: ramp(0, 5), y: [{ time: 10 * FRAME, value: 2, easing: 'linear' }] } }] }, body] }))
+    const once = setNodeKeys(keyed, [node('arm', 2)], 0, false)
+    expect(armAt(once, 2)).toEqual({ x: 20, y: 0, keyframes: { x: [{ time: 10 * FRAME, value: 5, easing: 'linear' }], y: [{ time: 10 * FRAME, value: 2, easing: 'linear' }] } })
+    expect(armAt(setNodeKeys(once, [node('arm', 2)], 10 * FRAME, false), 2)).toEqual({ x: 25, y: 2 })
+  })
+
+  it('saves a set around the middle of the chosen nodes as they show, names it, and deletes it from every node', () => {
+    const saved = addNodeSet(turnedArm, [node('arm', 0), node('arm', 1)], 'shoulder', 0)
+    const shoulder = drawingOf(saved).nodeSets?.[1]
+    expect(shoulder).toMatchObject({ id: 'shoulder', name: 'Set 2' })
+    expect(shoulder?.pivot.x).toBeCloseTo(0, 10)
+    expect(shoulder?.pivot.y).toBeCloseTo(5, 10)
+    expect(armAt(saved, 1)?.sets).toEqual(['elbow', 'shoulder'])
+    expect(drawingOf(renameNodeSet(saved, { clipId: 'sketch', setId: 'shoulder' }, ' Arm ')).nodeSets?.[1]?.name).toBe('Arm')
+    expect(drawingOf(setNodeSetPivot(saved, elbow, { x: 3, y: 4 })).nodeSets?.[0]?.pivot).toEqual({ x: 3, y: 4 })
+
+    const deleted = deleteNodeSet(saved, elbow)
+    expect(drawingOf(deleted).nodeSets?.map((set) => set.id)).toEqual(['shoulder'])
+    expect(armAt(deleted, 1)?.sets).toEqual(['shoulder'])
+    expect(armAt(deleted, 2)).not.toHaveProperty('sets')
+    expect(drawingOf(deleteNodeSet(deleted, { clipId: 'sketch', setId: 'shoulder' }))).not.toHaveProperty('nodeSets')
+  })
+
+  it('keys a set every time it turns or moves: rotation alone, x and y together', () => {
+    const turned = setNodeSetPose(turnedArm, elbow, { rotation: 45 }, 10 * FRAME)
+    expect(drawingOf(turned).nodeSets?.[0]?.keyframes).toEqual({ rotation: [{ time: 0, value: 90, easing: 'linear' }, { time: 10 * FRAME, value: 45, easing: 'linear' }] })
+    const moved = setNodeSetPose(turned, elbow, { x: 3 }, 10 * FRAME)
+    expect(drawingOf(moved).nodeSets?.[0]?.keyframes).toMatchObject({ x: [{ time: 10 * FRAME, value: 3 }], y: [{ time: 10 * FRAME, value: 0 }] })
+    expect(hasSetKeysAt(moved, [elbow], 'position', 10 * FRAME)).toBe(true)
+    expect(hasSetKeysAt(moved, [elbow], 'position', 0)).toBe(false)
+
+    const unturned = setNodeSetKeys(setNodeSetKeys(moved, elbow, 'rotation', 10 * FRAME, false), elbow, 'rotation', 0, false)
+    expect(drawingOf(unturned).nodeSets?.[0]?.keyframes).not.toHaveProperty('rotation')
+    expect(drawingOf(setNodeSetKeys(unturned, elbow, 'rotation', 0, true)).nodeSets?.[0]?.keyframes?.rotation).toEqual([{ time: 0, value: 0, easing: 'linear' }])
+  })
+
+  // The arm's last node and Elbow are keyed at 0 and 10 frames, the body's first node at 10 frames only.
+  const animated = withDrawing((clip) => ({
+    ...clip,
+    shapes: [
+      { ...arm, nodes: [{ x: 0, y: 0 }, { x: 10, y: 0, sets: ['elbow'] }, { x: 20, y: 0, sets: ['elbow'], keyframes: { x: ramp(0, 5) } }] },
+      { ...body, nodes: [{ x: 50, y: 50, keyframes: { y: [{ time: 10 * FRAME, value: 1, easing: 'linear' }] } }, { x: 60, y: 50 }] },
+    ],
+    nodeSets: [{ id: 'elbow', name: 'Elbow', pivot: { x: 0, y: 0 }, keyframes: { rotation: ramp(0, 90) } }],
+  }))
+  const armScope = { clipId: 'sketch', shapeId: 'arm' }
+  const elbowOf = (edited: Project): NodeSet | undefined => drawingOf(edited).nodeSets?.[0]
+
+  it('lists the moments with keys for the drawing or one shape with the sets holding its nodes', () => {
+    expect(drawingKeyTimes(drawingOf(animated))).toEqual([0, 10 * FRAME])
+    expect(drawingKeyTimes(drawingOf(animated), 'body')).toEqual([10 * FRAME])
+    expect(drawingKeyTimes(drawingOf(animated), 'arm')).toEqual([0, 10 * FRAME])
+  })
+
+  it('eases and deletes the keys of one moment', () => {
+    const eased = setKeysEasing(animated, armScope, 0, 'easeIn')
+    expect(armAt(eased, 2)?.keyframes?.x?.[0]?.easing).toBe('easeIn')
+    expect(elbowOf(eased)?.keyframes?.rotation?.[0]?.easing).toBe('easeIn')
+    expect(shapesOf(eased, 'sketch')[1]).toEqual(shapesOf(animated, 'sketch')[1])
+
+    const deleted = deleteKeysAt(animated, { clipId: 'sketch' }, 10 * FRAME)
+    expect(shapesOf(deleted, 'sketch')[1]?.nodes[0]).toEqual({ x: 50, y: 51 })
+    expect(elbowOf(deleted)?.keyframes?.rotation).toEqual([{ time: 0, value: 0, easing: 'linear' }])
+  })
+
+  it('moves the keys of a moment in time, inside the drawing and short of the next key', () => {
+    const later = moveKeysAt(animated, armScope, 10 * FRAME, 20 * FRAME + 30)
+    expect(armAt(later, 2)?.keyframes?.x?.[1]?.time).toBe(20 * FRAME)
+    expect(elbowOf(later)?.keyframes?.rotation?.[1]?.time).toBe(20 * FRAME)
+    expect(shapesOf(later, 'sketch')[1]?.nodes[0]?.keyframes?.y?.[0]?.time).toBe(10 * FRAME)
+    expect(armAt(moveKeysAt(animated, armScope, 10 * FRAME, 2 * SECOND), 2)?.keyframes?.x?.[1]?.time).toBe(SECOND)
+    expect(armAt(moveKeysAt(animated, armScope, 10 * FRAME, -FRAME), 2)?.keyframes?.x?.[1]?.time).toBe(TIMELINE_GRID)
+  })
+
+  it('copies the keys of a moment and pastes them at the playhead onto the same nodes and sets', () => {
+    const copied = copyKeysAt(drawingOf(animated), 'arm', 0)
+    expect(copied).toEqual({ nodes: [{ shapeId: 'arm', index: 2, x: { value: 0, easing: 'linear' } }], sets: [{ setId: 'elbow', rotation: { value: 0, easing: 'linear' } }] })
+    const pasted = pasteKeys(animated, 'sketch', copied, 20 * FRAME)
+    expect(armAt(pasted, 2)?.keyframes?.x?.[2]).toEqual({ time: 20 * FRAME, value: 0, easing: 'linear' })
+    expect(elbowOf(pasted)?.keyframes?.rotation?.[2]).toEqual({ time: 20 * FRAME, value: 0, easing: 'linear' })
+  })
+
+  it('carries keys and whole sets along when shapes move, scale, split, trim or land in another drawing', () => {
+    const at = (x: number, scale: number): { x: number; y: number; scaleX: number; scaleY: number; rotation: number } => ({ x, y: 0, scaleX: scale, scaleY: scale, rotation: 0 })
+    const moved = transformShapes(animated, [{ clipId: 'sketch', shapeId: 'arm' }], at(0, 1), at(100, 2), 0)
+    expect(armAt(moved, 2)).toMatchObject({ x: 140, sets: ['elbow'], keyframes: { x: ramp(0, 10) } })
+    expect(elbowOf(moved)?.pivot).toEqual({ x: 100, y: 0 })
+    expect(elbowOf(transformShapes(animated, [{ clipId: 'sketch', shapeId: 'body' }], at(0, 1), at(100, 1), 0))?.pivot).toEqual({ x: 0, y: 0 })
+
+    const inserted = shapesOf(insertNode(animated, { clipId: 'sketch', shapeId: 'arm' }, 1, 0.5), 'sketch')[0]?.nodes
+    expect(inserted?.map((each) => each.sets)).toEqual([undefined, ['elbow'], ['elbow'], ['elbow']])
+
+    const later = laterPart(drawingOf(animated), 5 * FRAME)
+    expect(later.type === 'drawing' && later.nodeSets?.[0]?.keyframes?.rotation?.map((key) => key.time)).toEqual([-5 * FRAME, 5 * FRAME])
+
+    const place = drawingPlace(project, 2 * SECOND, [], [], { clipId: 'new', trackId: 'top' })
+    const landed = addDrawingShapes(animated, place, [shapesOf(animated, 'sketch')[0] ?? arm])
+    expect(shapesOf(landed, 'new')[0]?.nodes.map((each) => each.sets)).toEqual([undefined, undefined, undefined])
+  })
+
+  function expectNear(point: { x: number; y: number } | undefined, x: number, y: number): void {
+    expect(point?.x).toBeCloseTo(x, 10)
+    expect(point?.y).toBeCloseTo(y, 10)
+  }
+
+  it('moves a shape that follows a set, turns its moves back, and lets go of a set it cannot follow', () => {
+    const bodyShape = { clipId: 'sketch', shapeId: 'body' }
+    const following = setShapesFollow(turnedArm, [bodyShape], 'elbow')
+    expect(shapesOf(following, 'sketch')[1]?.follows).toBe('elbow')
+    expectNear(posedShapes(drawingOf(following), 0)[1]?.nodes[0], -50, 50)
+    expectNear(posedShapes(drawingOf(moveNodes(following, [node('body', 0)], { x: 5, y: 0 }, 0)), 0)[1]?.nodes[0], -45, 50)
+    expect(drawingKeyTimes(drawingOf(following), 'body')).toEqual([0])
+    expect(setShapesFollow(following, [bodyShape], 'missing')).toEqual(following)
+    expect(shapesOf(setShapesFollow(following, [bodyShape], undefined), 'sketch')[1]).not.toHaveProperty('follows')
+    expect(shapesOf(deleteNodeSet(following, elbow), 'sketch')[1]).not.toHaveProperty('follows')
+
+    const place = drawingPlace(project, 2 * SECOND, [], [], { clipId: 'new', trackId: 'top' })
+    const landed = addDrawingShapes(following, place, [shapesOf(following, 'sketch')[1] ?? body])
+    expect(shapesOf(landed, 'new')[0]).not.toHaveProperty('follows')
+  })
+
+  // Wrist holds the arm's last node and Tip nothing; Elbow turns a quarter around the arm's start.
+  const rigged = withDrawing((clip) => ({
+    ...clip,
+    shapes: [{ ...arm, nodes: [{ x: 0, y: 0 }, { x: 10, y: 0, sets: ['elbow'] }, { x: 20, y: 0, sets: ['wrist'] }] }, body],
+    nodeSets: [
+      { id: 'elbow', name: 'Elbow', pivot: { x: 0, y: 0 }, keyframes: { rotation: [{ time: 0, value: 90, easing: 'linear' }] } },
+      { id: 'wrist', name: 'Wrist', pivot: { x: 10, y: 0 } },
+      { id: 'tip', name: 'Tip', pivot: { x: 20, y: 0 }, parent: 'wrist' },
+    ],
+  }))
+  const wrist = { clipId: 'sketch', setId: 'wrist' }
+
+  it('parents a set without loops, and carries its pivot and nodes with the parent', () => {
+    const parented = setNodeSetParent(rigged, wrist, 'elbow')
+    expect(drawingOf(parented).nodeSets?.[1]?.parent).toBe('elbow')
+    expect(parentChoices(drawingOf(parented), 'elbow')).toEqual([])
+    expect(parentChoices(drawingOf(parented), 'wrist').map((set) => set.id)).toEqual(['elbow'])
+    expect(setNodeSetParent(parented, elbow, 'tip')).toEqual(parented)
+    expect(drawingOf(setNodeSetParent(parented, wrist, undefined)).nodeSets?.[1]).not.toHaveProperty('parent')
+
+    expectNear(shownPivot(drawingOf(parented), 'wrist', 0), 0, 10)
+    expect(turnAndScaleAboveSet(drawingOf(parented), 'tip', 0)).toEqual({ rotation: 90, scale: 1 })
+    expect(turnAndScaleAboveSet(drawingOf(parented), 'elbow', 0)).toEqual({ rotation: 0, scale: 1 })
+    expectNear(posedArmAt(parented, 2, 0), 0, 20)
+    expectNear(posedArmAt(moveNodes(parented, [node('arm', 2)], { x: 5, y: 0 }, 0), 2, 0), 5, 20)
+  })
+
+  it('gives the children of a deleted set its parent', () => {
+    const parented = setNodeSetParent(rigged, wrist, 'elbow')
+    expect(drawingOf(deleteNodeSet(parented, wrist)).nodeSets?.[1]).toMatchObject({ id: 'tip', parent: 'elbow' })
+    expect(drawingOf(deleteNodeSet(rigged, wrist)).nodeSets?.[1]).not.toHaveProperty('parent')
+  })
+
+  const bodyShape = { clipId: 'sketch', shapeId: 'body' }
+  const armShape = { clipId: 'sketch', shapeId: 'arm' }
+
+  function setOf(edited: Project, setId: string): NodeSet | undefined {
+    return drawingOf(edited).nodeSets?.find((set) => set.id === setId)
+  }
+
+  it('keys a shape on a set of its own, named after it, around its middle and inside the set it followed', () => {
+    const keyed = setShapesKeys(setShapesFollow(turnedArm, [bodyShape], 'elbow'), [bodyShape], 'rotation', 0, true, () => 'body-own')
+    const own = setOf(keyed, 'body-own')
+    expect(own).toMatchObject({ name: 'Shape', parent: 'elbow', keyframes: { rotation: [{ time: 0, value: 0, easing: 'linear' }] } })
+    expectNear(own?.pivot, 55, 50)
+    expect(shapesOf(keyed, 'sketch')[1]).toMatchObject({ follows: 'body-own', ownsSet: true })
+    expectNear(posedShapes(drawingOf(keyed), 0)[1]?.nodes[0], -50, 50)
+    expect(hasShapeKeysAt(keyed, [bodyShape], 'rotation', 0)).toBe(true)
+    expect(hasShapeKeysAt(keyed, [bodyShape, armShape], 'rotation', 0)).toBe(false)
+    expect(shapePoseAt(keyed, bodyShape, 0)).toEqual({ rotation: 0, scale: 1, x: 0, y: 0 })
+
+    const grown = setShapesPose(keyed, [bodyShape], { scale: 2 }, 0, () => 'unused')
+    expect(setOf(grown, 'body-own')?.keyframes?.scale).toEqual([{ time: 0, value: 2, easing: 'linear' }])
+    expectNear(posedShapes(drawingOf(grown), 0)[1]?.nodes[0], -50, 45)
+  })
+
+  it('records the box turning, scaling and moving a keyed shape as keys on its set, and moves unkeyed shapes in place', () => {
+    const keyed = setShapesKeys(project, [armShape], 'rotation', 0, true, () => 'arm-own')
+    const box = { x: 10, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }
+    const turnedBox = transformShapes(keyed, [armShape], box, { ...box, rotation: 90 }, 10 * FRAME)
+    expect(setOf(turnedBox, 'arm-own')?.keyframes).toEqual({ rotation: [{ time: 0, value: 0, easing: 'linear' }, { time: 10 * FRAME, value: 90, easing: 'linear' }] })
+    expectNear(posedArmAt(turnedBox, 0, 10 * FRAME), 10, -10)
+    expect(setOf(transformShapes(keyed, [armShape], box, { ...box, scaleX: 2, scaleY: 2 }, 0), 'arm-own')?.keyframes?.scale).toEqual([{ time: 0, value: 2, easing: 'linear' }])
+
+    const moved = transformShapes(keyed, [armShape, bodyShape], box, { ...box, x: 15 }, 0)
+    expect(setOf(moved, 'arm-own')?.keyframes).toMatchObject({ x: [{ time: 0, value: 5 }], y: [{ time: 0, value: 0 }] })
+    expect(armAt(moved, 0)).toEqual({ x: 0, y: 0 })
+    expect(shapesOf(moved, 'sketch')[1]?.nodes[0]).toEqual({ x: 55, y: 50 })
+  })
+
+  it('leaves the shapes clipped inside a keyed shape to follow it, and lets copies follow without owning', () => {
+    const lining: DrawingShape = { id: 'lining', nodes: [{ x: 2, y: 0 }, { x: 4, y: 0 }] }
+    const lined = withDrawing((clip) => ({ ...clip, shapes: [{ ...arm, children: [lining] }, body] }))
+    const keyed = setShapesKeys(lined, [armShape], 'position', 0, true, () => 'arm-own')
+    const box = { x: 10, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }
+    const moved = transformShapes(keyed, [armShape, { clipId: 'sketch', shapeId: 'lining' }], box, { ...box, y: 7 }, 0)
+    expect(shapesOf(moved, 'sketch')[0]?.children?.[0]?.nodes[0]).toEqual({ x: 2, y: 0 })
+    expectNear(posedShapes(drawingOf(moved), 0)[0]?.children?.[0]?.nodes[0], 2, 7)
+
+    const copy = withNewShapeIds(shapesOf(keyed, 'sketch')[0] ?? arm, () => 'copy')
+    expect(copy.follows).toBe('arm-own')
+    expect(copy).not.toHaveProperty('ownsSet')
+    expect(setOf(deleteShapes(keyed, [armShape]), 'arm-own')).toBeDefined()
+    expect(shapesOf(deleteNodeSet(keyed, { clipId: 'sketch', setId: 'arm-own' }), 'sketch')[0]).not.toHaveProperty('ownsSet')
+  })
+
+  it('makes a keyed shape follow through its own set', () => {
+    const keyed = setShapesKeys(turnedArm, [bodyShape], 'rotation', 0, true, () => 'body-own')
+    const following = setShapesFollow(keyed, [bodyShape], 'elbow')
+    expect(setOf(following, 'body-own')?.parent).toBe('elbow')
+    const body = shapesOf(following, 'sketch')[1]
+    expect(body).toMatchObject({ follows: 'body-own', ownsSet: true })
+    expect(body === undefined ? undefined : followedSetOf(drawingOf(following), body)).toBe('elbow')
+    expect(followChoices(drawingOf(following), body === undefined ? [] : [body]).map((set) => set.id)).toEqual(['elbow'])
+  })
+
+  it('gives a node added between keyed nodes keys that keep it on the outline at every key', () => {
+    const keyedArm = withDrawing((clip) => ({ ...clip, shapes: [{ ...arm, nodes: [{ x: 0, y: 0 }, { x: 10, y: 0, keyframes: { y: ramp(0, 10) } }, { x: 20, y: 0, keyframes: { x: ramp(0, 6) } }] }, body] }))
+    const inserted = insertNode(keyedArm, armScope, 1, 0.5)
+    expect(armAt(inserted, 2)).toEqual({ x: 15, y: 0, keyframes: { x: ramp(0, 3), y: ramp(0, 5) } })
+    expectNear(posedArmAt(inserted, 2, 5 * FRAME), 16.5, 2.5)
+    expect(armAt(insertNode(project, armScope, 1, 0.5), 2)).toEqual({ x: 15, y: 0 })
+  })
+
+  it('keeps keys and sets on their own nodes when nodes go, paths break or close, and node types change', () => {
+    expect(shapesOf(deleteNodes(animated, [node('arm', 1)]), 'sketch')[0]?.nodes).toEqual([{ x: 0, y: 0 }, { x: 20, y: 0, sets: ['elbow'], keyframes: { x: ramp(0, 5) } }])
+
+    const [first, second] = shapesOf(breakPaths(animated, [node('arm', 1)], () => 'forearm'), 'sketch')
+    expect(first?.nodes).toEqual([{ x: 0, y: 0 }, { x: 10, y: 0, sets: ['elbow'] }])
+    expect(second).toMatchObject({ id: 'forearm', nodes: [{ x: 10, y: 0, sets: ['elbow'] }, { x: 20, y: 0, sets: ['elbow'], keyframes: { x: ramp(0, 5) } }] })
+
+    expect(shapesOf(closePaths(animated, [armScope]), 'sketch')[0]?.nodes).toEqual(shapesOf(animated, 'sketch')[0]?.nodes)
+    expect(armAt(setNodeType(animated, [node('arm', 2)], 'smooth'), 2)).toMatchObject({ x: 20, sets: ['elbow'], keyframes: { x: ramp(0, 5) } })
   })
 })

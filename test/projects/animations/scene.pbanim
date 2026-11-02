@@ -194,6 +194,65 @@
         {
           "duration": 24000000,
           "id": "face-2",
+          "nodeSets": [
+            {
+              "id": "tilt",
+              "keyframes": {
+                "rotation": [
+                  {
+                    "easing": "linear",
+                    "time": 0,
+                    "value": 0
+                  },
+                  {
+                    "easing": "easeInOut",
+                    "time": 24000000,
+                    "value": 20
+                  }
+                ]
+              },
+              "name": "Tilt",
+              "pivot": {
+                "x": 130,
+                "y": 110
+              }
+            },
+            {
+              "id": "jaw",
+              "keyframes": {
+                "rotation": [
+                  {
+                    "easing": "linear",
+                    "time": 0,
+                    "value": 0
+                  },
+                  {
+                    "easing": "easeInOut",
+                    "time": 12000000,
+                    "value": -15
+                  }
+                ],
+                "scale": [
+                  {
+                    "easing": "linear",
+                    "time": 0,
+                    "value": 1
+                  },
+                  {
+                    "easing": "easeInOut",
+                    "time": 12000000,
+                    "value": 1.25
+                  }
+                ]
+              },
+              "name": "Jaw",
+              "parent": "tilt",
+              "pivot": {
+                "x": 130,
+                "y": 110
+              }
+            }
+          ],
           "shapes": [
             {
               "children": [
@@ -222,6 +281,7 @@
                 }
               ],
               "fill": "#F2C9A0",
+              "follows": "tilt",
               "id": "head",
               "isClosed": true,
               "nodes": [
@@ -283,10 +343,27 @@
               "id": "mouth",
               "nodes": [
                 {
+                  "keyframes": {
+                    "y": [
+                      {
+                        "easing": "linear",
+                        "time": 0,
+                        "value": 0
+                      },
+                      {
+                        "easing": "linear",
+                        "time": 12000000,
+                        "value": -8
+                      }
+                    ]
+                  },
                   "out": {
                     "x": 10,
                     "y": 12
                   },
+                  "sets": [
+                    "jaw"
+                  ],
                   "x": 110,
                   "y": 110
                 },
@@ -295,6 +372,9 @@
                     "x": -10,
                     "y": 12
                   },
+                  "sets": [
+                    "jaw"
+                  ],
                   "x": 150,
                   "y": 110
                 }

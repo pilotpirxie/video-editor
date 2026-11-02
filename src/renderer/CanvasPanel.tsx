@@ -52,6 +52,8 @@ function ToolStrip(): ReactElement {
   const { store } = useSession()
   const tool = useEditorState((state) => state.tool)
   const moveKeys = useShortcutHint('tool-move')
+  const nodeKeys = useShortcutHint('tool-node')
+  const penKeys = useShortcutHint('tool-pen')
   const fillKeys = useShortcutHint('tool-fill')
   const shapeKeys = useShortcutHint('tool-shape')
   const pickerKeys = useShortcutHint('tool-picker')
@@ -60,7 +62,9 @@ function ToolStrip(): ReactElement {
   return (
     <div className="tool-strip" role="toolbar" aria-label="Drawing tools" aria-orientation="vertical" data-testid="tool-strip">
       <IconButton icon="pointer" label="Move" testId="tool-move" shortcut={moveKeys} isPressed={tool === 'move'} onClick={() => store.setTool('move')} />
+      <IconButton icon="node" label="Node" testId="tool-node" shortcut={nodeKeys} isPressed={tool === 'node'} onClick={() => store.setTool('node')} />
       <hr />
+      <IconButton icon="pen" label="Pen" testId="tool-pen" shortcut={penKeys} isPressed={tool === 'pen'} onClick={() => store.setTool('pen')} />
       <IconButton icon="bucket" label="Fill" testId="tool-fill" shortcut={fillKeys} isPressed={tool === 'fill'} onClick={() => store.setTool('fill')} />
       <hr />
       <IconButton icon="rectangle" label="Rectangle" testId="tool-rectangle" shortcut={shapeKeys} isPressed={tool === 'rectangle'} onClick={() => store.setTool('rectangle')} />
@@ -123,6 +127,7 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
   const [zoom, setZoom] = useState<PreviewZoom>('fit')
   const [isCropping, setIsCropping] = useState(false)
   const [isZoomToolOn, setIsZoomToolOn] = useState(false)
+  const [isOnionSkinOn, setIsOnionSkinOn] = useState(false)
   const isGroupOpen = useEditorState((state) => state.openGroups.length > 0)
   const isZooming = isZoomToolOn && !isGroupOpen
   const isDrawing = isInAnimation && !isPreviewing && !isZooming
@@ -199,7 +204,7 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
       <div className={zoom === 'fit' ? 'canvas-area' : 'canvas-area scrollable'} ref={areaRef}>
         <div className="preview-fit" ref={stageRef}>
           <div className="preview-frame" ref={frameRef}>
-            {!isPreviewing && (isZooming ? <CameraTool /> : <CanvasOverlay isCropping={isCropping} areaRef={areaRef} />)}
+            {!isPreviewing && (isZooming ? <CameraTool /> : <CanvasOverlay isCropping={isCropping} isOnionSkinOn={isOnionSkinOn} areaRef={areaRef} />)}
           </div>
         </div>
         {hint !== undefined && !isPreviewing && (!isOpening || isOpeningSlowly) && (
@@ -241,7 +246,11 @@ export function CanvasPanel({ preview }: CanvasPanelProps): ReactElement {
         ) : (
           <>
             <span className="spacer" />
-            <IconButton icon="zoom" label="Zoom and pan" testId="zoom-tool" isPressed={isZooming} isDisabled={isGroupOpen} onClick={() => setIsZoomToolOn(!isZooming)} />
+            {isInAnimation ? (
+              <IconButton icon="onion" label="Onion skin" testId="onion-skin-button" isPressed={isOnionSkinOn} onClick={() => setIsOnionSkinOn(!isOnionSkinOn)} />
+            ) : (
+              <IconButton icon="zoom" label="Zoom and pan" testId="zoom-tool" isPressed={isZooming} isDisabled={isGroupOpen} onClick={() => setIsZoomToolOn(!isZooming)} />
+            )}
             <IconButton icon="fit" label="Zoom to full" testId="zoom-to-full" isDisabled={isGroupOpen} onClick={actions.zoomToFull} />
             <IconButton icon="crop" label="Crop" testId="crop-mode" isPressed={isCropping} onClick={() => setIsCropping(!isCropping)} />
             <div className="canvas-zoom">

@@ -1,3 +1,4 @@
+import { turned } from '../engine/curves.js'
 import type { Size } from '../shared/exportPresets.js'
 import type { Crop, Transform } from '../shared/project.js'
 import { nearestWithin, type Bounds } from './snapping.js'
@@ -48,20 +49,13 @@ export function boxOf(natural: Size, crop: Crop, transform: Transform): Box {
   }
 }
 
-function rotated(point: Point, degrees: number): Point {
-  const angle = degrees * DEGREES_TO_RADIANS
-  const cosine = Math.cos(angle)
-  const sine = Math.sin(angle)
-  return { x: point.x * cosine - point.y * sine, y: point.x * sine + point.y * cosine }
-}
-
 export function toLocal(box: Box, point: Point): Point {
-  return rotated({ x: point.x - box.centerX, y: point.y - box.centerY }, -box.rotation)
+  return turned({ x: point.x - box.centerX, y: point.y - box.centerY }, -box.rotation)
 }
 
 export function toCanvas(box: Box, local: Point): Point {
-  const turned = rotated(local, box.rotation)
-  return { x: box.centerX + turned.x, y: box.centerY + turned.y }
+  const offset = turned(local, box.rotation)
+  return { x: box.centerX + offset.x, y: box.centerY + offset.y }
 }
 
 export function containsPoint(box: Box, point: Point): boolean {
@@ -176,7 +170,7 @@ export function cropFromValue(natural: Size, crop: Crop, transform: Transform, s
   const scale = isHorizontal ? transform.scaleX : transform.scaleY
   const direction = side === 'left' || side === 'top' ? 1 : -1
   const along = (direction * (hidden - crop[side]) * scale) / 2
-  const shift = rotated(isHorizontal ? { x: along, y: 0 } : { x: 0, y: along }, transform.rotation)
+  const shift = turned(isHorizontal ? { x: along, y: 0 } : { x: 0, y: along }, transform.rotation)
   return {
     crop: { ...crop, [side]: hidden },
     transform: { ...transform, x: transform.x + shift.x, y: transform.y + shift.y },

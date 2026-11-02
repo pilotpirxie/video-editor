@@ -1,5 +1,5 @@
 import type { MediaStates } from '../src/engine/resolve.js'
-import type { MediaInfo, VideoInfo } from '../src/shared/mediaProtocol.js'
+import type { Documents, MediaInfo, VideoInfo } from '../src/shared/mediaProtocol.js'
 import { parseProject, serializeProject, type AnimationClip, type AudioClip, type Clip, type DrawingClip, type DrawingShape, type GroupClip, type MediaRef, type Project, type TextClip, type Track, type VideoClip } from '../src/shared/project.js'
 
 export const SECOND = 24_000_000
@@ -128,4 +128,15 @@ export const MEDIA_STATES: MediaStates = {
   sticker: { info: STICKER_MEDIA },
   music: { info: { kind: 'audio', duration: 60 * SECOND, containerStart: 0, audio: { channels: 2, sampleRate: 48_000, codec: 'mp3', seeksExactly: false } } },
   logo: { info: { kind: 'image', width: 400, height: 200, hasAlpha: true } },
+}
+
+export const NO_DOCUMENTS: Documents = {}
+
+const WAVE_PATH = '/episode/wave.pbanim'
+export const WAVE_STATES: MediaStates = { ...MEDIA_STATES, wave: { info: { kind: 'animation', path: WAVE_PATH } } }
+
+// The wave animation is one drawing this long; an empty one has nothing drawn yet.
+export function waveDocuments(length: number): Documents {
+  const tracks = length === 0 ? [] : [track('art', [drawingClip('pose', 0, length)])]
+  return { [WAVE_PATH]: projectOf(tracks) }
 }

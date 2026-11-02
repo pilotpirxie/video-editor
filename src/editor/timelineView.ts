@@ -1,6 +1,7 @@
-import { isVisual, type CameraKeyframe, type Clip, type DrawingShape, type Track } from '../shared/project.js'
+import { isVisual, type CameraKeyframe, type Clip, type DrawingClip, type DrawingShape, type Track } from '../shared/project.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
 import { endOf, hasVolume } from './clips.js'
+import { drawingKeyTimes, shapeRows } from './drawings.js'
 import type { Fade } from './properties.js'
 import { transitionSpans, type TransitionEdge } from './transitions.js'
 
@@ -344,18 +345,45 @@ export type KeyframeDiamond = {
   y: number
 }
 
-export function keyframeDiamonds(clip: Clip, picture: Band | undefined, view: TimelineView): KeyframeDiamond[] {
-  if (picture === undefined || clip.keyframes === undefined) return []
+function pictureKeyTimes(clip: Clip): number[] {
+  if (clip.type === 'drawing') return drawingKeyTimes(clip)
   const times = new Set<number>()
-  for (const [property, keyframes] of Object.entries(clip.keyframes)) {
+  for (const [property, keyframes] of Object.entries(clip.keyframes ?? {})) {
     if (property === 'volume' || keyframes === undefined) continue
-    for (const keyframe of keyframes) {
-      if (keyframe.time >= 0 && keyframe.time <= clip.duration) times.add(keyframe.time)
-    }
+    for (const keyframe of keyframes) times.add(keyframe.time)
   }
-  const y = picture.top + picture.height - DIAMOND_INSET
-  const sorted = [...times].sort((a, b) => a - b)
-  return sorted.map((time) => ({ time, x: timeToX(clip.start + time, view), y }))
+  return [...times].sort((a, b) => a - b)
+}
+
+function diamondsOn(clip: Clip, times: readonly number[], y: number, view: TimelineView): KeyframeDiamond[] {
+  const shown = times.filter((time) => time >= 0 && time <= clip.duration)
+  return shown.map((time) => ({ time, x: timeToX(clip.start + time, view), y }))
+}
+
+export function keyframeDiamonds(clip: Clip, picture: Band | undefined, view: TimelineView): KeyframeDiamond[] {
+  if (picture === undefined) return []
+  return diamondsOn(clip, pictureKeyTimes(clip), picture.top + picture.height - DIAMOND_INSET, view)
+}
+
+export type RowDiamond = KeyframeDiamond & {
+  shapeId: string
+  isPickable: boolean
+}
+
+// The rows start right under the track's clips, in the order the shape rows list them.
+export function shapeRowDiamonds(drawing: DrawingClip, rowsTop: number, view: TimelineView): RowDiamond[] {
+  const diamonds: RowDiamond[] = []
+  for (const [rowIndex, row] of shapeRows(drawing.shapes).entries()) {
+    const y = rowsTop + rowIndex * SHAPE_ROW_HEIGHT + SHAPE_ROW_HEIGHT / 2
+    const times = drawingKeyTimes(drawing, row.shape.id)
+    for (const diamond of diamondsOn(drawing, times, y, view)) diamonds.push({ ...diamond, shapeId: row.shape.id, isPickable: row.isPickable })
+  }
+  return diamonds
+}
+
+export function rowDiamondAt(diamonds: readonly RowDiamond[], x: number, y: number): RowDiamond | undefined {
+  const pickable = diamonds.filter((diamond) => diamond.isPickable)
+  return pickable[nearestInReach(pickable, x, y)]
 }
 
 export function keyframeDiamondAt(diamonds: readonly KeyframeDiamond[], x: number, y: number): KeyframeDiamond | undefined {
