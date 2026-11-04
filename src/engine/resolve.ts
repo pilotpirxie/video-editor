@@ -369,11 +369,25 @@ function cutTransition(earlier: Clip | undefined, later: Clip | undefined): Tran
   return earlier.start + earlier.duration === later.start ? later.transitionIn : undefined
 }
 
+// A held clip opened for editing, with the time mapping the playhead has inside it.
+export type HeldLevel = {
+  path: readonly string[]
+  offset: number
+  timeScale: number
+  end: number
+}
+
+type OpenHold = {
+  path: readonly string[]
+  time: number
+}
+
 type Drawing = {
   project: Project
   media: MediaStates
   documents: Documents
   outputScale: number
+  openHolds?: readonly OpenHold[]
 }
 
 type Frame = {
@@ -547,16 +561,26 @@ function animationFrame(clip: AnimationClip, track: Track, drawing: Drawing, fra
 }
 
 // Pictures step on the animation's own frames; its sound is placed without stepping.
-function animationTime(clip: AnimationClip, opened: Opened, time: number): number {
-  const looped = loopedTime(sourceTime(clip, time), projectDuration(opened.project), clip.loop === true)
-  const frameTicks = frameDuration(opened.project.canvas.frameRate)
-  return Math.floor(looped / frameTicks) * frameTicks
+export function animationTime(clip: AnimationClip, project: Project, time: number, heldTime = clip.heldTime): number {
+  const shown = heldTime ?? loopedTime(sourceTime(clip, time), projectDuration(project), clip.loop === true)
+  const frameTicks = frameDuration(project.canvas.frameRate)
+  return Math.floor(shown / frameTicks) * frameTicks
+}
+
+function isOnPath(path: readonly string[], groups: readonly string[], clipId: string): boolean {
+  return path.length === groups.length + 1 && path.at(-1) === clipId && groups.every((groupId, depth) => path[depth] === groupId)
+}
+
+function heldTimeIn(clip: AnimationClip, drawing: Drawing, frame: Frame): number | undefined {
+  if (clip.heldTime === undefined) return undefined
+  const open = drawing.openHolds?.find((hold) => isOnPath(hold.path, frame.groups, clip.id))
+  return open?.time ?? clip.heldTime
 }
 
 function animationLayers(clip: AnimationClip, track: Track, drawing: Drawing, frame: Frame, time: number, placement: Placement): Layer[] {
   const opened = openedAnimation(clip, drawing.media, drawing.documents, frame.chain)
   if (opened === undefined) return []
-  const innerTime = animationTime(clip, opened, time)
+  const innerTime = animationTime(clip, opened.project, time, heldTimeIn(clip, drawing, frame))
   if (innerTime >= projectDuration(opened.project)) return []
   return layersOfTracks(opened.project.tracks, drawing, animationFrame(clip, track, drawing, frame, placement, opened), innerTime)
 }
@@ -770,8 +794,26 @@ function layersOfTracks(tracks: readonly Track[], drawing: Drawing, frame: Frame
   return layers
 }
 
-export function resolveFrame(project: Project, media: MediaStates, documents: Documents, time: number, outputScale: number): Layer[] {
-  return layersOfTracks(project.tracks, { project, media, documents, outputScale }, NO_FRAME, time)
+const NO_HOLDS: readonly HeldLevel[] = []
+
+// While a held clip is open the episode stands still at the clip's start, and the playhead moves only inside that clip.
+export function worldTimeOf(holds: readonly HeldLevel[] | undefined, time: number): number {
+  return holds?.at(-1)?.offset ?? time
+}
+
+function openHoldsAt(holds: readonly HeldLevel[], time: number): OpenHold[] {
+  const worldTime = worldTimeOf(holds, time)
+  const innermost = holds.at(-1)
+  return holds.map((hold) => {
+    const levelTime = hold === innermost ? time : worldTime
+    return { path: hold.path, time: Math.max(0, (levelTime - hold.offset) / hold.timeScale) }
+  })
+}
+
+export function resolveFrame(project: Project, media: MediaStates, documents: Documents, time: number, outputScale: number, holds: readonly HeldLevel[] = NO_HOLDS): Layer[] {
+  const drawing: Drawing = { project, media, documents, outputScale }
+  if (holds.length > 0) drawing.openHolds = openHoldsAt(holds, time)
+  return layersOfTracks(project.tracks, drawing, NO_FRAME, worldTimeOf(holds, time))
 }
 
 // Episode time = shift + time on the tracks inside × timeScale.
@@ -808,11 +850,27 @@ type Level = TimeMapping & {
   chain: readonly string[]
 }
 
+// A held clip needs only the one frame it shows, and that frame is asked for at the clip's start.
+function placeHeldFrame(clip: AnimationClip, opened: Opened, window: Window, walk: Walk, level: Level): void {
+  const { timeScale } = level
+  const frameStart = animationTime(clip, opened.project, clip.start)
+  const startsAt = level.shift + clip.start * timeScale
+  const frameLength = frameDuration(opened.project.canvas.frameRate) * timeScale
+  const shown = { from: Math.max(window.from, startsAt), to: Math.min(window.to, startsAt + frameLength) }
+  if (shown.from >= shown.to) return
+  const groups = [...level.groups, { container: clip, shift: level.shift, timeScale }]
+  placeTracks(opened.project.tracks, shown, walk, { shift: startsAt - frameStart * timeScale, timeScale, groups, chain: [...level.chain, opened.path] })
+}
+
 function placeAnimation(clip: AnimationClip, window: Window, walk: Walk, level: Level): void {
   const opened = openedAnimation(clip, walk.media, walk.documents, level.chain)
   if (opened === undefined) return
   const length = projectDuration(opened.project)
   if (length <= 0) return
+  if (clip.heldTime !== undefined) {
+    placeHeldFrame(clip, opened, window, walk, level)
+    return
+  }
   const timeScale = (level.timeScale * NORMAL_SPEED_PERCENT) / clip.speedPercent
   const passLength = length * timeScale
   const firstShift = level.shift + clip.start * level.timeScale - clip.sourceStart * timeScale
@@ -895,11 +953,11 @@ function containerIn(tracks: readonly Track[], clipId: string): { clip: GroupCli
 }
 
 // Where the open clips put their tracks on the episode's canvas, as the resolver draws them.
-export function scopeFrameAt(project: Project, media: MediaStates, documents: Documents, openGroups: readonly string[], time: number): GroupFrame {
-  const drawing: Drawing = { project, media, documents, outputScale: 1 }
+export function scopeFrameAt(project: Project, media: MediaStates, documents: Documents, openGroups: readonly string[], time: number, holds: readonly HeldLevel[] = NO_HOLDS): GroupFrame {
+  const drawing: Drawing = { project, media, documents, outputScale: 1, openHolds: openHoldsAt(holds, time) }
   let frame = NO_FRAME
   let tracks: readonly Track[] = project.tracks
-  let trackTime = time
+  let trackTime = worldTimeOf(holds, time)
   for (const clipId of openGroups) {
     const found = containerIn(tracks, clipId)
     if (found === undefined) break
@@ -914,8 +972,9 @@ export function scopeFrameAt(project: Project, media: MediaStates, documents: Do
     }
     const opened = openedAnimation(clip, media, documents, frame.chain)
     if (opened === undefined) break
+    const heldTime = heldTimeIn(clip, drawing, frame)
     frame = animationFrame(clip, track, drawing, frame, placement, opened)
-    trackTime = animationTime(clip, opened, trackTime)
+    trackTime = animationTime(clip, opened.project, trackTime, heldTime)
     tracks = opened.project.tracks
   }
   return frame

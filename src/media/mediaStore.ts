@@ -38,7 +38,7 @@ import { decodeFrame, decodeKeyframe, openFrameStream, toArrayBuffer, type Frame
 import { audioLayoutOf, planPreparation, previewLayoutOf, type PreparationJob } from './preparation.js'
 import { buildPreviewRun, createPreviewReader, previewSegmentFiles, type PreviewLayout, type PreviewReader, type SegmentInProgress } from './previewCopy.js'
 import { ProbeError, probeMedia } from './probe.js'
-import { withSavedPaths, writeProjectFile } from './projectFile.js'
+import { freeCopyPathOf, withSavedPaths, writeProjectFile } from './projectFile.js'
 import { withMediaIdsChanged } from '../editor/place.js'
 
 const CACHE_KEY_LENGTH = 32
@@ -340,6 +340,10 @@ export class MediaSession implements MediaClient {
     const done = this.saveAfter(this.saving, path, saved, animationPath === undefined ? 'project' : 'animation')
     this.saving = settled(done)
     return done
+  }
+
+  async freeCopyPath(path: string): Promise<string> {
+    return freeCopyPathOf(path, existsSync)
   }
 
   async readImage(mediaId: string): Promise<ArrayBuffer> {

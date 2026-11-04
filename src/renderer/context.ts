@@ -1,4 +1,4 @@
-import { createContext, useContext, useSyncExternalStore } from 'react'
+import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react'
 import { hintOf, type ShortcutAction } from '../editor/shortcuts.js'
 import type { Session } from './document.js'
 import type { EditorState } from './store.js'
@@ -33,4 +33,24 @@ export function useShortcutHint(action: ShortcutAction): string | undefined {
   const { shortcuts } = useSession()
   const [first] = useSyncExternalStore(shortcuts.subscribe, shortcuts.get)[action]
   return first === undefined ? undefined : hintOf(first)
+}
+
+// Draws again when a thumbnail arrives, at most once per display frame.
+export function useThumbnailUpdates(): void {
+  const { thumbnails } = useSession()
+  const [, setPictureCount] = useState(0)
+  useEffect(() => {
+    let redraw: number | undefined
+    const unsubscribe = thumbnails.subscribe(() => {
+      if (redraw !== undefined) return
+      redraw = requestAnimationFrame(() => {
+        redraw = undefined
+        setPictureCount((count) => count + 1)
+      })
+    })
+    return () => {
+      unsubscribe()
+      if (redraw !== undefined) cancelAnimationFrame(redraw)
+    }
+  }, [thumbnails])
 }

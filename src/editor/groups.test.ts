@@ -234,6 +234,16 @@ describe('editing inside a group', () => {
   })
 })
 
+describe('colours added from inside a group', () => {
+  it('reach the file that holds the group', () => {
+    const project = projectOf([track('t1', [groupClip('group', 0, SECOND, [[videoClip('deep', 0, SECOND)]])])])
+    const scoped = resolveScope(project, {}, MEDIA_STATES, ['group']).project
+    const swatches = [{ id: 'skin', name: 'Skin', color: '#FFCC99' }]
+    const edited = { ...scoped, swatches, tracks: [...scoped.tracks] }
+    expect(withScopedProject(project, ['group'], edited).swatches).toEqual(swatches)
+  })
+})
+
 describe('opening an animation', () => {
   const wave = '/films/wave.pbanim'
   const states = { ...MEDIA_STATES, wave: { info: { kind: 'animation' as const, path: wave } } }
@@ -273,5 +283,27 @@ describe('opening an animation', () => {
     expect(episodeTimeOf(thirds, 100) % 100).toBe(0)
     expect(scopeTimeOf(thirds, 100)).toBe(300)
     expect(episodeTimeOf(undefined, 700)).toBe(700)
+  })
+
+  it('opens a held clip as if it played once from its start, with its whole length in reach', () => {
+    const held = projectOf([track('t1', [animationClip('anim', 4 * SECOND, SECOND, { heldTime: 2 * SECOND, sourceStart: SECOND, speedPercent: 200 })])])
+    const { scope } = resolveScope(held, documents, states, ['anim'])
+    expect(scope).toEqual({
+      offset: 4 * SECOND,
+      timeScale: 1,
+      from: 0,
+      to: 3 * SECOND,
+      heldTime: 2 * SECOND,
+      holds: [{ path: ['anim'], offset: 4 * SECOND, timeScale: 1, end: 7 * SECOND }],
+    })
+    expect(episodeTimeOf(scope, 2 * SECOND)).toBe(6 * SECOND)
+    expect(scopeTimeOf(scope, 6 * SECOND)).toBe(2 * SECOND)
+  })
+
+  it('keeps the holds above a group opened inside a held clip, without a held time of its own', () => {
+    const held = projectOf([track('t1', [animationClip('anim', 4 * SECOND, SECOND, { heldTime: 2 * SECOND })])])
+    const { scope } = resolveScope(held, documents, states, ['anim', 'inside'])
+    expect(scope?.heldTime).toBeUndefined()
+    expect(scope?.holds).toEqual([{ path: ['anim'], offset: 4 * SECOND, timeScale: 1, end: 7 * SECOND }])
   })
 })

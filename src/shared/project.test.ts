@@ -397,6 +397,14 @@ describe('animation clips', () => {
     expect(parsed.ok && parsed.project.tracks[3]?.clips).toEqual([clip])
   })
 
+  it('load and save a held frame, which has to be on the timeline grid', () => {
+    const held = { ...clip, heldTime: 2_000_000 }
+    const parsed = parseProject(withValue('tracks.3.clips', [held]))
+    expect(parsed.ok && parsed.project.tracks[3]?.clips).toEqual([held])
+    expect(parseProject(withValue('tracks.3.clips', [{ ...clip, heldTime: -100 }])).ok).toBe(false)
+    expect(parseProject(withValue('tracks.3.clips', [{ ...clip, heldTime: 1.5 }])).ok).toBe(false)
+  })
+
   it('scale evenly, like groups', () => {
     const stretched = { ...clip, transform: { ...clip.transform, scaleX: 2 } }
     expect(messageFor(withValue('tracks.3.clips', [stretched]))).toMatch(/transform of an animation must have the same scaleX and scaleY/)

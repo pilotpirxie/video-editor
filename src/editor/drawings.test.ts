@@ -71,6 +71,8 @@ import {
   styleIn,
   targetTrackIndex,
   transformShapes,
+  setsOfCopies,
+  withArrivingSwatches,
   withKnownSwatches,
   withNewShapeIds,
   type ArrangePlace,
@@ -401,6 +403,51 @@ describe('shared colours', () => {
     const pasted = withKnownSwatches({ ...hand, children: [{ ...shapeOf('nail'), fill: '#FFFFFF', fillSwatch: 'nail' }] }, [skin])
     expect(pasted).toMatchObject({ fillSwatch: 'skin', stroke: { swatch: 'skin' } })
     expect(pasted.children?.[0]?.fillSwatch).toBeUndefined()
+  })
+})
+
+describe('pasting into another drawing or file', () => {
+  const skin = { id: 'skin', name: 'Skin', color: '#FFCC99' }
+  const body = { id: 'body', name: 'Body', pivot: { x: 0, y: 0 } }
+  const arm = { id: 'arm', name: 'Arm', pivot: { x: 1, y: 1 }, parent: 'body' }
+  const spare = { id: 'spare', name: 'Spare', pivot: { x: 2, y: 2 } }
+  const hand: DrawingShape = { ...shapeOf('hand'), follows: 'arm', fill: '#FFCC99', fillSwatch: 'skin' }
+  const nail: DrawingShape = { ...shapeOf('nail'), nodes: [{ x: 0, y: 0, sets: ['spare'] }, { x: 1, y: 1 }] }
+  const place = { trackIndex: 0, time: 0, newDrawing: { clipId: 'new', duration: SECOND, newTrack: { id: 'new-track', name: 'Track' } } }
+
+  it('finds the sets that move the copies, children and parents included, and no others', () => {
+    const source = { ...drawingClip('source', 0, SECOND, [hand]), nodeSets: [body, arm, spare] }
+    const project = projectOf([track('art', [source])])
+    const copied = { ref: { clipId: 'source', shapeId: 'hand' }, shape: hand }
+    expect(setsOfCopies(project, [copied]).map((set) => set.id).sort()).toEqual(['arm', 'body'])
+    const withChild = { ...copied, shape: { ...hand, follows: undefined, children: [nail] } }
+    expect(setsOfCopies(project, [withChild]).map((set) => set.id)).toEqual(['spare'])
+  })
+
+  it('brings the sets a drawing lacks, keeps the ones it has, and fills a new drawing with them', () => {
+    const theirs = { ...arm, name: 'Their arm' }
+    const target = { ...drawingClip('target', 0, SECOND), nodeSets: [theirs] }
+    const pasted = addDrawingShapes(projectOf([track('art', [target])]), place, [hand], [arm, body])
+    const drawing = clipOf(pasted, 'target')
+    expect(drawing.type === 'drawing' && drawing.nodeSets?.map((set) => set.name)).toEqual(['Their arm', 'Body'])
+    expect(drawing.type === 'drawing' && drawing.shapes[0]?.follows).toBe('arm')
+
+    const created = clipOf(addDrawingShapes(projectOf([track('art', [])]), place, [hand], [arm, body]), 'new')
+    expect(created.type === 'drawing' && created.nodeSets).toEqual([arm, body])
+    expect(created.type === 'drawing' && created.shapes[0]?.follows).toBe('arm')
+  })
+
+  it('brings the swatches shapes use into a file that lacks them, and takes the colour of one it has', () => {
+    const empty = projectOf([])
+    const unused = { id: 'unused', name: 'Unused', color: '#000000' }
+    const arrived = withArrivingSwatches(empty, [hand], [skin, unused])
+    expect(arrived.swatches).toEqual([skin])
+    expect(withKnownSwatches(hand, arrived.swatches)).toMatchObject({ fill: '#FFCC99', fillSwatch: 'skin' })
+
+    const repainted = { ...empty, swatches: [{ ...skin, color: '#884422' }] }
+    const landed = withArrivingSwatches(repainted, [hand], [skin])
+    expect(landed).toBe(repainted)
+    expect(withKnownSwatches(hand, landed.swatches)).toMatchObject({ fill: '#884422', fillSwatch: 'skin' })
   })
 })
 

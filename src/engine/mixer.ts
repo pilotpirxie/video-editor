@@ -39,7 +39,8 @@ function collectSounds(project: Project, media: MediaStates, documents: Document
   forEachPlacedClip(project, media, documents, window, (track) => track.muted, (placed) => {
     const { clip } = placed
     // Played faster or slower by its animation, it would need its own stretched copy; it stays silent instead.
-    if (placed.timeScale === 1 && hasSound(clip, media)) found.push({ ...placed, clip })
+    const isInHeldClip = placed.groups.some(({ container }) => container.type === 'animation' && container.heldTime !== undefined)
+    if (placed.timeScale === 1 && !isInHeldClip && hasSound(clip, media)) found.push({ ...placed, clip })
   })
 }
 

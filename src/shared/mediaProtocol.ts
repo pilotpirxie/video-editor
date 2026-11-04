@@ -160,6 +160,7 @@ export type MediaClient = {
   want(wanted: Wanted): Promise<void>
   waveform(mediaId: string): Promise<WaveformLevel[] | undefined>
   saveProject(path: string, project: Project, animationPath?: string): Promise<void>
+  freeCopyPath(path: string): Promise<string>
   cacheUsage(): Promise<CacheUsage>
   clearCache(): Promise<void>
 }
@@ -196,6 +197,7 @@ export type MediaRequest =
   | { method: 'want'; wanted: Wanted }
   | { method: 'waveform'; mediaId: string }
   | { method: 'saveProject'; path: string; project: Project; animationPath?: string }
+  | { method: 'freeCopyPath'; path: string }
   | { method: 'cacheUsage' }
   | { method: 'clearCache' }
 
@@ -283,6 +285,7 @@ export type HostCommand =
   | { type: 'menu'; action: MenuAction }
   | { type: 'memory-pressure'; isUnderPressure: boolean }
   | { type: 'settings'; settings: AppSettings }
+  | { type: 'animation-changed'; path: string }
 
 export type DocumentInfo = {
   path: string | undefined
@@ -309,6 +312,7 @@ export type DocumentState = {
 }
 
 export type UnsavedChoice = 'save' | 'discard' | 'cancel'
+export type ChangedFileChoice = 'mine' | 'saved'
 
 export type SlowFrame = {
   durationMs: number
@@ -342,6 +346,8 @@ export type Host = {
   chooseMediaFile(name: string): Promise<string | undefined>
   showLastExport(): void
   confirmUnsavedChanges(): Promise<UnsavedChoice>
+  confirmAnimationChanged(name: string): Promise<ChangedFileChoice>
+  watchAnimations(paths: readonly string[]): void
   closeDocument(): void
   discardRecovery(): void
   setMenuShortcuts(shortcuts: MenuShortcuts): void

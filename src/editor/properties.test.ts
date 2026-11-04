@@ -6,6 +6,9 @@ import { setTransition } from './transitions.js'
 import {
   changeKeyframe,
   hasKeyframesAt,
+  holdShownFrames,
+  playHeldClips,
+  setHeldFrame,
   keyframeFrame,
   motionPath,
   nearestKeyframe,
@@ -196,6 +199,29 @@ describe('timing', () => {
     const once = clipOf(setLoop(looping, ['wave'], false, WAVE_STATES, documents), 'wave')
     expect(once).toMatchObject({ sourceStart: SECOND / 2, duration: 1.5 * SECOND })
     expect(once).not.toHaveProperty('loop')
+  })
+
+  it('holds what a clip shows at the playhead, or its first frame from elsewhere, and drops Loop', () => {
+    const documents = waveDocuments(2 * SECOND)
+    const waving = projectOf([track('t1', [animationClip('wave', SECOND, SECOND, { sourceStart: SECOND / 2, loop: true })])])
+    const atPlayhead = clipOf(holdShownFrames(waving, ['wave'], SECOND + 6 * FRAME, WAVE_STATES, documents), 'wave')
+    expect(atPlayhead).toMatchObject({ heldTime: SECOND / 2 + 6 * FRAME })
+    expect(atPlayhead).not.toHaveProperty('loop')
+    expect(clipOf(holdShownFrames(waving, ['wave'], 0, WAVE_STATES, documents), 'wave')).toMatchObject({ heldTime: SECOND / 2 })
+    expect(clipOf(setHeldFrame(waving, ['wave'], SECOND), 'wave')).toMatchObject({ heldTime: SECOND })
+  })
+
+  it('plays a held clip again, ending where its animation does', () => {
+    const held = projectOf([track('t1', [animationClip('wave', 0, 5 * SECOND, { heldTime: SECOND, sourceStart: SECOND / 2 })])])
+    const played = clipOf(playHeldClips(held, ['wave'], WAVE_STATES, waveDocuments(2 * SECOND)), 'wave')
+    expect(played).toMatchObject({ sourceStart: SECOND / 2, duration: 1.5 * SECOND })
+    expect(played).not.toHaveProperty('heldTime')
+  })
+
+  it('does not change the speed or length of a held clip', () => {
+    const held = projectOf([track('t1', [animationClip('wave', 0, 2 * SECOND, { heldTime: SECOND })])])
+    expect(setSpeed(held, ['wave'], 200)).toBe(held)
+    expect(clipOf(setDuration(held, ['wave'], 60 * SECOND, FRAME, WAVE_STATES, waveDocuments(SECOND)), 'wave').duration).toBe(60 * SECOND)
   })
 
   it('sets the source offset, keeping the clip inside its source', () => {

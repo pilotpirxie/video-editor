@@ -1,6 +1,6 @@
-import { onCanvas, openedAnimation, scaledEffect, type GroupFrame, type MediaStates } from '../engine/resolve.js'
+import { onCanvas, openedAnimation, scaledEffect, type GroupFrame, type HeldLevel, type MediaStates } from '../engine/resolve.js'
 import type { Documents } from '../shared/mediaProtocol.js'
-import { isVisual, valueAt, type Clip, type GroupClip, type Keyframe, type Keyframes, type Project, type Track, type Transform } from '../shared/project.js'
+import { isVisual, projectDuration, valueAt, type Clip, type GroupClip, type Keyframe, type Keyframes, type Project, type Track, type Transform } from '../shared/project.js'
 import { NORMAL_SPEED_PERCENT, TIMELINE_GRID } from '../shared/time.js'
 import { emptyTrack, endOf, hasVolume, placeOnTrack, type NewTrack } from './clips.js'
 import { earlierPart, laterPart } from './split.js'
@@ -25,6 +25,8 @@ export type Scope = {
   timeScale: number
   from: number
   to: number
+  heldTime?: number
+  holds?: readonly HeldLevel[]
 }
 
 export type OpenScope = {
@@ -267,6 +269,7 @@ export function resolveScope(wholeProject: Project, documents: Documents, mediaS
   let scope: Scope | undefined
   let offset = 0
   let timeScale = 1
+  const holds: HeldLevel[] = []
   for (const clipId of wanted) {
     const clip = clipIn(tracks, clipId)
     if (clip?.type === 'group') {
@@ -278,10 +281,18 @@ export function resolveScope(wholeProject: Project, documents: Documents, mediaS
     } else if (clip?.type === 'animation') {
       const opened = openedAnimation(clip, mediaStates, documents, chain)
       if (opened === undefined) break
-      const innerScale = (timeScale * NORMAL_SPEED_PERCENT) / clip.speedPercent
-      offset += clip.start * timeScale - clip.sourceStart * innerScale
-      timeScale = innerScale
-      scope = { offset, timeScale, from: clip.sourceStart, to: clip.sourceStart + (clip.duration * clip.speedPercent) / NORMAL_SPEED_PERCENT }
+      if (clip.heldTime === undefined) {
+        const innerScale = (timeScale * NORMAL_SPEED_PERCENT) / clip.speedPercent
+        offset += clip.start * timeScale - clip.sourceStart * innerScale
+        timeScale = innerScale
+        scope = { offset, timeScale, from: clip.sourceStart, to: clip.sourceStart + (clip.duration * clip.speedPercent) / NORMAL_SPEED_PERCENT }
+      } else {
+        // Every frame of a held clip stays reachable, as if it played once from its start.
+        const length = projectDuration(opened.project)
+        offset += clip.start * timeScale
+        holds.push({ path: [...openGroups, clipId], offset, timeScale, end: offset + length * timeScale })
+        scope = { offset, timeScale, from: 0, to: length, heldTime: clip.heldTime }
+      }
       chain.push(opened.path)
       owner = opened.project
       documentPath = opened.path
@@ -293,6 +304,7 @@ export function resolveScope(wholeProject: Project, documents: Documents, mediaS
     openGroups.push(clipId)
   }
   const project = groupsInDocument.length === 0 ? owner : { ...owner, tracks, camera: undefined }
+  if (scope !== undefined && holds.length > 0) scope = { ...scope, holds }
   return { openGroups, chain, documentPath, groupsInDocument, project, scope }
 }
 
@@ -328,7 +340,8 @@ export function withScopedProject(project: Project, openGroups: readonly string[
   const scoped = scopedProject(project, openGroups)
   if (scoped === undefined) return project
   if (edited.tracks === scoped.tracks && edited.media === project.media) return project
-  return { ...project, media: edited.media, tracks: withTracksAt(project.tracks, openGroups, edited.tracks) }
+  const withEdits: Project = { ...project, media: edited.media, tracks: withTracksAt(project.tracks, openGroups, edited.tracks) }
+  return edited.swatches === undefined ? withEdits : { ...withEdits, swatches: edited.swatches }
 }
 
 export function intoGroup(frame: GroupFrame, transform: Transform): Transform {

@@ -58,3 +58,29 @@ export function changedDocuments(before: Documents, after: Documents): Record<st
   }
   return changed
 }
+
+function stepWithout(step: Step, path: string): Step | undefined {
+  if (step.documents?.[path] === undefined) return step
+  const others: Record<string, DocumentChange> = {}
+  for (const [otherPath, change] of Object.entries(step.documents)) {
+    if (otherPath !== path) others[otherPath] = change
+  }
+  if (Object.keys(others).length > 0) return { ...step, documents: others }
+  if (step.before === step.after) return undefined
+  const { documents: _gone, ...rest } = step
+  return rest
+}
+
+function stepsWithout(steps: readonly Step[], path: string): Step[] {
+  const kept: Step[] = []
+  for (const step of steps) {
+    const left = stepWithout(step, path)
+    if (left !== undefined) kept.push(left)
+  }
+  return kept
+}
+
+// A file replaced from outside can't be undone into its older versions.
+export function withoutDocument(history: History, path: string): History {
+  return { done: stepsWithout(history.done, path), undone: stepsWithout(history.undone, path) }
+}

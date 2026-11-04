@@ -1,5 +1,6 @@
-import type { Clip, MediaRef, Project } from '../shared/project.js'
+import type { Clip, DrawingShape, MediaRef, Project, Swatch } from '../shared/project.js'
 import { allClips, editClips, endOf, hasMedia, placeOnTrack, withMemberIds, type NewTrack } from './clips.js'
+import { withArrivingSwatches, withKnownSwatches } from './drawings.js'
 
 type CopiedClip = {
   clip: Clip
@@ -9,6 +10,7 @@ type CopiedClip = {
 export type Clipboard = {
   clips: readonly CopiedClip[]
   media: readonly MediaRef[]
+  swatches?: readonly Swatch[]
 }
 
 export type Paste = {
@@ -25,6 +27,11 @@ export function holdsDrawings(clipboard: Clipboard): boolean {
     if (clip.type === 'group' && allClips(clip.tracks).some((member) => member.type === 'drawing')) return true
   }
   return false
+}
+
+// Only drawings carry everything they need, so only they can be pasted outside the place they were copied from.
+export function holdsOnlyDrawings(clipboard: Clipboard): boolean {
+  return clipboard.clips.every(({ clip }) => clip.type === 'drawing')
 }
 
 export function deleteClips(project: Project, clipIds: readonly string[]): Project {
@@ -63,7 +70,17 @@ export function copyClips(project: Project, clipIds: readonly string[]): Clipboa
       }
     }
   }
-  return { clips, media: project.media.filter((reference) => mediaIds.has(reference.id)) }
+  const copied: Clipboard = { clips, media: project.media.filter((reference) => mediaIds.has(reference.id)) }
+  if (project.swatches !== undefined) copied.swatches = project.swatches
+  return copied
+}
+
+function shapesOnClipboard(clipboard: Clipboard): DrawingShape[] {
+  const shapes: DrawingShape[] = []
+  for (const { clip } of clipboard.clips) {
+    if (clip.type === 'drawing') shapes.push(...clip.shapes)
+  }
+  return shapes
 }
 
 export function pasteClips(project: Project, paste: Paste): Project {
@@ -73,7 +90,9 @@ export function pasteClips(project: Project, paste: Paste): Project {
 
   const knownMedia = new Set(project.media.map((reference) => reference.id))
   const missingMedia = clipboard.media.filter((reference) => !knownMedia.has(reference.id))
-  let pasted: Project = missingMedia.length === 0 ? project : { ...project, media: [...project.media, ...missingMedia] }
+  const withMissingMedia: Project = missingMedia.length === 0 ? project : { ...project, media: [...project.media, ...missingMedia] }
+  let pasted = withArrivingSwatches(withMissingMedia, shapesOnClipboard(clipboard), clipboard.swatches)
+  const { swatches } = pasted
 
   const sourceRows = [...new Set(clipboard.clips.map((copied) => copied.trackIndex))].sort((a, b) => a - b)
   let nextClipId = 0
@@ -87,7 +106,8 @@ export function pasteClips(project: Project, paste: Paste): Project {
       const copy = withMemberIds(copied.clip, paste.memberIds)
       if (id === undefined || copy === undefined) return project
       nextClipId += 1
-      clips.push({ ...copy, id, start: copied.clip.start - firstStart + at })
+      const placed = copy.type === 'drawing' ? { ...copy, shapes: copy.shapes.map((shape) => withKnownSwatches(shape, swatches)) } : copy
+      clips.push({ ...placed, id, start: copied.clip.start - firstStart + at })
     }
     const rowsInsertedSoFar = pasted.tracks.length - project.tracks.length
     const trackIndex = sourceRow + rowsInsertedSoFar

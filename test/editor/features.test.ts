@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { partsOf } from '../../src/editor/colors.js'
 import { parseProject, serializeProject, type Clip, type DrawingClip, type DrawingShape, type Project, type Transform } from '../../src/shared/project.js'
-import { ROOT, at, imageOf, probeExport, projectIn, projectOfTracks, projectPath, runApp, scratchDirectory, uiTest } from '../helpers.js'
+import { ROOT, animationOf, at, imageOf, pixelAt, probeExport, projectIn, projectOfTracks, projectPath, renderFrames, runApp, scratchDirectory, uiTest } from '../helpers.js'
 
 const SECOND = 24_000_000
 const MAX_STEP_MS = 50
@@ -719,6 +719,158 @@ describe('animation files', () => {
     const [grown] = own?.keyframes?.scale ?? []
     expect(grown?.time).toBe(SECOND)
     expect(grown?.value).toBeGreaterThan(1.2)
+  })
+
+  const TWELFTH = SECOND / 12
+  const MOUTH_FRAMES = 6
+
+  function mouthSquare(frame: number): DrawingShape {
+    const left = 20 + 40 * frame
+    const side = 30
+    return { id: 'mouth', nodes: [{ x: left, y: 70 }, { x: left + side, y: 70 }, { x: left + side, y: 70 + side }, { x: left, y: 70 + side }], isClosed: true, fill: '#FF0000' }
+  }
+
+  function animationFile(path: string, clips: Clip[], settings: Partial<Project> = {}): string {
+    const project = projectOfTracks({ width: 320, height: 180 }, [clips])
+    const media = project.media.map((reference) => ({ ...reference, path: join(dirname(path), `${reference.id}.pbanim`) }))
+    writeFileSync(path, serializeProject({ ...project, media, canvas: { ...project.canvas, frameRate: { num: 12, den: 1 } }, ...settings }))
+    return path
+  }
+
+  function writeMouths(directory: string): string {
+    mkdirSync(directory, { recursive: true })
+    const clips: Clip[] = []
+    for (let frame = 0; frame < MOUTH_FRAMES; frame++) clips.push({ id: `frame-${frame}`, type: 'drawing', start: frame * TWELFTH, duration: TWELFTH, shapes: [mouthSquare(frame)] })
+    return animationFile(join(directory, 'mouths.pbanim'), clips)
+  }
+
+  function writeEpisodeOf(directory: string, tracks: Clip[][]): string {
+    const episode = projectOfTracks({ width: 640, height: 360 }, tracks)
+    const media = episode.media.map((reference) => (reference.id.startsWith('image-') ? reference : { ...reference, path: join(directory, `${reference.id}.pbanim`) }))
+    const episodePath = join(directory, 'episode.json')
+    writeFileSync(episodePath, serializeProject({ ...episode, media }))
+    return episodePath
+  }
+
+  function episodeIn(path: string): Project {
+    const parsed = parseProject(readFileSync(path, 'utf8'))
+    if (!parsed.ok) throw new Error(`${path} is not a valid project: ${parsed.message}`)
+    return parsed.project
+  }
+
+  const GROUND_SPAN = { start: 0, duration: 3 * SECOND }
+
+  it('holds a frame of an animation, stays free of its length, and swaps it with Split and a new pick', async () => {
+    const directory = join(scratch, 'hold-frame')
+    writeMouths(directory)
+    const episodePath = writeEpisodeOf(directory, [[imageOf('image-white.png', 'ground', GROUND_SPAN, at(320, 180, 2))], [animationOf('mouths', 'lips', { start: 0, duration: MOUTH_FRAMES * TWELFTH }, at(320, 180))]])
+    const report = await uiTest('hold-frame', ['--project', episodePath, '--out', directory])
+    expect(report.isSpeedShownWhileHeld).toBe(false)
+    expect(report.isSpeedShownWhenPlayed).toBe(true)
+    expect(Number(report.playedDuration)).toBeCloseTo(0.5)
+
+    const [lips, later] = episodeIn(episodePath).tracks[1]?.clips ?? []
+    expect(lips).toMatchObject({ start: 0, duration: SECOND, heldTime: 3 * TWELFTH })
+    expect(later).toMatchObject({ start: SECOND, duration: SECOND, heldTime: 5 * TWELFTH, sourceStart: 0 })
+  })
+
+  it('opens a shared part held inside a character, reaches all its frames and saves to its own file for every character', async () => {
+    const directory = join(scratch, 'shared-parts')
+    const mouthsPath = writeMouths(directory)
+    const characterClip = (heldFrame: number): Clip => animationOf('mouths', 'lips', { start: 0, duration: SECOND }, at(160, 90), { heldTime: heldFrame * TWELFTH })
+    const kentaPath = animationFile(join(directory, 'kenta.pbanim'), [characterClip(2)])
+    const bobPath = animationFile(join(directory, 'bob.pbanim'), [characterClip(4)])
+    const kentaBefore = readFileSync(kentaPath, 'utf8')
+    const bobBefore = readFileSync(bobPath, 'utf8')
+    const episodePath = writeEpisodeOf(directory, [
+      [imageOf('image-white.png', 'ground', GROUND_SPAN, at(320, 180, 2))],
+      [animationOf('kenta', 'kenta-clip', { start: SECOND, duration: SECOND }, at(160, 180))],
+      [animationOf('bob', 'bob-clip', { start: 0, duration: 2 * SECOND }, at(480, 180), { loop: true })],
+    ])
+    const report = await uiTest('shared-parts', ['--project', episodePath, '--out', directory])
+    expect(report.path).toContain('kenta')
+    expect(report.path).toContain('mouths')
+    expect(report.duration).toBe(`/ ${MOUTH_FRAMES}`)
+
+    expect(readFileSync(kentaPath, 'utf8')).toBe(kentaBefore)
+    expect(readFileSync(bobPath, 'utf8')).toBe(bobBefore)
+    const drawings = drawingsIn(mouthsPath)
+    const moved = drawings[4]?.shapes[0]?.nodes[0]?.x ?? 0
+    expect(Math.abs(moved - (180 + 40))).toBeLessThanOrEqual(2)
+    expect(drawings[3]?.shapes[0]?.nodes[0]?.x).toBe(140)
+
+    const [bobFrame] = await renderFrames(episodePath, { via: 'export', frames: [0] })
+    if (bobFrame === undefined) throw new Error('The frame was not rendered')
+    expect(pixelAt(bobFrame, 320 + 195, 90 + 85)).toMatchObject({ red: 255, green: 255, blue: 255 })
+    expect(pixelAt(bobFrame, 320 + 235, 90 + 85)).toMatchObject({ red: 255, green: 0, blue: 0 })
+  })
+
+  function firstNodeX(text: string): number | undefined {
+    const parsed = parseProject(text, 'animation')
+    const [frame] = parsed.ok ? (parsed.project.tracks[0]?.clips ?? []) : []
+    return frame?.type === 'drawing' ? frame.shapes[0]?.nodes[0]?.x : undefined
+  }
+
+  it('makes one clip of an animation unique from what is on screen, undoes it and keeps the file', async () => {
+    const directory = join(scratch, 'make-unique')
+    writeMouths(directory)
+    const span = { start: 0, duration: MOUTH_FRAMES * TWELFTH }
+    const episodePath = writeEpisodeOf(directory, [[imageOf('image-white.png', 'ground', GROUND_SPAN, at(320, 180, 2))], [animationOf('mouths', 'lips', span, at(160, 180))], [animationOf('mouths', 'other-lips', span, at(480, 180))]])
+    const report = await uiTest('make-unique', ['--project', episodePath, '--out', directory])
+    expect(report.isCopyKeptAfterUndo).toBe(true)
+    expect(firstNodeX(String(report.originalAtFirst))).toBe(20)
+    expect(Math.abs((firstNodeX(String(report.copyAtFirst)) ?? 0) - 40)).toBeLessThanOrEqual(2)
+
+    const saved = episodeIn(episodePath)
+    const fileOf = (trackIndex: number): string | undefined => {
+      const clip = saved.tracks[trackIndex]?.clips[0]
+      const mediaId = clip?.type === 'animation' ? clip.mediaId : undefined
+      return saved.media.find((reference) => reference.id === mediaId)?.relativePath
+    }
+    expect(fileOf(1)).toBe('mouths 2.pbanim')
+    expect(fileOf(2)).toBe('mouths 3.pbanim')
+    expect(statSync(join(directory, 'mouths 3.pbanim')).isFile()).toBe(true)
+  })
+
+  it('takes in an animation changed on disk or by another window, and asks when this window has unsaved changes to it', async () => {
+    const directory = join(scratch, 'animation-reload')
+    const mouthsPath = writeMouths(directory)
+    const episodePath = writeEpisodeOf(directory, [[imageOf('image-white.png', 'ground', GROUND_SPAN, at(320, 180, 2))], [animationOf('mouths', 'lips', { start: 0, duration: MOUTH_FRAMES * TWELFTH }, at(320, 180))]])
+    const report = await uiTest('animation-reload', ['--project', episodePath, '--out', directory])
+    expect(report.isEditedAfterReload).toBe(false)
+    expect(report.afterKeepingMine).toBe('/ 7')
+    expect(report.undoAfterKeepingMine).toBe('Undo Move Shape')
+    expect(report.isEditedAfterKeepingMine).toBe(true)
+    expect(report.undoAfterUsingSaved).not.toBe('Undo Move Shape')
+    expect(report.afterBrokenFile).toBe('/ 9')
+    expect(report.isFirstWindowEdited).toBe(false)
+    expect(drawingsIn(mouthsPath)).toHaveLength(10)
+  })
+
+  it('pastes shapes and drawings into another animation with their node sets and shared colours', async () => {
+    const directory = join(scratch, 'paste-between')
+    mkdirSync(directory, { recursive: true })
+    const skin = { id: 'skin', name: 'Skin', color: '#FFCC99' }
+    const turn = [{ time: 0, value: 0, easing: 'linear' as const }, { time: SECOND, value: 45, easing: 'linear' as const }]
+    const nodeSets = [{ id: 'body', name: 'Body', pivot: { x: 0, y: 0 } }, { id: 'arm', name: 'Arm', pivot: { x: 35, y: 85 }, parent: 'body', keyframes: { rotation: turn } }]
+    const hand: DrawingShape = { ...mouthSquare(0), id: 'hand', name: 'Hand', fill: '#FFCC99', fillSwatch: 'skin', follows: 'arm' }
+    animationFile(join(directory, 'first.pbanim'), [{ id: 'pose', type: 'drawing', start: 0, duration: SECOND, shapes: [hand], nodeSets }], { swatches: [skin] })
+    const secondPath = animationFile(join(directory, 'second.pbanim'), [{ id: 'theirs', type: 'drawing', start: 0, duration: SECOND, shapes: [{ ...mouthSquare(5), id: 'their-shape' }] }])
+    const span = { start: 0, duration: SECOND }
+    const episodePath = writeEpisodeOf(directory, [[imageOf('image-white.png', 'ground', GROUND_SPAN, at(320, 180, 2))], [animationOf('first', 'first-clip', span, at(160, 180))], [animationOf('second', 'second-clip', span, at(480, 180))]])
+    await uiTest('paste-between', ['--project', episodePath, '--out', directory])
+
+    expect(animationIn(secondPath).swatches).toEqual([skin])
+    const drawings = drawingsIn(secondPath)
+    expect(drawings).toHaveLength(2)
+    const theirs = drawings.find((drawing) => drawing.id === 'theirs')
+    expect(theirs?.shapes.map((shape) => shape.name)).toEqual([undefined, 'Hand'])
+    expect(theirs?.shapes[1]).toMatchObject({ follows: 'arm', fillSwatch: 'skin', fill: '#FFCC99' })
+    expect(theirs?.nodeSets?.map((set) => set.id).sort()).toEqual(['arm', 'body'])
+    expect(theirs?.nodeSets?.find((set) => set.id === 'arm')?.keyframes?.rotation).toEqual(turn)
+    const pastedDrawing = drawings.find((drawing) => drawing.id !== 'theirs')
+    expect(pastedDrawing?.shapes[0]).toMatchObject({ follows: 'arm', fillSwatch: 'skin' })
+    expect(pastedDrawing?.nodeSets).toEqual(nodeSets)
   })
 
   it('restores an unsaved animation after the editor was killed', async () => {

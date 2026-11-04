@@ -61,7 +61,7 @@ import { viewAt } from '../engine/camera.js'
 import { NO_TURN_OR_SCALE, nearestOnOutline, posedShapes, setPosesAt, shapesBounds, svgPathOf, turnAndScaleOf, turned, unturnedAndUnscaled, type OutlinePoint, type TurnAndScale } from '../engine/curves.js'
 import type { PixelColor } from '../engine/engine.js'
 import { shapePath } from '../engine/drawings.js'
-import { onCanvas, resolveFrame, scopeFrameAt, shownShapes, type GroupFrame, type Layer, type MediaStates } from '../engine/resolve.js'
+import { onCanvas, resolveFrame, scopeFrameAt, shownShapes, worldTimeOf, type GroupFrame, type HeldLevel, type Layer, type MediaStates } from '../engine/resolve.js'
 import { measureText } from '../engine/text.js'
 import type { Size } from '../shared/exportPresets.js'
 import type { Documents } from '../shared/mediaProtocol.js'
@@ -281,10 +281,10 @@ type Open = {
   frame: GroupFrame
 }
 
-function shownClips(wholeProject: Project, mediaStates: MediaStates, documents: Documents, wholeTime: number, open: Open): Pickable[] {
+function shownClips(wholeProject: Project, mediaStates: MediaStates, documents: Documents, wholeTime: number, holds: readonly HeldLevel[] | undefined, open: Open): Pickable[] {
   const order: (Pickable | string)[] = []
   const membersOf = new Map<string, ShownClip[]>()
-  for (const layer of resolveFrame(wholeProject, mediaStates, documents, wholeTime, 1)) {
+  for (const layer of resolveFrame(wholeProject, mediaStates, documents, wholeTime, 1, holds)) {
     const path = layer.groups ?? []
     if (!open.groups.every((groupId, depth) => path[depth] === groupId)) continue
     const closedGroupId = path[open.groups.length]
@@ -484,15 +484,16 @@ export function CanvasOverlay({ isCropping, isOnionSkinOn, areaRef }: OverlayPro
   const [marquee, setMarquee] = useState<Bounds | undefined>(undefined)
   const { canvas } = wholeProject
   const wholeTime = episodeTimeOf(scope, time)
-  const frame = frameOf(canvas, viewAt(wholeProject.camera, wholeTime, canvas))
+  const holds = scope?.holds
+  const frame = frameOf(canvas, viewAt(wholeProject.camera, worldTimeOf(holds, wholeTime), canvas))
   const canvasPerPixel = frame.width / pictureWidth
-  const openFrame = useMemo(() => scopeFrameAt(wholeProject, mediaStates, documents, openGroups, wholeTime), [wholeProject, mediaStates, documents, openGroups, wholeTime])
+  const openFrame = useMemo(() => scopeFrameAt(wholeProject, mediaStates, documents, openGroups, wholeTime, holds), [wholeProject, mediaStates, documents, openGroups, wholeTime, holds])
   // A group opened inside the animation has its own space, whose edges aren't the artboard's.
   const isArtboardOpen = useMemo(() => resolveScope(wholeProject, documents, mediaStates, openGroups).groupsInDocument.length === 0, [wholeProject, documents, mediaStates, openGroups])
 
   const pickables = useMemo(
-    () => (isPlaying ? [] : shownClips(wholeProject, mediaStates, documents, wholeTime, { project, time, groups: openGroups, frame: openFrame })),
-    [isPlaying, wholeProject, mediaStates, documents, wholeTime, project, time, openGroups, openFrame],
+    () => (isPlaying ? [] : shownClips(wholeProject, mediaStates, documents, wholeTime, holds, { project, time, groups: openGroups, frame: openFrame })),
+    [isPlaying, wholeProject, mediaStates, documents, wholeTime, holds, project, time, openGroups, openFrame],
   )
   const hitContext = useMemo(() => {
     const context = new OffscreenCanvas(1, 1).getContext('2d')

@@ -321,6 +321,7 @@ export type AnimationClip = ClipTiming &
   VolumeSettings & {
     type: 'animation'
     loop?: true
+    heldTime?: number
   }
 
 // Offset from its node, so a moved node takes its handles along.
@@ -1104,7 +1105,7 @@ function rejectUnevenScale(fields: Fields, clip: { transform: Transform; keyfram
 
 function parseAnimationClip(value: unknown, path: string, context: ParseContext): AnimationClip {
   const required = [...TIMING_KEYS, ...VISUAL_KEYS, ...SOURCE_KEYS, 'volume']
-  const optional = [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_VOLUME_KEYS, ...OPTIONAL_SOURCE_KEYS, 'loop']
+  const optional = [...OPTIONAL_PICTURE_KEYS, ...OPTIONAL_VOLUME_KEYS, ...OPTIONAL_SOURCE_KEYS, 'loop', 'heldTime']
   const fields = readFields(value, path, required, optional)
   const timing = parseTiming(fields, context, [...TRANSFORM_PROPERTIES, 'volume'])
   const clip: AnimationClip = {
@@ -1117,6 +1118,7 @@ function parseAnimationClip(value: unknown, path: string, context: ParseContext)
   rejectUnevenScale(fields, clip, 'an animation')
   if (fields.has('effects')) clip.effects = parseEffects(fields.raw('effects'), fields.at('effects'))
   if (fields.has('loop')) clip.loop = parseSwitch(fields, 'loop')
+  if (fields.has('heldTime')) clip.heldTime = fields.gridTime('heldTime', 'zero or more')
   return clip
 }
 

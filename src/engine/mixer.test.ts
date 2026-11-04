@@ -384,6 +384,13 @@ describe('sound inside animations', () => {
     return { id: 'scene', type: 'animation', mediaId: 'scene', start: 4 * SECOND, duration: 3 * SECOND, sourceStart: 0, speedPercent: 100, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 }, opacity: 1, volume: 1, ...overrides }
   }
 
+  it('stays silent inside a held clip, which also asks for no sound', async () => {
+    const held = project([animationClip({ heldTime: SECOND })])
+    const samples = 8 * 48_000
+    expect(sameBits(await mix(held, media, documents, 0, samples, readSource), await mix(project([]), MEDIA, {}, 0, samples, readSource))).toBe(true)
+    expect(soundRanges(held, media, documents)).toEqual([])
+  })
+
   it('plays a voice in sync with its animation, as loud as both clips make it', async () => {
     const inside = project([animationClip({ sourceStart: SECOND / 2, volume: 0.5 })])
     const direct = project([audioClip({ id: 'line', start: 4 * SECOND + SECOND / 2, duration: 2 * SECOND, volume: 0.5 })])

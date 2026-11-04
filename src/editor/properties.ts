@@ -1,9 +1,9 @@
-import { scaledEffect, type MediaStates } from '../engine/resolve.js'
+import { animationTime, openedAnimation, scaledEffect, type MediaStates } from '../engine/resolve.js'
 import type { Size } from '../shared/exportPresets.js'
 import type { Documents } from '../shared/mediaProtocol.js'
-import { MAX_CANVAS, MIN_CANVAS, isVisual, valueAt, type AnimatableProperty, type Clip, type Crop, type Easing, type Keyframe, type Keyframes, type Project, type Transform } from '../shared/project.js'
+import { MAX_CANVAS, MIN_CANVAS, isVisual, valueAt, type AnimatableProperty, type AnimationClip, type Clip, type Crop, type Easing, type Keyframe, type Keyframes, type Project, type Transform, type VideoClip } from '../shared/project.js'
 import { MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, TIMELINE_GRID, frameAt, frameDuration, type FrameRate } from '../shared/time.js'
-import { editClips, endOf, hasSource, hasVolume, isCroppable, isContainer, locateClip, withFadesWithin, withOnlyAtEnd } from './clips.js'
+import { coversTime, editClips, endOf, hasSource, hasVolume, isCroppable, isContainer, isHeld, locateClip, withFadesWithin, withOnlyAtEnd } from './clips.js'
 import type { Point } from './geometry.js'
 import { shiftLater, sourceDuration, timelineSpan, trimClip } from './moveTrim.js'
 
@@ -467,7 +467,7 @@ export function setSpeed(project: Project, clipIds: readonly string[], speedPerc
   for (const clipId of clipIds) {
     // Located again each time: an earlier clip of the same track may have moved this one.
     const located = locateClip(edited, clipId)
-    if (located === undefined || !hasSource(located.clip)) continue
+    if (located === undefined || !hasSource(located.clip) || isHeld(located.clip)) continue
     if (located.clip.speedPercent === speed) continue
     const { clip, track } = located
     const used = (clip.duration / TIMELINE_GRID) * clip.speedPercent
@@ -488,6 +488,14 @@ function isAnimatedImage(clip: Clip, mediaStates: MediaStates): boolean {
 }
 
 // Played once, a clip ends where its source does.
+function endingWithSource(clip: VideoClip | AnimationClip, mediaStates: MediaStates, documents: Documents): Clip {
+  const length = sourceDuration(clip, mediaStates, documents)
+  if (length === undefined) return clip
+  const sourceStart = clip.sourceStart % length
+  const longest = Math.max(TIMELINE_GRID, timelineSpan(length - sourceStart, clip.speedPercent))
+  return withFadesWithin({ ...clip, sourceStart, duration: Math.min(clip.duration, longest) })
+}
+
 export function setLoop(project: Project, clipIds: readonly string[], isLooping: boolean, mediaStates: MediaStates, documents: Documents): Project {
   return editClips(project, new Set(clipIds), (clip) => {
     if (clip.type !== 'video' && clip.type !== 'animation') return clip
@@ -497,11 +505,35 @@ export function setLoop(project: Project, clipIds: readonly string[], isLooping:
     if (isLooping) return { ...clip, loop: true }
 
     const { loop: _loop, ...once } = clip
-    const length = sourceDuration(once, mediaStates, documents)
-    if (length === undefined) return once
-    const sourceStart = clip.sourceStart % length
-    const longest = Math.max(TIMELINE_GRID, timelineSpan(length - sourceStart, clip.speedPercent))
-    return withFadesWithin({ ...once, sourceStart, duration: Math.min(clip.duration, longest) })
+    return endingWithSource(once, mediaStates, documents)
+  })
+}
+
+export function setHeldFrame(project: Project, clipIds: readonly string[], heldTime: number): Project {
+  return editClips(project, new Set(clipIds), (clip) => {
+    if (clip.type !== 'animation' || clip.heldTime === heldTime) return clip
+    const { loop: _loop, ...held } = clip
+    return { ...held, heldTime }
+  })
+}
+
+// Each clip goes on holding what it shows at the playhead, or its first frame when the playhead is elsewhere.
+export function holdShownFrames(project: Project, clipIds: readonly string[], time: number, mediaStates: MediaStates, documents: Documents): Project {
+  return editClips(project, new Set(clipIds), (clip) => {
+    if (clip.type !== 'animation' || clip.heldTime !== undefined) return clip
+    const opened = openedAnimation(clip, mediaStates, documents, [])
+    const shownAt = coversTime(clip, time) ? time : clip.start
+    const heldTime = opened === undefined ? clip.sourceStart : animationTime(clip, opened.project, shownAt)
+    const { loop: _loop, ...held } = clip
+    return { ...held, heldTime }
+  })
+}
+
+export function playHeldClips(project: Project, clipIds: readonly string[], mediaStates: MediaStates, documents: Documents): Project {
+  return editClips(project, new Set(clipIds), (clip) => {
+    if (clip.type !== 'animation' || clip.heldTime === undefined) return clip
+    const { heldTime: _held, ...played } = clip
+    return endingWithSource(played, mediaStates, documents)
   })
 }
 

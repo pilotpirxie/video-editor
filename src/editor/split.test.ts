@@ -197,6 +197,15 @@ describe('splitting animation clips', () => {
   })
 })
 
+describe('splitting held animation clips', () => {
+  it('keeps the same frame and source offset on both parts', () => {
+    const held = animationClip('wave', 0, 4 * SECOND, { heldTime: SECOND, sourceStart: SECOND / 2 })
+    const split = splitClips(projectOf([track('t1', [held])]), SECOND, new Map([['wave', 'later']]))
+    expect(clipOf(split, 'wave')).toMatchObject({ start: 0, duration: SECOND, heldTime: SECOND, sourceStart: SECOND / 2 })
+    expect(clipOf(split, 'later')).toMatchObject({ start: SECOND, duration: 3 * SECOND, heldTime: SECOND, sourceStart: SECOND / 2 })
+  })
+})
+
 describe('splitting drawing clips', () => {
   it('keeps every shape in both parts', () => {
     const shapes = [{ id: 'dot', nodes: [{ x: 0, y: 0 }, { x: 4, y: 4 }] }]

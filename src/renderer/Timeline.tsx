@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from 'react'
 import { deleteZoom, setZoom } from '../editor/camera.js'
-import { coversTime, hasSource, locateClip } from '../editor/clips.js'
+import { coversTime, hasSource, isHeld, locateClip } from '../editor/clips.js'
 import { canDropShape, deleteKeysAt, drawingAt, moveShape, renameShape, setKeysEasing, setShapeFlag, shapeRows, type ShapeDrop, type ShapeRef, type ShapeRow } from '../editor/drawings.js'
 import { resolveScope } from '../editor/groups.js'
 import { changeKeyframe, removeKeyframe, setSpeed, sharedValue } from '../editor/properties.js'
@@ -337,7 +337,7 @@ function TrackHeader({ track, index, rows }: { track: Track; index: number; rows
 function clipsWithSpeed(project: Project, selection: readonly string[]): string[] {
   return selection.filter((clipId) => {
     const clip = locateClip(project, clipId)?.clip
-    return clip !== undefined && hasSource(clip)
+    return clip !== undefined && hasSource(clip) && !isHeld(clip)
   })
 }
 
@@ -520,6 +520,7 @@ export function Timeline(): ReactElement {
     { label: 'Separate Video and Audio', testId: 'menu-separate-audio', isDisabled: !canSeparateAudio, onSelect: actions.separateAudio },
     { label: 'Group', testId: 'menu-group', isDisabled: !hasSelection, onSelect: actions.group },
     { label: 'Ungroup', testId: 'menu-ungroup', isDisabled: !hasSelection, onSelect: actions.ungroup },
+    { label: 'Make Unique', testId: 'menu-make-unique', isDisabled: menu === undefined || !session.canMakeUnique(), onSelect: () => void session.makeUnique() },
     { label: 'Copy', testId: 'menu-copy', isDisabled: !hasSelection, onSelect: actions.copy },
     { label: 'Paste', testId: 'menu-paste', onSelect: actions.paste },
     { label: 'Duplicate', testId: 'menu-duplicate', isDisabled: !hasSelection, onSelect: actions.duplicate },

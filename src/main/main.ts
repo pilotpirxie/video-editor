@@ -32,6 +32,7 @@ import type {
   MenuAction,
   MenuShortcuts,
   UnsavedChoice,
+  ChangedFileChoice,
 } from '../shared/mediaProtocol.js'
 import { isExportJob } from '../editor/export.js'
 import { DEFAULT_BINDINGS, MENU_SHORTCUT_ACTIONS, menuShortcutsOf } from '../editor/shortcuts.js'
@@ -55,6 +56,7 @@ import {
 import { runSelfTest, type SelfTestOptions } from './selfTest.js'
 import type { DialogAnswers } from './uiDriver.js'
 import { runUiTest } from './uiTest.js'
+import { createAnimationWatch, type AnimationWatch } from './animationWatch.js'
 import { readSettings, writeSettings } from './settingsFile.js'
 import { mediaSettingsOf, parseSettings, type AppSettings, type MediaSort } from '../shared/settings.js'
 
@@ -102,6 +104,10 @@ const UNSAVED_ANSWERS: readonly { choice: UnsavedChoice; label: string }[] = [
   { choice: 'discard', label: "Don't Save" },
   { choice: 'cancel', label: 'Cancel' },
 ]
+const CHANGED_FILE_ANSWERS: readonly { choice: ChangedFileChoice; label: string }[] = [
+  { choice: 'mine', label: 'Keep Mine' },
+  { choice: 'saved', label: 'Use Saved' },
+]
 const RESTORE_ANSWER = 0
 const DISCARD_ANSWER = 1
 const NEW_WINDOW_OFFSET_PIXELS = 22
@@ -116,6 +122,7 @@ type Editor = {
   documentState: DocumentState
   isCloseConfirmed: boolean
   restartedAt: number | undefined
+  animationPaths: ReadonlySet<string>
 }
 
 type AppState = {
@@ -124,6 +131,7 @@ type AppState = {
   isUnderMemoryPressure: boolean
   editors: Editor[]
   activeEditor: Editor | undefined
+  animationWatch: AnimationWatch
   harnessWindow: BrowserWindow | undefined
   exportWindow: BrowserWindow | undefined
   exportRequester: BrowserWindow | undefined
@@ -648,6 +656,37 @@ async function askUnsavedChanges(state: AppState, editor: Editor): Promise<Unsav
   return UNSAVED_ANSWERS[answer.response]?.choice ?? 'cancel'
 }
 
+async function askAnimationChanged(state: AppState, owner: BrowserWindow, name: string): Promise<ChangedFileChoice> {
+  if (state.dialogAnswers.animationChanged !== undefined) return state.dialogAnswers.animationChanged
+  const answer = await dialog.showMessageBox(owner, {
+    type: 'warning',
+    message: `"${name}" changed in another window or on disk.`,
+    detail: 'You have unsaved changes to it in this window.',
+    buttons: CHANGED_FILE_ANSWERS.map((choice) => choice.label),
+    defaultId: 0,
+    cancelId: 0,
+  })
+  return CHANGED_FILE_ANSWERS[answer.response]?.choice ?? 'mine'
+}
+
+function watchEditorAnimations(state: AppState): void {
+  const paths = new Set<string>()
+  for (const editor of state.editors) {
+    for (const path of editor.animationPaths) paths.add(path)
+  }
+  state.animationWatch.setPaths(paths)
+}
+
+function tellEditorsAnimationChanged(state: AppState, path: string): void {
+  for (const editor of state.editors) {
+    if (editor.animationPaths.has(path)) send(editor.window, { type: 'animation-changed', path })
+  }
+}
+
+function isTextList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
 function registerDocumentIpc(state: AppState): void {
   ipcMain.handle('document-info', async (event): Promise<DocumentInfo | undefined> => {
     const document = editorOf(state, event.sender)?.document
@@ -719,6 +758,19 @@ function registerDocumentIpc(state: AppState): void {
   ipcMain.handle('confirm-unsaved-changes', async (event): Promise<UnsavedChoice> => {
     const editor = editorOf(state, event.sender)
     return editor === undefined ? 'cancel' : askUnsavedChanges(state, editor)
+  })
+
+  ipcMain.handle('confirm-animation-changed', async (event, name: unknown): Promise<ChangedFileChoice> => {
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    if (owner === null || typeof name !== 'string') return 'mine'
+    return askAnimationChanged(state, owner, name)
+  })
+
+  ipcMain.on('watch-animations', (event, paths: unknown) => {
+    const editor = editorOf(state, event.sender)
+    if (editor === undefined || !isTextList(paths)) return
+    editor.animationPaths = new Set(paths)
+    watchEditorAnimations(state)
   })
 
   ipcMain.on('slow-frame', (_event, frame: unknown) => {
@@ -1027,7 +1079,7 @@ function openEditor(state: AppState, document: DocumentInfo): BrowserWindow {
     position = { x: left + NEW_WINDOW_OFFSET_PIXELS, y: top + NEW_WINDOW_OFFSET_PIXELS }
   }
   const window = createWindow(state, { mode: 'editor', isUnattended: state.isUnattended, position })
-  const editor: Editor = { window, document, documentState: CLEAN_DOCUMENT, isCloseConfirmed: false, restartedAt: undefined }
+  const editor: Editor = { window, document, documentState: CLEAN_DOCUMENT, isCloseConfirmed: false, restartedAt: undefined, animationPaths: new Set() }
   state.editors.push(editor)
   state.activeEditor = editor
   window.on('page-title-updated', (event) => event.preventDefault())
@@ -1052,6 +1104,7 @@ function openEditor(state: AppState, document: DocumentInfo): BrowserWindow {
   })
   window.on('closed', () => {
     state.editors = state.editors.filter((other) => other !== editor)
+    watchEditorAnimations(state)
     if (state.activeEditor === editor) state.activeEditor = state.editors.at(-1)
     if (!editor.documentState.isDirty || editor.isCloseConfirmed) void discardRecovery(editor.document.recoveryPath)
     if (state.activeEditor !== undefined) buildEditorMenu(state)
@@ -1145,6 +1198,7 @@ async function main(): Promise<void> {
     mediaQuickExits: 0,
     isUnderMemoryPressure: false,
     editors: [],
+    animationWatch: createAnimationWatch((path) => tellEditorsAnimationChanged(state, path)),
     activeEditor: undefined,
     harnessWindow: undefined,
     exportWindow: undefined,

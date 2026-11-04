@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { SECOND, projectOf, track, videoClip } from '../../test/fixtures.js'
 import { parseProject } from '../shared/project.js'
-import { ProjectFileError, withSavedPaths, writeProjectFile } from './projectFile.js'
+import { ProjectFileError, freeCopyPathOf, withSavedPaths, writeProjectFile } from './projectFile.js'
 
 const scratch = await mkdtemp(join(tmpdir(), 'project-file-'))
 
@@ -78,5 +78,14 @@ describe('writeProjectFile', () => {
 
     await expect(writeProjectFile(path, sample)).rejects.toThrow(ProjectFileError)
     expect(await readdir(directory)).toEqual(['project.json'])
+  })
+})
+
+describe('freeCopyPathOf', () => {
+  it('numbers a copy from 2, carries on from a numbered name and skips the names already taken', () => {
+    const noneTaken = (): boolean => false
+    expect(freeCopyPathOf('/films/Mouths.pbanim', noneTaken)).toBe('/films/Mouths 2.pbanim')
+    expect(freeCopyPathOf('/films/Mouths 2.pbanim', noneTaken)).toBe('/films/Mouths 3.pbanim')
+    expect(freeCopyPathOf('/films/Mouths.pbanim', (path) => path.endsWith('Mouths 2.pbanim') || path.endsWith('Mouths 3.pbanim'))).toBe('/films/Mouths 4.pbanim')
   })
 })

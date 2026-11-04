@@ -62,6 +62,18 @@ describe('animation clips', () => {
     await expectGolden(ffmpeg, 'animation-image-720p', await frameOf('golden', episode, 15, { width: 1280, height: 720 }))
   })
 
+  it('holds one picture of an animation for the whole clip, the same as that frame when played', async () => {
+    const half = SECOND / 2
+    const stepsPath = writeAnimation(scratch, 'steps', ARTBOARD, [[imageOf('image-red.png', 'red', { start: 0, duration: half }, at(50, 60, 0.25)), imageOf('image-blue.png', 'blue', { start: half, duration: half }, at(150, 60, 0.25))]])
+    const span = { start: 0, duration: 2 * SECOND }
+    const held = episodeOf([[WHITE_GROUND], [animationOf('steps', 'steps', span, at(320, 180), { heldTime: 18_000_000, speedPercent: 400 })]], { steps: stepsPath })
+    const played = episodeOf([[WHITE_GROUND], [animationOf('steps', 'steps', FIRST_SECOND, at(320, 180))]], { steps: stepsPath })
+    const heldFrames = await renderProject(scratch, 'held', held, { via: 'paused', frames: [0, 50] })
+    const exportedFrames = await renderProject(scratch, 'held-exported', held, { via: 'export', frames: [0, 50] })
+    const playedFrame = await frameOf('held-played', played, 23)
+    for (const picture of [...heldFrames, ...exportedFrames]) expect(sameBytes(picture, playedFrame)).toBe(true)
+  })
+
   it('holds each picture of a 12 fps animation for two frames of a 24 fps episode', async () => {
     const [held, same, next] = await renderFrames('26-animation', { via: 'paused', frames: [12, 13, 14] })
     if (held === undefined || same === undefined || next === undefined) throw new Error('A frame was not rendered')

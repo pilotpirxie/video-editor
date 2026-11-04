@@ -1,7 +1,7 @@
 import { exportJobFor, selectionRange, type ExportChoices } from '../editor/export.js'
-import { allClips } from '../editor/clips.js'
+import { allClips, locateClip } from '../editor/clips.js'
 import { episodeTimeOf } from '../editor/groups.js'
-import { mediaFileName, mediaUses, relinkedMedia, unlinkedMedia, withMedia } from '../editor/place.js'
+import { mediaFileName, mediaUses, relinkedMedia, unlinkedMedia, withClipOnMedia, withMedia } from '../editor/place.js'
 import { menuShortcutsOf, parseBindings, type Bindings } from '../editor/shortcuts.js'
 import { missingFonts } from '../editor/text.js'
 import type { MediaStates } from '../engine/resolve.js'
@@ -16,12 +16,13 @@ import {
   type Documents,
   type HostCommand,
   type JobEvent,
+  type LoadedAnimations,
   type MediaUse,
   type MenuAction,
   type Preparation,
   type UnlinkedMedia,
 } from '../shared/mediaProtocol.js'
-import { PROJECT_VERSION, projectDuration, type Project } from '../shared/project.js'
+import { PROJECT_VERSION, projectDuration, serializeProject, type Project } from '../shared/project.js'
 import { cacheLimitOffer, type AppSettings } from '../shared/settings.js'
 import { frameDuration } from '../shared/time.js'
 import { createActions, type Actions } from './actions.js'
@@ -50,6 +51,8 @@ export type Session = {
   importFiles(paths: readonly string[]): Promise<void>
   chooseAndImport(): Promise<void>
   relink(mediaId: string): Promise<void>
+  canMakeUnique(): boolean
+  makeUnique(): Promise<void>
   exportVideo(choices: ExportChoices): Promise<void>
   cancelExport(): void
   runMenuAction(action: MenuAction): void
@@ -114,6 +117,12 @@ type SentProject = {
   documents: Documents
 }
 
+// How a file names its media depends on where it was saved from, so the comparison leaves that out.
+function contentOf(document: Project): string {
+  const media = document.media.map((reference) => ({ ...reference, path: '', relativePath: '' }))
+  return serializeProject({ ...document, media })
+}
+
 async function missingFontsNotice(project: Project): Promise<string | undefined> {
   let installed: string[]
   try {
@@ -133,16 +142,19 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   const store = createEditorStore(settings)
   const transport = createTransport(engine, store.notify)
   const actions = createActions(store, transport)
-  const thumbnails = createThumbnails(media, engine.renderStill, () => transport.position().isPlaying)
+  const thumbnails = createThumbnails(media, renderLatestStill, () => transport.position().isPlaying)
   const preparationListeners = new Set<() => void>()
   const panelListeners = new Set<(panel: Panel) => void>()
   let preparation: PreparationStates = {}
   let preparationTimer: number | undefined
   let isCacheOffered = false
   let sent: SentProject | undefined
-  let sentFocus = ''
+  let sentFocus = JSON.stringify({ path: [], holds: [] })
   let isSendScheduled = false
   let reportedState = ''
+  let watchedDocuments: Documents | undefined
+  let watchedAnimations = ''
+  let animationChanges: Promise<void> = Promise.resolve()
   let recovered: Project | undefined = store.getState().wholeProject
   let recoveredDocuments: Documents | undefined = store.getState().documents
   const copiedDocuments = new Map<string, Project>()
@@ -153,6 +165,12 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   let isOpenNeeded = info.loadFrom !== undefined
   let mediaReopened: Promise<void> = Promise.resolve()
   let previewLostTimer: number | undefined
+
+  // A still must show the latest edit, which the engine otherwise gets only on the next display frame.
+  function renderLatestStill(path: string, time: number, height: number): Promise<ImageBitmap | undefined> {
+    sendToEngine()
+    return engine.renderStill(path, time, height)
+  }
 
   async function offerLargerCache(): Promise<void> {
     if (isCacheOffered) return
@@ -303,18 +321,58 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     }
   }
 
+  function clipToMakeUnique(): { clipId: string; path: string; document: Project } | undefined {
+    const { project, selection, mediaStates } = store.getState()
+    const [clipId] = selection
+    if (selection.length !== 1 || clipId === undefined) return undefined
+    const located = locateClip(project, clipId)
+    if (located === undefined || located.track.locked || located.clip.type !== 'animation') return undefined
+    const state = mediaStates[located.clip.mediaId]
+    if (state === undefined || 'error' in state || state.info.kind !== 'animation') return undefined
+    const document = store.committedDocuments()[state.info.path]
+    return document === undefined ? undefined : { clipId, path: state.info.path, document }
+  }
+
+  // The copy is what is on screen, unsaved edits included, so the clip looks the same after it.
+  async function makeUnique(): Promise<void> {
+    const target = clipToMakeUnique()
+    if (target === undefined) return
+    const { clipId, path, document } = target
+    await mediaReopened
+    let copyPath: string
+    let added: AddedMedia
+    try {
+      copyPath = await media.freeCopyPath(path)
+      await media.saveProject(copyPath, document, path)
+      added = await media.addMedia(copyPath)
+    } catch (error) {
+      store.notify(describeError(error))
+      return
+    }
+    store.setMediaState(added.id, { info: added.info, createdAt: added.createdAt })
+    await loadAnimation(copyPath)
+    const reference = { id: added.id, path: copyPath, relativePath: '' }
+    const { openDocument } = store.getState()
+    const owner = openDocument === undefined ? undefined : store.committedDocuments()[openDocument]
+    store.applyToFiles(
+      'Make Unique',
+      (episode) => (owner === undefined ? withClipOnMedia(episode, clipId, reference) : withMedia(episode, reference)),
+      (file) => (file === owner ? withClipOnMedia(file, clipId, reference) : file),
+    )
+  }
+
   function sendFocus(): void {
-    const { openDocument, openGroups } = store.getState()
+    const { openDocument, openGroups, scope } = store.getState()
     const path = openDocument === undefined ? [] : [...openGroups]
-    const key = path.join('/')
+    const holds = scope?.holds ?? []
+    const key = JSON.stringify({ path, holds })
     if (key === sentFocus) return
     sentFocus = key
-    engine.send({ type: 'focus', path })
+    engine.send({ type: 'focus', path, holds })
   }
 
   function sendToEngine(): void {
     isSendScheduled = false
-    sendFocus()
     const { wholeProject: project, mediaStates, documents } = store.getState()
     if (sent !== undefined && sent.project === project && sent.mediaStates === mediaStates && sent.documents === documents) return
     sent = { project, mediaStates, documents }
@@ -340,7 +398,21 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     window.host.setDocumentState(state)
   }
 
+  function reportWatchedAnimations(): void {
+    const { documents } = store.getState()
+    if (documents === watchedDocuments) return
+    watchedDocuments = documents
+    const paths = Object.keys(documents)
+    const key = paths.join('\n')
+    if (key === watchedAnimations) return
+    watchedAnimations = key
+    window.host.watchAnimations(paths)
+  }
+
+  // The focus goes first: a seek that follows may reach past the episode's end, inside a held clip.
   store.subscribe(() => {
+    sendFocus()
+    reportWatchedAnimations()
     transport.setScope(store.getState().scope)
     reportDocumentState()
     if (isSendScheduled) return
@@ -459,6 +531,48 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
   async function saveAs(): Promise<boolean> {
     const path = await window.host.saveProjectDialog()
     return path === undefined ? false : saveTo(path)
+  }
+
+  async function readChangedAnimation(path: string): Promise<LoadedAnimations | undefined> {
+    await mediaReopened
+    try {
+      return await media.loadAnimations([path])
+    } catch (error) {
+      logError('Could not read an animation that changed', error, { path })
+      return undefined
+    }
+  }
+
+  // This window's own saves come through here too, and find the file already the same.
+  async function reloadAnimation(path: string): Promise<void> {
+    const loaded = await readChangedAnimation(path)
+    const onDisk = loaded?.documents[path]
+    if (!isMediaConnected) return
+    if (loaded === undefined || onDisk === undefined) {
+      store.notify(`"${fileNameOf(path)}" changed, but it could not be read. This window keeps its copy.`)
+      return
+    }
+    const current = store.committedDocuments()[path]
+    if (current === undefined) return
+    const saved = store.getState().savedDocuments[path]
+    const content = contentOf(onDisk)
+    if (content === contentOf(current)) {
+      if (current !== saved) store.markDocumentsSaved({ [path]: current })
+      return
+    }
+    if (saved !== undefined && content === contentOf(saved)) return
+    if (current !== saved && (await window.host.confirmAnimationChanged(fileNameOf(path))) === 'mine') {
+      store.markDocumentsSaved({ [path]: onDisk })
+      return
+    }
+    store.reloadDocument(path, loaded)
+    thumbnails.refreshAnimations([path])
+    recovered = undefined
+    autosave()
+  }
+
+  function onAnimationChanged(path: string): void {
+    animationChanges = animationChanges.then(() => reloadAnimation(path)).catch((error: unknown) => logError('Could not take in an animation that changed', error, { path }))
   }
 
   function fileNameOf(path: string): string {
@@ -602,6 +716,10 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
       applySettings(command.settings)
       return
     }
+    if (command.type === 'animation-changed') {
+      onAnimationChanged(command.path)
+      return
+    }
     if (command.type !== 'menu') return
     const isForUnderADialog = command.action === 'save' || command.action === 'save-as' || command.action === 'close'
     if (isModalOpen() && !isForUnderADialog) return
@@ -692,6 +810,8 @@ export function createSession(engine: EngineHost, media: MediaConnection, info: 
     importFiles,
     chooseAndImport,
     relink,
+    canMakeUnique: () => clipToMakeUnique() !== undefined,
+    makeUnique,
     exportVideo,
     cancelExport,
     runMenuAction,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SAMPLE_MEDIA, SECOND, audioClip, clipIds, clipOf, drawingClip, groupClip, projectOf, reopened, track, videoClip } from '../../test/fixtures.js'
 import type { Project } from '../shared/project.js'
-import { copyClips, deleteClips, holdsDrawings, pasteClips, rippleDelete, spanEnd, type Paste } from './clipboard.js'
+import { copyClips, deleteClips, holdsDrawings, holdsOnlyDrawings, pasteClips, rippleDelete, spanEnd, type Paste } from './clipboard.js'
 
 function sample(): Project {
   return projectOf([
@@ -132,5 +132,28 @@ describe('copy and paste', () => {
 
   it('reports where the copied clips end, for a duplicate placed right after them', () => {
     expect(spanEnd(copyClips(sample(), ['a', 'music']))).toBe(4 * SECOND)
+  })
+})
+
+describe('pasting drawings into another file', () => {
+  const skin = { id: 'skin', name: 'Skin', color: '#FFCC99' }
+  const hand = { id: 'hand', nodes: [{ x: 0, y: 0 }, { x: 1, y: 1 }], fill: '#FFCC99', fillSwatch: 'skin' }
+  const source = { ...projectOf([track('art', [drawingClip('pose', 0, SECOND, [hand]), videoClip('film', SECOND, SECOND)])]), swatches: [skin] }
+
+  function paste(project: Project, clipIds: readonly string[]): Project {
+    const clipboard = copyClips(source, clipIds)
+    return pasteClips(project, { clipboard, at: 0, clipIds: ['copy'], memberIds: new Map(), newTracks: [{ id: 'new', name: 'Track' }] })
+  }
+
+  it('tells a clipboard of drawings from a mixed one', () => {
+    expect(holdsOnlyDrawings(copyClips(source, ['pose']))).toBe(true)
+    expect(holdsOnlyDrawings(copyClips(source, ['pose', 'film']))).toBe(false)
+  })
+
+  it('brings the swatches its shapes use, or takes the colour of the swatch already there', () => {
+    expect(paste(projectOf([]), ['pose']).swatches).toEqual([skin])
+    const repainted = { ...projectOf([]), swatches: [{ ...skin, color: '#884422' }] }
+    const copy = clipOf(paste(repainted, ['pose']), 'copy')
+    expect(copy.type === 'drawing' && copy.shapes[0]).toMatchObject({ fill: '#884422', fillSwatch: 'skin' })
   })
 })

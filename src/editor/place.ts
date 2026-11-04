@@ -191,6 +191,11 @@ function placeableInfo(info: MediaInfo, documents: Documents): PlaceableInfo | u
   return document === undefined ? undefined : { kind: 'animation', artboard: document.canvas, length: projectDuration(document) }
 }
 
+export function withClipOnMedia(project: Project, clipId: string, reference: MediaRef): Project {
+  const tracks = mapClipsDeep(project.tracks, (clip) => (clip.id === clipId && clip.type === 'animation' ? { ...clip, mediaId: reference.id } : clip))
+  return { ...withMedia(project, reference), tracks }
+}
+
 export const SELF_CONTAINING_NOTICE = 'An animation cannot be placed inside itself.'
 
 function animationPathOf(mediaId: string, mediaStates: MediaStates): string | undefined {

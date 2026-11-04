@@ -10,7 +10,7 @@ import { CompositorError, createCompositor, type DrawItem } from './compositor.j
 import { exportMedia, renderFrames, renderStill, type JobSummary, type ProgressListener, type RenderContext } from './exporter.js'
 import { createFrameProvider } from './frameProvider.js'
 import { cachedAudioReader, mix, soundRanges, type AudioReader } from './mixer.js'
-import { pictureRanges, resolveFrame, type Layer } from './resolve.js'
+import { pictureRanges, resolveFrame, worldTimeOf, type HeldLevel, type Layer } from './resolve.js'
 
 const AUDIO_BLOCK_SAMPLES = 2048
 const WANT_AGAIN_AFTER_TICKS = 10 * TICKS_PER_SECOND
@@ -44,7 +44,7 @@ export type Engine = {
   setProject(project: LoadedProject): void
   setOutputSize(size: Size): void
   showWholeCanvasWhenPaused(isShown: boolean): void
-  setFocus(path: readonly string[]): void
+  setFocus(path: readonly string[], holds: readonly HeldLevel[]): void
   attachAudio(port: MessagePort): void
   setUnderPressure(isUnderPressure: boolean): void
   seek(time: number): void
@@ -117,10 +117,16 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
   let wantSentAt = -Infinity
   let wantTimer: ReturnType<typeof setTimeout> | undefined
   let focus: readonly string[] = []
+  let holds: readonly HeldLevel[] = []
 
   function requireLoaded(): LoadedProject {
     if (loaded === undefined) throw new EngineError('No project is loaded')
     return loaded
+  }
+
+  // An open held clip can reach past the end of the episode.
+  function timeLimit(project: LoadedProject): number {
+    return Math.max(projectDuration(project.project), holds.at(-1)?.end ?? 0)
   }
 
   function outputScale(project: LoadedProject): number {
@@ -134,7 +140,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
 
   // Only the preview dims what is outside an open animation; exports draw the episode as it is.
   function layersAt(project: LoadedProject, frameTime: number): Layer[] {
-    const layers = resolveFrame(project.project, project.media, project.documents, frameTime, outputScale(project))
+    const layers = resolveFrame(project.project, project.media, project.documents, frameTime, outputScale(project), holds)
     if (focus.length === 0) return layers
     return layers.map((layer) => (isInFocus(layer) ? layer : { ...layer, opacity: layer.opacity * OUTSIDE_FOCUS_OPACITY }))
   }
@@ -182,7 +188,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
 
   function pausedView(project: LoadedProject): View {
     const { canvas, camera } = project.project
-    return isWholeCanvasShownWhenPaused ? wholeCanvas(canvas) : viewAt(camera, time, canvas)
+    return isWholeCanvasShownWhenPaused ? wholeCanvas(canvas) : viewAt(camera, worldTimeOf(holds, time), canvas)
   }
 
   async function showPaused(): Promise<void> {
@@ -243,7 +249,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
   }
 
   function cameraAt(project: LoadedProject, frameTime: number): View {
-    return viewAt(project.project.camera, frameTime, project.project.canvas)
+    return viewAt(project.project.camera, worldTimeOf(holds, frameTime), project.project.canvas)
   }
 
   // Nearest frame first, and only as far as the cache holds, so reading ahead never pushes out the frame about to be shown.
@@ -265,7 +271,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     if (playback !== playing) return
     const frameTicks = frameDuration(project.project.canvas.frameRate)
     const position = playing.clock.positionAt(performance.now())
-    if (position >= projectDuration(project.project)) {
+    if (position >= timeLimit(project)) {
       pause()
       return
     }
@@ -327,7 +333,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     if (project === undefined || playback !== undefined || audioPort === undefined) return
     outputLatency = outputLatencySeconds
     const frameTicks = frameDuration(project.project.canvas.frameRate)
-    if (time + frameTicks >= projectDuration(project.project)) time = 0
+    if (time + frameTicks >= timeLimit(project)) time = 0
 
     generation += 1
     refining?.abort()
@@ -352,6 +358,8 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
   }
 
   function frameStartNear(project: LoadedProject, target: number): number {
+    // Inside a held clip the playhead lands on the animation's frames, which the episode's frame rate may not have.
+    if (holds.length > 0) return Math.min(Math.max(target, 0), timeLimit(project))
     const frameTicks = frameDuration(project.project.canvas.frameRate)
     const lastFrame = Math.max(0, Math.ceil(projectDuration(project.project) / frameTicks) - 1)
     const frame = Math.min(Math.max(frameAt(target, frameTicks), 0), lastFrame)
@@ -422,10 +430,11 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     void showPaused()
   })
 
-  function setFocus(path: readonly string[]): void {
-    const isSame = path.length === focus.length && path.every((clipId, depth) => focus[depth] === clipId)
+  function setFocus(path: readonly string[], heldLevels: readonly HeldLevel[]): void {
+    const isSame = path.length === focus.length && path.every((clipId, depth) => focus[depth] === clipId) && JSON.stringify(heldLevels) === JSON.stringify(holds)
     if (isSame) return
     focus = path
+    holds = heldLevels
     if (playback === undefined) void showPaused()
   }
 
@@ -492,7 +501,7 @@ export function createEngine(media: MediaClient, surface: OffscreenCanvas, emit:
     const project = loaded
     if (project === undefined || isContextLost) return undefined
     const view = pausedView(project)
-    const layers = resolveFrame(project.project, project.media, project.documents, time, outputScale(project))
+    const layers = resolveFrame(project.project, project.media, project.documents, time, outputScale(project), holds)
     const items = await provider.itemsFor(layers, 'full', textScale(project, view))
     if (loaded !== project || isContextLost) return undefined
     compositor.render(project.project.canvas, output, view, items)

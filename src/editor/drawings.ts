@@ -228,18 +228,27 @@ function setIdsOf(clip: DrawingClip): Set<string> {
   return new Set(clip.nodeSets?.map((set) => set.id))
 }
 
-export function addDrawingShapes(project: Project, place: DrawingPlace, shapes: readonly DrawingShape[]): Project {
+// A set the drawing already has stays as it is there; the others come along with the shapes they move.
+export function addDrawingShapes(project: Project, place: DrawingPlace, shapes: readonly DrawingShape[], sets: readonly NodeSet[] = []): Project {
   const track = project.tracks[place.trackIndex]
   const isUsable = track !== undefined && !track.locked && !track.hidden
   const drawing = isUsable ? drawingAt(track, place.time) : undefined
   if (drawing !== undefined) {
-    const known = shapes.map((shape) => withKnownSets(shape, setIdsOf(drawing)))
-    return editClips(project, new Set([drawing.id]), () => ({ ...drawing, shapes: [...drawing.shapes, ...known] }))
+    const known = setIdsOf(drawing)
+    const arriving = sets.filter((set) => !known.has(set.id))
+    const nodeSets = [...(drawing.nodeSets ?? []), ...arriving]
+    const setIds = new Set(nodeSets.map((set) => set.id))
+    const placed = shapes.map((shape) => withKnownSets(shape, setIds))
+    const withShapes: DrawingClip = { ...drawing, shapes: [...drawing.shapes, ...placed] }
+    if (nodeSets.length > 0) withShapes.nodeSets = nodeSets
+    return editClips(project, new Set([drawing.id]), () => withShapes)
   }
 
   const { clipId, duration, newTrack } = place.newDrawing
-  const unset = shapes.map((shape) => withKnownSets(shape, new Set()))
-  const clip: DrawingClip = { id: clipId, type: 'drawing', start: place.time, duration, shapes: unset }
+  const setIds = new Set(sets.map((set) => set.id))
+  const placed = shapes.map((shape) => withKnownSets(shape, setIds))
+  const clip: DrawingClip = { id: clipId, type: 'drawing', start: place.time, duration, shapes: placed }
+  if (sets.length > 0) clip.nodeSets = [...sets]
   // A hidden track would hide what was just drawn, so the drawing goes above it.
   const trackIndex = track?.hidden === true ? place.trackIndex + 1 : place.trackIndex
   return placeOnTrack(project, { clips: [clip], trackIndex, newTrack })
@@ -901,6 +910,35 @@ export function copyShapes(project: Project, shapes: readonly ShapeRef[]): Copie
   return copies
 }
 
+function addSetsUsedBy(shape: DrawingShape, setIds: Set<string>): void {
+  if (shape.follows !== undefined) setIds.add(shape.follows)
+  for (const node of shape.nodes) {
+    for (const setId of node.sets ?? []) setIds.add(setId)
+  }
+  for (const child of shape.children ?? []) addSetsUsedBy(child, setIds)
+}
+
+function addSetAndParents(clip: DrawingClip, setId: string, found: Map<string, NodeSet>): void {
+  let set = nodeSetOf(clip, setId)
+  while (set !== undefined && !found.has(set.id)) {
+    found.set(set.id, set)
+    set = set.parent === undefined ? undefined : nodeSetOf(clip, set.parent)
+  }
+}
+
+// The sets that move the copies, with every parent above them.
+export function setsOfCopies(project: Project, copies: readonly CopiedShape[]): NodeSet[] {
+  const found = new Map<string, NodeSet>()
+  for (const { ref, shape } of copies) {
+    const clip = locateClip(project, ref.clipId)?.clip
+    if (clip?.type !== 'drawing') continue
+    const setIds = new Set<string>()
+    addSetsUsedBy(shape, setIds)
+    for (const setId of setIds) addSetAndParents(clip, setId, found)
+  }
+  return [...found.values()]
+}
+
 // A copy follows what its original follows but owns no set, as a set has one owner.
 export function withNewShapeIds(shape: DrawingShape, newId: () => string): DrawingShape {
   const { ownsSet: _owned, ...copied } = shape
@@ -972,10 +1010,34 @@ function unlinked(shape: DrawingShape, isKept: (swatchId: string) => boolean): D
   return kept
 }
 
-// Pasted into another animation, a shape keeps its colours but not its links to swatches that file lacks.
+function addSwatchesUsedBy(shape: DrawingShape, swatchIds: Set<string>): void {
+  if (shape.fillSwatch !== undefined) swatchIds.add(shape.fillSwatch)
+  if (shape.stroke?.swatch !== undefined) swatchIds.add(shape.stroke.swatch)
+  for (const child of shape.children ?? []) addSwatchesUsedBy(child, swatchIds)
+}
+
+// The shared colours pasted shapes use come with them, unless the file already has them.
+export function withArrivingSwatches(project: Project, shapes: readonly DrawingShape[], arriving: readonly Swatch[] | undefined): Project {
+  const used = new Set<string>()
+  for (const shape of shapes) addSwatchesUsedBy(shape, used)
+  const known = new Set(project.swatches?.map((swatch) => swatch.id))
+  const missing = arriving?.filter((swatch) => used.has(swatch.id) && !known.has(swatch.id)) ?? []
+  return missing.length === 0 ? project : { ...project, swatches: [...(project.swatches ?? []), ...missing] }
+}
+
+function coloredBySwatches(shape: DrawingShape, swatches: readonly Swatch[] | undefined): DrawingShape {
+  const fill = swatchIn(swatches, shape.fillSwatch)
+  const stroke = swatchIn(swatches, shape.stroke?.swatch)
+  let colored = shape
+  if (fill !== undefined) colored = { ...colored, fill: fill.color }
+  if (stroke !== undefined && colored.stroke !== undefined) colored = { ...colored, stroke: { ...colored.stroke, color: stroke.color } }
+  return colored
+}
+
+// In a file that has its swatch a shape stays linked and takes the file's colour; otherwise it keeps its colour without the link.
 export function withKnownSwatches(shape: DrawingShape, swatches: readonly Swatch[] | undefined): DrawingShape {
   const known = new Set(swatches?.map((swatch) => swatch.id))
-  const [kept] = editSiblings([shape], (siblings) => siblings.map((sibling) => unlinked(sibling, (swatchId) => known.has(swatchId))))
+  const [kept] = editSiblings([shape], (siblings) => siblings.map((sibling) => unlinked(coloredBySwatches(sibling, swatches), (swatchId) => known.has(swatchId))))
   return kept ?? shape
 }
 

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { BrowserWindow, Menu } from 'electron'
 import { CAMERA_LANE_HEIGHT, RULER_HEIGHT, TRACK_HEIGHT, trackRows, trackTop } from '../editor/timelineView.js'
-import type { MenuAction, UnsavedChoice } from '../shared/mediaProtocol.js'
+import type { ChangedFileChoice, MenuAction, UnsavedChoice } from '../shared/mediaProtocol.js'
 import type { MediaSort } from '../shared/settings.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
 import { PageError, pageOf, selector, type Page } from './page.js'
@@ -25,6 +25,7 @@ export type DialogAnswers = {
   relinkMedia?: string
   exportPath?: string
   unsavedChanges?: UnsavedChoice
+  animationChanged?: ChangedFileChoice
   restore?: boolean
 }
 

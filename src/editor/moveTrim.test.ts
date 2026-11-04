@@ -155,6 +155,15 @@ describe('trimClip', () => {
     expect(lengthAfter(animationClip('wave', 0, SECOND), 0)).toBe(60 * SECOND)
   })
 
+  it('leaves a held animation free at both ends, keeping its frame and source offset', () => {
+    const held = animationClip('wave', 4 * SECOND, SECOND, { heldTime: SECOND / 2, sourceStart: SECOND / 4 })
+    const project = projectOf([track('t1', [held])])
+    const options = { clipId: 'wave', mediaStates: WAVE_STATES, documents: waveDocuments(2 * SECOND) }
+    expect(clipOf(trimClip(project, trim({ ...options, time: 60 * SECOND })), 'wave').duration).toBe(56 * SECOND)
+    const earlier = clipOf(trimClip(project, trim({ ...options, edge: 'start', time: SECOND })), 'wave')
+    expect(earlier).toMatchObject({ start: SECOND, duration: 4 * SECOND, heldTime: SECOND / 2, sourceStart: SECOND / 4 })
+  })
+
   it('counts the source offset and speed when limiting the end', () => {
     const fast = projectOf([track('t1', [videoClip('a', 0, SECOND, { sourceStart: 4 * SECOND, speedPercent: 200 })])])
     expect(clipOf(trimClip(fast, trim({ clipId: 'a', time: 60 * SECOND })), 'a').duration).toBe(3 * SECOND)

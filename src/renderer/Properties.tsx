@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement, type ReactNode } from 'react'
 import { ANIMATION_NAMES, DEFAULT_ANIMATION, setAnimation, takesAnimation } from '../editor/presets.js'
 import { CALLOUT_NAMES, setArrowStyle, setCalloutStyle } from '../editor/annotations.js'
 import { deleteZoom, setZoom, type ZoomChanges } from '../editor/camera.js'
-import { allClips, coversTime, freeTrackId, hasMedia, hasSource, isCroppable, isContainer, locateClip, makesSound, nextTrackName } from '../editor/clips.js'
+import { allClips, coversTime, freeTrackId, hasMedia, hasSource, isCroppable, isContainer, isHeld, locateClip, makesSound, nextTrackName } from '../editor/clips.js'
 import {
   MIN_STROKE_WIDTH,
   NEW_STROKE,
@@ -59,6 +59,9 @@ import {
   setFade,
   setFrameRate,
   setKeyframesAt,
+  holdShownFrames,
+  playHeldClips,
+  setHeldFrame,
   setLoop,
   setProperties,
   setSoundSwitches,
@@ -87,8 +90,10 @@ import {
   MIN_CANVAS,
   TRANSITION_TYPES,
   isVisual,
+  projectDuration,
   type AnimatableProperty,
   type AnimationClip,
+  type AudioClip,
   type AnimationPresetType,
   type ArrowClip,
   type ArrowHead,
@@ -116,9 +121,10 @@ import {
 } from '../shared/project.js'
 import { ANIMATION_FRAME_RATES, FAST_SOUND_ABOVE_PERCENT, MAX_SPEED_PERCENT, MIN_SPEED_PERCENT, PROJECT_FRAME_RATES, TICKS_PER_SECOND, frameDuration, type FrameRate } from '../shared/time.js'
 import { ColorFields, DraftField } from './ColorFields.js'
-import { useEditorState, usePosition, useSession } from './context.js'
+import { useEditorState, usePosition, useSession, useThumbnailUpdates } from './context.js'
 import { installedFontFamilies } from './fonts.js'
 import { Icon, IconButton, type IconName } from './icons.js'
+import { Poster } from './MediaTab.js'
 import { PopupMenu } from './Menu.js'
 import { NumberField } from './NumberField.js'
 import { Picker, type Choice } from './Picker.js'
@@ -480,8 +486,12 @@ function isHighlight(clip: Clip): clip is HighlightClip {
   return clip.type === 'highlight'
 }
 
+function playsSource(clip: Clip): clip is VideoClip | AudioClip | AnimationClip {
+  return hasSource(clip) && !isHeld(clip)
+}
+
 function isLoopable(clip: Clip, mediaStates: MediaStates): clip is VideoClip | AnimationClip {
-  if (clip.type === 'animation') return true
+  if (clip.type === 'animation') return !isHeld(clip)
   if (clip.type !== 'video') return false
   const state = mediaStates[clip.mediaId]
   if (state === undefined || !('info' in state)) return false
@@ -1734,6 +1744,91 @@ function ShapeTransformFields(): ReactElement {
   )
 }
 
+type ClipMode = 'play' | 'hold'
+
+const CLIP_MODES: readonly SegmentChoice<ClipMode>[] = [
+  { value: 'play', label: 'Play' },
+  { value: 'hold', label: 'Hold frame' },
+]
+
+const FRAME_ROW_HEIGHT = 56
+const FRAME_ROW_GAP = 4
+const FRAME_ROW_STEP = FRAME_ROW_HEIGHT + FRAME_ROW_GAP
+const FRAMES_PER_ROW = 3
+const FRAME_PICKER_HEIGHT = 244
+const FRAME_ROWS_IN_VIEW = Math.ceil(FRAME_PICKER_HEIGHT / FRAME_ROW_STEP) + 1
+
+function FrameCell({ path, document, frame, frameTicks, isChosen, onPick }: { path: string; document: Project; frame: number; frameTicks: number; isChosen: boolean; onPick(frame: number): void }): ReactElement {
+  const { thumbnails } = useSession()
+  const picture = thumbnails.animationFrame(path, document, frame * frameTicks)
+  const name = `Frame ${frame}`
+  return (
+    <button type="button" className="frame-cell focusable" data-testid={`held-frame-${frame}`} data-tooltip={name} aria-label={name} aria-pressed={isChosen} onClick={() => onPick(frame)}>
+      {picture !== undefined && <Poster picture={picture} />}
+    </button>
+  )
+}
+
+// Only the rows in view exist, so a long animation asks for no more thumbnails than a short one.
+function HeldFramePicker({ clips }: { clips: readonly AnimationClip[] }): ReactElement | null {
+  const { store } = useSession()
+  const mediaStates = useEditorState((state) => state.mediaStates)
+  const documents = useEditorState((state) => state.documents)
+  const listRef = useRef<HTMLDivElement>(null)
+  const [firstRow, setFirstRow] = useState(0)
+  useThumbnailUpdates()
+
+  const heldTime = sharedValue(clips.map((clip) => clip.heldTime))
+  const mediaId = sharedValue(clips.map((clip) => clip.mediaId))
+  const state = mediaId === undefined ? undefined : mediaStates[mediaId]
+  const path = state !== undefined && 'info' in state && state.info.kind === 'animation' ? state.info.path : undefined
+  const document = path === undefined ? undefined : documents[path]
+  const frameTicks = document === undefined ? 1 : frameDuration(document.canvas.frameRate)
+  const chosenFrame = heldTime === undefined ? undefined : Math.floor(heldTime / frameTicks)
+
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (list === null || chosenFrame === undefined) return
+    const top = Math.floor(chosenFrame / FRAMES_PER_ROW) * FRAME_ROW_STEP
+    const isInView = top >= list.scrollTop && top + FRAME_ROW_HEIGHT <= list.scrollTop + list.clientHeight
+    if (!isInView) list.scrollTop = top
+  }, [chosenFrame, mediaId])
+
+  if (!clips.every(isHeld) || path === undefined || document === undefined) return null
+  const frameCount = Math.ceil(projectDuration(document) / frameTicks)
+  if (frameCount === 0) return null
+  const ids = clips.map((clip) => clip.id)
+
+  function pick(frame: number): void {
+    store.apply('Pick Frame', (project) => setHeldFrame(project, ids, frame * frameTicks))
+  }
+
+  const rowCount = Math.ceil(frameCount / FRAMES_PER_ROW)
+  const shownFrames: number[] = []
+  const endFrame = Math.min(frameCount, (firstRow + FRAME_ROWS_IN_VIEW) * FRAMES_PER_ROW)
+  for (let frame = firstRow * FRAMES_PER_ROW; frame < endFrame; frame++) shownFrames.push(frame)
+  return (
+    <div
+      ref={listRef}
+      className="frame-picker"
+      role="group"
+      aria-label="Held frame"
+      data-testid="held-frames"
+      style={{ maxHeight: FRAME_PICKER_HEIGHT }}
+      onScroll={(event) => setFirstRow(Math.floor(event.currentTarget.scrollTop / FRAME_ROW_STEP))}
+    >
+      <div
+        className="frame-grid"
+        style={{ height: rowCount * FRAME_ROW_STEP - FRAME_ROW_GAP, paddingTop: firstRow * FRAME_ROW_STEP, gridAutoRows: FRAME_ROW_HEIGHT, rowGap: FRAME_ROW_GAP, gridTemplateColumns: `repeat(${FRAMES_PER_ROW}, 1fr)` }}
+      >
+        {shownFrames.map((frame) => (
+          <FrameCell key={frame} path={path} document={document} frame={frame} frameTicks={frameTicks} isChosen={frame === chosenFrame} onPick={pick} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const mediaStates = useEditorState((state) => state.mediaStates)
   const documents = useEditorState((state) => state.documents)
@@ -1745,7 +1840,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const frameTicks = frameDuration(canvas.frameRate)
   const isInAnimation = useEditorState((state) => state.openChain.length > 0)
   const timing = isInAnimation ? { unit: 'frames', ticks: frameTicks, decimals: 0 } : { unit: 's', ticks: TICKS_PER_SECOND, decimals: SECONDS_DECIMALS }
-  const { store, actions } = useSession()
+  const { store, actions, transport } = useSession()
   const visual = clips.filter(isVisual)
   const croppable = clips.filter(isCroppable)
   const worded = clips.filter(hasWords)
@@ -1753,7 +1848,7 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
   const arrows = clips.filter(isArrow)
   const groups = clips.filter((clip) => clip.type === 'group')
   const animations = clips.filter((clip) => clip.type === 'animation')
-  const sourced = clips.filter(hasSource)
+  const sourced = clips.filter(playsSource)
   const loopable = clips.filter((clip) => isLoopable(clip, mediaStates))
   const isLooping = loopable.length > 0 && loopable.every((clip) => clip.loop === true)
   const sounding = clips.filter((clip) => makesSound(clip, mediaStates, documents))
@@ -1883,6 +1978,11 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
     store.apply(command, (project) => setLoop(project, ids, isOn, mediaStates, documents))
   }
 
+  function chooseMode(mode: ClipMode): void {
+    if (mode === 'hold') store.apply('Hold Frame', (project) => holdShownFrames(project, ids, transport.position().time, mediaStates, documents))
+    else store.apply('Play Clip', (project) => playHeldClips(project, ids, mediaStates, documents))
+  }
+
   function pixelate(isOn: boolean): void {
     styleShapes(isOn ? 'Pixelate' : 'Blur', { isPixelated: isOn })
   }
@@ -1940,6 +2040,12 @@ function ClipProperties({ clips }: { clips: readonly Clip[] }): ReactElement {
         </Group>
       )}
       <Group title="Timing" icon="clock" isOpenAtStart>
+        {animations.length === clips.length && (
+          <>
+            <ChoiceField label="Mode" testId="clip-mode" choices={CLIP_MODES} value={sharedValue(animations.map((clip) => (isHeld(clip) ? 'hold' : 'play')))} onChoose={chooseMode} />
+            <HeldFramePicker clips={animations} />
+          </>
+        )}
         <EditField
           label={`Start (${timing.unit})`}
           testId="clip-start"

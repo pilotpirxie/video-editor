@@ -107,6 +107,28 @@ describe('editing inside an animation', () => {
     expect(store.getState().documents[WAVE]).toBe(character)
   })
 
+  it('takes in a file changed elsewhere: the gesture ends, and undo no longer reaches the older versions', () => {
+    const store = openedStore()
+    store.apply('Change Opacity', (project) => setProperties(project, ['hand'], { opacity: 0.25 }, 0))
+    store.begin('Change Opacity')
+    store.update((project) => setProperties(project, ['hand'], { opacity: 0.5 }, 0))
+
+    const changed = projectOf([track('a1', [videoClip('hand', 0, SECOND)]), track('a2', [videoClip('foot', 0, SECOND)])])
+    const nestedAgain = projectOf([])
+    store.addDocuments({ documents: { [OTHER]: ANIMATION }, media: {} })
+    store.reloadDocument(WAVE, { documents: { [WAVE]: changed, [OTHER]: nestedAgain, '/films/new.pbanim': nestedAgain }, media: {} })
+
+    const state = store.getState()
+    expect(state.documents[WAVE]).toBe(changed)
+    expect(state.savedDocuments[WAVE]).toBe(changed)
+    expect(state.project).toBe(changed)
+    expect(state.documents[OTHER]).toBe(ANIMATION)
+    expect(state.documents['/films/new.pbanim']).toBe(nestedAgain)
+    expect(state.history.done).toEqual([])
+    store.undo()
+    expect(store.getState().documents[WAVE]).toBe(changed)
+  })
+
   it('closes an animation whose file is no longer loaded', () => {
     const store = openedStore({})
     expect(store.getState().openGroups).toEqual([])

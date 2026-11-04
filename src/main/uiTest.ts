@@ -1,9 +1,10 @@
 import { existsSync } from 'node:fs'
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { app, type BrowserWindow } from 'electron'
 import { SHAPE_ROW_HEIGHT } from '../editor/timelineView.js'
+import { parseProject, serializeProject, type Clip } from '../shared/project.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
 import { PageError, selector } from './page.js'
 import {
@@ -37,6 +38,7 @@ import { FEATURE_SCENARIOS, framesShown, pick, rowInView, seekDelays, splitFirst
 const AUTOSAVE_TIMEOUT_MS = 20_000
 const MS_PER_SECOND = 1000
 const RELOAD_WAIT_MS = 6000
+const FILE_TAKEN_IN_MS = 1000
 
 async function panelSizes(driver: Driver): Promise<Record<string, number>> {
   const left = await driver.rect('left-sidebar')
@@ -1074,6 +1076,252 @@ async function testShapeKeys(driver: Driver): Promise<UiTestReport> {
   return { hasSideHandles }
 }
 
+async function pickHeldFrame(driver: Driver, frame: number): Promise<void> {
+  await driver.page.click(`held-frame-${frame}`)
+  await driver.until(isPressed(`held-frame-${frame}`), `frame ${frame} to be chosen`)
+}
+
+// The Mouths animation has six frames at 12 fps, placed as one played clip on the top of two tracks.
+async function testHoldFrame(driver: Driver): Promise<UiTestReport> {
+  await fullQualityFrame(driver, 0)
+  await driver.clickAt(await driver.timelinePoint(TICKS_PER_SECOND / 4, 1, 2))
+  await driver.until(`${selector('clip-mode-hold')} !== null`, 'the clip mode to show')
+  await driver.page.click('clip-mode-hold')
+  await driver.untilUndoLabel('Undo Hold Frame')
+  await driver.until(`${selector('held-frame-5')} !== null`, 'the frames to show')
+  await driver.until(`${selector('held-frame-5')}.querySelector('canvas') !== null`, 'the thumbnail of a frame')
+  const isSpeedShownWhileHeld = await driver.page.evaluate(`${selector('clip-speed')} !== null`)
+
+  await driver.typeInto('clip-duration', '2')
+  await driver.untilUndoLabel('Undo Trim Clip')
+  await pickHeldFrame(driver, 3)
+  await driver.picture('hold-frame-picker')
+
+  const timeline = await driver.rect('timeline')
+  const onTrack = await driver.timelinePoint(TICKS_PER_SECOND, 1, 2)
+  await driver.clickAt({ x: onTrack.x, y: timeline.y + RULER_HEIGHT / 2 })
+  await driver.until(`${selector('timecode')}.textContent === '00:00:01:00'`, 'the playhead at one second')
+  driver.menu('split')
+  await driver.untilUndoLabel('Undo Split Clip')
+  await pickHeldFrame(driver, 5)
+  driver.menu('save')
+  await untilEdited(driver, false)
+
+  await driver.page.click('clip-mode-play')
+  await driver.untilUndoLabel('Undo Play Clip')
+  const playedDuration = await driver.value('clip-duration')
+  const isSpeedShownWhenPlayed = await driver.page.evaluate(`${selector('clip-speed')} !== null`)
+  return { isSpeedShownWhileHeld, playedDuration, isSpeedShownWhenPlayed }
+}
+
+// Kenta (on track 1) and Bob (on track 2) each hold a frame of Mouths; Kenta starts at one second.
+async function testSharedParts(driver: Driver): Promise<UiTestReport> {
+  await fullQualityFrame(driver, 0)
+  const preview = await driver.rect('preview')
+  const pointAt = (x: number, y: number): Point => ({ x: preview.x + (preview.width * x) / 640, y: preview.y + (preview.height * y) / 360 })
+
+  await driver.doubleClickAt(await driver.timelinePoint(1.5 * TICKS_PER_SECOND, 1, 3))
+  await driver.until(`${selector('group-path')}?.textContent.includes('kenta') === true`, 'Kenta to open')
+  await driver.doubleClickAt(await driver.timelinePoint(TICKS_PER_SECOND / 2, 0, 1))
+  await driver.until(`${selector('group-path')}?.textContent.includes('mouths') === true`, 'Mouths to open')
+  const path = await driver.page.evaluate(`${selector('group-path')}.textContent`)
+  await driver.until(`${selector('timecode')}.textContent === '2'`, 'the playhead on the held frame')
+  const duration = await driver.page.evaluate(`${selector('duration')}.textContent`)
+
+  await driver.press('Right')
+  await driver.until(`${selector('timecode')}.textContent === '3'`, 'the odd frame, which the episode has no frame for')
+  await driver.press('Right')
+  await driver.until(`${selector('timecode')}.textContent === '4'`, 'the frame Bob holds')
+  await driver.picture('shared-parts-open')
+
+  await driver.press('V')
+  await driver.until(isPressed('tool-move'), 'the move tool to be chosen')
+  await driver.drag(pointAt(195, 175), pointAt(235, 175), ['meta'])
+  await driver.untilUndoLabel('Undo Move Shape')
+  driver.menu('save')
+  await untilEdited(driver, false)
+
+  await closeAnimations(driver)
+  await driver.until(`${selector('timecode')}.textContent === '00:00:01:00'`, 'the playhead back where the clip starts')
+
+  await driver.clickAt(await driver.timelinePoint(TICKS_PER_SECOND / 2, 2, 3))
+  await driver.until(`${selector('group-animation')} !== null`, 'the groups of the selected clip')
+  await driver.page.evaluate(`[...document.querySelectorAll('[data-testid="group-animation"]')].at(-1).click()`)
+  await driver.until(`${selector('animation-open')} !== null`, 'the button that opens the selected clip')
+  await driver.page.click('animation-open')
+  await driver.until(`${selector('group-path')}?.textContent.includes('bob') === true`, 'Bob to open from Properties')
+  await driver.press('Escape')
+  await driver.until(`${selector('group-path')} === null`, 'Bob to close')
+
+  await driver.until(`${selector('timecode')}.textContent === '00:00:01:00'`, 'the playhead where it was')
+  await driver.doubleClickAt(pointAt(555, 175))
+  await driver.until(`${selector('group-path')}?.textContent.includes('bob') === true`, 'Bob to open from the canvas')
+  await driver.doubleClickAt(pointAt(555, 175))
+  await driver.until(`${selector('group-path')}?.textContent.includes('mouths') === true`, 'Mouths to open from the canvas')
+  await driver.until(`${selector('timecode')}.textContent === '4'`, 'the frame Bob holds')
+  return { path, duration }
+}
+
+async function makeUniqueAt(driver: Driver, point: Point): Promise<void> {
+  await driver.rightClickAt(point)
+  await chooseMenuItem(driver, 'menu-make-unique')
+}
+
+// Two played clips of Mouths lie on tracks 1 and 2; an edit to the first frame of Mouths stays unsaved until the end.
+async function testMakeUnique(driver: Driver): Promise<UiTestReport> {
+  const { outputDirectory } = driver.options
+  if (outputDirectory === undefined) throw new PageError('This UI test needs --out <directory>')
+  await fullQualityFrame(driver, 0)
+  await driver.doubleClickAt(await driver.timelinePoint(TICKS_PER_SECOND / 4, 1, 3))
+  await driver.until(`${selector('group-path')} !== null`, 'Mouths to open')
+  await driver.press('V')
+  await driver.until(isPressed('tool-move'), 'the move tool to be chosen')
+  const preview = await driver.rect('preview')
+  const pointAt = (x: number, y: number): Point => ({ x: preview.x + (preview.width * x) / 640, y: preview.y + (preview.height * y) / 360 })
+  await driver.drag(pointAt(35, 175), pointAt(55, 175), ['meta'])
+  await driver.untilUndoLabel('Undo Move Shape')
+  await closeAnimations(driver)
+
+  await makeUniqueAt(driver, await driver.timelinePoint(TICKS_PER_SECOND / 4, 1, 3))
+  await driver.untilUndoLabel('Undo Make Unique')
+  await driver.until(`${selector('media-mouths 2.pbanim')} !== null`, 'the copy in Media')
+  const copyPath = join(outputDirectory, 'mouths 2.pbanim')
+  const copyAtFirst = await readFile(copyPath, 'utf8')
+  const originalAtFirst = await readFile(join(outputDirectory, 'mouths.pbanim'), 'utf8')
+
+  driver.menu('undo')
+  await driver.untilRedoLabel('Redo Make Unique')
+  await driver.until(`${selector('media-mouths 2.pbanim')} === null`, 'the copy to leave Media')
+  const isCopyKeptAfterUndo = existsSync(copyPath)
+  driver.menu('redo')
+  await driver.untilUndoLabel('Undo Make Unique')
+
+  await makeUniqueAt(driver, await driver.timelinePoint(TICKS_PER_SECOND / 4, 2, 3))
+  await driver.until(`${selector('media-mouths 3.pbanim')} !== null`, 'the second copy in Media')
+  driver.menu('save')
+  await untilEdited(driver, false)
+  return { copyAtFirst, originalAtFirst, isCopyKeptAfterUndo }
+}
+
+async function closeAnimations(driver: Driver): Promise<void> {
+  await driver.page.click('group-path-0')
+  await driver.until(`${selector('group-path')} === null`, 'the animations to close')
+}
+
+async function openAnimationOnTrack(driver: Driver, trackIndex: number, name: string): Promise<void> {
+  await driver.doubleClickAt(await driver.timelinePoint(TICKS_PER_SECOND / 2, trackIndex, 3))
+  await driver.until(`${selector('group-path')}?.textContent.includes('${name}') === true`, `${name} to open`)
+}
+
+// First (on track 1) holds a drawing whose shape uses a swatch and follows a set with a parent; second (on track 2) holds a drawing of its own.
+async function testPasteBetween(driver: Driver): Promise<UiTestReport> {
+  await fullQualityFrame(driver, 0)
+  const preview = await driver.rect('preview')
+  await openAnimationOnTrack(driver, 1, 'first')
+  await driver.press('V')
+  await driver.until(isPressed('tool-move'), 'the move tool to be chosen')
+  await driver.clickAt({ x: preview.x + (preview.width * 35) / 640, y: preview.y + (preview.height * 175) / 360 })
+  await driver.until(`${CHOSEN_SHAPES} === '1'`, 'the shape to be selected')
+  driver.window.webContents.copy()
+  await closeAnimations(driver)
+
+  await openAnimationOnTrack(driver, 2, 'second')
+  driver.window.webContents.paste()
+  await driver.untilUndoLabel('Undo Paste Shape')
+  await closeAnimations(driver)
+
+  await openAnimationOnTrack(driver, 1, 'first')
+  await driver.clickAt(await driver.timelinePoint(TICKS_PER_SECOND / 2, 0, 1))
+  await driver.until(`${selector('clip-start')} !== null`, 'the drawing to be selected')
+  driver.window.webContents.copy()
+  await closeAnimations(driver)
+
+  await openAnimationOnTrack(driver, 2, 'second')
+  driver.window.webContents.paste()
+  await driver.untilUndoLabel('Undo Paste Clip')
+  driver.menu('save')
+  await untilEdited(driver, false)
+  return {}
+}
+
+function isOfLength(frames: number): string {
+  return `${selector('duration')}?.textContent === '/ ${frames}'`
+}
+
+async function writeFramesOf(text: string, path: string, frames: number): Promise<void> {
+  const parsed = parseProject(text, 'animation')
+  if (!parsed.ok) throw new PageError(`The animation could not be read: ${parsed.message}`)
+  const [track] = parsed.project.tracks
+  const [first] = track?.clips ?? []
+  if (track === undefined || first === undefined) throw new PageError('The animation has no frames')
+  const clips: Clip[] = []
+  for (let frame = 0; frame < frames; frame++) clips.push({ ...first, id: `written-${frame}`, start: frame * first.duration })
+  await writeFile(path, serializeProject({ ...parsed.project, tracks: [{ ...track, clips }] }))
+}
+
+// One played clip of Mouths (six frames at 12 fps) is open throughout; what the file holds shows in the animation's length.
+async function testAnimationReload(driver: Driver): Promise<UiTestReport> {
+  const { outputDirectory, answers } = driver.options
+  if (outputDirectory === undefined) throw new PageError('This UI test needs --out <directory>')
+  const path = join(outputDirectory, 'mouths.pbanim')
+  const text = await readFile(path, 'utf8')
+  await fullQualityFrame(driver, 0)
+  await driver.doubleClickAt(await driver.timelinePoint(TICKS_PER_SECOND / 4, 1, 2))
+  await driver.until(isOfLength(6), 'Mouths to open')
+
+  await writeFramesOf(text, path, 7)
+  await driver.until(isOfLength(7), 'a clean window to take in the file')
+  const isEditedAfterReload = driver.window.isDocumentEdited()
+
+  await driver.press('V')
+  await driver.until(isPressed('tool-move'), 'the move tool to be chosen')
+  const preview = await driver.rect('preview')
+  const center = { x: preview.x + (preview.width * 195) / 640, y: preview.y + (preview.height * 175) / 360 }
+  await driver.drag(center, { x: center.x + 20, y: center.y }, ['meta'])
+  await driver.untilUndoLabel('Undo Move Shape')
+  await untilEdited(driver, true)
+
+  answers.animationChanged = 'mine'
+  await writeFramesOf(text, path, 8)
+  await sleep(FILE_TAKEN_IN_MS)
+  const afterKeepingMine = await driver.page.evaluate(`${selector('duration')}.textContent`)
+  const undoAfterKeepingMine = driver.menuLabel('undo')
+  const isEditedAfterKeepingMine = driver.window.isDocumentEdited()
+
+  answers.animationChanged = 'saved'
+  await writeFramesOf(text, path, 9)
+  await driver.until(isOfLength(9), 'the saved file to replace the unsaved one')
+  await untilEdited(driver, false)
+  const undoAfterUsingSaved = driver.menuLabel('undo')
+
+  await writeFile(path, '{ "this is": "not an animation"')
+  await driver.until(`${selector('notice')}?.textContent.includes('could not be read') === true`, 'the notice about the broken file')
+  const afterBrokenFile = await driver.page.evaluate(`${selector('duration')}.textContent`)
+  await writeFramesOf(text, path, 9)
+
+  driver.menu('new')
+  const other = await driverOfNewWindow(driver, [driver.window])
+  answers.importMedia = [path]
+  other.menu('import')
+  await other.until(`${selector('media-mouths.pbanim')} !== null`, 'Mouths in the other window')
+  await dragMedia(other, 'mouths.pbanim', await other.timelinePoint(0, 0, 6))
+  await other.untilUndoLabel('Undo Add Clip')
+  await other.doubleClickAt(await other.timelinePoint(TICKS_PER_SECOND / 4, 0, 6))
+  await other.until(isOfLength(9), 'Mouths to open in the other window')
+
+  // The menu acts on the newest window, so the save comes from there and the first window takes it in.
+  await other.clickAt(await other.timelinePoint(TICKS_PER_SECOND / 8, 0, 1))
+  other.menu('duplicate')
+  await other.untilUndoLabel('Undo Duplicate Drawing')
+  await other.until(isOfLength(10), 'the copied drawing')
+  answers.saveProject = join(outputDirectory, 'second.json')
+  other.menu('save')
+  await untilEdited(other, false)
+  await driver.until(isOfLength(10), 'the first window to take in the save')
+  const isFirstWindowEdited = driver.window.isDocumentEdited()
+  return { isEditedAfterReload, afterKeepingMine, undoAfterKeepingMine, isEditedAfterKeepingMine, undoAfterUsingSaved, afterBrokenFile, isFirstWindowEdited }
+}
+
 async function testAnimationCrash(driver: Driver): Promise<UiTestReport> {
   await fadeCardInsideAnimation(driver)
   await untilRecoveryFiles(1, '.animations')
@@ -1184,6 +1432,11 @@ const SCENARIOS: Record<string, Scenario> = {
   'node-sets': testNodeSets,
   'follow-and-parent': testFollowAndParent,
   'shape-keys': testShapeKeys,
+  'hold-frame': testHoldFrame,
+  'shared-parts': testSharedParts,
+  'make-unique': testMakeUnique,
+  'animation-reload': testAnimationReload,
+  'paste-between': testPasteBetween,
   'animation-crash': testAnimationCrash,
   'animation-restore': testAnimationRestore,
   budgets: testBudgets,

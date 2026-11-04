@@ -1,5 +1,5 @@
 import { mkdir, open, rename, rm } from 'node:fs/promises'
-import { basename, dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, extname, join, relative, resolve } from 'node:path'
 import { describeError } from '../shared/log.js'
 import { parseProject, serializeProject, type DocumentKind, type MediaRef, type Project } from '../shared/project.js'
 
@@ -23,6 +23,22 @@ function savedReference(reference: MediaRef, locations: MediaLocations, targetDi
   if (reference.relativePath === '' || sourceDirectory === undefined) return reference
   const expected = resolve(sourceDirectory, reference.relativePath)
   return { ...reference, relativePath: relative(targetDirectory, expected) }
+}
+
+const NUMBERED_NAME = /^(?<name>.*) (?<number>\d+)$/
+
+// "Mouths" and "Mouths 2" both lead to the next number free beside them.
+export function freeCopyPathOf(path: string, isTaken: (candidate: string) => boolean): string {
+  const extension = extname(path)
+  const stem = basename(path, extension)
+  const numbered = NUMBERED_NAME.exec(stem)?.groups
+  const name = numbered?.name ?? stem
+  let number = numbered?.number === undefined ? 2 : Number(numbered.number) + 1
+  for (;;) {
+    const candidate = join(dirname(path), `${name} ${number}${extension}`)
+    if (!isTaken(candidate)) return candidate
+    number += 1
+  }
 }
 
 export function withSavedPaths(project: Project, locations: MediaLocations, targetPath: string): Project {

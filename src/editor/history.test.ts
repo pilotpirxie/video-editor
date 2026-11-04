@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { projectOf, track } from '../../test/fixtures.js'
-import { EMPTY_HISTORY, changedDocuments, record, redo, undo, type History } from './history.js'
+import { EMPTY_HISTORY, changedDocuments, record, redo, undo, withoutDocument, type History } from './history.js'
 
 const MAX_UNDO_STEPS = 500
 
@@ -66,5 +66,26 @@ describe('history', () => {
     expect(undone?.documents).toEqual({ '/a.pbanim': first })
     expect(redo(undone?.history ?? EMPTY_HISTORY)?.documents).toEqual({ '/a.pbanim': second })
     expect(undo(twoSteps())?.documents).toEqual({})
+  })
+})
+
+describe('withoutDocument', () => {
+  const change = { before: first, after: second }
+
+  it('takes the file out of every step and drops the steps left with nothing to do', () => {
+    const history: History = {
+      done: [
+        { label: 'Only the file', before: first, after: first, documents: { '/a': change } },
+        { label: 'Two files', before: first, after: first, documents: { '/a': change, '/b': change } },
+        { label: 'File and episode', before: first, after: second, documents: { '/a': change } },
+        { label: 'Other file', before: first, after: first, documents: { '/b': change } },
+      ],
+      undone: [{ label: 'Only the file', before: first, after: first, documents: { '/a': change } }],
+    }
+    const left = withoutDocument(history, '/a')
+    expect(left.done.map((step) => step.label)).toEqual(['Two files', 'File and episode', 'Other file'])
+    expect(left.done[0]?.documents).toEqual({ '/b': change })
+    expect(left.done[1]).not.toHaveProperty('documents')
+    expect(left.undone).toEqual([])
   })
 })

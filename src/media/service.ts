@@ -74,6 +74,8 @@ function perform(session: MediaSession, request: MediaRequest, signal: AbortSign
       return session.waveform(request.mediaId)
     case 'saveProject':
       return session.saveProject(request.path, request.project, request.animationPath)
+    case 'freeCopyPath':
+      return session.freeCopyPath(request.path)
     case 'cacheUsage':
       return session.cacheUsage()
     case 'clearCache':

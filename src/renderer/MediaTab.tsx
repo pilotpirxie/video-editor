@@ -4,7 +4,7 @@ import { isTimed, type MediaInfo, type MediaState, type Preparation } from '../s
 import type { MediaRef } from '../shared/project.js'
 import type { MediaSort } from '../shared/settings.js'
 import { TICKS_PER_SECOND } from '../shared/time.js'
-import { useEditorState, useSession } from './context.js'
+import { useEditorState, useSession, useThumbnailUpdates } from './context.js'
 import { DELETE_EVENT, SELECT_ALL_EVENT } from './document.js'
 import { Icon } from './icons.js'
 import { LibraryTools, useLibraryDrag, useLibraryView } from './LibraryTabs.js'
@@ -42,7 +42,7 @@ function durationLabel(info: MediaInfo): string {
   return `${Math.floor(seconds / SECONDS_PER_MINUTE)}:${String(seconds % SECONDS_PER_MINUTE).padStart(2, '0')}`
 }
 
-function Poster({ picture }: { picture: ImageBitmap }): ReactElement {
+export function Poster({ picture }: { picture: ImageBitmap }): ReactElement {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     const canvas = canvasRef.current
@@ -218,27 +218,13 @@ export function MediaTab(): ReactElement {
   const [selectedIds, setSelectedIds] = useState<readonly string[]>([])
   const [anchorId, setAnchorId] = useState<string | undefined>(undefined)
   const [focusedId, setFocusedId] = useState<string | undefined>(undefined)
-  const [, setPictureCount] = useState(0)
   const [boxShown, setBoxShown] = useState<Rect | undefined>(undefined)
   const boxRef = useRef<BoxSelect | undefined>(undefined)
   const tabRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
   const wasPressedLastRef = useRef(false)
 
-  useEffect(() => {
-    let redraw: number | undefined
-    const unsubscribe = session.thumbnails.subscribe(() => {
-      if (redraw !== undefined) return
-      redraw = requestAnimationFrame(() => {
-        redraw = undefined
-        setPictureCount((count) => count + 1)
-      })
-    })
-    return () => {
-      unsubscribe()
-      if (redraw !== undefined) cancelAnimationFrame(redraw)
-    }
-  }, [session])
+  useThumbnailUpdates()
 
   const sorted = useMemo(() => sortedMedia(media, mediaStates, sort), [media, mediaStates, sort])
   const wanted = query.trim().toLowerCase()

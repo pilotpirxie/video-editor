@@ -43,6 +43,7 @@ function fakeMedia(): MediaClient {
     want: notUsed,
     waveform: notUsed,
     saveProject: notUsed,
+    freeCopyPath: notUsed,
     cacheUsage: notUsed,
     clearCache: notUsed,
   }

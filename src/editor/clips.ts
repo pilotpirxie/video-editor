@@ -25,6 +25,10 @@ export function hasSource(clip: Clip): clip is VideoClip | AudioClip | Animation
   return clip.type === 'video' || clip.type === 'audio' || clip.type === 'animation'
 }
 
+export function isHeld(clip: Clip): clip is AnimationClip & { heldTime: number } {
+  return clip.type === 'animation' && clip.heldTime !== undefined
+}
+
 export function hasVolume(clip: Clip): clip is VideoClip | AudioClip | GroupClip | AnimationClip {
   return clip.type === 'video' || clip.type === 'audio' || clip.type === 'group' || clip.type === 'animation'
 }
@@ -77,6 +81,7 @@ export function hasLinkedAudio(clip: Clip, mediaStates: MediaStates): clip is Vi
 export function makesSound(clip: Clip, mediaStates: MediaStates, documents: Documents, chain: readonly string[] = []): clip is VideoClip | AudioClip | GroupClip | AnimationClip {
   if (clip.type === 'group') return allClips(clip.tracks).some((member) => member.type !== 'group' && makesSound(member, mediaStates, documents, chain))
   if (clip.type !== 'animation') return clip.type === 'audio' || hasLinkedAudio(clip, mediaStates)
+  if (isHeld(clip)) return false
   const opened = openedAnimation(clip, mediaStates, documents, chain)
   if (opened === undefined) return false
   return allClips(opened.project.tracks).some((member) => member.type !== 'group' && makesSound(member, mediaStates, documents, [...chain, opened.path]))

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MEDIA_STATES, SAMPLE_MEDIA, SECOND, STICKER_MEDIA, VIDEO_INFO, VIDEO_MEDIA, animationClip, audioClip, clipIds, clipOf, groupClip, projectOf, reopened, textClip, track, videoClip } from '../../test/fixtures.js'
 import type { MediaRef } from '../shared/project.js'
-import { canvasForFirstClip, clipForMedia, containsAnimation, dropMedia, mediaFileName, mediaUses, relinkedMedia, unlinkedMedia, withoutMedia, type MediaDrop, type PlaceableInfo } from './place.js'
+import { canvasForFirstClip, clipForMedia, containsAnimation, dropMedia, mediaFileName, mediaUses, relinkedMedia, unlinkedMedia, withClipOnMedia, withoutMedia, type MediaDrop, type PlaceableInfo } from './place.js'
 
 const CANVAS = projectOf([]).canvas
 const NEW_TRACK = { id: 'new-track', name: 'Track' }
@@ -241,5 +241,18 @@ describe('placing animations', () => {
     expect(containsAnimation(['body'], '/arm.pbanim', states, documents)).toBe(true)
     expect(containsAnimation(['arm'], '/body.pbanim', states, documents)).toBe(false)
     expect(containsAnimation(['video', 'gone'], '/body.pbanim', states, documents)).toBe(false)
+  })
+})
+
+describe('withClipOnMedia', () => {
+  it('points one clip at the new file, also inside a group, and leaves the others on the old one', () => {
+    const copy: MediaRef = { id: 'copy', path: '/films/wave 2.pbanim', relativePath: '' }
+    const project = projectOf([track('t1', [animationClip('one', 0, SECOND), animationClip('two', SECOND, SECOND), groupClip('group', 2 * SECOND, SECOND, [[animationClip('inner', 0, SECOND)]])])])
+    const top = withClipOnMedia(project, 'one', copy)
+    expect(clipOf(top, 'one')).toMatchObject({ mediaId: 'copy' })
+    expect(clipOf(top, 'two')).toMatchObject({ mediaId: 'wave' })
+    expect(top.media).toContainEqual(copy)
+    const grouped = clipOf(withClipOnMedia(project, 'inner', copy), 'group')
+    expect(grouped.type === 'group' && grouped.tracks[0]?.clips[0]).toMatchObject({ mediaId: 'copy' })
   })
 })

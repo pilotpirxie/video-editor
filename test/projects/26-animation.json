@@ -103,6 +103,34 @@
       "locked": false,
       "muted": false,
       "name": "loop"
+    },
+    {
+      "clips": [
+        {
+          "duration": 48000000,
+          "heldTime": 20000000,
+          "id": "held",
+          "mediaId": "scene",
+          "opacity": 1,
+          "sourceStart": 0,
+          "speedPercent": 100,
+          "start": 12000000,
+          "transform": {
+            "rotation": 0,
+            "scaleX": 0.25,
+            "scaleY": 0.25,
+            "x": 220,
+            "y": 560
+          },
+          "type": "animation",
+          "volume": 1
+        }
+      ],
+      "hidden": false,
+      "id": "held",
+      "locked": false,
+      "muted": false,
+      "name": "held"
     }
   ],
   "version": 1

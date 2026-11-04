@@ -240,6 +240,12 @@ export function createMediaClient(firstPort: MessagePort): MediaConnection {
       if (answer !== undefined && !isWaveform(answer)) throw unexpectedAnswer(request)
       return answer
     },
+    async freeCopyPath(path) {
+      const request: MediaRequest = { method: 'freeCopyPath', path }
+      const answer = await call(request)
+      if (typeof answer !== 'string') throw unexpectedAnswer(request)
+      return answer
+    },
     async saveProject(path, project, animationPath) {
       await callWithin({ method: 'saveProject', path, project, animationPath }, SAVE_TIMEOUT_MS)
     },

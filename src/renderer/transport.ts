@@ -1,9 +1,11 @@
 import { episodeTimeOf, scopeTimeOf, type Scope } from '../editor/groups.js'
+import type { HeldLevel } from '../engine/resolve.js'
 import { describeError, describeErrorAsSentence } from '../shared/log.js'
 import { TICKS_PER_SECOND, frameAt } from '../shared/time.js'
 import { createAudioOutput, type AudioOutput } from './audioOutput.js'
 import type { EngineHost } from './engineHost.js'
 
+const NO_HOLDS: readonly HeldLevel[] = []
 const MAX_SHUTTLE_RATE = 8
 const MS_PER_SECOND = 1000
 
@@ -182,11 +184,17 @@ export function createTransport(engine: EngineHost, onError: (message: string) =
     },
     shuttle,
     setScope(next) {
-      const isSameTime = next?.offset === scope?.offset && next?.timeScale === scope?.timeScale
+      const heldBefore = scope?.holds ?? NO_HOLDS
+      const heldNext = next?.holds ?? NO_HOLDS
+      const isSameTime = next?.offset === scope?.offset && next?.timeScale === scope?.timeScale && heldNext.length === heldBefore.length
       if (isSameTime) return
       endShuttle()
-      position = { ...position, time: scopeTimeOf(next, episodeTimeOf(scope, position.time)), sequence: position.sequence + 1 }
+      // The episode stood still while a held clip was open, so that is where the playhead comes back to.
+      const left = heldNext.length < heldBefore.length ? heldBefore.at(-1) : undefined
+      const episodeTime = left?.offset ?? episodeTimeOf(scope, position.time)
+      position = { ...position, time: scopeTimeOf(next, episodeTime), sequence: position.sequence + 1 }
       scope = next
+      if (left !== undefined) engine.send({ type: 'seek', time: Math.max(0, left.offset) })
       announce()
     },
   }

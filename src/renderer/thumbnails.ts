@@ -2,6 +2,7 @@ import { createByteLru } from '../engine/byteLru.js'
 import { minimumHalvings, UNDER_PRESSURE_SHARE } from '../shared/limits.js'
 import { logError } from '../shared/log.js'
 import type { MediaClient, MediaInfo, VideoInfo, WaveformLevel } from '../shared/mediaProtocol.js'
+import type { Project } from '../shared/project.js'
 
 const POSTER_HEIGHT = 120
 const FRAME_HEIGHT = 96
@@ -19,6 +20,7 @@ function standInKeyOf(mediaId: string, frame: number): string {
 export type Thumbnails = {
   poster(mediaId: string, info: MediaInfo): ImageBitmap | undefined
   videoFrame(mediaId: string, video: VideoInfo, frame: number): ImageBitmap | undefined
+  animationFrame(path: string, document: Project, time: number): ImageBitmap | undefined
   waveform(mediaId: string): readonly WaveformLevel[] | undefined
   subscribe(listener: () => void): () => void
   setUnderPressure(isUnderPressure: boolean): void
@@ -34,6 +36,8 @@ export function createThumbnails(media: MediaClient, renderStill: StillRenderer,
   const notReadyAt = new Map<string, number>()
   const listeners = new Set<() => void>()
   const animationRevisions = new Map<string, number>()
+  const documentRevisions = new WeakMap<Project, number>()
+  let lastDocumentRevision = 0
   let frameRequests = 0
   let retryTimer: number | undefined
 
@@ -126,6 +130,25 @@ export function createThumbnails(media: MediaClient, renderStill: StillRenderer,
     }
   }
 
+  async function loadAnimationFrame(key: string, path: string, time: number): Promise<boolean> {
+    frameRequests += 1
+    try {
+      const still = await renderStill(path, time, FRAME_HEIGHT)
+      return still !== undefined && keep(key, still)
+    } finally {
+      frameRequests -= 1
+    }
+  }
+
+  // Each edit makes a new document, so a frame drawn from an older one is never shown again.
+  function revisionOf(document: Project): number {
+    const known = documentRevisions.get(document)
+    if (known !== undefined) return known
+    lastDocumentRevision += 1
+    documentRevisions.set(document, lastDocumentRevision)
+    return lastDocumentRevision
+  }
+
   async function loadWaveform(mediaId: string): Promise<boolean> {
     const levels = await media.waveform(mediaId)
     if (levels === undefined) return false
@@ -147,6 +170,13 @@ export function createThumbnails(media: MediaClient, renderStill: StillRenderer,
       const mayFetch = known === undefined && !isPlaying() && frameRequests < MAX_FRAME_REQUESTS && canRequest(key)
       if (mayFetch) void fetchOnce(key, () => loadVideoFrame(key, mediaId, video, frame))
       return known ?? pictures.get(standInKeyOf(mediaId, frame))
+    },
+    animationFrame(path, document, time) {
+      const key = `animation-frame:${path}:${revisionOf(document)}:${time}`
+      const known = pictures.get(key)
+      const mayFetch = known === undefined && !isPlaying() && frameRequests < MAX_FRAME_REQUESTS && canRequest(key)
+      if (mayFetch) void fetchOnce(key, () => loadAnimationFrame(key, path, time))
+      return known
     },
     waveform(mediaId) {
       const key = `waveform:${mediaId}`

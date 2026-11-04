@@ -735,6 +735,39 @@ legend.field-label {
   box-shadow: 0 0 0 2px var(--primary);
 }
 
+.frame-picker {
+  overflow-y: auto;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius);
+  padding: var(--space-1);
+}
+
+.frame-grid {
+  display: grid;
+  align-content: start;
+  column-gap: var(--space-1);
+  box-sizing: border-box;
+}
+
+.frame-cell {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius);
+  background: var(--window-background);
+  cursor: pointer;
+}
+
+.frame-cell:hover {
+  border-color: var(--primary);
+}
+
+.frame-cell[aria-pressed='true'] {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
 .field-pair {
   display: flex;
   align-items: flex-end;

@@ -1,6 +1,6 @@
 import { ANNOTATION_NAMES, addAnnotation, type AnnotationKind } from '../editor/annotations.js'
 import { deleteZoom, setViewAt, zoomIndexAt } from '../editor/camera.js'
-import { copyClips, deleteClips, holdsDrawings, pasteClips, rippleDelete, spanEnd, type Clipboard } from '../editor/clipboard.js'
+import { copyClips, deleteClips, holdsDrawings, holdsOnlyDrawings, pasteClips, rippleDelete, spanEnd, type Clipboard } from '../editor/clipboard.js'
 import { allClips, isContainer, locateClip, nearestClipEdge, nextTrackName, trackAboveAll, unlockedClipIds, type NewTrack } from '../editor/clips.js'
 import {
   addDrawingShapes,
@@ -16,8 +16,10 @@ import {
   pasteKeys,
   setNodeSetPose,
   setPoseAt,
+  setsOfCopies,
   turnAndScaleAboveSet,
   shapeRefsOf,
+  withArrivingSwatches,
   withKnownSwatches,
   withNewShapeIds,
   type ArrangePlace,
@@ -32,7 +34,7 @@ import { clipsToSplit, splitClips } from '../editor/split.js'
 import { addTrack } from '../editor/tracks.js'
 import { DEFAULT_TRANSITION, setTransition } from '../editor/transitions.js'
 import { unturnedAndUnscaled } from '../engine/curves.js'
-import { isVisual, projectDuration, type Clip, type DrawingShape, type EffectType, type Project, type TransitionType } from '../shared/project.js'
+import { isVisual, projectDuration, type Clip, type DrawingShape, type EffectType, type NodeSet, type Project, type Swatch, type TransitionType } from '../shared/project.js'
 import { stillDurationTicks } from '../shared/settings.js'
 import { frameAt, frameDuration } from '../shared/time.js'
 import type { EditorStore } from './store.js'
@@ -71,7 +73,14 @@ export type Actions = {
   addTrack(): void
 }
 
-type Copied = { kind: 'clips'; clipboard: Clipboard; place: string } | { kind: 'shapes'; shapes: readonly DrawingShape[] }
+type CopiedShapes = {
+  kind: 'shapes'
+  shapes: readonly DrawingShape[]
+  sets: readonly NodeSet[]
+  swatches: readonly Swatch[] | undefined
+}
+
+type Copied = { kind: 'clips'; clipboard: Clipboard; place: string } | CopiedShapes
 
 const ARRANGE_LABELS: Record<ArrangePlace, string> = { front: 'Bring to Front', forward: 'Bring Forward', backward: 'Send Backward', back: 'Send to Back' }
 
@@ -134,7 +143,8 @@ export function createActions(store: EditorStore, transport: Transport): Actions
   function copy(): boolean {
     const { project, selection, selectedShapes, openGroups } = store.getState()
     if (selectedShapes.length > 0) {
-      copied = { kind: 'shapes', shapes: copyShapes(project, selectedShapes).map((copy) => copy.shape) }
+      const copies = copyShapes(project, selectedShapes)
+      copied = { kind: 'shapes', shapes: copies.map((copy) => copy.shape), sets: setsOfCopies(project, copies), swatches: project.swatches }
       return true
     }
     if (selection.length === 0) return false
@@ -146,15 +156,19 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     return withNewShapeIds(shape, () => crypto.randomUUID())
   }
 
-  function pasteShapes(shapes: readonly DrawingShape[]): void {
+  function pasteShapes({ shapes, sets, swatches }: CopiedShapes): void {
     const { project, selection, selectedShapes, openChain } = store.getState()
     if (openChain.length === 0) {
       store.notify('Shapes can only be pasted inside an animation.')
       return
     }
-    const pasted = shapes.map((shape) => withKnownSwatches(newShapeIds(shape), project.swatches))
+    const pasted = shapes.map(newShapeIds)
     const place = drawingPlace(project, transport.position().time, selection, selectedShapes, { clipId: crypto.randomUUID(), trackId: crypto.randomUUID() })
-    store.apply(`Paste ${plural(pasted.length, 'Shape')}`, (current) => addDrawingShapes(current, place, pasted))
+    store.apply(`Paste ${plural(pasted.length, 'Shape')}`, (current) => {
+      const withSwatches = withArrivingSwatches(current, pasted, swatches)
+      const colored = pasted.map((shape) => withKnownSwatches(shape, withSwatches.swatches))
+      return addDrawingShapes(withSwatches, place, colored, sets)
+    })
     store.selectShapes(shapeRefsOf(store.getState().project, pasted.map((shape) => shape.id)))
   }
 
@@ -285,6 +299,10 @@ export function createActions(store: EditorStore, transport: Transport): Actions
         store.notify('This animation cannot be opened: its file is missing, or it contains itself.')
         return
       }
+      if (scope?.heldTime !== undefined) {
+        transport.seek(scope.heldTime)
+        return
+      }
       const { time } = transport.position()
       if (scope !== undefined && (time < scope.from || time >= scope.to)) transport.seek(scope.from)
     },
@@ -358,7 +376,7 @@ export function createActions(store: EditorStore, transport: Transport): Actions
     paste() {
       if (copied === undefined) return
       if (copied.kind === 'shapes') {
-        pasteShapes(copied.shapes)
+        pasteShapes(copied)
         return
       }
       const { clipboard } = copied
@@ -366,7 +384,7 @@ export function createActions(store: EditorStore, transport: Transport): Actions
         store.notify('Drawings can only be pasted inside an animation.')
         return
       }
-      if (copied.place !== store.getState().openGroups.join('/')) {
+      if (copied.place !== store.getState().openGroups.join('/') && !holdsOnlyDrawings(clipboard)) {
         store.notify('Clips copied inside a group can only be pasted in that group, and clips copied outside it only there.')
         return
       }

@@ -865,6 +865,63 @@ describe('animation clips', () => {
     return resolveFrame(project([track(clips)]), media, documents, time, 1)
   }
 
+  describe('held on one frame', () => {
+    const FRAME_12 = SECOND / 12
+    const steps = animation(videoClip({ id: 'early', start: 0, duration: FRAME_12 * 3 }), videoClip({ id: 'late', start: FRAME_12 * 3, duration: FRAME_12 * 3 }))
+    const documents: Documents = { [WAVE]: steps }
+
+    function shownIn(clip: Animation, time: number): string | undefined {
+      return layersIn([clip], time, documents)[0]?.clipId
+    }
+
+    it('shows that frame for its whole length, whatever its source offset and speed', () => {
+      const held = animationClip({ heldTime: FRAME_12 * 4, sourceStart: 0, speedPercent: 400, duration: 6 * SECOND })
+      expect(shownIn(held, SECOND)).toBe('late')
+      expect(shownIn(held, 5 * SECOND)).toBe('late')
+      expect(shownIn({ ...held, heldTime: FRAME_12 }, 5 * SECOND)).toBe('early')
+    })
+
+    it('steps a held time between frames down to the frame it falls in', () => {
+      expect(shownIn(animationClip({ heldTime: FRAME_12 * 3 - 100 }), SECOND)).toBe('early')
+    })
+
+    it('draws the same layers as the played clip at that moment, but for its stepped time', () => {
+      const played = layersIn([animationClip()], SECOND + FRAME_12 * 4, documents)
+      const held = layersIn([animationClip({ heldTime: FRAME_12 * 4 })], SECOND + FRAME_12 * 4, documents)
+      expect(held).toEqual(played)
+    })
+
+    it('shows nothing when the frame lies past the end of the animation', () => {
+      expect(layersIn([animationClip({ heldTime: 60 * SECOND })], SECOND, documents)).toEqual([])
+    })
+
+    it('stands the episode still while open, and shows the playhead inside the clip', () => {
+      const held = animationClip({ heldTime: FRAME_12, duration: SECOND })
+      const after = videoClip({ id: 'after', start: 2 * SECOND, duration: SECOND })
+      const whole = project([track([held]), track([after])])
+      const holds = [{ path: ['wave'], offset: SECOND, timeScale: 1, end: SECOND + FRAME_12 * 6 }]
+      const open = (time: number): string[] => resolveFrame(whole, WAVE_MEDIA, documents, time, 1, holds).map((layer) => layer.clipId)
+      expect(open(SECOND + FRAME_12)).toEqual(['early'])
+      expect(open(SECOND + FRAME_12 * 4)).toEqual(['late'])
+      expect(open(SECOND + 2.5 * SECOND)).toEqual([])
+    })
+
+    it('shows an outer held clip where the next open clip starts, while the inner one follows the playhead', () => {
+      const MOUTHS = '/films/mouths.pbanim'
+      const media = mediaOf({ wave: WAVE, mouths: MOUTHS })
+      const inner = animationClip({ id: 'inner', mediaId: 'mouths', start: FRAME_12 * 2, duration: FRAME_12, heldTime: 0, transform: { x: 0, y: 0, scaleX: 1, scaleY: 1, rotation: 0 } })
+      const outer = animation(inner)
+      const held = animationClip({ heldTime: 0 })
+      const levels = [
+        { path: ['wave'], offset: SECOND, timeScale: 1, end: SECOND + FRAME_12 * 3 },
+        { path: ['wave', 'inner'], offset: SECOND + FRAME_12 * 2, timeScale: 1, end: SECOND + FRAME_12 * 8 },
+      ]
+      const open = (time: number): string[] => resolveFrame(project([track([held])]), media, { [WAVE]: outer, [MOUTHS]: steps }, time, 1, levels).map((layer) => layer.clipId)
+      expect(open(SECOND + FRAME_12 * 2)).toEqual(['early'])
+      expect(open(SECOND + FRAME_12 * 6)).toEqual(['late'])
+    })
+  })
+
   it('draws its clips with the centre of its artboard where the clip is placed', () => {
     const [layer] = layersIn([animationClip()], SECOND)
     expect(layer).toMatchObject({ clipId: 'hand', key: 'wave/hand', groups: ['wave'], frame: 0, transform: { x: 760, y: 440, scaleX: 0.5, scaleY: 0.5 } })

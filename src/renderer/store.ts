@@ -1,7 +1,7 @@
 import { emptyTrack, locateClip } from '../editor/clips.js'
 import { NEW_SHAPE_STYLE, nodeSetOf, pickableShape, shapeAt, styleWithColor, type ColorPart, type NodeRef, type SetRef, type ShapeRef, type ShapeStyle } from '../editor/drawings.js'
 import { resolveScope, withScopedProject, type Scope } from '../editor/groups.js'
-import { EMPTY_HISTORY, changedDocuments, record, redo, undo, type History, type Step, type Travel } from '../editor/history.js'
+import { EMPTY_HISTORY, changedDocuments, record, redo, undo, withoutDocument, type History, type Step, type Travel } from '../editor/history.js'
 import type { MediaStates } from '../engine/resolve.js'
 import type { Documents, LoadedAnimations, LoadedProject, MediaState } from '../shared/mediaProtocol.js'
 import { PROJECT_VERSION, type Canvas, type Project, type ShapeStroke, type Track } from '../shared/project.js'
@@ -90,6 +90,7 @@ export type EditorStore = {
   setMediaState(mediaId: string, state: MediaState): void
   setMediaStates(states: MediaStates): void
   addDocuments(loaded: LoadedAnimations): void
+  reloadDocument(path: string, loaded: LoadedAnimations): void
   markSaved(project: Project, documentPath: string): void
   markDocumentsSaved(documents: Documents): void
   notify(notice: string | undefined): void
@@ -408,6 +409,18 @@ export function createEditorStore(settings: AppSettings = DEFAULT_SETTINGS): Edi
         documents: { ...state.documents, ...loaded.documents },
         savedDocuments: { ...state.savedDocuments, ...loaded.documents },
         mediaStates: { ...state.mediaStates, ...loaded.media },
+      })
+    },
+    // Files nested in the reloaded one are read too; those already here stay as they are, and tell of their own changes.
+    reloadDocument(path, loaded) {
+      const document = loaded.documents[path]
+      if (document === undefined) return
+      cancel()
+      setState({
+        documents: { ...loaded.documents, ...state.documents, [path]: document },
+        savedDocuments: { ...loaded.documents, ...state.savedDocuments, [path]: document },
+        mediaStates: { ...state.mediaStates, ...loaded.media },
+        history: withoutDocument(state.history, path),
       })
     },
     markSaved: (project, documentPath) => setState({ savedProject: project, documentPath }),

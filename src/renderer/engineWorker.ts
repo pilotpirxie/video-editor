@@ -1,4 +1,5 @@
 import { createEngine, type Engine, type EngineEvent, type PixelColor, type Share } from '../engine/engine.js'
+import type { HeldLevel } from '../engine/resolve.js'
 import { describeError, logError } from '../shared/log.js'
 import type { HeadlessJob, JobEvent, LoadedProject } from '../shared/mediaProtocol.js'
 import { createMediaClient, type MediaConnection } from './mediaClient.js'
@@ -11,7 +12,7 @@ export type WorkerCommand =
   | { type: 'project'; loaded: LoadedProject }
   | { type: 'resize'; width: number; height: number }
   | { type: 'whole-canvas'; isShown: boolean }
-  | { type: 'focus'; path: string[] }
+  | { type: 'focus'; path: string[]; holds: readonly HeldLevel[] }
   | { type: 'seek'; time: number }
   | { type: 'play'; outputLatency: number }
   | { type: 'pause' }
@@ -92,7 +93,7 @@ async function handle(engine: Engine, command: WorkerCommand, ports: readonly Me
   } else if (command.type === 'whole-canvas') {
     engine.showWholeCanvasWhenPaused(command.isShown)
   } else if (command.type === 'focus') {
-    engine.setFocus(command.path)
+    engine.setFocus(command.path, command.holds)
   } else if (command.type === 'seek') {
     engine.seek(command.time)
   } else if (command.type === 'play') {
